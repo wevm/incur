@@ -68,7 +68,36 @@ cli.command('greet', {
 
 ---
 
-## Phase 3: Errors — Structured Error Handling
+## Phase 3: Type Inference — Zod Schema Narrowing
+
+**Goal:** Narrow all types wherever Zod schemas flow. `run({ args, options })` infers from `args`/`options` schemas. `Parser.parse()` return type narrows from input schemas. `alias` keys constrain to option schema keys.
+
+**TDD cycles (Cli.test-d.ts — type tests):**
+1. `args` in `run()` callback infers correct types from Zod `args` schema
+2. `options` in `run()` callback infers correct types from Zod `options` schema
+3. `run` return type is checked against `output` schema when provided
+4. `alias` keys are constrained to keys of `options` schema
+5. `next` callback receives correctly typed result (based on `output` or `run` return)
+6. Without `args`/`options` schemas, `run` callback receives `{}`
+7. Zod `.default()` and `.optional()` are reflected in inferred types
+
+**TDD cycles (Parser.test-d.ts — type tests):**
+8. `Parser.parse()` return type narrows `args` to `z.output<argsSchema>`
+9. `Parser.parse()` return type narrows `options` to `z.output<optionsSchema>`
+10. Without schemas, returns `{ args: {}; options: {} }`
+
+**Implementation:**
+- Add `const` generic parameters to `CommandDefinition`: `<const args, const options, const output>`
+- Make `Cli.command()` generic, flowing schemas through to `run`, `next`, and `alias`
+- Make `Parser.parse()` generic, returning narrowed `{ args: z.output<A>; options: z.output<O> }`
+- Use `z.output<>` (not `z.infer<>`) for post-transform types
+
+**Files created:** `Cli.test-d.ts`, `Parser.test-d.ts`
+**Files modified:** `Cli.ts`, `Parser.ts`
+
+---
+
+## Phase 4: Errors — Structured Error Handling
 
 **Goal:** Error classes + auto-wrapping of thrown errors into the error envelope.
 
@@ -89,7 +118,7 @@ cli.command('greet', {
 
 ---
 
-## Phase 4: Formatter — Output Formats
+## Phase 5: Formatter — Output Formats
 
 **Goal:** Support `--format toon|json|jsonl|yaml|md`, `--json` shorthand. stdout/stderr discipline.
 
@@ -113,7 +142,7 @@ cli.command('greet', {
 
 ---
 
-## Phase 5: Subcommands — Group Composition
+## Phase 6: Subcommands — Group Composition
 
 **Goal:** `Cli.command('name')` without `run` acts as a group. Composable subcommand trees mounted via `cli.command(sub)`.
 
@@ -128,7 +157,7 @@ cli.command('greet', {
 
 ---
 
-## Phase 6: Schema — JSON Schema Generation
+## Phase 7: Schema — JSON Schema Generation
 
 **Goal:** Convert Zod schemas to JSON Schema. Power the `--llms` manifest.
 
@@ -156,7 +185,7 @@ cli.command('greet', {
 
 ---
 
-## Phase 7: CTAs — Next Commands
+## Phase 8: CTAs — Next Commands
 
 **Goal:** `next` function on commands populates `meta.nextCommands` in output.
 
@@ -170,7 +199,7 @@ cli.command('greet', {
 
 ---
 
-## Phase 8: Skill Files — Markdown Generation
+## Phase 9: Skill Files — Markdown Generation
 
 **Goal:** Auto-generate Markdown skill files with YAML frontmatter from command definitions.
 
@@ -191,7 +220,7 @@ cli.command('greet', {
 
 ---
 
-## Phase 9: Global Flags & Polish
+## Phase 10: Global Flags & Polish
 
 **Goal:** Built-in `--help`, `--version`, `--no-color`, streaming, final polish.
 
@@ -209,31 +238,28 @@ cli.command('greet', {
 9. Final line is the meta envelope
 10. Non-streaming command with `--format jsonl` → single JSON line + meta line
 
-**TDD cycles (type tests — Cli.test-d.ts):**
-11. `args` in `run()` callback infers correct types from Zod schema
-12. `options` in `run()` callback infers correct types from Zod schema
-13. `next` callback receives correctly typed result
-14. `alias` keys are constrained to keys of `options` schema
-
 ---
 
 ## Dependency Graph
 
 ```
 Phase 1 (tracer bullet)
-  ├── Phase 2 (parser) ──────────────────┐
-  ├── Phase 3 (errors) ──────────────────┤
-  │                                      ▼
-  ├── Phase 4 (formatter) ──── Phase 6 (schema)
+  ├── Phase 2 (parser) ──┐
+  │                      ▼
+  ├── Phase 3 (type inference) ──────────┐
   │                                      │
-  ├── Phase 5 (subcommands)              ▼
-  │                            Phase 8 (skills)
-  ├── Phase 7 (CTAs)
+  ├── Phase 4 (errors) ─────────────────┤
+  │                                      ▼
+  ├── Phase 5 (formatter) ──── Phase 7 (schema)
+  │                                      │
+  ├── Phase 6 (subcommands)              ▼
+  │                            Phase 9 (skills)
+  ├── Phase 8 (CTAs)
   │
-  └── Phase 9 (global flags & polish) ← all above
+  └── Phase 10 (global flags & polish) ← all above
 ```
 
-Phases 2, 3, 4, 5, 7 can be parallelized after Phase 1. Phase 6 depends on having the formatter. Phase 8 depends on schema. Phase 9 is the final integration pass.
+Phase 3 depends on Phase 2 (parser must exist to type it). Phases 4, 5, 6, 8 can be parallelized after Phase 3. Phase 7 depends on the formatter. Phase 9 depends on schema. Phase 10 is the final integration pass.
 
 ---
 

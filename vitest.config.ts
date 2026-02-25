@@ -8,5 +8,9 @@ export default defineConfig({
     },
     globals: true,
     passWithNoTests: true,
+    typecheck: {
+      enabled: true,
+      include: ['**/*.test-d.ts'],
+    },
   },
 })

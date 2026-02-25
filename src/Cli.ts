@@ -1,39 +1,75 @@
 import type { z } from 'zod'
 import * as Formatter from './Formatter.js'
+import * as Parser from './Parser.js'
 
 /** A CLI application instance. */
 export type Cli = {
   /** The name of the CLI application. */
   name: string
   /** Registers a command and returns the CLI instance for chaining. */
-  command(name: string, definition: CommandDefinition): Cli
+  command<
+    const args extends z.ZodObject<any> | undefined = undefined,
+    const options extends z.ZodObject<any> | undefined = undefined,
+    const output extends z.ZodObject<any> | undefined = undefined,
+  >(name: string, definition: CommandDefinition<args, options, output>): Cli
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
 }
 
+/** Inferred output type of a Zod schema, or `{}` when the schema is not provided. */
+type InferOutput<schema extends z.ZodObject<any> | undefined> =
+  schema extends z.ZodObject<any> ? z.output<schema> : {}
+
+/** Inferred return type for a command handler. */
+type InferReturn<output extends z.ZodObject<any> | undefined> =
+  output extends z.ZodObject<any> ? z.output<output> : unknown
+
+/** A suggested next command returned from the `next` callback. */
+type NextCommand = {
+  /** The command string to run. */
+  command: string
+  /** A short description of what the command does. */
+  description?: string | undefined
+  /** Pre-filled arguments for the command. */
+  args?: Record<string, unknown> | undefined
+}
+
 /** Defines a command's schema, handler, and metadata. */
-type CommandDefinition = {
+type CommandDefinition<
+  args extends z.ZodObject<any> | undefined = undefined,
+  options extends z.ZodObject<any> | undefined = undefined,
+  output extends z.ZodObject<any> | undefined = undefined,
+> = {
   /** A short description of what the command does. */
   description?: string | undefined
   /** Zod schema for positional arguments. */
-  args?: z.ZodObject<any> | undefined
+  args?: args
   /** Zod schema for named options/flags. */
-  options?: z.ZodObject<any> | undefined
+  options?: options
   /** Zod schema for the command's return value. */
-  output?: z.ZodObject<any> | undefined
+  output?: output
+  /** Map of option names to single-char aliases. */
+  alias?: options extends z.ZodObject<any>
+    ? Partial<Record<keyof z.output<options>, string>>
+    : Record<string, string> | undefined
   /** The command handler. */
-  run(context: { args: any; options: any }): unknown | Promise<unknown>
+  run(context: {
+    args: InferOutput<args>
+    options: InferOutput<options>
+  }): InferReturn<output> | Promise<InferReturn<output>>
+  /** Returns suggested next commands based on the result. */
+  next?: ((result: InferReturn<output>) => NextCommand[]) | undefined
 }
 
 /** Creates a new CLI application. */
 export function create(name: string, _options: create.Options = {}): Cli {
-  const commands = new Map<string, CommandDefinition>()
+  const commands = new Map<string, CommandDefinition<any, any, any>>()
 
   return {
     name,
 
     command(name, def) {
-      commands.set(name, def)
+      commands.set(name, def as CommandDefinition<any, any, any>)
       return this
     },
 
@@ -67,17 +103,12 @@ export function create(name: string, _options: create.Options = {}): Cli {
       const command = commands.get(commandName)!
 
       try {
-        // Parse positional args by schema key order
-        const args: Record<string, string> = {}
-        if (command.args) {
-          const keys = Object.keys(command.args.shape)
-          for (let i = 0; i < keys.length; i++) {
-            const key = keys[i]!
-            if (rest[i] !== undefined) args[key] = rest[i]!
-          }
-        }
+        const { args, options: parsedOptions } = Parser.parse(rest, {
+          args: command.args,
+          options: command.options,
+        })
 
-        const data = await command.run({ args, options: {} })
+        const data = await command.run({ args, options: parsedOptions })
 
         write({
           ok: true,
@@ -124,5 +155,3 @@ export declare namespace serve {
     exit?: ((code: number) => void) | undefined
   }
 }
-
-
