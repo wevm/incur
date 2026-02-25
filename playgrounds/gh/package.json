@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "gh": "node --import tsx cli.ts",
     "check:types": "tsc"
   },
   "dependencies": {

@@ -54,34 +54,43 @@ export type Commands = Register extends { commands: infer commands extends Comma
   ? commands
   : {}
 
-/** CTA type — discriminated union when commands are registered, plain strings otherwise. */
-export type Cta<commands extends CommandsMap = Commands> = [keyof commands] extends [never]
-  ? {
-      /** Positional arguments appended as bare values. */
-      args?: Record<string, unknown> | undefined
-      /** The command name to run. */
-      command: string
-      /** A short description of what the command does. */
-      description?: string | undefined
-      /** Named options formatted as `--key value` flags. */
-      options?: Record<string, unknown> | undefined
-    }
-  : {
-      [name in keyof commands & string]: {
-        /** Positional arguments appended as bare values. */
-        args?:
-          | { [key in keyof commands[name]['args']]?: commands[name]['args'][key] | true }
-          | undefined
-        /** The command name to run. */
-        command: name
-        /** A short description of what the command does. */
-        description?: string | undefined
-        /** Named options formatted as `--key value` flags. */
-        options?:
-          | { [key in keyof commands[name]['options']]?: commands[name]['options'][key] | true }
-          | undefined
-      }
-    }[keyof commands & string]
+/** Call to action. */
+export type Cta<commands extends CommandsMap = Commands> =
+  | ([keyof commands] extends [never] ? string : (keyof commands & string) | (string & {}))
+  | ([keyof commands] extends [never]
+      ? {
+          /** Positional arguments appended as bare values. */
+          args?: Record<string, unknown> | undefined
+          /** The command name to run. */
+          command: string
+          /** A short description of what the command does. */
+          description?: string | undefined
+          /** Named options formatted as `--key value` flags. */
+          options?: Record<string, unknown> | undefined
+        }
+      :
+          | {
+              [name in keyof commands & string]: {
+                /** Positional arguments appended as bare values. */
+                args?:
+                  | { [key in keyof commands[name]['args']]?: commands[name]['args'][key] | true }
+                  | undefined
+                /** The command name to run. */
+                command: name
+                /** A short description of what the command does. */
+                description?: string | undefined
+                /** Named options formatted as `--key value` flags. */
+                options?:
+                  | { [key in keyof commands[name]['options']]?: commands[name]['options'][key] | true }
+                  | undefined
+              }
+            }[keyof commands & string]
+          | {
+              /** The command name to run. */
+              command: string & {}
+              /** A short description of what the command does. */
+              description?: string | undefined
+            })
 
 /** Creates a leaf CLI with a root handler and no subcommands. */
 export function create<
@@ -183,8 +192,6 @@ export declare namespace create {
       : Record<string, string> | undefined
     /** Zod schema for positional arguments. */
     args?: args
-    /** Returns suggested next commands based on the result. */
-    cta?: ((result: InferReturn<output>) => Cta[]) | undefined
     /** A short description of what the CLI does. */
     description?: string | undefined
     /** Whether the command may perform destructive operations. */
@@ -202,6 +209,10 @@ export declare namespace create {
     /** The root command handler. When provided, creates a leaf CLI with no subcommands. */
     run?: (context: {
       args: InferOutput<args>
+      /** Return a success result with optional metadata (e.g. CTAs). */
+      ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock }) => never
+      /** Return an error result with optional CTAs. */
+      error: (options: { code: string; message: string; retryable?: boolean; cta?: CtaBlock }) => never
       options: InferOutput<options>
     }) => InferReturn<output> | Promise<InferReturn<output>>
     /** The CLI version string. */
@@ -247,7 +258,7 @@ async function serveImpl(
     stdout(
       Help.formatRoot(name, {
         description: options.description,
-        commands: collectHelpCommands(commands, []),
+        commands: collectHelpCommands(commands),
       }),
     )
     return
@@ -265,7 +276,7 @@ async function serveImpl(
       stdout(
         Help.formatRoot(helpName, {
           description: helpDesc,
-          commands: collectHelpCommands(helpCmds, []),
+          commands: collectHelpCommands(helpCmds),
         }),
       )
     } else {
@@ -284,7 +295,7 @@ async function serveImpl(
     stdout(
       Help.formatRoot(`${name} ${resolved.path}`, {
         description: resolved.description,
-        commands: collectHelpCommands(resolved.commands, []),
+        commands: collectHelpCommands(resolved.commands),
       }),
     )
     return
@@ -323,25 +334,61 @@ async function serveImpl(
       options: command.options,
     })
 
-    const data = await command.run({ args, options: parsedOptions })
-    const cta = command.cta ? command.cta(data).map((c) => formatCta(name, c)) : undefined
+    const okFn = (data: unknown, meta: { cta?: CtaBlock } = {}): never => {
+      return { [sentinel]: 'ok', data, cta: meta.cta } as never
+    }
+    const errorFn = (
+      opts: { code: string; message: string; retryable?: boolean; cta?: CtaBlock },
+    ): never => {
+      return { [sentinel]: 'error', ...opts } as never
+    }
 
-    write({
-      ok: true,
-      data,
-      meta: {
-        command: path,
-        duration: `${Math.round(performance.now() - start)}ms`,
-        ...(cta ? { cta } : undefined),
-      },
-    })
+    const result = await command.run({ args, options: parsedOptions, ok: okFn, error: errorFn })
+
+    if (isSentinel(result)) {
+      const cta = formatCtaBlock(name, result.cta)
+      if (result[sentinel] === 'ok') {
+        write({
+          ok: true,
+          data: result.data,
+          meta: {
+            command: path,
+            duration: `${Math.round(performance.now() - start)}ms`,
+            ...(cta ? { cta } : undefined),
+          },
+        })
+      } else {
+        write({
+          ok: false,
+          error: {
+            code: result.code,
+            message: result.message,
+            ...(result.retryable !== undefined ? { retryable: result.retryable } : undefined),
+          },
+          meta: {
+            command: path,
+            duration: `${Math.round(performance.now() - start)}ms`,
+            ...(cta ? { cta } : undefined),
+          },
+        })
+        exit(1)
+      }
+    } else {
+      write({
+        ok: true,
+        data: result,
+        meta: {
+          command: path,
+          duration: `${Math.round(performance.now() - start)}ms`,
+        },
+      })
+    }
   } catch (error) {
     write({
       ok: false,
       error: {
         code: error instanceof ClacError ? error.code : 'UNKNOWN',
         message: error instanceof Error ? error.message : String(error),
-        ...(error instanceof ClacError && error.hint ? { hint: error.hint } : undefined),
         ...(error instanceof ClacError ? { retryable: error.retryable } : undefined),
         ...(error instanceof ValidationError ? { fieldErrors: error.fieldErrors } : undefined),
       },
@@ -354,7 +401,7 @@ async function serveImpl(
   }
 }
 
-/** Resolves a command from the tree by walking tokens until a leaf is found. */
+/** @internal Resolves a command from the tree by walking tokens until a leaf is found. */
 function resolveCommand(
   commands: Map<string, CommandEntry>,
   tokens: string[],
@@ -408,7 +455,7 @@ declare namespace serveImpl {
   }
 }
 
-/** Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
   let llms = false
@@ -433,16 +480,14 @@ function extractBuiltinFlags(argv: string[]) {
   return { verbose, format, llms, help, version, rest }
 }
 
-/** Recursively collects command names and descriptions for help output. */
+/** @internal Collects immediate child commands/groups for help output. */
 function collectHelpCommands(
   commands: Map<string, CommandEntry>,
-  prefix: string[],
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
-    const path = [...prefix, name]
-    if (isGroup(entry)) result.push(...collectHelpCommands(entry.commands, path))
-    else result.push({ name: path.join(' '), description: entry.description })
+    if (isGroup(entry)) result.push({ name, description: entry.description })
+    else result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -474,8 +519,50 @@ export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 /** @internal Maps root CLI instances to their command definitions. */
 const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
 
-/** @internal Formats a CTA by prefixing the CLI name and folding `args` and `options` into the command string. */
+/** @internal Sentinel symbol for `ok()` and `error()` return values. */
+const sentinel = Symbol.for('clac.sentinel')
+
+/** @internal A tagged ok result returned by the `ok` context helper. */
+type OkResult = {
+  [sentinel]: 'ok'
+  data: unknown
+  cta?: CtaBlock | undefined
+}
+
+/** @internal A tagged error result returned by the `error` context helper. */
+type ErrorResult = {
+  [sentinel]: 'error'
+  code: string
+  message: string
+  retryable?: boolean | undefined
+  cta?: CtaBlock | undefined
+}
+
+/** @internal A CTA block with a description and list of suggested commands. */
+type CtaBlock<commands extends CommandsMap = Commands> = {
+  /** Commands to suggest. */
+  commands: Cta<commands>[]
+  /** Human-readable label. Defaults to `"Suggested commands:"`. */
+  description?: string | undefined
+}
+
+/** @internal Type guard for sentinel results. */
+function isSentinel(value: unknown): value is OkResult | ErrorResult {
+  return typeof value === 'object' && value !== null && sentinel in value
+}
+
+/** @internal Formats a CTA block into the output envelope shape. */
+function formatCtaBlock(name: string, block: CtaBlock | undefined): FormattedCtaBlock | undefined {
+  if (!block || block.commands.length === 0) return undefined
+  return {
+    description: block.description ?? 'Suggested commands:',
+    commands: block.commands.map((c) => formatCta(name, c)),
+  }
+}
+
+/** @internal Formats a CTA by prefixing the CLI name. Handles string and object forms. */
 function formatCta(name: string, cta: Cta): FormattedCta {
+  if (typeof cta === 'string') return { command: `${name} ${cta}` }
   let cmd = `${name} ${cta.command}`
   if (cta.args)
     for (const [key, value] of Object.entries(cta.args))
@@ -486,7 +573,7 @@ function formatCta(name: string, cta: Cta): FormattedCta {
   return { command: cmd, ...(cta.description ? { description: cta.description } : undefined) }
 }
 
-/** Builds the `--llms` manifest from the command tree. */
+/** @internal Builds the `--llms` manifest from the command tree. */
 function buildManifest(commands: Map<string, CommandEntry>) {
   return {
     version: 'clac.v1',
@@ -494,7 +581,7 @@ function buildManifest(commands: Map<string, CommandEntry>) {
   }
 }
 
-/** Recursively collects leaf commands with their full paths. */
+/** @internal Recursively collects leaf commands with their full paths. */
 function collectCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
@@ -529,7 +616,7 @@ function collectCommands(
   return result
 }
 
-/** Extracts annotation flags from a command definition, mapped to MCP-style keys. */
+/** @internal Extracts annotation flags from a command definition, mapped to MCP-style keys. */
 function buildAnnotations(
   entry: CommandDefinition<any, any, any>,
 ): Record<string, boolean> | undefined {
@@ -554,7 +641,7 @@ function buildAnnotations(
   return has ? map : undefined
 }
 
-/** Merges args + options schemas into a single input JSON Schema. */
+/** @internal Merges args + options schemas into a single input JSON Schema. */
 function buildInputSchema(
   args: z.ZodObject<any> | undefined,
   options: z.ZodObject<any> | undefined,
@@ -567,15 +654,15 @@ function buildInputSchema(
   return Schema.toJsonSchema(merged)
 }
 
-/** Inferred output type of a Zod schema, or `{}` when the schema is not provided. */
+/** @internal Inferred output type of a Zod schema, or `{}` when the schema is not provided. */
 type InferOutput<schema extends z.ZodObject<any> | undefined> =
   schema extends z.ZodObject<any> ? z.output<schema> : {}
 
-/** Inferred return type for a command handler. */
+/** @internal Inferred return type for a command handler. */
 type InferReturn<output extends z.ZodObject<any> | undefined> =
   output extends z.ZodObject<any> ? z.output<output> : unknown
 
-/** The output envelope written to stdout. */
+/** @internal The output envelope written to stdout. */
 type Output = OneOf<
   | {
       /** The command's return data. */
@@ -592,8 +679,6 @@ type Output = OneOf<
         code: string
         /** Per-field validation errors. */
         fieldErrors?: FieldError[] | undefined
-        /** Actionable hint for the user. */
-        hint?: string | undefined
         /** Human-readable error message. */
         message: string
         /** Whether the operation can be retried. */
@@ -606,6 +691,7 @@ type Output = OneOf<
     }
 >
 
+/** @internal */
 declare namespace Output {
   /** Shared metadata included in every envelope. */
   type Meta = {
@@ -613,12 +699,12 @@ declare namespace Output {
     command: string
     /** Wall-clock duration of the command. */
     duration: string
-    /** Suggested next commands. Present on success envelopes only. */
-    cta?: FormattedCta[] | undefined
+    /** Suggested next commands. */
+    cta?: FormattedCtaBlock | undefined
   }
 }
 
-/** Defines a command's schema, handler, and metadata. */
+/** @internal Defines a command's schema, handler, and metadata. */
 type CommandDefinition<
   args extends z.ZodObject<any> | undefined = undefined,
   options extends z.ZodObject<any> | undefined = undefined,
@@ -630,8 +716,6 @@ type CommandDefinition<
     : Record<string, string> | undefined
   /** Zod schema for positional arguments. */
   args?: args
-  /** Returns suggested next commands based on the result. */
-  cta?: ((result: InferReturn<output>) => Cta[]) | undefined
   /** A short description of what the command does. */
   description?: string | undefined
   /** Whether the command may perform destructive operations. */
@@ -649,11 +733,23 @@ type CommandDefinition<
   /** The command handler. */
   run(context: {
     args: InferOutput<args>
+    /** Return a success result with optional metadata (e.g. CTAs). */
+    ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock }) => never
+    /** Return an error result with optional CTAs. */
+    error: (options: { code: string; message: string; retryable?: boolean; cta?: CtaBlock }) => never
     options: InferOutput<options>
   }): InferReturn<output> | Promise<InferReturn<output>>
 }
 
-/** A formatted CTA as it appears in the output envelope. */
+/** @internal A formatted CTA block as it appears in the output envelope. */
+type FormattedCtaBlock = {
+  /** Formatted command suggestions. */
+  commands: FormattedCta[]
+  /** Human-readable label for the CTA block. */
+  description: string
+}
+
+/** @internal A formatted CTA as it appears in the output envelope. */
 type FormattedCta = {
   /** The full command string with args and options folded in. */
   command: string

@@ -1,4 +1,4 @@
-import { Cli, Errors, z } from 'clac'
+import { Cli, z } from 'clac'
 
 const cli = Cli.create('gh', {
   version: '2.62.0',
@@ -28,15 +28,12 @@ const pr = Cli.create('pr', { description: 'Manage pull requests' })
     }),
     readOnly: true,
     openWorld: true,
-    run() {
-      return { items: [], totalCount: 0 }
+    run({ ok }) {
+      const items: { number: number; title: string; state: string; author: string }[] = []
+      return ok({ items, totalCount: 0 }, {
+        cta: { commands: items.map((item) => ({ command: `pr view ${item.number}`, description: `View "${item.title}"` })) },
+      })
     },
-    cta: (result) =>
-      result.items.map((item) => ({
-        command: 'pr view',
-        args: { number: item.number },
-        description: `View "${item.title}"`,
-      })),
   })
   .command('view', {
     description: 'View a pull request',
@@ -52,25 +49,17 @@ const pr = Cli.create('pr', { description: 'Manage pull requests' })
     }),
     readOnly: true,
     openWorld: true,
-    run({ args }) {
-      return {
+    run({ args, ok }) {
+      const result = {
         number: args.number,
         title: `PR #${args.number}`,
         body: '',
         state: 'open',
         mergeable: true,
       }
-    },
-    cta(result) {
-      if (result.mergeable)
-        return [
-          {
-            command: 'pr merge',
-            args: { number: result.number },
-            description: 'Merge this PR',
-          },
-        ]
-      return []
+      return ok(result, result.mergeable ? {
+        cta: { commands: [{ command: 'pr merge', description: 'Merge this PR' }] },
+      } : undefined)
     },
   })
   .command('create', {
@@ -84,12 +73,11 @@ const pr = Cli.create('pr', { description: 'Manage pull requests' })
     alias: { body: 'b', draft: 'd' },
     output: z.object({ number: z.number(), url: z.string() }),
     openWorld: true,
-    run() {
-      return { number: 1, url: `https://github.com/org/repo/pull/1` }
+    run({ ok }) {
+      return ok({ number: 1, url: `https://github.com/org/repo/pull/1` }, {
+        cta: { commands: [{ command: 'pr view', description: 'View the new PR' }] },
+      })
     },
-    cta: (result) => [
-      { command: 'pr view', args: { number: result.number }, description: 'View the new PR' },
-    ],
   })
   .command('merge', {
     description: 'Merge a pull request',
@@ -121,15 +109,12 @@ const issue = Cli.create('issue', { description: 'Manage issues' })
     }),
     readOnly: true,
     openWorld: true,
-    run() {
-      return { items: [] as { number: number; title: string; state: string }[] }
+    run({ ok }) {
+      const items: { number: number; title: string; state: string }[] = []
+      return ok({ items }, {
+        cta: { commands: items.map((item) => ({ command: `issue view ${item.number}`, description: `View "${item.title}"` })) },
+      })
     },
-    cta: (result) =>
-      result.items.map((item) => ({
-        command: 'issue view',
-        args: { number: item.number },
-        description: `View "${item.title}"`,
-      })),
   })
   .command('create', {
     description: 'Create a new issue',
@@ -141,12 +126,11 @@ const issue = Cli.create('issue', { description: 'Manage issues' })
     alias: { body: 'b' },
     output: z.object({ number: z.number(), url: z.string() }),
     openWorld: true,
-    run() {
-      return { number: 1, url: `https://github.com/org/repo/issues/1` }
+    run({ ok }) {
+      return ok({ number: 1, url: `https://github.com/org/repo/issues/1` }, {
+        cta: { commands: [{ command: 'issue view 1', description: 'View the new issue' }] },
+      })
     },
-    cta: (result) => [
-      { command: 'issue view', args: { number: result.number }, description: 'View the new issue' },
-    ],
   })
   .command('view', {
     description: 'View an issue',
@@ -171,19 +155,14 @@ const auth = Cli.create('auth', { description: 'Authenticate with GitHub' })
     alias: { hostname: 'h' },
     output: z.object({ loggedIn: z.boolean(), hostname: z.string() }),
     readOnly: true,
-    run({ options }) {
+    run({ options, ok, error }) {
       if (!process.env.GH_TOKEN)
-        throw new Errors.ClacError({
+        return error({
           code: 'NOT_AUTHENTICATED',
           message: `Not logged in to ${options.hostname}`,
-          hint: 'Run `gh auth login` to authenticate',
-          retryable: false,
+          cta: { description: 'Authenticate to continue:', commands: ['auth login'] },
         })
-      return { loggedIn: true, hostname: options.hostname }
-    },
-    cta(result) {
-      if (!result.loggedIn) return [{ command: 'auth login', description: 'Log in to GitHub' }]
-      return []
+      return ok({ loggedIn: true, hostname: options.hostname })
     },
   })
   .command('login', {
@@ -204,5 +183,6 @@ const auth = Cli.create('auth', { description: 'Authenticate with GitHub' })
 cli.command(pr)
 cli.command(issue)
 cli.command(auth)
+cli.serve()
 
 export default cli

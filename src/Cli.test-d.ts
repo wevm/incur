@@ -71,41 +71,47 @@ test('alias keys are constrained to option keys', () => {
   })
 })
 
-test('cta callback receives typed result from output', () => {
+test('ok() data param is typed from output schema', () => {
   const cli = Cli.create('test')
   cli.command('list', {
     output: z.object({ items: z.array(z.string()) }),
-    run: () => ({ items: ['a', 'b'] }),
-    cta(result) {
-      expectTypeOf(result).toEqualTypeOf<{ items: string[] }>()
-      return []
+    run({ ok }) {
+      return ok({ items: ['a', 'b'] })
+    },
+  })
+
+  cli.command('list2', {
+    output: z.object({ items: z.array(z.string()) }),
+    run({ ok }) {
+      // @ts-expect-error — data doesn't match output schema
+      return ok({ wrong: 123 })
     },
   })
 })
 
-test('Cta falls back to plain strings when commands map is empty', () => {
-  type Cta = Cli.Cta<{}>
-  expectTypeOf<Cta['command']>().toEqualTypeOf<string>()
-  expectTypeOf<Cta['args']>().toEqualTypeOf<Record<string, unknown> | undefined>()
-  expectTypeOf<Cta['options']>().toEqualTypeOf<Record<string, unknown> | undefined>()
+test('Cta accepts string shorthand', () => {
+  expectTypeOf<'auth login'>().toMatchTypeOf<Cli.Cta>()
 })
 
-test('Cta narrows command to registered keys', () => {
+test('Cta accepts object form', () => {
+  expectTypeOf<{ command: 'auth login'; description: 'Log in' }>().toMatchTypeOf<Cli.Cta>()
+})
+
+test('Cta narrows strings and objects to registered commands', () => {
   type Commands = {
     get: { args: { id: number }; options: {} }
     list: { args: {}; options: { limit: number } }
   }
   type Cta = Cli.Cta<Commands>
 
-  expectTypeOf<Cta>().toMatchTypeOf<{ command: 'get' } | { command: 'list' }>()
+  // string suggests registered command names but accepts any string
+  expectTypeOf<'get'>().toMatchTypeOf<Cta>()
+  expectTypeOf<'list'>().toMatchTypeOf<Cta>()
+  expectTypeOf<'anything else'>().toMatchTypeOf<Cta>()
 
-  // args are narrowed per command
-  const getCta: Extract<Cta, { command: 'get' }> = { command: 'get', args: { id: 42 } }
-  expectTypeOf(getCta.args).toEqualTypeOf<{ id?: number | true } | undefined>()
-
-  // options are narrowed per command
-  const listCta: Extract<Cta, { command: 'list' }> = { command: 'list', options: { limit: 10 } }
-  expectTypeOf(listCta.options).toEqualTypeOf<{ limit?: number | true } | undefined>()
+  // object form narrows args/options via discriminated union on command
+  expectTypeOf<{ command: 'get'; args: { id: 42 } }>().toMatchTypeOf<Cta>()
+  expectTypeOf<{ command: 'list'; options: { limit: 10 } }>().toMatchTypeOf<Cta>()
 })
 
 test('command() accumulates command types through chaining', () => {

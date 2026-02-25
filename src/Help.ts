@@ -143,7 +143,12 @@ function unwrap(schema: unknown): unknown {
 
 /** Extracts the default value from a Zod schema, if any. */
 function extractDefault(schema: unknown): unknown {
-  if (schema instanceof z.ZodDefault) return schema._def.defaultValue
+  if (schema instanceof z.ZodDefault) {
+    const raw = schema._def.defaultValue
+    const value = typeof raw === 'function' ? raw() : raw
+    if (Array.isArray(value) && value.length === 0) return undefined
+    return value
+  }
   if (schema instanceof z.ZodOptional) return extractDefault(schema.unwrap())
   return undefined
 }
