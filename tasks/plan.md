@@ -220,23 +220,95 @@ cli.command('greet', {
 
 ---
 
-## Phase 10: Global Flags & Polish
+## Phase 10: Help, Version & Polish
 
-**Goal:** Built-in `--help`, `--version`, `--no-color`, streaming, final polish.
+**Goal:** Built-in `--help`, `--version`, implicit help for router CLIs with no subcommand, and root CLIs with no `run`.
 
-**TDD cycles (Cli.test.ts — global flags):**
-1. `cli.serve(['--version'])` → outputs version string
-2. `cli.serve(['--help'])` → structured help text listing all commands
-3. `cli.serve(['pr', '--help'])` → help for the `pr` group, listing subcommands
-4. `cli.serve(['pr', 'list', '--help'])` → help for `pr list` with args/options
-5. `--no-color` disables ANSI codes in text/help output
-6. `NO_COLOR=1` env var has same effect as `--no-color`
+### 10a: Default help for routers and root CLIs without `run`
 
-**TDD cycles (streaming):**
-7. Command with `streaming: true` + `--format jsonl` → JSONL on stdout
-8. Each line is valid JSON
-9. Final line is the meta envelope
-10. Non-streaming command with `--format jsonl` → single JSON line + meta line
+When a router CLI is invoked with no subcommand, or a root CLI has no `run` handler, display usage/help instead of erroring.
+
+**TDD cycles (Cli.test.ts — implicit help):**
+1. `cli.serve([])` on a router CLI (no subcommand) → prints usage listing available commands, exits 0
+2. `Cli.create('tool')` with no `run` and no subcommands → prints usage with name/description, exits 0
+3. Usage output includes CLI name, description (when set), and list of commands with descriptions
+4. Usage output includes listed args/options for leaf commands
+
+### 10b: `--help` flag
+
+Explicit `--help` flag at any level of the command tree.
+
+**TDD cycles (Cli.test.ts — --help):**
+5. `cli.serve(['--help'])` → prints usage for the root CLI, exits 0
+6. `cli.serve(['pr', '--help'])` → prints usage for the `pr` group, listing its subcommands
+7. `cli.serve(['pr', 'list', '--help'])` → prints usage for `pr list` with its args/options
+8. `--help` is consumed before command resolution — no handler runs
+
+### 10c: `--version` flag
+
+**TDD cycles (Cli.test.ts — --version):**
+9. `Cli.create('tool', { version: '1.0.0' })` + `cli.serve(['--version'])` → outputs `1.0.0`, exits 0
+10. `--version` with no version set → error or no output
+
+### 10d: Help formatting
+
+**TDD cycles (Help.test.ts):**
+11. Formats a command with args → `tool <name> <age>`-style synopsis
+12. Formats a command with options → lists `--flag` with type and description
+13. Formats a group → lists subcommands with descriptions in aligned columns
+14. Formats optional args with `[brackets]`, required with `<brackets>`
+15. Includes default values for options that have them
+
+**Files created:** `Help.ts`, `Help.test.ts`
+**Files modified:** `Cli.ts`
+
+---
+
+## Phase 11: Agent vs Human Output
+
+**Goal:** Detect whether the caller is a human (TTY) or an agent/pipe (non-TTY) and adapt all output accordingly. Humans get pretty-printed results, agents get structured envelopes.
+
+### Detection
+
+- **Auto**: `process.stdout.isTTY` — `true` for humans in a terminal, `false` for pipes/programmatic callers
+- **Override**: explicit `--format` or `--json` flag forces structured output regardless of TTY
+- **Env**: `CI=true` or `TERM=dumb` treated as non-TTY
+
+### Behavior matrix
+
+| Scenario | TTY (human) | Non-TTY (agent) |
+|---|---|---|
+| **Command output** | Silent (handler logs what it wants) | TOON/JSON envelope `{ ok, data, meta }` |
+| **Errors** | Human-readable message + hint | Error envelope `{ ok: false, error }` |
+| **`--help`** | Pretty help text (Phase 10) | Structured command manifest (JSON) |
+| **`--version`** | `1.2.3\n` | `{ version: "1.2.3" }` |
+| **No subcommand** | Pretty help | Structured command list |
+| **`--llms`** | Same as non-TTY (always structured) | Same |
+
+### Human output formatting
+
+When TTY and no explicit `--format`:
+- Command return data is **not written to stdout** — the handler owns human-facing output via `console.log` or similar
+- Errors show `Error: message` with optional hint, no envelope wrapper
+- No `ok`/`meta` envelope — that's for agents only
+
+### TDD cycles
+
+**Cli.test.ts — TTY detection:**
+1. Non-TTY (default in tests) → outputs TOON envelope as today
+2. Simulated TTY → outputs human-friendly format (no envelope)
+3. TTY + `--json` → outputs JSON envelope (override)
+4. TTY + `--format toon` → outputs TOON envelope (override)
+5. Non-TTY + `--help` → outputs structured command manifest (JSON)
+6. TTY + `--help` → outputs pretty help text
+7. Non-TTY error → error envelope
+8. TTY error → human-readable error message
+
+**Formatter.test.ts — human error mode:**
+9. `formatError(error)` → `Error: message` with hint on next line
+10. `formatError(error)` with field errors → lists fields below message
+
+**Files modified:** `Cli.ts`, `Formatter.ts`
 
 ---
 
@@ -256,10 +328,12 @@ Phase 1 (tracer bullet)
   │                            Phase 9 (skills)
   ├── Phase 8 (CTAs)
   │
-  └── Phase 10 (global flags & polish) ← all above
+  ├── Phase 10 (help & version) ← all above
+  │
+  └── Phase 11 (agent vs human output) ← Phase 10
 ```
 
-Phase 3 depends on Phase 2 (parser must exist to type it). Phases 4, 5, 6, 8 can be parallelized after Phase 3. Phase 7 depends on the formatter. Phase 9 depends on schema. Phase 10 is the final integration pass.
+Phase 3 depends on Phase 2 (parser must exist to type it). Phases 4, 5, 6, 8 can be parallelized after Phase 3. Phase 7 depends on the formatter. Phase 9 depends on schema. Phase 10 is the help/version pass. Phase 11 builds on Phase 10 to adapt all output (help, errors, data) based on TTY detection.
 
 ---
 

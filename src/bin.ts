@@ -20,4 +20,3 @@ Cli.create('clac')
     },
   })
   .serve()
-

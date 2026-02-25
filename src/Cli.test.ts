@@ -544,7 +544,7 @@ describe('subcommands', () => {
     `)
   })
 
-  test('group without subcommand lists available commands', async () => {
+  test('group without subcommand shows help', async () => {
     const cli = Cli.create('test')
     const pr = Cli.create('pr', { description: 'PR management' })
       .command('list', { run: () => ({}) })
@@ -552,10 +552,15 @@ describe('subcommands', () => {
     cli.command(pr)
 
     const { output, exitCode } = await serve(cli, ['pr'])
-    expect(exitCode).toBe(1)
+    expect(exitCode).toBeUndefined()
     expect(output).toMatchInlineSnapshot(`
-      "code: COMMAND_NOT_FOUND
-      message: "No subcommand provided for pr. Available: create, list""
+      "test pr — PR management
+
+      Usage: test pr <command>
+
+      Commands:
+        create
+        list"
     `)
   })
 
@@ -840,5 +845,111 @@ describe('leaf cli', () => {
     expect(manifest.commands).toHaveLength(1)
     expect(manifest.commands[0].name).toBe('ping')
     expect(manifest.commands[0].description).toBe('Health check')
+  })
+})
+
+describe('help', () => {
+  test('router with no subcommand shows help', async () => {
+    const cli = Cli.create('tool')
+    cli.command('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+    })
+
+    const { output, exitCode } = await serve(cli, [])
+    expect(exitCode).toBeUndefined()
+    expect(output).toMatchInlineSnapshot(`
+      "tool
+
+      Usage: tool <command>
+
+      Commands:
+        ping  Health check"
+    `)
+  })
+
+  test('--help on root shows help', async () => {
+    const cli = Cli.create('tool')
+    cli.command('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+    })
+
+    const { output, exitCode } = await serve(cli, ['--help'])
+    expect(exitCode).toBeUndefined()
+    expect(output).toMatchInlineSnapshot(`
+      "tool
+
+      Usage: tool <command>
+
+      Commands:
+        ping  Health check"
+    `)
+  })
+
+  test('--help on leaf shows command help', async () => {
+    const cli = Cli.create('tool')
+    cli.command('greet', {
+      description: 'Greet someone',
+      args: z.object({ name: z.string().describe('Name') }),
+      run: ({ args }) => ({ message: `hi ${args.name}` }),
+    })
+
+    const { output, exitCode } = await serve(cli, ['greet', '--help'])
+    expect(exitCode).toBeUndefined()
+    expect(output).toMatchInlineSnapshot(`
+      "tool greet — Greet someone
+
+      Usage: tool greet <name>
+
+      Arguments:
+        name  Name"
+    `)
+  })
+
+  test('group with no subcommand shows help', async () => {
+    const pr = Cli.create('pr', { description: 'Pull request commands' })
+    pr.command('list', {
+      description: 'List PRs',
+      run: () => ({}),
+    })
+
+    const cli = Cli.create('gh')
+    cli.command(pr)
+
+    const { output, exitCode } = await serve(cli, ['pr'])
+    expect(exitCode).toBeUndefined()
+    expect(output).toMatchInlineSnapshot(`
+      "gh pr — Pull request commands
+
+      Usage: gh pr <command>
+
+      Commands:
+        list  List PRs"
+    `)
+  })
+
+  test('--version outputs version string', async () => {
+    const cli = Cli.create('tool', { version: '1.2.3' })
+    cli.command('ping', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['--version'])
+    expect(exitCode).toBeUndefined()
+    expect(output).toMatchInlineSnapshot(`"1.2.3"`)
+  })
+
+  test('--help takes precedence over --version', async () => {
+    const cli = Cli.create('tool', { version: '1.2.3' })
+    cli.command('ping', { description: 'Ping', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--help', '--version'])
+    expect(output).toMatchInlineSnapshot(`
+      "tool
+
+      Usage: tool <command>
+
+      Commands:
+        ping  Ping"
+    `)
   })
 })

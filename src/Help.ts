@@ -1,0 +1,149 @@
+import { z } from 'zod'
+
+/** Formats help text for a router CLI or command group. */
+export function formatRoot(name: string, options: formatRoot.Options = {}): string {
+  const { description, commands = [] } = options
+  const lines: string[] = []
+
+  // Header
+  lines.push(description ? `${name} \u2014 ${description}` : name)
+  lines.push('')
+
+  // Synopsis
+  lines.push(`Usage: ${name} <command>`)
+
+  // Commands
+  if (commands.length > 0) {
+    lines.push('')
+    lines.push('Commands:')
+    const maxLen = Math.max(...commands.map((c) => c.name.length))
+    for (const cmd of commands) {
+      if (cmd.description) {
+        const padding = ' '.repeat(maxLen - cmd.name.length)
+        lines.push(`  ${cmd.name}${padding}  ${cmd.description}`)
+      } else lines.push(`  ${cmd.name}`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+export declare namespace formatRoot {
+  type Options = {
+    /** Commands to list. */
+    commands?: { name: string; description?: string | undefined }[] | undefined
+    /** A short description of the CLI or group. */
+    description?: string | undefined
+  }
+}
+
+export declare namespace formatCommand {
+  type Options = {
+    /** Zod schema for positional arguments. */
+    args?: z.ZodObject<any> | undefined
+    /** A short description of what the command does. */
+    description?: string | undefined
+    /** Zod schema for named options/flags. */
+    options?: z.ZodObject<any> | undefined
+  }
+}
+
+/** Formats help text for a leaf command. */
+export function formatCommand(name: string, options: formatCommand.Options = {}): string {
+  const { description, args, options: opts } = options
+  const lines: string[] = []
+
+  // Header
+  lines.push(description ? `${name} \u2014 ${description}` : name)
+  lines.push('')
+
+  // Synopsis
+  const synopsis = buildSynopsis(name, args)
+  lines.push(`Usage: ${synopsis}`)
+
+  // Arguments
+  if (args) {
+    const entries = argsEntries(args)
+    if (entries.length > 0) {
+      lines.push('')
+      lines.push('Arguments:')
+      const maxLen = Math.max(...entries.map((e) => e.name.length))
+      for (const entry of entries)
+        lines.push(`  ${entry.name}${' '.repeat(maxLen - entry.name.length)}  ${entry.description}`)
+    }
+  }
+
+  // Options
+  if (opts) {
+    const entries = optionEntries(opts)
+    if (entries.length > 0) {
+      lines.push('')
+      lines.push('Options:')
+      const maxLen = Math.max(...entries.map((e) => e.flag.length))
+      for (const entry of entries) {
+        const padding = ' '.repeat(maxLen - entry.flag.length)
+        const desc =
+          entry.defaultValue !== undefined
+            ? `${entry.description} (default: ${entry.defaultValue})`
+            : entry.description
+        lines.push(`  ${entry.flag}${padding}  ${desc}`)
+      }
+    }
+  }
+
+  return lines.join('\n')
+}
+
+/** Builds the synopsis string with `<required>` and `[optional]` placeholders. */
+function buildSynopsis(name: string, args?: z.ZodObject<any>): string {
+  if (!args) return name
+  const parts = [name]
+  for (const [key, schema] of Object.entries(args.shape))
+    parts.push((schema as any).isOptional() ? `[${key}]` : `<${key}>`)
+  return parts.join(' ')
+}
+
+/** Extracts arg entries from a Zod object schema. */
+function argsEntries(schema: z.ZodObject<any>) {
+  const entries: { name: string; description: string }[] = []
+  for (const [key, field] of Object.entries(schema.shape))
+    entries.push({ name: key, description: (field as any).description ?? '' })
+  return entries
+}
+
+/** Extracts option entries from a Zod object schema. */
+function optionEntries(schema: z.ZodObject<any>) {
+  const entries: { flag: string; description: string; defaultValue?: unknown }[] = []
+  for (const [key, field] of Object.entries(schema.shape)) {
+    const type = resolveTypeName(field)
+    const flag = `--${key} <${type}>`
+    const defaultValue = extractDefault(field)
+    entries.push({ flag, description: (field as any).description ?? '', defaultValue })
+  }
+  return entries
+}
+
+/** Resolves a human-readable type name from a Zod schema. */
+function resolveTypeName(schema: unknown): string {
+  const unwrapped = unwrap(schema)
+  if (unwrapped instanceof z.ZodString) return 'string'
+  if (unwrapped instanceof z.ZodNumber) return 'number'
+  if (unwrapped instanceof z.ZodBoolean) return 'boolean'
+  if (unwrapped instanceof z.ZodArray) return 'array'
+  return 'value'
+}
+
+/** Unwraps optional/default/nullable wrappers to get the inner type. */
+function unwrap(schema: unknown): unknown {
+  if (schema instanceof z.ZodOptional) return unwrap(schema.unwrap())
+  if (schema instanceof z.ZodDefault) return unwrap(schema.removeDefault())
+  if (schema instanceof z.ZodNullable) return unwrap(schema.unwrap())
+  return schema
+}
+
+/** Extracts the default value from a Zod schema, if any. */
+function extractDefault(schema: unknown): unknown {
+  if (schema instanceof z.ZodDefault) return schema._def.defaultValue
+  if (schema instanceof z.ZodOptional) return extractDefault(schema.unwrap())
+  return undefined
+}

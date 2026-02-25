@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { FieldError } from './Errors.js'
 import { ClacError, ValidationError } from './Errors.js'
 import * as Formatter from './Formatter.js'
+import * as Help from './Help.js'
 import type { OneOf } from './internal/types.js'
 import * as Parser from './Parser.js'
 import type { Register } from './Register.js'
@@ -97,17 +98,37 @@ export function create<
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodObject<any> | undefined = undefined,
 >(name: string, definition?: create.Options<args, opts, output>): Cli
-export function create(name: string, options: any = {}): Cli | Root {
-  if ('run' in options) {
-    const rootDef = options as CommandDefinition<any, any, any>
+/** Creates a leaf CLI from a single options object (e.g. package.json). */
+export function create<
+  const args extends z.ZodObject<any> | undefined = undefined,
+  const opts extends z.ZodObject<any> | undefined = undefined,
+  const output extends z.ZodObject<any> | undefined = undefined,
+>(
+  definition: create.Options<args, opts, output> & { name: string; run: Function },
+): Root<args, opts>
+/** Creates a router CLI from a single options object (e.g. package.json). */
+export function create<
+  const args extends z.ZodObject<any> | undefined = undefined,
+  const opts extends z.ZodObject<any> | undefined = undefined,
+  const output extends z.ZodObject<any> | undefined = undefined,
+>(definition: create.Options<args, opts, output> & { name: string }): Cli
+export function create(nameOrDefinition: string | (any & { name: string }), definition?: any): Cli | Root {
+  const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name
+  const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition
+  if ('run' in def) {
+    const rootDef = def as CommandDefinition<any, any, any>
     const leafCommands = new Map<string, CommandEntry>()
     leafCommands.set(name, rootDef)
 
     const leaf: Root = {
       name,
-      description: options.description,
+      description: def.description,
       async serve(argv = process.argv.slice(2), options: serve.Options = {}) {
-        return serveImpl(name, leafCommands, [name, ...argv], options)
+        return serveImpl(name, leafCommands, [name, ...argv], {
+          ...options,
+          version: def.version,
+          description: def.description,
+        })
       },
     }
     toRootDefinition.set(leaf, rootDef)
@@ -118,7 +139,7 @@ export function create(name: string, options: any = {}): Cli | Root {
 
   const cli: Cli = {
     name,
-    description: options.description,
+    description: def.description,
 
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
@@ -136,8 +157,12 @@ export function create(name: string, options: any = {}): Cli | Root {
       return cli
     },
 
-    async serve(argv = process.argv.slice(2), options: serve.Options = {}) {
-      return serveImpl(name, commands, argv, options)
+    async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
+      return serveImpl(name, commands, argv, {
+        ...serveOptions,
+        description: def.description,
+        version: def.version,
+      })
     },
   }
 
@@ -195,19 +220,73 @@ export declare namespace serve {
 }
 
 /** @internal Shared serve implementation for both router and leaf CLIs. */
+// biome-ignore lint/correctness/noUnusedVariables: _
 async function serveImpl(
   name: string,
   commands: Map<string, CommandEntry>,
   argv: string[],
-  options: serve.Options = {},
+  options: serveImpl.Options = {},
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
 
-  const { verbose, format, llms, rest: filtered } = extractBuiltinFlags(argv)
+  const { verbose, format, llms, help, version, rest: filtered } = extractBuiltinFlags(argv)
 
   if (llms) {
     stdout(Formatter.format(buildManifest(commands), format))
+    return
+  }
+
+  // --help takes precedence over --version
+  if (version && !help && options.version) {
+    stdout(options.version)
+    return
+  }
+
+  if (filtered.length === 0) {
+    stdout(
+      Help.formatRoot(name, {
+        description: options.description,
+        commands: collectHelpCommands(commands, []),
+      }),
+    )
+    return
+  }
+
+  const resolved = resolveCommand(commands, filtered)
+
+  // --help after a command → show help for that command
+  if (help) {
+    if ('help' in resolved || 'error' in resolved) {
+      // group or unknown → show root help for that path
+      const helpName = 'help' in resolved ? `${name} ${resolved.path}` : name
+      const helpDesc = 'help' in resolved ? resolved.description : options.description
+      const helpCmds = 'help' in resolved ? resolved.commands : commands
+      stdout(
+        Help.formatRoot(helpName, {
+          description: helpDesc,
+          commands: collectHelpCommands(helpCmds, []),
+        }),
+      )
+    } else {
+      stdout(
+        Help.formatCommand(`${name} ${resolved.path}`, {
+          description: resolved.command.description,
+          args: resolved.command.args,
+          options: resolved.command.options,
+        }),
+      )
+    }
+    return
+  }
+
+  if ('help' in resolved) {
+    stdout(
+      Help.formatRoot(`${name} ${resolved.path}`, {
+        description: resolved.description,
+        commands: collectHelpCommands(resolved.commands, []),
+      }),
+    )
     return
   }
 
@@ -231,7 +310,6 @@ async function serveImpl(
     exit(1)
   }
 
-  const resolved = resolveCommand(commands, filtered)
   if ('error' in resolved) {
     writeError(resolved.error, resolved.path)
     return
@@ -282,6 +360,12 @@ function resolveCommand(
   tokens: string[],
 ):
   | { command: CommandDefinition<any, any, any>; path: string; rest: string[] }
+  | {
+      help: true
+      path: string
+      description?: string | undefined
+      commands: Map<string, CommandEntry>
+    }
   | { error: string; path: string } {
   const [first, ...rest] = tokens
 
@@ -294,16 +378,19 @@ function resolveCommand(
 
   while (isGroup(entry)) {
     const next = remaining[0]
-    const available = [...entry.commands.keys()].sort().join(', ')
     if (!next)
       return {
-        error: `No subcommand provided for ${path.join(' ')}. Available: ${available}`,
+        help: true,
         path: path.join(' '),
+        description: entry.description,
+        commands: entry.commands,
       }
 
     const child = entry.commands.get(next)
-    if (!child)
+    if (!child) {
+      const available = [...entry.commands.keys()].sort().join(', ')
       return { error: `Unknown subcommand: ${next}. Available: ${available}`, path: path.join(' ') }
+    }
 
     path.push(next)
     remaining = remaining.slice(1)
@@ -313,10 +400,20 @@ function resolveCommand(
   return { command: entry, path: path.join(' '), rest: remaining }
 }
 
-/** Extracts built-in flags (--verbose, --format, --json, --llms) from argv. */
+/** @internal Options for serveImpl, extending public serve.Options with internal metadata. */
+declare namespace serveImpl {
+  type Options = serve.Options & {
+    description?: string | undefined
+    version?: string | undefined
+  }
+}
+
+/** Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
   let llms = false
+  let help = false
+  let version = false
   let format: Formatter.Format = 'toon'
   const rest: string[] = []
 
@@ -324,6 +421,8 @@ function extractBuiltinFlags(argv: string[]) {
     const token = argv[i]!
     if (token === '--verbose') verbose = true
     else if (token === '--llms') llms = true
+    else if (token === '--help' || token === '-h') help = true
+    else if (token === '--version') version = true
     else if (token === '--json') format = 'json'
     else if (token === '--format' && argv[i + 1]) {
       format = argv[i + 1] as Formatter.Format
@@ -331,7 +430,21 @@ function extractBuiltinFlags(argv: string[]) {
     } else rest.push(token)
   }
 
-  return { verbose, format, llms, rest }
+  return { verbose, format, llms, help, version, rest }
+}
+
+/** Recursively collects command names and descriptions for help output. */
+function collectHelpCommands(
+  commands: Map<string, CommandEntry>,
+  prefix: string[],
+): { name: string; description?: string | undefined }[] {
+  const result: { name: string; description?: string | undefined }[] = []
+  for (const [name, entry] of commands) {
+    const path = [...prefix, name]
+    if (isGroup(entry)) result.push(...collectHelpCommands(entry.commands, path))
+    else result.push({ name: path.join(' '), description: entry.description })
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** Shape of the commands map accumulated through `.command()` chains. */
