@@ -152,7 +152,7 @@ function collectEntries(
 function resolvePackageRoot(): string {
   const bin = process.argv[1]
   if (!bin) return process.cwd()
-  let dir = path.dirname(path.resolve(bin))
+  let dir = path.dirname(fsSync.realpathSync(bin))
   const root = path.parse(dir).root
   while (dir !== root) {
     try {
