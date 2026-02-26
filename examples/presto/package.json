@@ -1,0 +1,14 @@
+{
+  "name": "presto",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "presto": "node --import tsx cli.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  },
+  "dependencies": {
+    "incur": "workspace:*"
+  }
+}

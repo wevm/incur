@@ -354,12 +354,7 @@ async function serveImpl(
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
   const skillsIdx =
     filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
-  if (
-    options.sync &&
-    skillsIdx !== -1 &&
-    filtered[skillsIdx] === 'skills' &&
-    filtered[skillsIdx + 1] === 'add'
-  ) {
+  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills' && filtered[skillsIdx + 1] === 'add') {
     if (help) {
       writeln(
         [
@@ -470,6 +465,12 @@ async function serveImpl(
           lines.push(`  Agents: ${result.agents.join(', ')}`)
         lines.push('')
         lines.push(`Agents can now use ${name} tools.`)
+        const suggestions = options.sync?.suggestions
+        if (suggestions && suggestions.length > 0) {
+          lines.push('')
+          lines.push('Try asking:')
+          for (const s of suggestions) lines.push(`  "${s}"`)
+        }
         writeln(lines.join('\n'))
       } else
         writeln(
