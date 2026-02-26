@@ -8,6 +8,7 @@ import * as Parser from './Parser.js'
 import type { Register } from './Register.js'
 import * as Schema from './Schema.js'
 import * as Skill from './Skill.js'
+import * as SyncSkills from './SyncSkills.js'
 
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<commands extends CommandsMap = {}> = {
@@ -150,6 +151,7 @@ export function create(
           ...options,
           description: def.description,
           format: def.format,
+          sync: def.sync,
           version: def.version,
         })
       },
@@ -185,6 +187,7 @@ export function create(
         ...serveOptions,
         description: def.description,
         format: def.format,
+        sync: def.sync,
         version: def.version,
       })
     },
@@ -236,6 +239,13 @@ export declare namespace create {
       ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
       options: InferOutput<options>
     }) => InferReturn<output> | Promise<InferReturn<output>>) | undefined
+    /** Options for the built-in `skills add` command. */
+    sync?: {
+      /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
+      depth?: number | undefined
+      /** Example prompts shown after sync to help users get started. */
+      suggestions?: string[] | undefined
+    } | undefined
     /** The CLI version string. */
     version?: string | undefined
   }
@@ -310,6 +320,67 @@ async function serveImpl(
       return
     }
     writeln(Formatter.format(buildManifest(scopedCommands, prefix), formatFlag))
+    return
+  }
+
+  // skills add: generate skill files and install via `<pm>x skills add`
+  if (filtered[0] === 'skills' && filtered[1] === 'add') {
+    if (help) {
+      writeln(
+        [
+          `${name} skills add — Sync skill files to your agent`,
+          '',
+          `Usage: ${name} skills add [options]`,
+          '',
+          'Options:',
+          '  --depth <number>  Grouping depth for skill files (default: 1)',
+          '  --no-global       Install to project instead of globally',
+        ].join('\n'),
+      )
+      return
+    }
+    const rest = filtered.slice(2)
+    const depthArg = rest.indexOf('--depth')
+    const depth = depthArg !== -1 ? Number(rest[depthArg + 1]) : (options.sync?.depth ?? 1)
+    const global = rest.includes('--no-global') ? false : undefined
+    try {
+      if (human) stdout('Syncing...')
+      const result = await SyncSkills.sync(name, commands, {
+        depth,
+        description: options.description,
+        global,
+      })
+      if (human) {
+        stdout('\r\x1b[K')
+        const lines: string[] = []
+        const skillLabel = (s: (typeof result.skills)[number]) => s.name === name ? name : `${name}-${s.name}`
+        const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
+        for (const s of result.skills) {
+          const label = skillLabel(s)
+          const padding = s.description ? `${' '.repeat(maxLen - label.length)}  ${s.description}` : ''
+          lines.push(`  ✓ ${label}${padding}`)
+        }
+        lines.push('')
+        lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`)
+        const suggestions = options.sync?.suggestions
+        if (suggestions && suggestions.length > 0) {
+          lines.push('')
+          lines.push(`Your agent can now use ${name}. Try asking:`)
+          for (const s of suggestions) lines.push(`  "${s}"`)
+        }
+        lines.push('')
+        lines.push(`Run \`${name} --help\` to see the full command reference.`)
+        writeln(lines.join('\n'))
+      } else writeln(Formatter.format({ skills: result.paths }, formatExplicit ? formatFlag : 'toon'))
+    } catch (err) {
+      writeln(
+        Formatter.format(
+          { code: 'SYNC_SKILLS_FAILED', message: err instanceof Error ? err.message : String(err) },
+          formatExplicit ? formatFlag : 'toon',
+        ),
+      )
+      exit(1)
+    }
     return
   }
 
@@ -582,6 +653,7 @@ declare namespace serveImpl {
     description?: string | undefined
     /** CLI-level default output format. */
     format?: Formatter.Format | undefined
+    sync?: { depth?: number | undefined; suggestions?: string[] | undefined } | undefined
     version?: string | undefined
   }
 }

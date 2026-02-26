@@ -24,6 +24,9 @@ describe('formatCommand', () => {
         --state <string>  Filter by state (default: open)
         --limit <number>  Max PRs to return (default: 30)
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -41,6 +44,9 @@ describe('formatCommand', () => {
       "tool ping — Health check
 
       Usage: tool ping
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -66,6 +72,9 @@ describe('formatCommand', () => {
       Arguments:
         name   Name
         title  Title
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -97,6 +106,9 @@ describe('formatRoot', () => {
         pr view     View a pull request
         issue list  List issues
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -117,6 +129,9 @@ describe('formatRoot', () => {
 
       Commands:
         ping  Health check
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format

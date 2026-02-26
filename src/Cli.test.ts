@@ -589,6 +589,9 @@ describe('subcommands', () => {
         create
         list
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -984,6 +987,9 @@ describe('help', () => {
       Commands:
         ping  Health check
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -1010,6 +1016,9 @@ describe('help', () => {
 
       Commands:
         ping  Health check
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -1038,6 +1047,9 @@ describe('help', () => {
 
       Arguments:
         name  Name
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -1068,6 +1080,9 @@ describe('help', () => {
 
       Commands:
         list  List PRs
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -1104,6 +1119,9 @@ describe('help', () => {
       Commands:
         ping  Ping
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -1129,6 +1147,9 @@ describe('help', () => {
       Usage: tool deploy
 
       Run "tool status" to check deployment progress.
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -1288,6 +1309,9 @@ describe('tty', () => {
       Commands:
         ping  Health check
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -1321,6 +1345,9 @@ describe('tty', () => {
 
       Commands:
         ping  Health check
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -1405,6 +1432,9 @@ describe('env', () => {
       Environment Variables:
         API_TOKEN  Auth token
         API_URL    API URL (default: https://api.example.com)
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format

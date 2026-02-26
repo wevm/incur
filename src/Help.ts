@@ -221,8 +221,10 @@ function toKebab(str: string): string {
   return str.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 }
 
-/** Renders the global options block shared by all help output. */
+/** Renders the built-in commands and global options block shared by all help output. */
 function globalOptionsLines(): string[] {
+  const builtins = [{ name: 'skills add', desc: 'Sync skill files to your agent' }]
+  const maxCmd = Math.max(...builtins.map((b) => b.name.length))
   const flags = [
     { flag: '--format <toon|json|yaml|md>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
@@ -232,6 +234,9 @@ function globalOptionsLines(): string[] {
   ]
   const maxLen = Math.max(...flags.map((f) => f.flag.length))
   return [
+    '',
+    'Built-in Commands:',
+    ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
     '',
     'Global Options:',
     ...flags.map((f) => `  ${f.flag}${' '.repeat(maxLen - f.flag.length)}  ${f.desc}`),

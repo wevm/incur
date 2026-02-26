@@ -560,6 +560,9 @@ describe('help', () => {
         slow           Async command
         validate-fail  Fails validation
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -588,6 +591,9 @@ describe('help', () => {
         logout  Log out of the service
         status  Show authentication status
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -611,6 +617,9 @@ describe('help', () => {
         rollback  Rollback a deployment
         status    Check deployment status
 
+      Built-in Commands:
+        skills add  Sync skill files to your agent
+
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
@@ -632,6 +641,9 @@ describe('help', () => {
         --limit, -l <number>  Max results (default: 20)
         --sort, -s <value>    Sort field (default: name)
         --archived <boolean>  Include archived (default: false)
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -660,6 +672,9 @@ describe('help', () => {
       Examples:
         $ app project deploy create staging                                    Deploy staging from main
         $ app project deploy create production --branch release --dryRun true  Dry run a production deploy
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -742,6 +757,9 @@ describe('tty', () => {
 
       Arguments:
         id  Project ID
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
@@ -1249,6 +1267,9 @@ describe('env', () => {
       Environment Variables:
         AUTH_TOKEN  Pre-existing auth token
         AUTH_HOST   Auth server hostname (default: api.example.com)
+
+      Built-in Commands:
+        skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
