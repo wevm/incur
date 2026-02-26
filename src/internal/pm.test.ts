@@ -8,10 +8,13 @@ test('detects pnpm from user agent', () => {
 })
 
 test('detects bun from user agent', () => {
-  const saved = process.env.npm_config_user_agent
+  const savedAgent = process.env.npm_config_user_agent
+  const savedExec = process.env.npm_execpath
   process.env.npm_config_user_agent = 'bun/1.0.0'
+  delete process.env.npm_execpath
   expect(detectRunner()).toBe('bunx')
-  process.env.npm_config_user_agent = saved
+  process.env.npm_config_user_agent = savedAgent
+  process.env.npm_execpath = savedExec
 })
 
 test('detects pnpm from exec path', () => {
