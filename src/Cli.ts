@@ -511,6 +511,7 @@ async function serveImpl(
 
   try {
     const { args, options: parsedOptions } = Parser.parse(rest, {
+      alias: command.alias as Record<string, string> | undefined,
       args: command.args,
       options: command.options,
     })
