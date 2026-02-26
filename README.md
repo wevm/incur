@@ -6,7 +6,11 @@ Simple CLI framework for agents and humans.
 
 Prompt your agent:
 
-```
+```sh
+# MCP (Recommended)
+Run `npx incur mcp add`, then show me what I can do with incur.
+
+# Skills 
 Run `npx incur skills add`, then show me what I can do with incur.
 ```
 
@@ -115,14 +119,17 @@ $ my-cli pr list --state closed
 
 ### Agent discovery
 
-Every incur CLI gets a built-in `--llms` flag and `skills add` command:
+Every incur CLI gets a built-in MCP support, `skills add` command and `--llms` flag:
 
 ```sh
-# Output machine-readable manifest
-my-cli --llms
+# Register as an MCP server for your agents
+my-cli mcp add
 
 # Auto-generate and install agent skill files
 my-cli skills add
+
+# Output machine-readable manifest
+my-cli --llms
 ```
 
 ## API Reference
