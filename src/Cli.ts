@@ -8,7 +8,9 @@ import type { OneOf } from './internal/types.js'
 import * as Parser from './Parser.js'
 import type { Register } from './Register.js'
 import * as Schema from './Schema.js'
+import * as Mcp from './Mcp.js'
 import * as Skill from './Skill.js'
+import * as SyncMcp from './SyncMcp.js'
 import * as SyncSkills from './SyncSkills.js'
 
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
@@ -152,6 +154,7 @@ export function create(
           ...options,
           description: def.description,
           format: def.format,
+          mcp: def.mcp,
           sync: def.sync,
           version: def.version,
         })
@@ -189,6 +192,7 @@ export function create(
         ...serveOptions,
         description: def.description,
         format: def.format,
+        mcp: def.mcp,
         sync: def.sync,
         version: def.version,
       })
@@ -245,6 +249,15 @@ export declare namespace create {
           options: InferOutput<options>
         }) => InferReturn<output> | Promise<InferReturn<output>>)
       | undefined
+    /** Options for the built-in `mcp add` command. */
+    mcp?:
+      | {
+          /** Target specific agents by default (e.g. `['claude-code', 'cursor']`). */
+          agents?: string[] | undefined
+          /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
+          command?: string | undefined
+        }
+      | undefined
     /** Options for the built-in `skills add` command. */
     sync?:
       | {
@@ -291,10 +304,17 @@ async function serveImpl(
     format: formatFlag,
     formatExplicit,
     llms,
+    mcp: mcpFlag,
     help,
     version,
     rest: filtered,
   } = extractBuiltinFlags(argv)
+
+  // --mcp: start as MCP stdio server
+  if (mcpFlag) {
+    await Mcp.serve(name, options.version ?? '0.0.0', commands)
+    return
+  }
 
   // Human mode: default unless --verbose or explicit --format/--json override
   const human = !formatExplicit && !verbose
@@ -405,6 +425,71 @@ async function serveImpl(
     return
   }
 
+  // mcp add: register CLI as MCP server via `npx add-mcp`
+  const mcpIdx =
+    filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
+  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp' && filtered[mcpIdx + 1] === 'add') {
+    if (help) {
+      writeln(
+        [
+          `${name} mcp add — Register as an MCP server for your agent`,
+          '',
+          `Usage: ${name} mcp add [options]`,
+          '',
+          'Options:',
+          '  -c, --command <cmd>  Override the command agents will run (e.g. "pnpm my-cli --mcp")',
+          '  --no-global          Install to project instead of globally',
+          '  --agent <agent>      Target a specific agent (e.g. claude-code, cursor)',
+        ].join('\n'),
+      )
+      return
+    }
+    const rest = filtered.slice(mcpIdx + 2)
+    const global = rest.includes('--no-global') ? false : true
+
+    // Parse --command / -c and --agent flags from argv
+    let command = options.mcp?.command
+    const agents: string[] = [...(options.mcp?.agents ?? [])]
+    for (let i = 0; i < rest.length; i++) {
+      if ((rest[i] === '--command' || rest[i] === '-c') && rest[i + 1]) command = rest[++i]!
+      else if (rest[i] === '--agent' && rest[i + 1]) agents.push(rest[++i]!)
+    }
+
+    try {
+      if (human) stdout('Registering MCP server...')
+      const result = await SyncMcp.register(name, {
+        command,
+        global,
+        agents,
+      })
+      if (human) {
+        stdout('\r\x1b[K')
+        const lines: string[] = []
+        lines.push(`✓ Registered ${name} as MCP server`)
+        if (result.agents.length > 0)
+          lines.push(`  Agents: ${result.agents.join(', ')}`)
+        lines.push('')
+        lines.push(`Agents can now use ${name} tools.`)
+        writeln(lines.join('\n'))
+      } else
+        writeln(
+          Formatter.format(
+            { name, command: result.command, agents: result.agents },
+            formatExplicit ? formatFlag : 'toon',
+          ),
+        )
+    } catch (err) {
+      writeln(
+        Formatter.format(
+          { code: 'MCP_ADD_FAILED', message: err instanceof Error ? err.message : String(err) },
+          formatExplicit ? formatFlag : 'toon',
+        ),
+      )
+      exit(1)
+    }
+    return
+  }
+
   // --help takes precedence over --version
   if (version && !help && options.version) {
     writeln(options.version)
@@ -417,6 +502,7 @@ async function serveImpl(
         description: options.description,
         version: options.version,
         commands: collectHelpCommands(commands),
+        root: true,
       }),
     )
     return
@@ -431,27 +517,30 @@ async function serveImpl(
       const helpName = 'help' in resolved ? `${name} ${resolved.path}` : name
       const helpDesc = 'help' in resolved ? resolved.description : options.description
       const helpCmds = 'help' in resolved ? resolved.commands : commands
+      const isRoot = helpName === name
       writeln(
         Help.formatRoot(helpName, {
           description: helpDesc,
-          version: helpName === name ? options.version : undefined,
+          version: isRoot ? options.version : undefined,
           commands: collectHelpCommands(helpCmds),
+          root: isRoot,
         }),
       )
     } else {
-      const commandName =
-        resolved.path === name ? name : `${name} ${resolved.path}`
+      const isRootCmd = resolved.path === name
+      const commandName = isRootCmd ? name : `${name} ${resolved.path}`
       writeln(
         Help.formatCommand(commandName, {
           alias: resolved.command.alias as Record<string, string> | undefined,
           description: resolved.command.description,
-          version: resolved.path === name ? options.version : undefined,
+          version: isRootCmd ? options.version : undefined,
           args: resolved.command.args,
           env: resolved.command.env,
           hint: resolved.command.hint,
           options: resolved.command.options,
           examples: formatExamples(resolved.command.examples),
           usage: resolved.command.usage,
+          root: isRootCmd,
         }),
       )
     }
@@ -687,6 +776,12 @@ declare namespace serveImpl {
     description?: string | undefined
     /** CLI-level default output format. */
     format?: Formatter.Format | undefined
+    mcp?:
+      | {
+          agents?: string[] | undefined
+          command?: string | undefined
+        }
+      | undefined
     sync?:
       | {
           cwd?: string | undefined
@@ -703,6 +798,7 @@ declare namespace serveImpl {
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
   let llms = false
+  let mcp = false
   let help = false
   let version = false
   let format: Formatter.Format = 'toon'
@@ -713,6 +809,7 @@ function extractBuiltinFlags(argv: string[]) {
     const token = argv[i]!
     if (token === '--verbose') verbose = true
     else if (token === '--llms') llms = true
+    else if (token === '--mcp') mcp = true
     else if (token === '--help' || token === '-h') help = true
     else if (token === '--version') version = true
     else if (token === '--json') {
@@ -725,7 +822,7 @@ function extractBuiltinFlags(argv: string[]) {
     } else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, llms, help, version, rest }
+  return { verbose, format, formatExplicit, llms, mcp, help, version, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */

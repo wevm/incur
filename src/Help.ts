@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
-  const { description, version, commands = [] } = options
+  const { description, version, commands = [], root = false } = options
   const lines: string[] = []
 
   // Header
@@ -26,7 +26,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines())
+  lines.push(...globalOptionsLines(root))
 
   return lines.join('\n')
 }
@@ -37,6 +37,8 @@ export declare namespace formatRoot {
     commands?: { name: string; description?: string | undefined }[] | undefined
     /** A short description of the CLI or group. */
     description?: string | undefined
+    /** Show root-level built-in commands and flags. */
+    root?: boolean | undefined
     /** CLI version string. */
     version?: string | undefined
   }
@@ -58,6 +60,8 @@ export declare namespace formatCommand {
     hint?: string | undefined
     /** Zod schema for named options/flags. */
     options?: z.ZodObject<any> | undefined
+    /** Show root-level built-in commands and flags. */
+    root?: boolean | undefined
     /** Alternative usage patterns. */
     usage?: { args?: Partial<Record<string, true>> | undefined; options?: Partial<Record<string, true>> | undefined; prefix?: string | undefined; suffix?: string | undefined }[] | undefined
     /** CLI version string. */
@@ -67,7 +71,7 @@ export declare namespace formatCommand {
 
 /** Formats help text for a leaf command. */
 export function formatCommand(name: string, options: formatCommand.Options = {}): string {
-  const { alias, description, version, args, env, hint, options: opts, examples } = options
+  const { alias, description, version, args, env, hint, root = false, options: opts, examples } = options
   const lines: string[] = []
 
   // Header
@@ -164,7 +168,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     lines.push(hint)
   }
 
-  lines.push(...globalOptionsLines())
+  lines.push(...globalOptionsLines(root))
 
   return lines.join('\n')
 }
@@ -245,24 +249,37 @@ function toKebab(str: string): string {
   return str.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 }
 
-/** Renders the built-in commands and global options block shared by all help output. */
-function globalOptionsLines(): string[] {
-  const builtins = [{ name: 'skills add', desc: 'Sync skill files to your agent' }]
-  const maxCmd = Math.max(...builtins.map((b) => b.name.length))
+/** Renders the built-in commands and global options block. Root-only items are hidden for subcommands. */
+function globalOptionsLines(root = false): string[] {
+  const lines: string[] = []
+
+  if (root) {
+    const builtins = [
+      { name: 'mcp add', desc: 'Register as an MCP server' },
+      { name: 'skills add', desc: 'Sync skill files to your agent' },
+    ]
+    const maxCmd = Math.max(...builtins.map((b) => b.name.length))
+    lines.push(
+      '',
+      'Built-in Commands:',
+      ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
+    )
+  }
+
   const flags = [
     { flag: '--format <toon|json|yaml|md>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms', desc: 'Print LLM-readable manifest' },
+    ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
     { flag: '--verbose', desc: 'Show full output envelope' },
-    { flag: '--version', desc: 'Show version' },
+    ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ]
   const maxLen = Math.max(...flags.map((f) => f.flag.length))
-  return [
-    '',
-    'Built-in Commands:',
-    ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
+  lines.push(
     '',
     'Global Options:',
     ...flags.map((f) => `  ${f.flag}${' '.repeat(maxLen - f.flag.length)}  ${f.desc}`),
-  ]
+  )
+
+  return lines
 }

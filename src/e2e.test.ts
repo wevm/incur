@@ -543,12 +543,14 @@ describe('help', () => {
         validate-fail  Fails validation
 
       Built-in Commands:
+        mcp add     Register as an MCP server
         skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
+        --mcp                         Start as MCP stdio server
         --verbose                     Show full output envelope
         --version                     Show version
       "
@@ -573,15 +575,11 @@ describe('help', () => {
         logout  Log out of the service
         status  Show authentication status
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -599,15 +597,11 @@ describe('help', () => {
         rollback  Rollback a deployment
         status    Check deployment status
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -624,15 +618,11 @@ describe('help', () => {
         --sort, -s <value>    Sort field (default: name)
         --archived <boolean>  Include archived (default: false)
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -655,15 +645,11 @@ describe('help', () => {
         $ app project deploy create staging                                    Deploy staging from main
         $ app project deploy create production --branch release --dryRun true  Dry run a production deploy
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -1135,15 +1121,11 @@ describe('env', () => {
         AUTH_TOKEN  Pre-existing auth token
         AUTH_HOST   Auth server hostname (default: api.example.com)
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })

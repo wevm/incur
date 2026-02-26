@@ -584,15 +584,11 @@ describe('subcommands', () => {
         create
         list
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -981,12 +977,14 @@ describe('help', () => {
         ping  Health check
 
       Built-in Commands:
+        mcp add     Register as an MCP server
         skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
+        --mcp                         Start as MCP stdio server
         --verbose                     Show full output envelope
         --version                     Show version
       "
@@ -1011,12 +1009,14 @@ describe('help', () => {
         ping  Health check
 
       Built-in Commands:
+        mcp add     Register as an MCP server
         skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
+        --mcp                         Start as MCP stdio server
         --verbose                     Show full output envelope
         --version                     Show version
       "
@@ -1041,15 +1041,11 @@ describe('help', () => {
       Arguments:
         name  Name
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -1074,15 +1070,11 @@ describe('help', () => {
       Commands:
         list  List PRs
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -1114,12 +1106,14 @@ describe('help', () => {
         ping  Ping
 
       Built-in Commands:
+        mcp add     Register as an MCP server
         skills add  Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
+        --mcp                         Start as MCP stdio server
         --verbose                     Show full output envelope
         --version                     Show version
       "
@@ -1142,15 +1136,11 @@ describe('help', () => {
 
       Run "tool status" to check deployment progress.
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })
@@ -1240,15 +1230,11 @@ describe('env', () => {
         API_TOKEN  Auth token
         API_URL    API URL (default: https://api.example.com)
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
         --verbose                     Show full output envelope
-        --version                     Show version
       "
     `)
   })

@@ -24,15 +24,11 @@ describe('formatCommand', () => {
         --state <string>  Filter by state (default: open)
         --limit <number>  Max PRs to return (default: 30)
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version"
+        --verbose                     Show full output envelope"
     `)
   })
 
@@ -45,15 +41,11 @@ describe('formatCommand', () => {
 
       Usage: tool ping
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version"
+        --verbose                     Show full output envelope"
     `)
   })
 
@@ -73,15 +65,11 @@ describe('formatCommand', () => {
         name   Name
         title  Title
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version"
+        --verbose                     Show full output envelope"
     `)
   })
 })
@@ -106,15 +94,11 @@ describe('formatRoot', () => {
         pr view     View a pull request
         issue list  List issues
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version"
+        --verbose                     Show full output envelope"
     `)
   })
 
@@ -130,15 +114,11 @@ describe('formatRoot', () => {
       Commands:
         ping  Health check
 
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
       Global Options:
         --format <toon|json|yaml|md>  Output format
         --help                        Show help
         --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version"
+        --verbose                     Show full output envelope"
     `)
   })
 })
