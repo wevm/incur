@@ -15,7 +15,7 @@ describe('formatCommand', () => {
     expect(result).toMatchInlineSnapshot(`
       "gh pr list — List pull requests
 
-      Usage: gh pr list [repo]
+      Usage: gh pr list [repo] [options]
 
       Arguments:
         repo  Repository in owner/repo format

@@ -69,7 +69,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
 
   // Synopsis
   const synopsis = buildSynopsis(name, args)
-  lines.push(`Usage: ${synopsis}`)
+  lines.push(`Usage: ${synopsis}${opts ? ' [options]' : ''}`)
 
   // Arguments
   if (args) {

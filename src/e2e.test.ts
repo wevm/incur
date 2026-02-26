@@ -635,7 +635,7 @@ describe('help', () => {
     expect(output).toMatchInlineSnapshot(`
       "app project list — List projects
 
-      Usage: app project list
+      Usage: app project list [options]
 
       Options:
         --limit, -l <number>  Max results (default: 20)
@@ -660,7 +660,7 @@ describe('help', () => {
     expect(output).toMatchInlineSnapshot(`
       "app project deploy create — Create a deployment
 
-      Usage: app project deploy create <env>
+      Usage: app project deploy create <env> [options]
 
       Arguments:
         env  Target environment
@@ -1269,7 +1269,7 @@ describe('env', () => {
     expect(output).toMatchInlineSnapshot(`
       "app auth login — Log in to the service
 
-      Usage: app auth login
+      Usage: app auth login [options]
 
       Options:
         --hostname, -h <string>  API hostname (default: api.example.com)
