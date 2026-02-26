@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,7 +14,7 @@ export async function sync(
   commands: Map<string, any>,
   options: sync.Options = {},
 ): Promise<sync.Result> {
-  const cwd = options.cwd ?? process.cwd()
+  const cwd = options.cwd ?? resolvePackageRoot()
   const { depth = 1, description, global = true } = options
 
   const groups = new Map<string, string>()
@@ -145,6 +146,22 @@ function collectEntries(
     }
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Resolves the package root from the executing bin script (`process.argv[1]`). Walks up from the bin's directory looking for `package.json`. Falls back to `process.cwd()`. */
+function resolvePackageRoot(): string {
+  const bin = process.argv[1]
+  if (!bin) return process.cwd()
+  let dir = path.dirname(path.resolve(bin))
+  const root = path.parse(dir).root
+  while (dir !== root) {
+    try {
+      fsSync.accessSync(path.join(dir, 'package.json'))
+      return dir
+    } catch {}
+    dir = path.dirname(dir)
+  }
+  return process.cwd()
 }
 
 /** Promisified execFile with stderr in error message. */

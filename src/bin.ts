@@ -8,7 +8,6 @@ import * as Typegen from './Typegen.js'
 const cli = Cli.create('incur', {
   description: 'CLI for incur',
   sync: {
-    cwd: path.resolve(import.meta.dirname, '..'),
     depth: 1,
     include: ['_root'],
     suggestions: ['build a cli with incur', 'generate incur types'],
