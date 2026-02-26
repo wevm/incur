@@ -50,8 +50,7 @@ describe('routing', () => {
     const { output, exitCode } = await serve(createApp(), ['nonexistent'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: COMMAND_NOT_FOUND
-      message: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
+      "Error: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
       "
     `)
   })
@@ -60,8 +59,7 @@ describe('routing', () => {
     const { output, exitCode } = await serve(createApp(), ['auth', 'whoami'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: COMMAND_NOT_FOUND
-      message: 'whoami' is not a command. See 'app auth --help' for a list of available commands.
+      "Error: 'whoami' is not a command. See 'app auth --help' for a list of available commands.
       "
     `)
   })
@@ -70,8 +68,7 @@ describe('routing', () => {
     const { output, exitCode } = await serve(createApp(), ['project', 'deploy', 'nope'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: COMMAND_NOT_FOUND
-      message: 'nope' is not a command. See 'app project deploy --help' for a list of available commands.
+      "Error: 'nope' is not a command. See 'app project deploy --help' for a list of available commands.
       "
     `)
   })
@@ -152,27 +149,21 @@ describe('args and options', () => {
   test('enum validation fails for invalid value', async () => {
     const { output, exitCode } = await serve(createApp(), ['project', 'list', '--sort', 'invalid'])
     expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "code: VALIDATION_ERROR
-      message: "Invalid option: expected one of \\"name\\"|\\"created\\"|\\"updated\\"\\n\\nDetails: [\\n  {\\n    \\"code\\": \\"invalid_value\\",\\n    \\"values\\": [\\n      \\"name\\",\\n      \\"created\\",\\n      \\"updated\\"\\n    ],\\n    \\"path\\": [\\n      \\"sort\\"\\n    ],\\n    \\"message\\": \\"Invalid option: expected one of \\\\\\"name\\\\\\"|\\\\\\"created\\\\\\"|\\\\\\"updated\\\\\\"\\"\\n  }\\n]"
-      fieldErrors[1]{path,expected,received,message}:
-        sort,"","","Invalid option: expected one of \\"name\\"|\\"created\\"|\\"updated\\""
-      "
-    `)
+    expect(output).toContain('Error')
+    expect(output).toContain('sort')
   })
 
   test('missing required arg fails validation', async () => {
     const { output, exitCode } = await serve(createApp(), ['project', 'get'])
     expect(exitCode).toBe(1)
-    expect(output).toContain('fieldErrors')
+    expect(output).toContain('Error: missing required argument <id>')
   })
 
   test('unknown flag returns error', async () => {
     const { output, exitCode } = await serve(createApp(), ['ping', '--unknown-flag'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: UNKNOWN
-      message: "Unknown flag: --unknown-flag"
+      "Error: Unknown flag: --unknown-flag
       "
     `)
   })
@@ -319,12 +310,11 @@ describe('output formats', () => {
 })
 
 describe('error handling', () => {
-  test('thrown Error wraps in UNKNOWN code', async () => {
+  test('thrown Error shows human-readable message', async () => {
     const { output, exitCode } = await serve(createApp(), ['explode'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: UNKNOWN
-      message: kaboom
+      "Error: kaboom
       "
     `)
   })
@@ -420,15 +410,6 @@ describe('error handling', () => {
         },
         "ok": false,
       }
-    `)
-  })
-
-  test('command not found tty format', async () => {
-    const { output, exitCode } = await serve(createApp(), ['nonexistent'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
-      "
     `)
   })
 
@@ -706,133 +687,6 @@ describe('help', () => {
     const { output } = await serve(createApp(), ['--help', '--version'])
     expect(output).toContain('Usage: app <command>')
     expect(output).toContain('v3.5.0')
-  })
-})
-
-describe('tty', () => {
-  test('shows toon output in tty mode', async () => {
-    const { output } = await serve(createApp(), ['ping'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "pong: true
-      "
-    `)
-  })
-
-  test('tty error shows human-readable message', async () => {
-    const { output, exitCode } = await serve(createApp(), ['explode'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error: kaboom
-      "
-    `)
-  })
-
-  test('tty IncurError shows code', async () => {
-    const { output, exitCode } = await serve(createApp(), ['explode-clac'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error (QUOTA_EXCEEDED): Rate limit exceeded
-      "
-    `)
-  })
-
-  test('tty error() sentinel shows human-readable', async () => {
-    const { output, exitCode } = await serve(createApp(), ['auth', 'status'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error (NOT_AUTHENTICATED): Not logged in
-
-      Suggested commands:
-        app auth login
-      "
-    `)
-  })
-
-  test('tty validation error shows usage hint', async () => {
-    const { output, exitCode } = await serve(createApp(), ['project', 'get'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error: missing required argument <id>
-      See below for usage.
-
-      app project get — Get a project by ID
-
-      Usage: app project get <id>
-
-      Arguments:
-        id  Project ID
-
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
-      Global Options:
-        --format <toon|json|yaml|md>  Output format
-        --help                        Show help
-        --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version
-      "
-    `)
-  })
-
-  test('tty + --verbose overrides to structured', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "ok: true
-      data:
-        pong: true
-      meta:
-        command: ping
-        duration: <stripped>
-      "
-    `)
-  })
-
-  test('tty + --json overrides to structured', async () => {
-    const { output } = await serve(createApp(), ['ping', '--json'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "{
-        "pong": true
-      }
-      "
-    `)
-  })
-
-  test('tty + --format toon overrides to structured', async () => {
-    const { output } = await serve(createApp(), ['ping', '--format', 'toon'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "pong: true
-      "
-    `)
-  })
-
-  test('tty help still displays', async () => {
-    const { output } = await serve(createApp(), [], { tty: true })
-    expect(output).toContain('Usage: app <command>')
-  })
-
-  test('tty --version still displays', async () => {
-    const { output } = await serve(createApp(), ['--version'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "3.5.0
-      "
-    `)
-  })
-
-  test('tty unknown command shows human error', async () => {
-    const { output, exitCode } = await serve(createApp(), ['nope'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error: 'nope' is not a command. See 'app --help' for a list of available commands.
-      "
-    `)
-  })
-
-  test('tty validation error shows field details', async () => {
-    const { output, exitCode } = await serve(createApp(), ['project', 'get'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toContain('Error')
-    expect(output).toContain('id')
   })
 })
 

@@ -489,7 +489,6 @@ Use `--llms --format json` for JSON schema manifest:
 | `--json`             | Shorthand for `--format json`                |
 | `--format <fmt>`     | Output format: `toon`, `json`, `yaml`, `md`  |
 | `--verbose`          | Include full envelope (`ok`, `data`, `meta`) |
-| `--tty` / `--no-tty` | Override TTY detection                       |
 
 ## Examples
 
@@ -549,7 +548,6 @@ await cli.serve(['install', 'express', '--json'], {
 | `stdout` | `(s: string) => void`                 | Override stdout writer         |
 | `exit`   | `(code: number) => void`              | Override exit handler          |
 | `env`    | `Record<string, string \| undefined>` | Override environment variables |
-| `tty`    | `boolean`                             | Override TTY detection         |
 
 ## Type Generation
 

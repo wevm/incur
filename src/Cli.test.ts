@@ -122,8 +122,7 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['nonexistent'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: COMMAND_NOT_FOUND
-      message: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
+      "Error: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
       "
     `)
   })
@@ -156,8 +155,7 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: UNKNOWN
-      message: boom
+      "Error: boom
       "
     `)
   })
@@ -177,9 +175,7 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: NOT_AUTHENTICATED
-      message: Token not found
-      retryable: false
+      "Error (NOT_AUTHENTICATED): Token not found
       "
     `)
   })
@@ -195,7 +191,7 @@ describe('serve', () => {
 
     const { output, exitCode } = await serve(cli, ['greet'])
     expect(exitCode).toBe(1)
-    expect(output).toContain('fieldErrors')
+    expect(output).toContain('Error: missing required argument <name>')
   })
 
   test('supports async handlers', async () => {
@@ -565,8 +561,7 @@ describe('subcommands', () => {
     const { output, exitCode } = await serve(cli, ['pr', 'unknown'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: COMMAND_NOT_FOUND
-      message: 'unknown' is not a command. See 'test pr --help' for a list of available commands.
+      "Error: 'unknown' is not a command. See 'test pr --help' for a list of available commands.
       "
     `)
   })
@@ -631,8 +626,7 @@ describe('subcommands', () => {
     const { output, exitCode } = await serve(cli, ['pr', 'fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: UNKNOWN
-      message: sub-boom
+      "Error: sub-boom
       "
     `)
   })
@@ -914,8 +908,7 @@ describe('leaf cli', () => {
     const { output, exitCode } = await serve(cli, [])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "code: UNKNOWN
-      message: boom
+      "Error: boom
       "
     `)
   })
@@ -1174,193 +1167,6 @@ describe('help', () => {
   })
 })
 
-describe('tty', () => {
-  test('non-TTY (default) outputs structured envelope', async () => {
-    const cli = Cli.create('test')
-    cli.command('ping', { run: () => ({ pong: true }) })
-
-    const { output } = await serve(cli, ['ping'])
-    expect(output).toMatchInlineSnapshot(`
-      "pong: true
-      "
-    `)
-  })
-
-  test('TTY shows toon output', async () => {
-    const cli = Cli.create('test')
-    cli.command('ping', { run: () => ({ pong: true }) })
-
-    const { output } = await serve(cli, ['ping'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "pong: true
-      "
-    `)
-  })
-
-  test('TTY + --verbose outputs full envelope', async () => {
-    const cli = Cli.create('test')
-    cli.command('ping', { run: () => ({ pong: true }) })
-
-    const { output } = await serve(cli, ['ping', '--verbose'], { tty: true })
-    expect(output).toContain('ok: true')
-    expect(output).toContain('pong: true')
-  })
-
-  test('TTY + --json overrides to structured output', async () => {
-    const cli = Cli.create('test')
-    cli.command('ping', { run: () => ({ pong: true }) })
-
-    const { output } = await serve(cli, ['ping', '--json'], { tty: true })
-    expect(JSON.parse(output)).toEqual({ pong: true })
-  })
-
-  test('TTY + --format toon overrides to structured output', async () => {
-    const cli = Cli.create('test')
-    cli.command('ping', { run: () => ({ pong: true }) })
-
-    const { output } = await serve(cli, ['ping', '--format', 'toon'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "pong: true
-      "
-    `)
-  })
-
-  test('TTY error shows human-readable message', async () => {
-    const cli = Cli.create('test')
-    cli.command('fail', {
-      run() {
-        throw new Error('boom')
-      },
-    })
-
-    const { output, exitCode } = await serve(cli, ['fail'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error: boom
-      "
-    `)
-  })
-
-  test('TTY IncurError shows code and message', async () => {
-    const cli = Cli.create('test')
-    cli.command('fail', {
-      run() {
-        throw new Errors.IncurError({ code: 'NOT_FOUND', message: 'Resource not found' })
-      },
-    })
-
-    const { output, exitCode } = await serve(cli, ['fail'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error (NOT_FOUND): Resource not found
-      "
-    `)
-  })
-
-  test('TTY ValidationError shows field errors', async () => {
-    const cli = Cli.create('test')
-    cli.command('greet', {
-      args: z.object({ name: z.string() }),
-      run: ({ args }) => ({ message: `hi ${args.name}` }),
-    })
-
-    const { output, exitCode } = await serve(cli, ['greet'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toContain('Error')
-    expect(output).toContain('name')
-  })
-
-  test('TTY error() sentinel shows human-readable message', async () => {
-    const cli = Cli.create('test')
-    cli.command('fail', {
-      run({ error }) {
-        return error({ code: 'AUTH', message: 'Not logged in' })
-      },
-    })
-
-    const { output, exitCode } = await serve(cli, ['fail'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error (AUTH): Not logged in
-      "
-    `)
-  })
-
-  test('TTY unknown command shows human-readable error', async () => {
-    const cli = Cli.create('test')
-
-    const { output, exitCode } = await serve(cli, ['nonexistent'], { tty: true })
-    expect(exitCode).toBe(1)
-    expect(output).toMatchInlineSnapshot(`
-      "Error: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
-      "
-    `)
-  })
-
-  test('TTY --help still shows pretty help', async () => {
-    const cli = Cli.create('tool')
-    cli.command('ping', { description: 'Health check', run: () => ({}) })
-
-    const { output } = await serve(cli, ['--help'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "tool
-
-      Usage: tool <command>
-
-      Commands:
-        ping  Health check
-
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
-      Global Options:
-        --format <toon|json|yaml|md>  Output format
-        --help                        Show help
-        --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version
-      "
-    `)
-  })
-
-  test('TTY --version still shows version', async () => {
-    const cli = Cli.create('tool', { version: '1.2.3' })
-    cli.command('ping', { run: () => ({}) })
-
-    const { output } = await serve(cli, ['--version'], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "1.2.3
-      "
-    `)
-  })
-
-  test('TTY router with no subcommand shows help', async () => {
-    const cli = Cli.create('tool')
-    cli.command('ping', { description: 'Health check', run: () => ({}) })
-
-    const { output } = await serve(cli, [], { tty: true })
-    expect(output).toMatchInlineSnapshot(`
-      "tool
-
-      Usage: tool <command>
-
-      Commands:
-        ping  Health check
-
-      Built-in Commands:
-        skills add  Sync skill files to your agent
-
-      Global Options:
-        --format <toon|json|yaml|md>  Output format
-        --help                        Show help
-        --llms                        Print LLM-readable manifest
-        --verbose                     Show full output envelope
-        --version                     Show version
-      "
-    `)
-  })
-})
-
 describe('env', () => {
   test('parses env vars and passes to handler', async () => {
     const cli = Cli.create('test')
@@ -1392,7 +1198,7 @@ describe('env', () => {
 
     const { output, exitCode } = await serve(cli, ['deploy'], { env: {} })
     expect(exitCode).toBe(1)
-    expect(output).toContain('VALIDATION_ERROR')
+    expect(output).toContain('Error')
   })
 
   test('env with defaults works when var is unset', async () => {

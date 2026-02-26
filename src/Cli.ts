@@ -272,8 +272,6 @@ export declare namespace serve {
     exit?: ((code: number) => void) | undefined
     /** Override stdout writer. Defaults to `process.stdout.write`. */
     stdout?: ((s: string) => void) | undefined
-    /** Override TTY detection. Defaults to `process.stdout.isTTY`. */
-    tty?: boolean | undefined
   }
 }
 
@@ -295,13 +293,11 @@ async function serveImpl(
     llms,
     help,
     version,
-    tty: ttyFlag,
     rest: filtered,
   } = extractBuiltinFlags(argv)
 
-  // TTY mode: human is at the terminal; suppress structured output unless overridden
-  const tty = ttyFlag ?? options.tty ?? process.stdout.isTTY ?? false
-  const human = tty && !formatExplicit && !verbose
+  // Human mode: default unless --verbose or explicit --format/--json override
+  const human = !formatExplicit && !verbose
 
   function writeln(s: string) {
     stdout(s.endsWith('\n') ? s : `${s}\n`)
@@ -711,7 +707,6 @@ function extractBuiltinFlags(argv: string[]) {
   let version = false
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
-  let tty: boolean | undefined
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -720,8 +715,6 @@ function extractBuiltinFlags(argv: string[]) {
     else if (token === '--llms') llms = true
     else if (token === '--help' || token === '-h') help = true
     else if (token === '--version') version = true
-    else if (token === '--tty') tty = true
-    else if (token === '--no-tty') tty = false
     else if (token === '--json') {
       format = 'json'
       formatExplicit = true
@@ -732,7 +725,7 @@ function extractBuiltinFlags(argv: string[]) {
     } else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, llms, help, version, tty, rest }
+  return { verbose, format, formatExplicit, llms, help, version, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
