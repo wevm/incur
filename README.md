@@ -8,10 +8,10 @@ Prompt your agent:
 
 ```sh
 # MCP (Recommended)
-Run `npx incur mcp add`, then show me what I can do with incur.
+> "Run `npx incur mcp add`, then show me what I can do with incur."
 
 # Skills 
-Run `npx incur skills add`, then show me what I can do with incur.
+> "Run `npx incur skills add`, then show me what I can do with incur."
 ```
 
 ## Install
