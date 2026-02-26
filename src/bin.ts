@@ -7,7 +7,7 @@ const cli = Cli.create('clac', {
   description: 'CLI for clac',
   sync: {
     depth: 0,
-    suggestions: ['generate clac types']
+    suggestions: ['generate clac types'],
   }
 }).command('gen', {
   description: 'Generate type definitions for development.',
@@ -23,6 +23,8 @@ const cli = Cli.create('clac', {
     await Typegen.generate(entry, output)
     return { dir, entry, output }
   },
-}).serve()
+})
+
+cli.serve()
 
 export default cli

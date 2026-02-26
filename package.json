@@ -6,6 +6,7 @@
     "check": "biome check --fix --unsafe",
     "check:types": "tsc -b && pnpm -r check:types",
     "clac": "node --import tsx src/bin.ts",
+    "cli:skills": "pnpm clac skills add",
     "dev": "zile dev",
     "test": "vitest"
   },
@@ -23,7 +24,6 @@
   "name": "clac",
   "type": "module",
   "version": "0.0.0",
-  "main": "./dist/index.js",
   "license": "MIT",
   "files": [
     "dist",
@@ -35,6 +35,11 @@
     "zod": "^4.3.6"
   },
   "sideEffects": false,
+  "bin": {
+    "clac": "./dist/bin.js",
+    "clac.src": "./src/bin.ts"
+  },
+  "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -42,11 +47,6 @@
       "types": "./dist/index.d.ts",
       "src": "./src/index.ts",
       "default": "./dist/index.js"
-    },
-    "./Register": {
-      "types": "./dist/Register.d.ts",
-      "src": "./src/Register.ts",
-      "default": "./dist/Register.js"
     }
   }
 }

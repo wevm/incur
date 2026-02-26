@@ -33,10 +33,16 @@ export async function importCli(input: string): Promise<Cli.Cli> {
   }
 }
 
-/** Resolves the CLI entry file from a directory by reading its `package.json` `main` field, falling back to `cli.ts`. */
+/** Resolves the CLI entry file from a directory by checking `package.json` `bin`, then falling back to `cli.ts`. */
 async function resolveEntry(dir: string): Promise<string> {
   try {
     const pkg = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'))
+    if (pkg.bin) {
+      const entries = typeof pkg.bin === 'string' ? [pkg.bin] : Object.values(pkg.bin) as string[]
+      const src = entries.find((e) => e.endsWith('.ts'))
+      const entry = src ?? entries[0]
+      if (entry) return path.join(dir, entry)
+    }
     if (pkg.main) return path.join(dir, pkg.main)
   } catch {}
   return path.join(dir, 'cli.ts')

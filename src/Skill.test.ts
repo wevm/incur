@@ -150,7 +150,7 @@ describe('split', () => {
         "",
       ]
     `)
-    expect(files[0]!.content).toContain('title: gh')
+    expect(files[0]!.content).toContain('name: gh')
     expect(files[0]!.content).toContain('# gh auth login')
     expect(files[0]!.content).toContain('# gh pr list')
   })
@@ -165,7 +165,7 @@ describe('split', () => {
     `)
     expect(files[0]!.content).toMatchInlineSnapshot(`
       "---
-      title: gh auth
+      name: gh-auth
       description: Authenticate with GitHub. Log in, Check status
       command: gh auth
       ---
@@ -182,7 +182,7 @@ describe('split', () => {
     `)
     expect(files[1]!.content).toMatchInlineSnapshot(`
       "---
-      title: gh pr
+      name: gh-pr
       description: Manage pull requests. List PRs, Create PR
       command: gh pr
       ---

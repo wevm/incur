@@ -88,7 +88,8 @@ function renderGroup(
   if (childDescs.length > 0) descParts.push(childDescs.join(', '))
   const description = descParts.join('. ') || undefined
 
-  const fm = ['---', `title: ${title}`]
+  const slug = title.replace(/\s+/g, '-')
+  const fm = ['---', `name: ${slug}`]
   if (description) fm.push(`description: ${description}`)
   fm.push(`command: ${title}`, '---')
 

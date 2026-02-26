@@ -157,6 +157,7 @@ export function create(
       },
     }
     toRootDefinition.set(leaf, rootDef)
+    toCommands.set(leaf as unknown as Cli, leafCommands)
     return leaf
   }
 
@@ -324,7 +325,8 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add`
-  if (filtered[0] === 'skills' && filtered[1] === 'add') {
+  const skillsIdx = filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
+  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills' && filtered[skillsIdx + 1] === 'add') {
     if (help) {
       writeln(
         [
@@ -339,7 +341,7 @@ async function serveImpl(
       )
       return
     }
-    const rest = filtered.slice(2)
+    const rest = filtered.slice(skillsIdx + 2)
     const depthArg = rest.indexOf('--depth')
     const depth = depthArg !== -1 ? Number(rest[depthArg + 1]) : (options.sync?.depth ?? 1)
     const global = rest.includes('--no-global') ? false : undefined
