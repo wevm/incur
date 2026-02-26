@@ -473,14 +473,18 @@ async function serveImpl(
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
 
   function write(output: Output) {
+    const cta = output.meta.cta
     if (human) {
       if (output.ok) writeln(Formatter.format(output.data, format))
       else writeln(formatHumanError(output.error))
+      if (cta) writeln(formatHumanCta(cta))
       return
     }
     if (verbose) return writeln(Formatter.format(output, format))
-    if (output.ok) writeln(Formatter.format(output.data, format))
-    else writeln(Formatter.format(output.error, format))
+    const payload = output.ok
+      ? { ...(output.data as object), ...(cta ? { cta } : undefined) }
+      : { ...output.error, ...(cta ? { cta } : undefined) }
+    writeln(Formatter.format(payload, format))
   }
 
   if ('error' in resolved) {
@@ -801,6 +805,16 @@ function formatHumanError(error: {
   let out = `${prefix}: ${error.message}`
   if (error.fieldErrors) for (const fe of error.fieldErrors) out += `\n  ${fe.path}: ${fe.message}`
   return out
+}
+
+/** @internal Formats a CTA block for human-readable TTY output. */
+function formatHumanCta(cta: FormattedCtaBlock): string {
+  const lines: string[] = ['', cta.description]
+  for (const c of cta.commands) {
+    const desc = c.description ? `  ${c.description}` : ''
+    lines.push(`  ${c.command}${desc}`)
+  }
+  return lines.join('\n')
 }
 
 /** @internal Type guard for sentinel results. */

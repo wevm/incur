@@ -740,6 +740,9 @@ describe('tty', () => {
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "Error (NOT_AUTHENTICATED): Not logged in
+
+      Suggested commands:
+        app auth login
       "
     `)
   })
@@ -1132,6 +1135,15 @@ describe('edge cases', () => {
     ])
     expect(json(output)).toMatchInlineSnapshot(`
       {
+        "cta": {
+          "commands": [
+            {
+              "command": "app project get p1",
+              "description": "View "Alpha"",
+            },
+          ],
+          "description": "Suggested commands:",
+        },
         "items": [
           {
             "archived": false,
