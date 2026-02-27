@@ -1,5 +1,12 @@
 # incur
 
+## 0.1.4
+
+### Patch Changes
+
+- 9bb41e3: Fixed `--depth=N` equals syntax not being parsed in `skills add`.
+  Fixed `depth=0` producing a root SKILL.md without a subdirectory wrapper.
+
 ## 0.1.3
 
 ### Patch Changes
