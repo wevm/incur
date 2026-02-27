@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.0
+
+### Minor Changes
+
+- 09e4d76: Initial release.
+
 ## 0.0.2
 
 ### Patch Changes
