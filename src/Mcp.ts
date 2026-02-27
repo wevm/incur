@@ -112,10 +112,10 @@ async function callTool(
           content: [{ type: 'text', text: tagged.message ?? 'Command failed' }],
           isError: true,
         }
-      return { content: [{ type: 'text', text: JSON.stringify(tagged.data) }] }
+      return { content: [{ type: 'text', text: JSON.stringify(tagged.data ?? null) }] }
     }
 
-    return { content: [{ type: 'text', text: JSON.stringify(awaited) }] }
+    return { content: [{ type: 'text', text: JSON.stringify(awaited ?? null) }] }
   } catch (err) {
     return {
       content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],

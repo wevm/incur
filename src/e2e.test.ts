@@ -316,6 +316,37 @@ describe('output formats', () => {
   })
 })
 
+describe('undefined output', () => {
+  test('void command produces no output in human mode', async () => {
+    const { output, exitCode } = await serve(createApp(), ['noop'])
+    expect(output).toBe('')
+    expect(exitCode).toBeUndefined()
+  })
+
+  test('void command produces no output with --format json', async () => {
+    const { output } = await serve(createApp(), ['noop', '--format', 'json'])
+    expect(output).toBe('')
+  })
+
+  test('void command produces no output with --format yaml', async () => {
+    const { output } = await serve(createApp(), ['noop', '--format', 'yaml'])
+    expect(output).toBe('')
+  })
+
+  test('void command shows envelope with --verbose', async () => {
+    const { output } = await serve(createApp(), ['noop', '--verbose', '--format', 'json'])
+    expect(json(output)).toMatchInlineSnapshot(`
+      {
+        "meta": {
+          "command": "noop",
+          "duration": "<stripped>",
+        },
+        "ok": true,
+      }
+    `)
+  })
+})
+
 describe('error handling', () => {
   test('thrown Error shows human-readable message', async () => {
     const { output, exitCode } = await serve(createApp(), ['explode'])
@@ -711,6 +742,7 @@ describe('help', () => {
         echo           Echo back arguments
         explode        Always fails
         explode-clac   Fails with IncurError
+        noop           Returns nothing
         ping           Health check
         project        Manage projects
         slow           Async command
@@ -870,6 +902,7 @@ describe('--llms', () => {
         "echo",
         "explode",
         "explode-clac",
+        "noop",
         "ping",
         "project create",
         "project delete",
@@ -1069,6 +1102,7 @@ describe('typegen', () => {
             'echo': { args: { message: string; repeat: number }; options: { upper: boolean; prefix: string } }
             'explode': { args: {}; options: {} }
             'explode-clac': { args: {}; options: {} }
+            'noop': { args: {}; options: {} }
             'ping': { args: {}; options: {} }
             'project create': { args: { name: string }; options: { description: string; private: boolean } }
             'project delete': { args: { id: string }; options: { force: boolean } }
@@ -1692,6 +1726,11 @@ function createApp() {
     run({ args }) {
       return args
     },
+  })
+
+  cli.command('noop', {
+    description: 'Returns nothing',
+    run() {},
   })
 
   cli.command('stream', {

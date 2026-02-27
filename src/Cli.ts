@@ -590,14 +590,18 @@ async function serveImpl(
   function write(output: Output) {
     const cta = output.meta.cta
     if (human) {
-      if (output.ok) writeln(Formatter.format(output.data, format))
-      else writeln(formatHumanError(output.error))
+      if (output.ok && output.data != null) writeln(Formatter.format(output.data, format))
+      else if (!output.ok) writeln(formatHumanError(output.error))
       if (cta) writeln(formatHumanCta(cta))
       return
     }
     if (verbose) return writeln(Formatter.format(output, format))
     const base = output.ok ? output.data : output.error
-    if (!cta) return writeln(Formatter.format(base, format))
+    const formatted = Formatter.format(base, format)
+    if (!cta) {
+      if (formatted) writeln(formatted)
+      return
+    }
     const payload =
       typeof base === 'object' && base !== null ? { ...base, cta } : { data: base, cta }
     writeln(Formatter.format(payload, format))

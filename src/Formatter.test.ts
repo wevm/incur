@@ -85,6 +85,20 @@ describe('format', () => {
     expect(Formatter.format(42)).toBe('42')
     expect(Formatter.format(42, 'json')).toBe('42')
   })
+
+  test('returns empty string for undefined', () => {
+    expect(Formatter.format(undefined)).toBe('')
+    expect(Formatter.format(undefined, 'json')).toBe('')
+    expect(Formatter.format(undefined, 'yaml')).toBe('')
+    expect(Formatter.format(undefined, 'md')).toBe('')
+  })
+
+  test('returns empty string for null', () => {
+    expect(Formatter.format(null)).toBe('')
+    expect(Formatter.format(null, 'json')).toBe('')
+    expect(Formatter.format(null, 'yaml')).toBe('')
+    expect(Formatter.format(null, 'md')).toBe('')
+  })
 })
 
 describe('format md', () => {
