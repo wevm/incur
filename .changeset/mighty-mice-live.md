@@ -1,5 +1,0 @@
----
-"incur": minor
----
-
-Initial release.
