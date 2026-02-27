@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.1
+
+### Patch Changes
+
+- 370d039: Fixed commands returning `undefined` being serialized as the literal string `"undefined"` in output. Void commands now produce no output in human and machine modes. MCP tool calls with undefined results now return valid JSON (`null`) instead of broken output.
+
 ## 0.1.0
 
 ### Minor Changes
