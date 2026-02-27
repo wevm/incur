@@ -79,7 +79,7 @@ export function install(
     const canonicalDir = path.join(canonicalBase, skill.name)
 
     // Copy to canonical location
-    fs.rmSync(canonicalDir, { recursive: true, force: true })
+    rmForce(canonicalDir)
     fs.mkdirSync(canonicalDir, { recursive: true })
     if (skill.root)
       fs.copyFileSync(path.join(skill.dir, 'SKILL.md'), path.join(canonicalDir, 'SKILL.md'))
@@ -96,7 +96,7 @@ export function install(
       if (agentDir === canonicalDir) continue
 
       try {
-        fs.rmSync(agentDir, { recursive: true, force: true })
+        rmForce(agentDir)
         fs.mkdirSync(path.dirname(agentDir), { recursive: true })
         // Resolve through any existing symlinks in parent directories
         const realLinkDir = resolveParent(path.dirname(agentDir))
@@ -139,6 +139,27 @@ export declare namespace install {
     path: string
     /** Whether it was symlinked or copied. */
     mode: 'symlink' | 'copy'
+  }
+}
+
+/**
+ * Removes a skill by name from the canonical location and all detected agent directories.
+ */
+export function remove(
+  skillName: string,
+  options: { global?: boolean | undefined; cwd?: string | undefined } = {},
+) {
+  const isGlobal = options.global !== false
+  const cwd = options.cwd || process.cwd()
+  const base = isGlobal ? home : cwd
+  const canonicalDir = path.join(base, '.agents', 'skills', skillName)
+  rmForce(canonicalDir)
+
+  for (const agent of detect()) {
+    if (agent.universal) continue
+    const agentSkillsDir = isGlobal ? agent.globalSkillsDir : path.join(cwd, agent.projectSkillsDir)
+    const agentDir = path.join(agentSkillsDir, skillName)
+    rmForce(agentDir)
   }
 }
 
@@ -188,6 +209,15 @@ function sanitizeName(name: string): string {
     .replace(/[/\\]/g, '-')
     .replace(/\.\./g, '')
     .slice(0, 255)
+}
+
+/** Removes a file, directory, or symlink (including broken symlinks). */
+function rmForce(target: string) {
+  try {
+    const stat = fs.lstatSync(target)
+    if (stat.isSymbolicLink()) fs.unlinkSync(target)
+    else fs.rmSync(target, { recursive: true, force: true })
+  } catch {}
 }
 
 /** Resolves parent directories through symlinks. */

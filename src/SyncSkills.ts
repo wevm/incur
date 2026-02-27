@@ -58,9 +58,19 @@ export async function sync(
 
     const { paths, agents } = Agents.install(tmpDir, { global, cwd })
 
-    // Write skills hash for staleness detection
+    // Remove stale skills from previous installs
+    const currentNames = new Set(paths.map((p) => path.basename(p)))
+    const prev = readMeta(name)
+    if (prev?.skills) {
+      for (const old of prev.skills) {
+        if (currentNames.has(old)) continue
+        Agents.remove(old, { global, cwd })
+      }
+    }
+
+    // Write skills hash + names for staleness detection
     const hashEntries = collectEntries(commands, [])
-    writeHash(name, Skill.hash(hashEntries))
+    writeMeta(name, Skill.hash(hashEntries), [...currentNames])
 
     return { skills, paths, agents }
   } finally {
@@ -158,20 +168,27 @@ function hashPath(name: string): string {
   return path.join(dir, 'incur', `${name}.json`)
 }
 
-/** @internal Writes the skills hash for staleness detection. */
-function writeHash(name: string, hash: string) {
+/** @internal Writes the skills metadata for staleness detection and cleanup. */
+function writeMeta(name: string, hash: string, skills: string[]) {
   const file = hashPath(name)
   const dir = path.dirname(file)
   if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true })
-  fsSync.writeFileSync(file, JSON.stringify({ hash, at: new Date().toISOString() }) + '\n')
+  fsSync.writeFileSync(
+    file,
+    JSON.stringify({ hash, skills, at: new Date().toISOString() }) + '\n',
+  )
+}
+
+/** @internal Reads the stored metadata for a CLI. */
+function readMeta(name: string): { hash: string; skills?: string[] } | undefined {
+  try {
+    return JSON.parse(fsSync.readFileSync(hashPath(name), 'utf-8'))
+  } catch {
+    return undefined
+  }
 }
 
 /** Reads the stored skills hash for a CLI. Returns `undefined` if no hash exists. */
 export function readHash(name: string): string | undefined {
-  try {
-    const data = JSON.parse(fsSync.readFileSync(hashPath(name), 'utf-8'))
-    return data.hash
-  } catch {
-    return undefined
-  }
+  return readMeta(name)?.hash
 }
