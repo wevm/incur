@@ -59,8 +59,8 @@ export async function sync(
     const { paths, agents } = Agents.install(tmpDir, { global, cwd })
 
     // Write skills hash for staleness detection
-    const entries = collectEntries(commands, [])
-    writeHash(name, Skill.hash(entries))
+    const hashEntries = collectEntries(commands, [])
+    writeHash(name, Skill.hash(hashEntries))
 
     return { skills, paths, agents }
   } finally {

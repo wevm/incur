@@ -81,7 +81,9 @@ export function install(
     // Copy to canonical location
     fs.rmSync(canonicalDir, { recursive: true, force: true })
     fs.mkdirSync(canonicalDir, { recursive: true })
-    fs.cpSync(skill.dir, canonicalDir, { recursive: true })
+    if (skill.root)
+      fs.copyFileSync(path.join(skill.dir, 'SKILL.md'), path.join(canonicalDir, 'SKILL.md'))
+    else fs.cpSync(skill.dir, canonicalDir, { recursive: true })
     paths.push(canonicalDir)
 
     // Create symlinks for non-universal agents
@@ -140,35 +142,52 @@ export declare namespace install {
   }
 }
 
-/** Discovers skill directories within a source directory. */
-function discoverSkills(dir: string): { name: string; dir: string }[] {
-  const results: { name: string; dir: string }[] = []
+/** Recursively discovers skill directories (those containing a `SKILL.md`). */
+function discoverSkills(rootDir: string): { name: string; dir: string; root?: boolean }[] {
+  const results: { name: string; dir: string; root?: boolean }[] = []
 
-  let entries: fs.Dirent[] = []
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return results
+  function visit(dir: string) {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const subDir = path.join(dir, entry.name)
+      const skillPath = path.join(subDir, 'SKILL.md')
+      if (fs.existsSync(skillPath)) {
+        const content = fs.readFileSync(skillPath, 'utf8')
+        const nameMatch = content.match(/^name:\s*(.+)$/m)
+        results.push({ name: sanitizeName(nameMatch?.[1] ?? entry.name), dir: subDir })
+      }
+      visit(subDir)
+    }
   }
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    const subDir = path.join(dir, entry.name)
-    const skillPath = path.join(subDir, 'SKILL.md')
-    if (!fs.existsSync(skillPath)) continue
-    const content = fs.readFileSync(skillPath, 'utf8')
-    const nameMatch = content.match(/^name:\s*(.+)$/m)
-    results.push({ name: nameMatch?.[1] ?? entry.name, dir: subDir })
-  }
+  visit(rootDir)
 
-  // Root-level SKILL.md (depth 0 / single skill)
-  if (results.length === 0 && fs.existsSync(path.join(dir, 'SKILL.md'))) {
-    const content = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
+  // Root-level SKILL.md (e.g. depth=0)
+  const rootSkill = path.join(rootDir, 'SKILL.md')
+  if (fs.existsSync(rootSkill)) {
+    const content = fs.readFileSync(rootSkill, 'utf8')
     const nameMatch = content.match(/^name:\s*(.+)$/m)
-    results.push({ name: nameMatch?.[1] ?? 'skill', dir })
+    const name = sanitizeName(nameMatch?.[1] ?? 'skill')
+    if (!results.some((r) => r.name === name))
+      results.push({ name, dir: rootDir, root: true })
   }
 
   return results
+}
+
+/** Sanitizes a skill name for use as a directory name. */
+function sanitizeName(name: string): string {
+  return name
+    .trim()
+    .replace(/[/\\]/g, '-')
+    .replace(/\.\./g, '')
+    .slice(0, 255)
 }
 
 /** Resolves parent directories through symlinks. */
@@ -176,11 +195,10 @@ function resolveParent(dir: string): string {
   try {
     return fs.realpathSync(dir)
   } catch {
-    // Parent may not exist yet — resolve what we can
     const parent = path.dirname(dir)
     if (parent === dir) return dir
     try {
-      return path.join(fs.realpathSync(parent), dir.slice(parent.length))
+      return path.join(fs.realpathSync(parent), path.relative(parent, dir))
     } catch {
       return dir
     }

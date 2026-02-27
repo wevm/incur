@@ -376,7 +376,12 @@ async function serveImpl(
     }
     const rest = filtered.slice(skillsIdx + 2)
     const depthArg = rest.indexOf('--depth')
-    const depth = depthArg !== -1 ? Number(rest[depthArg + 1]) : (options.sync?.depth ?? 1)
+    const depthEq = rest.find((t) => t.startsWith('--depth='))
+    const depth = depthArg !== -1
+      ? Number(rest[depthArg + 1])
+      : depthEq
+        ? Number(depthEq.split('=')[1])
+        : (options.sync?.depth ?? 1)
     const global = rest.includes('--no-global') ? false : undefined
     try {
       if (human) stdout('Syncing...')
