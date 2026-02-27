@@ -1,5 +1,12 @@
 # incur
 
+## 0.1.5
+
+### Patch Changes
+
+- b334523: Added automatic cleanup of stale skills when commands are removed or depth changes.
+  Fixed broken symlinks not being removed on Node v24.
+
 ## 0.1.4
 
 ### Patch Changes
