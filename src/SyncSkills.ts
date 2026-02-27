@@ -1,14 +1,13 @@
-import { execFile } from 'node:child_process'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { formatExamples } from './Cli.js'
-import { detectRunner } from './internal/pm.js'
+import * as Agents from './internal/agents.js'
 import * as Skill from './Skill.js'
 
-/** Generates skill files from a command map and installs them via `skills add`. */
+/** Generates skill files from a command map and installs them natively. */
 export async function sync(
   name: string,
   commands: Map<string, any>,
@@ -57,28 +56,13 @@ export async function sync(
       }
     }
 
-    const runner = options.runner ?? detectRunner()
-    const [cmd, ...prefix] = runner.split(' ')
-    const flags = ['--yes', ...(global ? ['--global'] : [])]
-    const { stdout } = await exec(cmd!, [...prefix, 'skills', 'add', tmpDir, ...flags])
-
-    // Extract installed paths from `skills add` output (lines like "✓ ~/path/to/skill")
-    const paths = stdout
-      .split('\n')
-      .filter((l) => l.includes('✓'))
-      .map((l) =>
-        l
-          .replace(/.*✓\s*/, '')
-          .replace(/[│┃|]/g, '')
-          .trim(),
-      )
-      .filter(Boolean)
+    const { paths, agents } = Agents.install(tmpDir, { global, cwd })
 
     // Write skills hash for staleness detection
     const entries = collectEntries(commands, [])
     writeHash(name, Skill.hash(entries))
 
-    return { skills, paths }
+    return { skills, paths, agents }
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true })
   }
@@ -97,12 +81,12 @@ export declare namespace sync {
     global?: boolean | undefined
     /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). Skill name is the parent directory name. */
     include?: string[] | undefined
-    /** Override the package manager runner (e.g. `npx`, `pnpx`, `bunx`). Auto-detected if omitted. */
-    runner?: string | undefined
   }
   /** Result of a sync operation. */
   type Result = {
-    /** Installed paths reported by `skills add`. */
+    /** Per-agent install details (non-universal agents only). */
+    agents: import('./internal/agents.js').install.AgentInstall[]
+    /** Canonical install paths. */
     paths: string[]
     /** Synced skills with metadata. */
     skills: Skill[]
@@ -190,16 +174,4 @@ export function readHash(name: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-/** Promisified execFile with stderr in error message. */
-function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, (error, stdout, stderr) => {
-      if (error) {
-        const msg = stderr?.trim() || stdout?.trim() || error.message
-        reject(new Error(msg))
-      } else resolve({ stdout, stderr })
-    })
-  })
 }

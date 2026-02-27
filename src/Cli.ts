@@ -411,8 +411,11 @@ async function serveImpl(
         lines.push('')
         lines.push(`Run \`${name} --help\` to see the full command reference.`)
         writeln(lines.join('\n'))
-      } else
-        writeln(Formatter.format({ skills: result.paths }, formatExplicit ? formatFlag : 'toon'))
+      } else {
+        const output: Record<string, unknown> = { skills: result.paths }
+        if (verbose && result.agents.length > 0) output.agents = result.agents
+        writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
+      }
     } catch (err) {
       writeln(
         Formatter.format(

@@ -1,21 +1,11 @@
 import { Cli, SyncSkills } from 'incur'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
-let mockExecError: Error | null = null
-
-vi.mock('node:child_process', () => ({
-  execFile: (_cmd: string, _args: string[], cb: Function) => {
-    if (mockExecError) cb(mockExecError, '', '')
-    else cb(null, '', '')
-  },
-}))
 
 let savedXdg: string | undefined
 
 beforeEach(() => {
-  mockExecError = null
   savedXdg = process.env.XDG_DATA_HOME
 })
 
@@ -24,44 +14,59 @@ afterEach(() => {
   else process.env.XDG_DATA_HOME = savedXdg
 })
 
-test('generates skill files to temp dir and calls runner', async () => {
+test('generates skill files and installs to canonical location', async () => {
+  const tmp = join(tmpdir(), `clac-sync-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
   const cli = Cli.create('test', { description: 'A test CLI' })
   cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
   cli.command('greet', { description: 'Say hello', run: () => ({ hi: true }) })
 
   const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
   const result = await SyncSkills.sync('test', commands, {
     description: 'A test CLI',
-    runner: 'npx',
+    // Use a fake home dir so we don't pollute the real one
+    global: false,
+    cwd: installDir,
   })
 
   expect(result.skills.length).toBeGreaterThan(0)
   expect(result.skills.map((s) => s.name)).toContain('greet')
   expect(result.skills.map((s) => s.name)).toContain('ping')
+
+  // Verify skills were installed to canonical location
+  for (const p of result.paths) {
+    expect(existsSync(join(p, 'SKILL.md'))).toBe(true)
+  }
+
+  rmSync(tmp, { recursive: true, force: true })
 })
 
 test('uses custom depth', async () => {
+  const tmp = join(tmpdir(), `clac-depth-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
   const cli = Cli.create('test')
   cli.command('ping', { description: 'Ping', run: () => ({}) })
   cli.command('pong', { description: 'Pong', run: () => ({}) })
 
   const commands = Cli.toCommands.get(cli)!
-  const result = await SyncSkills.sync('test', commands, { depth: 0, runner: 'npx' })
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const result = await SyncSkills.sync('test', commands, {
+    depth: 0,
+    global: false,
+    cwd: installDir,
+  })
 
   // depth 0 = single skill
   expect(result.skills).toHaveLength(1)
-})
 
-test('propagates runner errors', async () => {
-  mockExecError = new Error('skills not found')
-
-  const cli = Cli.create('test')
-  cli.command('ping', { run: () => ({}) })
-
-  const commands = Cli.toCommands.get(cli)!
-  await expect(SyncSkills.sync('test', commands, { runner: 'npx' })).rejects.toThrow(
-    'skills not found',
-  )
+  rmSync(tmp, { recursive: true, force: true })
 })
 
 test('writes hash after successful sync', async () => {
@@ -73,7 +78,13 @@ test('writes hash after successful sync', async () => {
   cli.command('ping', { description: 'Health check', run: () => ({}) })
 
   const commands = Cli.toCommands.get(cli)!
-  await SyncSkills.sync('hash-test', commands, { runner: 'npx' })
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  await SyncSkills.sync('hash-test', commands, {
+    global: false,
+    cwd: installDir,
+  })
 
   const stored = SyncSkills.readHash('hash-test')
   expect(stored).toMatch(/^[0-9a-f]{16}$/)
@@ -87,6 +98,30 @@ test('readHash returns undefined when no hash exists', () => {
   process.env.XDG_DATA_HOME = tmp
 
   expect(SyncSkills.readHash('nonexistent')).toBeUndefined()
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('installed SKILL.md contains frontmatter', async () => {
+  const tmp = join(tmpdir(), `clac-content-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('my-tool', { description: 'A useful tool' })
+  cli.command('run', { description: 'Run something', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const result = await SyncSkills.sync('my-tool', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  const skillPath = result.paths[0]!
+  const content = readFileSync(join(skillPath, 'SKILL.md'), 'utf8')
+  expect(content).toContain('name:')
+  expect(content).toContain('description:')
 
   rmSync(tmp, { recursive: true, force: true })
 })
