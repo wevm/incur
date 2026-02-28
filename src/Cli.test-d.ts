@@ -186,5 +186,53 @@ test('middleware<typeof cli.vars>() infers vars types', () => {
 test('middleware() without generic gives empty context', () => {
   middleware((c, _next) => {
     expectTypeOf(c.var).toEqualTypeOf<{}>()
+    expectTypeOf(c.env).toEqualTypeOf<{}>()
+  })
+})
+
+test('env is typed in middleware via .use()', () => {
+  Cli.create('test', {
+    env: z.object({
+      API_TOKEN: z.string(),
+      API_URL: z.string().default('https://api.example.com'),
+    }),
+  }).use((c, _next) => {
+    expectTypeOf(c.env.API_TOKEN).toEqualTypeOf<string>()
+    expectTypeOf(c.env.API_URL).toEqualTypeOf<string>()
+  })
+})
+
+test('without env, c.env is empty object in middleware', () => {
+  Cli.create('test').use((c, _next) => {
+    expectTypeOf(c.env).toEqualTypeOf<{}>()
+  })
+})
+
+test('middleware<vars, env>() infers both vars and env types', () => {
+  const cli = Cli.create('test', {
+    env: z.object({ API_TOKEN: z.string() }),
+    vars: z.object({ user: z.string() }),
+  })
+
+  const mw = middleware<typeof cli.vars, typeof cli.env>((c, _next) => {
+    expectTypeOf(c.env.API_TOKEN).toEqualTypeOf<string>()
+    expectTypeOf(c.var.user).toEqualTypeOf<string>()
+    c.set('user', 'alice')
+  })
+
+  expectTypeOf(mw).toEqualTypeOf<MiddlewareHandler<typeof cli.vars, typeof cli.env>>()
+})
+
+test('env is typed in per-command middleware', () => {
+  Cli.create('test', {
+    env: z.object({ API_TOKEN: z.string() }),
+  }).command('deploy', {
+    middleware: [
+      (c, next) => {
+        expectTypeOf(c.env.API_TOKEN).toEqualTypeOf<string>()
+        return next()
+      },
+    ],
+    run: () => ({}),
   })
 })
