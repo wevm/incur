@@ -266,14 +266,17 @@ cli.command('list', {
   args: z.object({ state: z.enum(['open', 'closed']).default('open') }),
   run(c) {
     const items = [{ id: 1, title: 'Fix bug' }]
-    return c.ok({ items }, {
-      cta: {
-        commands: [
-          { command: 'get 1', description: 'View item' },
-          { command: 'list', args: { state: 'closed' }, description: 'View closed' },
-        ],
+    return c.ok(
+      { items },
+      {
+        cta: {
+          commands: [
+            { command: 'get 1', description: 'View item' },
+            { command: 'list', args: { state: 'closed' }, description: 'View closed' },
+          ],
+        },
       },
-    })
+    )
   },
 })
 ```
@@ -296,17 +299,19 @@ A small API means agents can build entire CLIs in a single pass without needing 
 import { Cli, z } from 'incur'
 
 // Define sub-command groups
-const db = Cli.create('db', { description: 'Database commands' })
-  .command('migrate', { description: 'Run migrations', run: () => ({ migrated: true }) })
+const db = Cli.create('db', { description: 'Database commands' }).command('migrate', {
+  description: 'Run migrations',
+  run: () => ({ migrated: true }),
+})
 
 // Create the root CLI
 Cli.create('tool', { description: 'A tool' })
   // Register commands
   .command('run', { description: 'Run a task', run: () => ({ ok: true }) })
   // Mount sub-command groups
-  .command(db)    
+  .command(db)
   // Serve the CLI
-  .serve()       
+  .serve()
 ```
 
 ```sh
@@ -425,11 +430,56 @@ cli.command('greet', {
     //     ^? (property) name: string
     c.options.loud
     //        ^? (property) loud: boolean
-    return c.ok({ message: `hello ${c.args.name}` }, {  
-    //            ^? (property) message: string
-      cta: { commands: ['greet world'] },
-    //                   ^? 'greet' | 'other-cmd'
-    })
+    return c.ok(
+      { message: `hello ${c.args.name}` },
+      {
+        //            ^? (property) message: string
+        cta: { commands: ['greet world'] },
+        //                   ^? 'greet' | 'other-cmd'
+      },
+    )
+  },
+})
+```
+
+### Output policy
+
+Control whether output data is displayed to humans. By default, output goes to everyone (`'all'`). Set `outputPolicy: 'agent-only'` to suppress data in TTY mode while still returning it to agents via `--json`, `--format`, or `--verbose`.
+
+```ts
+cli.command('deploy', {
+  outputPolicy: 'agent-only',
+  run() {
+    // Agents get the structured data; humans see nothing (or just CTAs/errors)
+    return { id: 'deploy-123', url: 'https://staging.example.com' }
+  },
+})
+```
+
+Set it on a group or root CLI to inherit across all children:
+
+```ts
+const internal = Cli.create('internal', {
+  description: 'Internal commands',
+  outputPolicy: 'agent-only',
+})
+internal.command('sync', { run: () => ({ synced: true }) }) // inherits agent-only
+internal.command('status', {
+  outputPolicy: 'all', // overrides to show output
+  run: () => ({ ok: true }),
+})
+```
+
+### Agent detection
+
+The `run` context includes an `agent` boolean — `true` when stdout is not a TTY (piped or consumed by an agent), `false` when running in a terminal. Use it to tailor behavior:
+
+```ts
+cli.command('deploy', {
+  args: z.object({ env: z.enum(['staging', 'production']) }),
+  run(c) {
+    if (!c.agent) console.log(`Deploying to ${c.args.env}...`)
+    return { url: `https://${c.args.env}.example.com` }
   },
 })
 ```

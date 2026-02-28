@@ -339,22 +339,35 @@ incur adapts output based on whether stdout is a TTY:
 | `--help`              | Pretty help text        | Same                 |
 | `--json` / `--format` | Overrides to structured | Same                 |
 
-## Structured Errors
+## Run Context
 
-### `ok()` and `error()` context helpers
+### `agent` boolean
+
+The `run` context includes `agent` — `true` when stdout is not a TTY (piped or consumed by an agent), `false` when running in a terminal:
+
+```ts
+cli.command('deploy', {
+  run(c) {
+    if (!c.agent) console.log('Deploying...')
+    return { status: 'ok' }
+  },
+})
+```
+
+### `ok()` and `error()` helpers
 
 Use the context helpers for explicit result control:
 
 ```ts
-run({ args, ok, error }) {
-  const item = await db.find(args.id)
+run(c) {
+  const item = await db.find(c.args.id)
   if (!item)
     return error({
       code: 'NOT_FOUND',
-      message: `Item ${args.id} not found`,
+      message: `Item ${c.args.id} not found`,
       retryable: false,
     })
-  return ok(item)
+  return c.ok(item)
 }
 ```
 
@@ -363,9 +376,9 @@ run({ args, ok, error }) {
 Suggest next commands to guide agents on success:
 
 ```ts
-run({ args, ok }) {
-  const result = { id: 42, name: args.name }
-  return ok(result, {
+run(c) {
+  const result = { id: 42, name: c.args.name }
+  return c.ok(result, {
     cta: {
       description: 'Suggested commands:',
       commands: [
@@ -380,10 +393,10 @@ run({ args, ok }) {
 Or on errors, to help agents self-correct:
 
 ```ts
-run({ args, error }) {
+run(c) {
   const token = process.env.GH_TOKEN
   if (!token)
-    return error({
+    return c.error({
       code: 'NOT_AUTHENTICATED',
       message: 'GitHub token not found',
       retryable: true,
@@ -553,6 +566,27 @@ cli.command('publish', {
 ```
 
 Hints are displayed after examples in help output and included in skill files.
+
+### Output policy
+
+Control whether output data is displayed to TTY consumers. `'all'` (default) shows output to everyone. `'agent-only'` suppresses data in human/TTY mode while still returning it via `--json`, `--format`, or `--verbose`.
+
+```ts
+cli.command('deploy', {
+  outputPolicy: 'agent-only',
+  run() {
+    return { id: 'deploy-123', url: 'https://staging.example.com' }
+  },
+})
+```
+
+Set on a group or root CLI to inherit across children. Children can override:
+
+```ts
+const sub = Cli.create('internal', { outputPolicy: 'agent-only' })
+sub.command('sync', { run: () => ({ synced: true }) }) // inherits agent-only
+sub.command('status', { outputPolicy: 'all', run: () => ({}) }) // overrides
+```
 
 ## Serving
 

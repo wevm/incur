@@ -2,6 +2,14 @@ import { Cli, Errors, Skill, Typegen, z } from 'incur'
 
 let __mockSkillsHash: string | undefined
 
+const originalIsTTY = process.stdout.isTTY
+beforeAll(() => {
+  ;(process.stdout as any).isTTY = false
+})
+afterAll(() => {
+  ;(process.stdout as any).isTTY = originalIsTTY
+})
+
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
   return { ...actual, readHash: () => __mockSkillsHash }
@@ -57,6 +65,18 @@ describe('routing', () => {
     const { output, exitCode } = await serve(createApp(), ['nonexistent'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
+      "code: COMMAND_NOT_FOUND
+      message: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
+      "
+    `)
+  })
+
+  test('unknown top-level command shows human error in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const { output, exitCode } = await serve(createApp(), ['nonexistent'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
       "Error: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
       "
     `)
@@ -66,7 +86,8 @@ describe('routing', () => {
     const { output, exitCode } = await serve(createApp(), ['auth', 'whoami'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "Error: 'whoami' is not a command. See 'app auth --help' for a list of available commands.
+      "code: COMMAND_NOT_FOUND
+      message: 'whoami' is not a command. See 'app auth --help' for a list of available commands.
       "
     `)
   })
@@ -75,7 +96,8 @@ describe('routing', () => {
     const { output, exitCode } = await serve(createApp(), ['project', 'deploy', 'nope'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "Error: 'nope' is not a command. See 'app project deploy --help' for a list of available commands.
+      "code: COMMAND_NOT_FOUND
+      message: 'nope' is not a command. See 'app project deploy --help' for a list of available commands.
       "
     `)
   })
@@ -163,11 +185,31 @@ describe('args and options', () => {
   test('missing required arg fails validation', async () => {
     const { output, exitCode } = await serve(createApp(), ['project', 'get'])
     expect(exitCode).toBe(1)
+    expect(output).toContain('VALIDATION_ERROR')
+  })
+
+  test('missing required arg shows human error in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const { output, exitCode } = await serve(createApp(), ['project', 'get'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
     expect(output).toContain('Error: missing required argument <id>')
   })
 
   test('unknown flag returns error', async () => {
     const { output, exitCode } = await serve(createApp(), ['ping', '--unknown-flag'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: "Unknown flag: --unknown-flag"
+      "
+    `)
+  })
+
+  test('unknown flag shows human error in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const { output, exitCode } = await serve(createApp(), ['ping', '--unknown-flag'])
+    ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "Error: Unknown flag: --unknown-flag
@@ -348,8 +390,20 @@ describe('undefined output', () => {
 })
 
 describe('error handling', () => {
-  test('thrown Error shows human-readable message', async () => {
+  test('thrown Error shows structured error', async () => {
     const { output, exitCode } = await serve(createApp(), ['explode'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: kaboom
+      "
+    `)
+  })
+
+  test('thrown Error shows human error in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const { output, exitCode } = await serve(createApp(), ['explode'])
+    ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "Error: kaboom

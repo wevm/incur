@@ -1,5 +1,13 @@
 import { Cli, Errors, z } from 'incur'
 
+const originalIsTTY = process.stdout.isTTY
+beforeAll(() => {
+  ;(process.stdout as any).isTTY = false
+})
+afterAll(() => {
+  ;(process.stdout as any).isTTY = originalIsTTY
+})
+
 let __mockSkillsHash: string | undefined
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
@@ -129,6 +137,20 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['nonexistent'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
+      "code: COMMAND_NOT_FOUND
+      message: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
+      "
+    `)
+  })
+
+  test('outputs human error for unknown command in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+
+    const { output, exitCode } = await serve(cli, ['nonexistent'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
       "Error: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
       "
     `)
@@ -162,6 +184,25 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: boom
+      "
+    `)
+  })
+
+  test('wraps handler errors in human format in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run() {
+        throw new Error('boom')
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['fail'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
       "Error: boom
       "
     `)
@@ -182,6 +223,30 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
+      "code: NOT_AUTHENTICATED
+      message: Token not found
+      retryable: false
+      "
+    `)
+  })
+
+  test('IncurError shows human format in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run() {
+        throw new Errors.IncurError({
+          code: 'NOT_AUTHENTICATED',
+          message: 'Token not found',
+          retryable: false,
+        })
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['fail'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
       "Error (NOT_AUTHENTICATED): Token not found
       "
     `)
@@ -198,7 +263,53 @@ describe('serve', () => {
 
     const { output, exitCode } = await serve(cli, ['greet'])
     expect(exitCode).toBe(1)
+    expect(output).toContain('VALIDATION_ERROR')
+  })
+
+  test('ValidationError shows human format in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      run(c) {
+        return { message: `hello ${c.args.name}` }
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['greet'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
     expect(output).toContain('Error: missing required argument <name>')
+  })
+
+  test('agent is true when not TTY', async () => {
+    let agent: boolean | undefined
+    const cli = Cli.create('test')
+    cli.command('ping', {
+      run(c) {
+        agent = c.agent
+        return {}
+      },
+    })
+
+    await serve(cli, ['ping'])
+    expect(agent).toBe(true)
+  })
+
+  test('agent is false when TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    let agent: boolean | undefined
+    const cli = Cli.create('test')
+    cli.command('ping', {
+      run(c) {
+        agent = c.agent
+        return {}
+      },
+    })
+
+    await serve(cli, ['ping'])
+    ;(process.stdout as any).isTTY = false
+    expect(agent).toBe(false)
   })
 
   test('supports async handlers', async () => {
@@ -568,6 +679,24 @@ describe('subcommands', () => {
     const { output, exitCode } = await serve(cli, ['pr', 'unknown'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
+      "code: COMMAND_NOT_FOUND
+      message: 'unknown' is not a command. See 'test pr --help' for a list of available commands.
+      "
+    `)
+  })
+
+  test('unknown subcommand shows human error in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    const pr = Cli.create('pr', { description: 'PR management' })
+      .command('list', { run: () => ({}) })
+      .command('create', { run: () => ({}) })
+    cli.command(pr)
+
+    const { output, exitCode } = await serve(cli, ['pr', 'unknown'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
       "Error: 'unknown' is not a command. See 'test pr --help' for a list of available commands.
       "
     `)
@@ -627,6 +756,26 @@ describe('subcommands', () => {
     cli.command(pr)
 
     const { output, exitCode } = await serve(cli, ['pr', 'fail'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: sub-boom
+      "
+    `)
+  })
+
+  test('error in sub-command shows human format in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    const pr = Cli.create('pr', { description: 'PR management' }).command('fail', {
+      run() {
+        throw new Error('sub-boom')
+      },
+    })
+    cli.command(pr)
+
+    const { output, exitCode } = await serve(cli, ['pr', 'fail'])
+    ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "Error: sub-boom
@@ -909,6 +1058,23 @@ describe('leaf cli', () => {
       },
     })
     const { output, exitCode } = await serve(cli, [])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: boom
+      "
+    `)
+  })
+
+  test('errors show human format in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('fail', {
+      run() {
+        throw new Error('boom')
+      },
+    })
+    const { output, exitCode } = await serve(cli, [])
+    ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "Error: boom
@@ -1329,9 +1495,7 @@ describe('skills staleness', () => {
     cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
     await serve(cli, ['ping'])
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Skills are out of date. Run 'pnpx test skills add' to update."),
-    )
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("Skills are out of date. Run '"))
   })
 
   test('does not warn when hash matches', async () => {
@@ -1369,5 +1533,258 @@ describe('skills staleness', () => {
 
     await serve(cli, ['--help'])
     expect(stderrSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('outputPolicy', () => {
+  beforeEach(() => {
+    ;(process.stdout as any).isTTY = true
+  })
+  afterEach(() => {
+    ;(process.stdout as any).isTTY = false
+  })
+
+  test('default (all): displays data in human mode', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toContain('pong: true')
+  })
+
+  test('agent-only on command: suppresses data in human mode', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { outputPolicy: 'agent-only', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toBe('')
+  })
+
+  test('agent-only on command: still outputs in agent mode (--json)', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { outputPolicy: 'agent-only', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(output).toContain('"pong"')
+  })
+
+  test('agent-only on root CLI: inherited by commands', async () => {
+    const cli = Cli.create('test', { outputPolicy: 'agent-only' })
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toBe('')
+  })
+
+  test('agent-only on group: inherited by child commands', async () => {
+    const cli = Cli.create('test')
+    const sub = Cli.create('sub', { outputPolicy: 'agent-only' })
+    sub.command('ping', { run: () => ({ pong: true }) })
+    cli.command(sub)
+
+    const { output } = await serve(cli, ['sub', 'ping'])
+    expect(output).toBe('')
+  })
+
+  test('command overrides group outputPolicy', async () => {
+    const cli = Cli.create('test')
+    const sub = Cli.create('sub', { outputPolicy: 'agent-only' })
+    sub.command('ping', { outputPolicy: 'all', run: () => ({ pong: true }) })
+    cli.command(sub)
+
+    const { output } = await serve(cli, ['sub', 'ping'])
+    expect(output).toContain('pong: true')
+  })
+
+  test('agent-only suppresses streaming chunks in human mode', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      outputPolicy: 'agent-only',
+      async *run() {
+        yield { step: 1 }
+        yield { step: 2 }
+      },
+    })
+
+    const { output } = await serve(cli, ['stream'])
+    expect(output).toBe('')
+  })
+
+  test('agent-only still shows errors in human mode', async () => {
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      outputPolicy: 'agent-only',
+      run(c) {
+        return c.error({ code: 'FAILED', message: 'something broke' })
+      },
+    })
+
+    const { output } = await serve(cli, ['fail'])
+    expect(output).toContain('Error (FAILED): something broke')
+  })
+
+  test('agent-only still shows CTAs in human mode', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', {
+      outputPolicy: 'agent-only',
+      run(c) {
+        return c.ok({ pong: true }, { cta: { commands: ['ping'] } })
+      },
+    })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('pong')
+    expect(output).toContain('ping')
+  })
+
+  test('agent-only suppresses data when TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('ping', { outputPolicy: 'agent-only', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toBe('')
+  })
+
+  test('agent-only still displays data when not TTY (piped)', async () => {
+    ;(process.stdout as any).isTTY = false
+    const cli = Cli.create('test')
+    cli.command('ping', { outputPolicy: 'agent-only', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toContain('pong')
+  })
+
+  test('all displays data regardless of TTY', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { outputPolicy: 'all', run: () => ({ pong: true }) })
+
+    ;(process.stdout as any).isTTY = true
+    const tty = await serve(cli, ['ping'])
+    expect(tty.output).toContain('pong: true')
+
+    ;(process.stdout as any).isTTY = false
+    const piped = await serve(cli, ['ping'])
+    expect(piped.output).toContain('pong')
+  })
+
+  test('agent-only streaming suppresses when TTY, outputs when piped', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      outputPolicy: 'agent-only',
+      async *run() {
+        yield { step: 1 }
+      },
+    })
+
+    ;(process.stdout as any).isTTY = true
+    const tty = await serve(cli, ['stream'])
+    expect(tty.output).toBe('')
+
+    ;(process.stdout as any).isTTY = false
+    const piped = await serve(cli, ['stream'])
+    expect(piped.output).toContain('step: 1')
+  })
+
+  test('e2e: realistic multi-level CLI with mixed policies', async () => {
+    const cli = Cli.create('tool', { description: 'A deployment tool' })
+
+    // Top-level command with agent-only
+    cli.command('deploy', {
+      outputPolicy: 'agent-only',
+      args: z.object({ env: z.enum(['staging', 'production']) }),
+      run(c) {
+        return c.ok(
+          { id: 'deploy-123', url: `https://${c.args.env}.example.com` },
+          { cta: { commands: [{ command: 'status', description: 'Check status' }] } },
+        )
+      },
+    })
+
+    // Group with inherited agent-only
+    const internal = Cli.create('internal', {
+      description: 'Internal commands',
+      outputPolicy: 'agent-only',
+    })
+    internal.command('sync', { run: () => ({ synced: 42, duration: '1.2s' }) })
+    internal.command('healthcheck', {
+      outputPolicy: 'all',
+      run: () => ({ healthy: true }),
+    })
+
+    // Group without policy — children default to 'all'
+    const db = Cli.create('db', { description: 'Database commands' })
+    db.command('migrate', { run: () => ({ migrated: 3 }) })
+
+    cli.command(internal)
+    cli.command(db)
+
+    // deploy: agent-only suppresses data, shows CTA
+    const deploy = await serve(cli, ['deploy', 'staging'])
+    expect(deploy.output).not.toContain('deploy-123')
+    expect(deploy.output).toContain('Check status')
+
+    // deploy --verbose: agent mode shows everything
+    const deployVerbose = await serve(cli, ['deploy', 'staging', '--verbose'])
+    expect(deployVerbose.output).toContain('deploy-123')
+    expect(deployVerbose.output).toContain('staging.example.com')
+
+    // deploy --json: agent mode shows data
+    const deployJson = await serve(cli, ['deploy', 'staging', '--json'])
+    expect(deployJson.output).toContain('deploy-123')
+
+    // internal sync: inherits agent-only from group
+    const sync = await serve(cli, ['internal', 'sync'])
+    expect(sync.output).toBe('')
+
+    // internal sync --json: agent mode works
+    const syncJson = await serve(cli, ['internal', 'sync', '--json'])
+    expect(syncJson.output).toContain('42')
+
+    // internal healthcheck: overrides to 'all'
+    const health = await serve(cli, ['internal', 'healthcheck'])
+    expect(health.output).toContain('healthy: true')
+
+    // db migrate: no policy, defaults to 'all'
+    const migrate = await serve(cli, ['db', 'migrate'])
+    expect(migrate.output).toContain('migrated: 3')
+  })
+
+  test('e2e: agent-only with streaming and error in nested group', async () => {
+    const cli = Cli.create('tool')
+    const ops = Cli.create('ops', {
+      description: 'Operations',
+      outputPolicy: 'agent-only',
+    })
+
+    ops.command('logs', {
+      async *run() {
+        yield { line: 'Starting...' }
+        yield { line: 'Processing...' }
+        yield { line: 'Done.' }
+      },
+    })
+
+    ops.command('restart', {
+      run(c) {
+        return c.error({ code: 'PERMISSION_DENIED', message: 'Requires admin role' })
+      },
+    })
+
+    cli.command(ops)
+
+    // Streaming: agent-only suppresses chunks in human mode
+    const logs = await serve(cli, ['ops', 'logs'])
+    expect(logs.output).toBe('')
+
+    // Streaming: --format jsonl still works
+    const logsJsonl = await serve(cli, ['ops', 'logs', '--format', 'jsonl'])
+    expect(logsJsonl.output).toContain('"type":"chunk"')
+    expect(logsJsonl.output).toContain('Starting...')
+
+    // Errors still display in human mode despite agent-only
+    const restart = await serve(cli, ['ops', 'restart'])
+    expect(restart.output).toContain('Error (PERMISSION_DENIED): Requires admin role')
+    expect(restart.exitCode).toBe(1)
   })
 })

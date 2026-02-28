@@ -128,7 +128,9 @@ export function create<
   const output extends z.ZodType | undefined = undefined,
 >(
   definition: create.Options<args, env, opts, output> & { name: string; run: Function },
-): Cli<{ [key in (typeof definition)['name']]: { args: InferOutput<args>; options: InferOutput<opts> } }>
+): Cli<{
+  [key in (typeof definition)['name']]: { args: InferOutput<args>; options: InferOutput<opts> }
+}>
 /** Creates a router CLI from a single options object (e.g. package.json). */
 export function create<
   const args extends z.ZodObject<any> | undefined = undefined,
@@ -162,7 +164,13 @@ export function create(
       }
       const sub = nameOrCli as Cli
       const subCommands = toCommands.get(sub)!
-      commands.set(sub.name, { _group: true, description: sub.description, commands: subCommands })
+      const subOutputPolicy = toOutputPolicy.get(sub)
+      commands.set(sub.name, {
+        _group: true,
+        description: sub.description,
+        commands: subCommands,
+        ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
+      })
       return cli
     },
 
@@ -172,6 +180,7 @@ export function create(
         description: def.description,
         format: def.format,
         mcp: def.mcp,
+        outputPolicy: def.outputPolicy,
         rootCommand: rootDef,
         sync: def.sync,
         version: def.version,
@@ -180,6 +189,7 @@ export function create(
   }
 
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
+  if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
   toCommands.set(cli, commands)
   return cli
 }
@@ -210,25 +220,37 @@ export declare namespace create {
     options?: options | undefined
     /** Zod schema for the return value. */
     output?: output | undefined
+    /**
+     * Controls when output data is displayed. Inherited by child commands when set on a group or root CLI.
+     *
+     * - `'all'` — displays to both humans and agents.
+     * - `'agent-only'` — suppresses data output in human/TTY mode while still returning it to agents.
+     *
+     * @default 'all'
+     */
+    outputPolicy?: OutputPolicy | undefined
     /** Alternative usage patterns shown in help output. */
     usage?: Usage<args, options>[] | undefined
     /** The root command handler. When provided, creates a leaf CLI with no subcommands. */
     run?:
       | ((context: {
-          args: InferOutput<args>
-          /** Parsed environment variables. */
-          env: InferOutput<env>
-          /** Return an error result with optional CTAs. */
-          error: (options: {
-            code: string
-            cta?: CtaBlock | undefined
-            message: string
-            retryable?: boolean | undefined
-          }) => never
-          /** Return a success result with optional metadata (e.g. CTAs). */
-          ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
-          options: InferOutput<options>
-        }) =>
+         /** Whether the consumer is an agent (stdout is not a TTY). */
+         agent: boolean
+         /** Positional arguments. */
+         args: InferOutput<args>
+         /** Parsed environment variables. */
+         env: InferOutput<env>
+         /** Return an error result with optional CTAs. */
+         error: (options: {
+           code: string
+           cta?: CtaBlock | undefined
+           message: string
+           retryable?: boolean | undefined
+         }) => never
+         /** Return a success result with optional metadata (e.g. CTAs). */
+         ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
+         options: InferOutput<options>
+       }) =>
           | InferReturn<output>
           | Promise<InferReturn<output>>
           | AsyncGenerator<InferReturn<output>, unknown, unknown>)
@@ -300,8 +322,8 @@ async function serveImpl(
     return
   }
 
-  // Human mode: default unless --verbose or explicit --format/--json override
-  const human = !formatExplicit && !verbose
+  // Human mode: stdout is a TTY.
+  const human = process.stdout.isTTY === true
 
   function writeln(s: string) {
     stdout(s.endsWith('\n') ? s : `${s}\n`)
@@ -377,14 +399,15 @@ async function serveImpl(
     const rest = filtered.slice(skillsIdx + 2)
     const depthArg = rest.indexOf('--depth')
     const depthEq = rest.find((t) => t.startsWith('--depth='))
-    const depth = depthArg !== -1
-      ? Number(rest[depthArg + 1])
-      : depthEq
-        ? Number(depthEq.split('=')[1])
-        : (options.sync?.depth ?? 1)
+    const depth =
+      depthArg !== -1
+        ? Number(rest[depthArg + 1])
+        : depthEq
+          ? Number(depthEq.split('=')[1])
+          : (options.sync?.depth ?? 1)
     const global = rest.includes('--no-global') ? false : undefined
     try {
-      if (human) stdout('Syncing...')
+      stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
         cwd: options.sync?.cwd,
         depth,
@@ -392,31 +415,30 @@ async function serveImpl(
         global,
         include: options.sync?.include,
       })
-      if (human) {
-        stdout('\r\x1b[K')
-        const lines: string[] = []
-        const skillLabel = (s: (typeof result.skills)[number]) =>
-          s.external || s.name === name ? s.name : `${name}-${s.name}`
-        const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
-        for (const s of result.skills) {
-          const label = skillLabel(s)
-          const padding = s.description
-            ? `${' '.repeat(maxLen - label.length)}  ${s.description}`
-            : ''
-          lines.push(`  ✓ ${label}${padding}`)
-        }
+      stdout('\r\x1b[K')
+      const lines: string[] = []
+      const skillLabel = (s: (typeof result.skills)[number]) =>
+        s.external || s.name === name ? s.name : `${name}-${s.name}`
+      const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
+      for (const s of result.skills) {
+        const label = skillLabel(s)
+        const padding = s.description
+          ? `${' '.repeat(maxLen - label.length)}  ${s.description}`
+          : ''
+        lines.push(`  ✓ ${label}${padding}`)
+      }
+      lines.push('')
+      lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`)
+      const suggestions = options.sync?.suggestions
+      if (suggestions && suggestions.length > 0) {
         lines.push('')
-        lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`)
-        const suggestions = options.sync?.suggestions
-        if (suggestions && suggestions.length > 0) {
-          lines.push('')
-          lines.push(`Your agent can now use ${name}. Try asking:`)
-          for (const s of suggestions) lines.push(`  "${s}"`)
-        }
-        lines.push('')
-        lines.push(`Run \`${name} --help\` to see the full command reference.`)
-        writeln(lines.join('\n'))
-      } else {
+        lines.push(`Your agent can now use ${name}. Try asking:`)
+        for (const s of suggestions) lines.push(`  "${s}"`)
+      }
+      lines.push('')
+      lines.push(`Run \`${name} --help\` to see the full command reference.`)
+      writeln(lines.join('\n'))
+      if (verbose || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
         if (verbose && result.agents.length > 0) output.agents = result.agents
         writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
@@ -463,27 +485,26 @@ async function serveImpl(
     }
 
     try {
-      if (human) stdout('Registering MCP server...')
+      stdout('Registering MCP server...')
       const result = await SyncMcp.register(name, {
         command,
         global,
         agents,
       })
-      if (human) {
-        stdout('\r\x1b[K')
-        const lines: string[] = []
-        lines.push(`✓ Registered ${name} as MCP server`)
-        if (result.agents.length > 0) lines.push(`  Agents: ${result.agents.join(', ')}`)
+      stdout('\r\x1b[K')
+      const lines: string[] = []
+      lines.push(`✓ Registered ${name} as MCP server`)
+      if (result.agents.length > 0) lines.push(`  Agents: ${result.agents.join(', ')}`)
+      lines.push('')
+      lines.push(`Agents can now use ${name} tools.`)
+      const suggestions = options.sync?.suggestions
+      if (suggestions && suggestions.length > 0) {
         lines.push('')
-        lines.push(`Agents can now use ${name} tools.`)
-        const suggestions = options.sync?.suggestions
-        if (suggestions && suggestions.length > 0) {
-          lines.push('')
-          lines.push('Try asking:')
-          for (const s of suggestions) lines.push(`  "${s}"`)
-        }
-        writeln(lines.join('\n'))
-      } else
+        lines.push('Try asking:')
+        for (const s of suggestions) lines.push(`  "${s}"`)
+      }
+      writeln(lines.join('\n'))
+      if (verbose || formatExplicit)
         writeln(
           Formatter.format(
             { name, command: result.command, agents: result.agents },
@@ -526,7 +547,7 @@ async function serveImpl(
 
   const resolved =
     filtered.length === 0 && options.rootCommand
-      ? ({ command: options.rootCommand, path: name, rest: [] as string[] })
+      ? { command: options.rootCommand, path: name, rest: [] as string[] }
       : resolveCommand(commands, filtered)
 
   // --help after a command → show help for that command
@@ -607,10 +628,22 @@ async function serveImpl(
   const resolvedFormat = 'command' in resolved && resolved.command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
 
+  // Fall back to root command when no subcommand matches
+  const effective =
+    'error' in resolved && options.rootCommand
+      ? { command: options.rootCommand, path: name, rest: filtered }
+      : resolved
+
+  // Resolve outputPolicy: command/group → CLI-level → default ('all')
+  const effectiveOutputPolicy =
+    ('command' in resolved && resolved.outputPolicy) || options.outputPolicy
+  const renderOutput = !(human && !formatExplicit && effectiveOutputPolicy === 'agent-only')
+
   function write(output: Output) {
     const cta = output.meta.cta
-    if (human) {
-      if (output.ok && output.data != null) writeln(Formatter.format(output.data, format))
+    if (human && !verbose) {
+      if (output.ok && output.data != null && renderOutput)
+        writeln(Formatter.format(output.data, format))
       else if (!output.ok) writeln(formatHumanError(output.error))
       if (cta) writeln(formatHumanCta(cta))
       return
@@ -627,16 +660,10 @@ async function serveImpl(
     writeln(Formatter.format(payload, format))
   }
 
-  // Fall back to root command when no subcommand matches
-  const effective =
-    'error' in resolved && options.rootCommand
-      ? { command: options.rootCommand, path: name, rest: filtered }
-      : resolved
-
   if ('error' in effective) {
     const helpCmd = effective.path ? `${name} ${effective.path} --help` : `${name} --help`
     const message = `'${effective.error}' is not a command. See '${helpCmd}' for a list of available commands.`
-    if (human) {
+    if (human && !verbose) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
       exit(1)
       return
@@ -678,6 +705,7 @@ async function serveImpl(
     }
 
     const result = command.run({
+      agent: !human,
       args,
       env,
       options: parsedOptions,
@@ -694,6 +722,7 @@ async function serveImpl(
         format,
         formatExplicit,
         human,
+        renderOutput,
         verbose,
         write,
         writeln,
@@ -762,7 +791,7 @@ async function serveImpl(
       },
     }
 
-    if (human && error instanceof ValidationError) {
+    if (human && !formatExplicit && error instanceof ValidationError) {
       writeln(formatHumanValidationError(name, path, command, error))
       exit(1)
       return
@@ -804,7 +833,12 @@ function resolveCommand(
   commands: Map<string, CommandEntry>,
   tokens: string[],
 ):
-  | { command: CommandDefinition<any, any, any>; path: string; rest: string[] }
+  | {
+      command: CommandDefinition<any, any, any>
+      outputPolicy?: OutputPolicy | undefined
+      path: string
+      rest: string[]
+    }
   | {
       help: true
       path: string
@@ -819,8 +853,10 @@ function resolveCommand(
   let entry = commands.get(first)!
   const path = [first]
   let remaining = rest
+  let inheritedOutputPolicy: OutputPolicy | undefined
 
   while (isGroup(entry)) {
+    if (entry.outputPolicy) inheritedOutputPolicy = entry.outputPolicy
     const next = remaining[0]
     if (!next)
       return {
@@ -840,7 +876,13 @@ function resolveCommand(
     entry = child
   }
 
-  return { command: entry, path: path.join(' '), rest: remaining }
+  const outputPolicy = entry.outputPolicy ?? inheritedOutputPolicy
+  return {
+    command: entry,
+    path: path.join(' '),
+    rest: remaining,
+    ...(outputPolicy ? { outputPolicy } : undefined),
+  }
 }
 
 /** @internal Options for serveImpl, extending public serve.Options with internal metadata. */
@@ -849,6 +891,8 @@ declare namespace serveImpl {
     description?: string | undefined
     /** CLI-level default output format. */
     format?: Formatter.Format | undefined
+    /** CLI-level default output policy. */
+    outputPolicy?: OutputPolicy | undefined
     mcp?:
       | {
           agents?: string[] | undefined
@@ -921,10 +965,14 @@ export type CommandsMap = Record<
 /** @internal Entry stored in a command map — either a leaf definition or a group. */
 type CommandEntry = CommandDefinition<any, any, any> | InternalGroup
 
+/** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
+export type OutputPolicy = 'agent-only' | 'all'
+
 /** @internal A command group's internal storage. */
 type InternalGroup = {
   _group: true
   description?: string | undefined
+  outputPolicy?: OutputPolicy | undefined
   commands: Map<string, CommandEntry>
 }
 
@@ -938,6 +986,9 @@ export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
 /** @internal Maps root CLI instances to their command definitions. */
 const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
+
+/** @internal Maps CLI instances to their output policy. */
+const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
 
 /** @internal Sentinel symbol for `ok()` and `error()` return values. */
 const sentinel = Symbol.for('incur.sentinel')
@@ -1016,16 +1067,17 @@ async function handleStreaming(
     format: Formatter.Format
     formatExplicit: boolean
     human: boolean
+    renderOutput: boolean
     verbose: boolean
     write: (output: Output) => void
     writeln: (s: string) => void
     exit: (code: number) => void
   },
 ) {
-  // Incremental: human, no explicit format (default toon), or explicit jsonl
+  // Incremental: no explicit format (default toon), or explicit jsonl
   // Buffered: explicit json/yaml/toon/md
-  const useJsonl = !ctx.human && ctx.formatExplicit && ctx.format === 'jsonl'
-  const incremental = ctx.human || useJsonl || !ctx.formatExplicit
+  const useJsonl = ctx.formatExplicit && ctx.format === 'jsonl'
+  const incremental = useJsonl || !ctx.formatExplicit
 
   if (incremental) {
     // Incremental output: write each chunk as it arrives
@@ -1060,7 +1112,7 @@ async function handleStreaming(
           }
         }
         if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
-        else ctx.writeln(Formatter.format(value, 'toon'))
+        else if (ctx.renderOutput) ctx.writeln(Formatter.format(value, 'toon'))
       }
 
       // Handle return value — error() or ok() sentinel
@@ -1444,8 +1496,8 @@ type CommandDefinition<
 > = {
   /** Map of option names to single-char aliases. */
   alias?: options extends z.ZodObject<any>
-    ? Partial<Record<keyof z.output<options>, string>>
-    : Record<string, string> | undefined
+  ? Partial<Record<keyof z.output<options>, string>>
+  : Record<string, string> | undefined
   /** Zod schema for positional arguments. */
   args?: args | undefined
   /** A short description of what the command does. */
@@ -1462,10 +1514,22 @@ type CommandDefinition<
   options?: options | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
+  /**
+   * Controls when output data is displayed. Inherited by child commands when set on a group.
+   *
+   * - `'all'` — displays to both humans and agents.
+   * - `'agent-only'` — suppresses data output in human/TTY mode while still returning it to agents.
+   *
+   * @default 'all'
+   */
+  outputPolicy?: OutputPolicy | undefined
   /** Alternative usage patterns shown in help output. */
   usage?: Usage<args, options>[] | undefined
   /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
   run(context: {
+    /** Whether the consumer is an agent (stdout is not a TTY). */
+    agent: boolean
+    /** Positional arguments. */
     args: InferOutput<args>
     /** Parsed environment variables. */
     env: InferOutput<env>
