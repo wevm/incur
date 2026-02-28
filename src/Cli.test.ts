@@ -46,8 +46,8 @@ describe('command', () => {
     const cli = Cli.create('test')
     const result = cli.command('greet', {
       args: z.object({ name: z.string() }),
-      run({ args }) {
-        return { message: `hello ${args.name}` }
+      run(c) {
+        return { message: `hello ${c.args.name}` }
       },
     })
     expect(result).toBe(cli)
@@ -59,8 +59,8 @@ describe('serve', () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
-      run({ args }) {
-        return { message: `hello ${args.name}` }
+      run(c) {
+        return { message: `hello ${c.args.name}` }
       },
     })
 
@@ -75,8 +75,8 @@ describe('serve', () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
-      run({ args }) {
-        return { message: `hello ${args.name}` }
+      run(c) {
+        return { message: `hello ${c.args.name}` }
       },
     })
 
@@ -97,8 +97,8 @@ describe('serve', () => {
     let receivedArgs: any
     cli.command('add', {
       args: z.object({ a: z.string(), b: z.string() }),
-      run({ args }) {
-        receivedArgs = args
+      run(c) {
+        receivedArgs = c.args
         return {}
       },
     })
@@ -191,8 +191,8 @@ describe('serve', () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
-      run({ args }) {
-        return { message: `hello ${args.name}` }
+      run(c) {
+        return { message: `hello ${c.args.name}` }
       },
     })
 
@@ -653,8 +653,8 @@ describe('cta', () => {
   test('string shorthand for cta commands', async () => {
     const cli = Cli.create('test')
     cli.command('list', {
-      run({ ok }) {
-        return ok({ items: [] }, { cta: { commands: ['get 1', 'get 2'] } })
+      run(c) {
+        return c.ok({ items: [] }, { cta: { commands: ['get 1', 'get 2'] } })
       },
     })
 
@@ -669,8 +669,8 @@ describe('cta', () => {
   test('tuple shorthand with description', async () => {
     const cli = Cli.create('test')
     cli.command('list', {
-      run({ ok }) {
-        return ok(
+      run(c) {
+        return c.ok(
           { items: [] },
           {
             cta: { commands: [{ command: 'get 1', description: 'View item 1' }] },
@@ -689,8 +689,8 @@ describe('cta', () => {
   test('tuple form with args/options', async () => {
     const cli = Cli.create('test')
     cli.command('create', {
-      run({ ok }) {
-        return ok(
+      run(c) {
+        return c.ok(
           { id: 1 },
           {
             cta: {
@@ -718,8 +718,8 @@ describe('cta', () => {
   test('tuple form boolean args format as placeholders', async () => {
     const cli = Cli.create('test')
     cli.command('list', {
-      run({ ok }) {
-        return ok(
+      run(c) {
+        return c.ok(
           { items: [] },
           {
             cta: { commands: [{ command: 'get', args: { id: true }, options: { format: true } }] },
@@ -736,8 +736,8 @@ describe('cta', () => {
   test('custom cta description', async () => {
     const cli = Cli.create('test')
     cli.command('create', {
-      run({ ok }) {
-        return ok(
+      run(c) {
+        return c.ok(
           { id: 1 },
           {
             cta: { description: 'View the created item:', commands: ['get 1'] },
@@ -1172,8 +1172,8 @@ describe('env', () => {
       env: z.object({
         API_TOKEN: z.string().describe('Auth token'),
       }),
-      run({ env }) {
-        receivedEnv = env
+      run(c) {
+        receivedEnv = c.env
         return { ok: true }
       },
     })
@@ -1205,8 +1205,8 @@ describe('env', () => {
       env: z.object({
         API_URL: z.string().default('https://api.example.com').describe('API URL'),
       }),
-      run({ env }) {
-        receivedEnv = env
+      run(c) {
+        receivedEnv = c.env
         return { ok: true }
       },
     })
@@ -1300,8 +1300,8 @@ describe('env', () => {
         DEBUG: z.boolean().default(false).describe('Debug mode'),
         PORT: z.number().default(3000).describe('Port'),
       }),
-      run({ env }) {
-        receivedEnv = env
+      run(c) {
+        receivedEnv = c.env
         return { ok: true }
       },
     })

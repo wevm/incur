@@ -34,8 +34,8 @@ cli.command('install', {
     },
     { options: { global: true }, args: { package: 'tsx' }, description: 'Install globally' },
   ],
-  run({ args }) {
-    if (!args.package) return { added: 120, removed: 0, changed: 0, packages: 450 }
+  run(c) {
+    if (!c.args.package) return { added: 120, removed: 0, changed: 0, packages: 450 }
     return { added: 1, removed: 0, changed: 0, packages: 451 }
   },
 })
@@ -53,9 +53,9 @@ cli.command('info', {
     homepage: z.string(),
   }),
   examples: [{ args: { package: 'express' }, description: 'View info for express' }],
-  run({ args }) {
+  run(c) {
     return {
-      name: args.package,
+      name: c.args.package,
       version: '4.21.2',
       description: 'Fast, unopinionated, minimalist web framework',
       license: 'MIT',
@@ -102,8 +102,8 @@ cli.command('publish', {
     { options: { tag: 'beta' }, description: 'Publish as beta' },
     { options: { dryRun: true }, description: 'Dry run' },
   ],
-  run({ options }) {
-    return { name: 'my-package', version: '1.0.0', tag: options.tag }
+  run(c) {
+    return { name: 'my-package', version: '1.0.0', tag: c.options.tag }
   },
 })
 
@@ -120,8 +120,8 @@ cli.command('run', {
     { args: { script: 'test' }, description: 'Run tests' },
     { args: { script: 'build' }, description: 'Run build' },
   ],
-  run({ args }) {
-    return { script: args.script, exitCode: 0 }
+  run(c) {
+    return { script: c.args.script, exitCode: 0 }
   },
 })
 

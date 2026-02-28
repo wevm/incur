@@ -19,8 +19,8 @@ function createTestCommands() {
     options: z.object({
       upper: z.boolean().default(false).describe('Uppercase output'),
     }),
-    run({ args, options }: any) {
-      const msg = options.upper ? args.message.toUpperCase() : args.message
+    run(c: any) {
+      const msg = c.options.upper ? c.args.message.toUpperCase() : c.args.message
       return { result: msg }
     },
   })
@@ -34,8 +34,8 @@ function createTestCommands() {
         {
           description: 'Say hello',
           args: z.object({ name: z.string().describe('Name to greet') }),
-          run({ args }: any) {
-            return { greeting: `hello ${args.name}` }
+          run(c: any) {
+            return { greeting: `hello ${c.args.name}` }
           },
         },
       ],
@@ -44,8 +44,8 @@ function createTestCommands() {
 
   commands.set('fail', {
     description: 'Always fails',
-    run({ error }: any) {
-      return error({ code: 'BOOM', message: 'it broke' })
+    run(c: any) {
+      return c.error({ code: 'BOOM', message: 'it broke' })
     },
   })
 

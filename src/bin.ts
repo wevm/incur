@@ -19,10 +19,10 @@ const cli = Cli.create('incur', {
     entry: z.string().optional().describe('Entrypoint path (absolute)'),
     output: z.string().optional().describe('Output path (absolute)'),
   }),
-  async run({ options }) {
-    const dir = options.dir ?? '.'
-    const entry = options.entry ?? dir
-    const output = options.output ?? path.join(dir, 'incur.generated.ts')
+  async run(c) {
+    const dir = c.options.dir ?? '.'
+    const entry = c.options.entry ?? dir
+    const output = c.options.output ?? path.join(dir, 'incur.generated.ts')
     await Typegen.generate(entry, output)
     return { dir, entry, output }
   },

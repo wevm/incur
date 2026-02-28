@@ -5,8 +5,8 @@ test('args in run() infers from args schema', () => {
   const cli = Cli.create('test')
   cli.command('greet', {
     args: z.object({ name: z.string() }),
-    run({ args }) {
-      expectTypeOf(args).toEqualTypeOf<{ name: string }>()
+    run(c) {
+      expectTypeOf(c.args).toEqualTypeOf<{ name: string }>()
       return {}
     },
   })
@@ -19,8 +19,8 @@ test('options in run() infers from options schema', () => {
       state: z.enum(['open', 'closed']).default('open'),
       limit: z.number().default(30),
     }),
-    run({ options }) {
-      expectTypeOf(options).toEqualTypeOf<{ state: 'open' | 'closed'; limit: number }>()
+    run(c) {
+      expectTypeOf(c.options).toEqualTypeOf<{ state: 'open' | 'closed'; limit: number }>()
       return {}
     },
   })
@@ -29,9 +29,9 @@ test('options in run() infers from options schema', () => {
 test('without schemas, run receives empty objects', () => {
   const cli = Cli.create('test')
   cli.command('ping', {
-    run({ args, options }) {
-      expectTypeOf(args).toEqualTypeOf<{}>()
-      expectTypeOf(options).toEqualTypeOf<{}>()
+    run(c) {
+      expectTypeOf(c.args).toEqualTypeOf<{}>()
+      expectTypeOf(c.options).toEqualTypeOf<{}>()
       return { pong: true }
     },
   })
@@ -75,16 +75,16 @@ test('ok() data param is typed from output schema', () => {
   const cli = Cli.create('test')
   cli.command('list', {
     output: z.object({ items: z.array(z.string()) }),
-    run({ ok }) {
-      return ok({ items: ['a', 'b'] })
+    run(c) {
+      return c.ok({ items: ['a', 'b'] })
     },
   })
 
   cli.command('list2', {
     output: z.object({ items: z.array(z.string()) }),
-    run({ ok }) {
+    run(c) {
       // @ts-expect-error — data doesn't match output schema
-      return ok({ wrong: 123 })
+      return c.ok({ wrong: 123 })
     },
   })
 })
@@ -119,7 +119,7 @@ test('command() accumulates command types through chaining', () => {
     .command('get', {
       args: z.object({ id: z.number() }),
       options: z.object({ verbose: z.boolean().default(false) }),
-      run: ({ args }) => ({ id: args.id }),
+      run: (c) => ({ id: c.args.id }),
     })
     .command('list', {
       options: z.object({ limit: z.number().default(30) }),

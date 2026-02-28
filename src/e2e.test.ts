@@ -1192,8 +1192,8 @@ describe('root command with subcommands', () => {
     const cli = Cli.create('tool', {
       description: 'A tool with a default action',
       args: z.object({ query: z.string().optional().describe('Search query') }),
-      run({ args }) {
-        return { default: true, query: args.query ?? null }
+      run(c) {
+        return { default: true, query: c.args.query ?? null }
       },
     })
     cli.command('info', {
@@ -1556,9 +1556,9 @@ function createApp() {
         scopes: z.array(z.string()).default([]).describe('OAuth scopes'),
       }),
       alias: { hostname: 'h', web: 'w' },
-      run({ env, options, ok }) {
-        return ok(
-          { hostname: env.AUTH_HOST, scopes: options.scopes },
+      run(c) {
+        return c.ok(
+          { hostname: c.env.AUTH_HOST, scopes: c.options.scopes },
           {
             cta: {
               description: 'Verify your session:',
@@ -1570,15 +1570,15 @@ function createApp() {
     })
     .command('logout', {
       description: 'Log out of the service',
-      run({ ok }) {
-        return ok({ loggedOut: true })
+      run(c) {
+        return c.ok({ loggedOut: true })
       },
     })
     .command('status', {
       description: 'Show authentication status',
       output: z.object({ loggedIn: z.boolean(), hostname: z.string(), user: z.string() }),
-      run({ error }) {
-        return error({
+      run(c) {
+        return c.error({
           code: 'NOT_AUTHENTICATED',
           message: 'Not logged in',
           retryable: false,
@@ -1607,12 +1607,12 @@ function createApp() {
         ),
         total: z.number(),
       }),
-      run({ options, ok }) {
+      run(c) {
         const items = [
           { id: 'p1', name: 'Alpha', archived: false },
           { id: 'p2', name: 'Beta', archived: true },
-        ].filter((p) => options.archived || !p.archived)
-        return ok(
+        ].filter((p) => c.options.archived || !p.archived)
+        return c.ok(
           { items, total: items.length },
           {
             cta: {
@@ -1634,9 +1634,9 @@ function createApp() {
         description: z.string(),
         members: z.array(z.object({ userId: z.string(), role: z.string() })),
       }),
-      run({ args, ok }) {
-        return ok({
-          id: args.id,
+      run(c) {
+        return c.ok({
+          id: c.args.id,
           name: 'Alpha',
           description: 'Main project',
           members: [{ userId: 'u1', role: 'admin' }],
@@ -1653,13 +1653,13 @@ function createApp() {
       alias: { description: 'd' },
 
       output: z.object({ id: z.string(), url: z.string() }),
-      run({ args, ok }) {
-        return ok(
+      run(c) {
+        return c.ok(
           { id: 'p-new', url: 'https://example.com/projects/p-new' },
           {
             cta: {
               commands: [
-                { command: 'project get p-new', description: `View "${args.name}"` },
+                { command: 'project get p-new', description: `View "${c.args.name}"` },
                 'project list',
               ],
             },
@@ -1675,14 +1675,14 @@ function createApp() {
       }),
       alias: { force: 'f' },
 
-      run({ args, options }) {
-        if (!options.force)
+      run(c) {
+        if (!c.options.force)
           throw new Errors.IncurError({
             code: 'CONFIRMATION_REQUIRED',
-            message: `Use --force to delete project ${args.id}`,
+            message: `Use --force to delete project ${c.args.id}`,
             retryable: true,
           })
-        return { deleted: true, id: args.id }
+        return { deleted: true, id: c.args.id }
       },
     })
 
@@ -1705,11 +1705,11 @@ function createApp() {
           options: { branch: 'release', dryRun: true },
         },
       ],
-      run({ args, options, ok }) {
-        return ok({
+      run(c) {
+        return c.ok({
           deployId: 'd-123',
-          url: `https://${args.env}.example.com`,
-          status: options.dryRun ? 'dry-run' : 'pending',
+          url: `https://${c.args.env}.example.com`,
+          status: c.options.dryRun ? 'dry-run' : 'pending',
         })
       },
     })
@@ -1718,16 +1718,16 @@ function createApp() {
       args: z.object({ deployId: z.string().describe('Deployment ID') }),
 
       output: z.object({ deployId: z.string(), status: z.string(), progress: z.number() }),
-      run({ args }) {
-        return { deployId: args.deployId, status: 'running', progress: 75 }
+      run(c) {
+        return { deployId: c.args.deployId, status: 'running', progress: 75 }
       },
     })
     .command('rollback', {
       description: 'Rollback a deployment',
       args: z.object({ deployId: z.string().describe('Deployment ID') }),
 
-      run({ args }) {
-        return { rolledBack: true, deployId: args.deployId }
+      run(c) {
+        return { rolledBack: true, deployId: c.args.deployId }
       },
     })
 
@@ -1736,8 +1736,8 @@ function createApp() {
   const config = Cli.create('config', {
     description: 'Show current configuration',
     args: z.object({ key: z.string().optional().describe('Config key to show') }),
-    run({ args }) {
-      if (args.key) return { key: args.key, value: 'some-value' }
+    run(c) {
+      if (c.args.key) return { key: c.args.key, value: 'some-value' }
       return { apiUrl: 'https://api.example.com', timeout: 30, debug: false }
     },
   })
@@ -1765,10 +1765,10 @@ function createApp() {
       prefix: z.string().default('').describe('Prefix string'),
     }),
     alias: { upper: 'u', prefix: 'p' },
-    run({ args, options }) {
-      const count = args.repeat ?? 1
-      let msg = options.prefix ? `${options.prefix} ${args.message}` : args.message
-      if (options.upper) msg = msg.toUpperCase()
+    run(c) {
+      const count = c.args.repeat ?? 1
+      let msg = c.options.prefix ? `${c.options.prefix} ${c.args.message}` : c.args.message
+      if (c.options.upper) msg = msg.toUpperCase()
       return { result: Array(count).fill(msg) }
     },
   })

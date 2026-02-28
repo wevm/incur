@@ -66,8 +66,8 @@ Cli.create('greet', {
   args: z.object({
     name: z.string().describe('Name to greet'),
   }),
-  run({ args }) {
-    return { message: `hello ${args.name}` }
+  run(c) {
+    return { message: `hello ${c.args.name}` }
   },
 }).serve()
 ```
@@ -124,7 +124,7 @@ Cli.create('my-cli', {
       saveDev: z.boolean().optional().describe('Save as dev dependency'),
     }),
     alias: { saveDev: 'D' },
-    run({ args }) {
+    run(c) {
       return { added: 1, packages: 451 }
     },
   })
@@ -176,8 +176,8 @@ const pr = Cli.create('pr', { description: 'Pull request commands' }).command('l
   options: z.object({
     state: z.enum(['open', 'closed', 'all']).default('open'),
   }),
-  run({ options }) {
-    return { prs: [], state: options.state }
+  run(c) {
+    return { prs: [], state: c.options.state }
   },
 })
 
@@ -264,9 +264,9 @@ Return CTAs from `ok()` or `error()` to suggest next steps. `cta` parameters are
 ```ts
 cli.command('list', {
   args: z.object({ state: z.enum(['open', 'closed']).default('open') }),
-  run({ args, ok }) {
+  run(c) {
     const items = [{ id: 1, title: 'Fix bug' }]
-    return ok({ items }, {
+    return c.ok({ items }, {
       cta: {
         commands: [
           { command: 'get 1', description: 'View item' },
@@ -364,8 +364,8 @@ cli.command('deploy', {
   options: z.object({ force: z.boolean().optional() }),
   env: z.object({ DEPLOY_TOKEN: z.string() }),
   output: z.object({ url: z.string(), duration: z.number() }),
-  run({ args, options, env }) {
-    return { url: `https://${args.env}.example.com`, duration: 3.2 }
+  run(c) {
+    return { url: `https://${c.args.env}.example.com`, duration: 3.2 }
   },
 })
 ```
@@ -404,10 +404,10 @@ async *run() {
 Use `ok()` or `error()` as the return value to attach CTAs or signal failure:
 
 ```ts
-async *run({ ok }) {
+async *run(c) {
   yield { step: 1 }
   yield { step: 2 }
-  return ok(undefined, { cta: { commands: ['status'] } })
+  return c.ok(undefined, { cta: { commands: ['status'] } })
 }
 ```
 
@@ -420,13 +420,13 @@ cli.command('greet', {
   args: z.object({ name: z.string() }),
   options: z.object({ loud: z.boolean().default(false) }),
   output: z.object({ message: z.string() }),
-  run({ args, options, ok }) {
-    args.name
-    //   ^? (property) name: string
-    options.loud
-    //      ^? (property) loud: boolean
-    return ok({ message: `hello ${args.name}` }, {  
-    //          ^? (property) message: string
+  run(c) {
+    c.args.name
+    //     ^? (property) name: string
+    c.options.loud
+    //        ^? (property) loud: boolean
+    return c.ok({ message: `hello ${c.args.name}` }, {  
+    //            ^? (property) message: string
       cta: { commands: ['greet world'] },
     //                   ^? 'greet' | 'other-cmd'
     })
