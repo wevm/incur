@@ -1,5 +1,13 @@
 # incur
 
+## 0.1.7
+
+### Patch Changes
+
+- 2c60110: - Added middleware support via `cli.use()`.
+  - Added typed dependency injection via `vars`: declare a Zod schema on `create()` (and optionally set defaults), set values with `c.set()` in middleware, read them via `c.var` in handlers.
+- ba07f0b: Added per-command middleware via `middleware` property on command definitions. Added `middleware()` helper for creating strictly typed middleware handlers with `middleware<typeof cli.vars>(...)`. Added `cli.vars` property to expose the vars schema for use with `typeof`.
+
 ## 0.1.6
 
 ### Patch Changes
