@@ -223,6 +223,34 @@ test('middleware<vars, env>() infers both vars and env types', () => {
   expectTypeOf(mw).toEqualTypeOf<MiddlewareHandler<typeof cli.vars, typeof cli.env>>()
 })
 
+test('middleware context has error() for short-circuiting', () => {
+  const vars = z.object({ session: z.custom<{ id: string } | null>() })
+
+  const requireAuth = middleware<typeof vars>((c, next) => {
+    if (!c.var.session)
+      return c.error({
+        code: 'NOT_AUTHENTICATED',
+        message: 'You are not authenticated.',
+        cta: {
+          description: 'Log in:',
+          commands: [{ command: 'auth login', description: 'Log in' }],
+        },
+      })
+    return next()
+  })
+
+  Cli.create('test', { vars }).command('deploy', {
+    middleware: [requireAuth],
+    run: () => ({ deployed: true }),
+  })
+})
+
+test('middleware error() returns never', () => {
+  middleware((c, _next) => {
+    expectTypeOf(c.error).returns.toEqualTypeOf<never>()
+  })
+})
+
 test('env is typed in per-command middleware', () => {
   Cli.create('test', {
     env: z.object({ API_TOKEN: z.string() }),

@@ -2049,6 +2049,45 @@ describe('outputPolicy', () => {
     expect(exitCode).toBe(1)
   })
 
+  test('e2e: middleware error() short-circuits before run()', async () => {
+    const vars = z.object({ authed: z.boolean().default(false) })
+    const cli = Cli.create('test', { vars })
+      .use((c, _next) => {
+        if (!c.var.authed)
+          return c.error({ code: 'DENIED', message: 'Not allowed' })
+      })
+      .command('secret', {
+        output: z.string(),
+        run: () => 'should not reach',
+      })
+
+    const { output, exitCode } = await serve(cli, ['secret'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('DENIED')
+    expect(output).toContain('Not allowed')
+    expect(output).not.toContain('should not reach')
+  })
+
+  test('e2e: middleware error() with CTA', async () => {
+    const cli = Cli.create('test')
+      .use((c, _next) => {
+        return c.error({
+          code: 'AUTH',
+          message: 'Not authenticated',
+          cta: {
+            description: 'Log in:',
+            commands: [{ command: 'auth login', description: 'Log in' }],
+          },
+        })
+      })
+      .command('deploy', { run: () => ({ ok: true }) })
+
+    const { output, exitCode } = await serve(cli, ['deploy'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('AUTH')
+    expect(output).toContain('Not authenticated')
+  })
+
   test('e2e: agent-only with streaming and error in nested group', async () => {
     const cli = Cli.create('tool')
     const ops = Cli.create('ops', {

@@ -840,19 +840,46 @@ async function serveImpl(
     const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, envSource) : {}
 
     if (allMiddleware.length > 0) {
+      const errorFn = (opts: {
+        code: string
+        message: string
+        retryable?: boolean | undefined
+        cta?: CtaBlock | undefined
+      }): never => {
+        return { [sentinel]: 'error', ...opts } as never
+      }
       const mwCtx: MiddlewareContext = {
         agent: !human,
         command: path,
         env: cliEnv,
+        error: errorFn,
         name,
         set(key: string, value: unknown) {
           varsMap[key] = value
         },
         var: varsMap,
       }
+      const handleMwSentinel = (result: unknown) => {
+        if (!isSentinel(result)) return
+        const cta = formatCtaBlock(name, result.cta)
+        write({
+          ok: false,
+          error: {
+            code: result.code,
+            message: result.message,
+            ...(result.retryable !== undefined ? { retryable: result.retryable } : undefined),
+          },
+          meta: {
+            command: path,
+            duration: `${Math.round(performance.now() - start)}ms`,
+            ...(cta ? { cta } : undefined),
+          },
+        })
+        exit(1)
+      }
       const composed = allMiddleware.reduceRight(
         (next: () => Promise<void>, mw) => async () => {
-          await mw(mwCtx, next)
+          handleMwSentinel(await mw(mwCtx, next))
         },
         runCommand,
       )

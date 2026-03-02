@@ -535,8 +535,16 @@ const cli = Cli.create('my-cli', {
   vars: z.object({ user: z.custom<User>() }),
 })
 
+// structured error with code — shows up in the output envelope
 const requireAuth = middleware<typeof cli.vars>((c, next) => {
-  if (!c.var.user) throw new Error('must be logged in')
+  if (!c.var.user)
+    return c.error({ code: 'AUTH', message: 'must be logged in' })
+  return next()
+})
+
+// throwing also works — produces an UNKNOWN error code
+const requireAdmin = middleware<typeof cli.vars>((c, next) => {
+  if (!c.var.user?.admin) throw new Error('admin required')
   return next()
 })
 
@@ -550,7 +558,7 @@ cli.command('deploy', {
 
 ```sh
 $ my-cli deploy
-# Error: must be logged in
+# Error (AUTH): must be logged in
 
 $ my-cli other-cmd
 # per-command middleware does not run

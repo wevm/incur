@@ -17,6 +17,14 @@ export type Handler<
   next: () => Promise<void>,
 ) => Promise<void> | void
 
+/** CTA block for middleware error/ok responses. */
+type CtaBlock = {
+  /** Commands to suggest. */
+  commands: (string | { command: string; description?: string | undefined })[]
+  /** Human-readable label. Defaults to `"Suggested commands:"`. */
+  description?: string | undefined
+}
+
 /** Context available inside middleware. */
 export type Context<
   vars extends z.ZodObject<any> | undefined = undefined,
@@ -26,6 +34,13 @@ export type Context<
   agent: boolean
   /** The resolved command path. */
   command: string
+  /** Return an error result, short-circuiting the middleware chain. */
+  error: (options: {
+    code: string
+    cta?: CtaBlock | undefined
+    message: string
+    retryable?: boolean | undefined
+  }) => never
   /** The CLI name. */
   name: string
   /** Parsed environment variables from the CLI-level env schema. */
