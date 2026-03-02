@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.9
+
+### Patch Changes
+
+- 1a671e9: Added `name` to run and middleware context (`c.name`) — returns the CLI name passed to `Cli.create()`.
+
 ## 0.1.8
 
 ### Patch Changes
