@@ -213,7 +213,7 @@ function buildSynopsis(name: string, args?: z.ZodObject<any>): string {
   if (!args) return name
   const parts = [name]
   for (const [key, schema] of Object.entries(args.shape))
-    parts.push((schema as any).isOptional() ? `[${key}]` : `<${key}>`)
+    parts.push((schema as z.ZodType)._zod.optout === 'optional' ? `[${key}]` : `<${key}>`)
   return parts.join(' ')
 }
 

@@ -1206,7 +1206,7 @@ function formatHumanCta(cta: FormattedCtaBlock): string {
 
 /** @internal Type guard for sentinel results. */
 function hasRequiredArgs(args: z.ZodObject<z.ZodRawShape>): boolean {
-  return Object.values(args.shape).some((field) => !field.isOptional())
+  return Object.values(args.shape).some((field) => field._zod.optout !== 'optional')
 }
 
 function isSentinel(value: unknown): value is OkResult | ErrorResult {
