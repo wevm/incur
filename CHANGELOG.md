@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.11
+
+### Patch Changes
+
+- 77f5c98: Added deprecated option support via Zod's `.meta({ deprecated: true })`. Deprecated flags show `[deprecated]` in help output, `**Deprecated.**` in skill docs, `deprecated: true` in JSON Schema, and emit stderr warnings in TTY mode.
+
 ## 0.1.10
 
 ### Patch Changes
