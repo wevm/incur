@@ -1684,17 +1684,15 @@ describe('deprecated flags', () => {
         run: ({ options }) => ({ zone: options.zone, region: options.region }),
       })
 
-    let stderr = ''
-    const origWrite = process.stderr.write
-    process.stderr.write = ((s: string) => { stderr += s; return true }) as any
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     ;(process.stdout as any).isTTY = true
     try {
       await serve(cli, ['deploy', '--zone', 'us-east-1'])
+      expect(spy).toHaveBeenCalledWith('Warning: --zone is deprecated\n')
     } finally {
       ;(process.stdout as any).isTTY = false
-      process.stderr.write = origWrite
+      spy.mockRestore()
     }
-    expect(stderr).toContain('Warning: --zone is deprecated')
   })
 
   test('does not emit stderr warning for non-deprecated flags', async () => {
@@ -1707,17 +1705,15 @@ describe('deprecated flags', () => {
         run: ({ options }) => ({ region: options.region }),
       })
 
-    let stderr = ''
-    const origWrite = process.stderr.write
-    process.stderr.write = ((s: string) => { stderr += s; return true }) as any
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     ;(process.stdout as any).isTTY = true
     try {
       await serve(cli, ['deploy', '--region', 'us-west-2'])
+      expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('deprecated'))
     } finally {
       ;(process.stdout as any).isTTY = false
-      process.stderr.write = origWrite
+      spy.mockRestore()
     }
-    expect(stderr).not.toContain('deprecated')
   })
 
   test('does not emit stderr warning in agent mode (non-TTY)', async () => {
@@ -1729,15 +1725,13 @@ describe('deprecated flags', () => {
         run: ({ options }) => ({ zone: options.zone }),
       })
 
-    let stderr = ''
-    const origWrite = process.stderr.write
-    process.stderr.write = ((s: string) => { stderr += s; return true }) as any
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     try {
       await serve(cli, ['deploy', '--zone', 'us-east-1'])
+      expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('deprecated'))
     } finally {
-      process.stderr.write = origWrite
+      spy.mockRestore()
     }
-    expect(stderr).not.toContain('deprecated')
   })
 })
 

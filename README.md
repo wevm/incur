@@ -487,6 +487,27 @@ cli.command('check', {
 })
 ```
 
+### Deprecated options
+
+Mark options as deprecated with `.meta({ deprecated: true })`. Deprecated flags show `[deprecated]` in `--help`, `**Deprecated.**` in skill docs, `deprecated: true` in JSON Schema (`--llms`), and emit a stderr warning when used in TTY mode:
+
+```ts
+cli.command('deploy', {
+  options: z.object({
+    zone: z.string().optional().describe('Availability zone').meta({ deprecated: true }),
+    region: z.string().optional().describe('Target region'),
+  }),
+  run(c) {
+    return { region: c.options.region }
+  },
+})
+```
+
+```sh
+$ my-cli deploy --zone us-east-1
+# Warning: --zone is deprecated
+```
+
 ### Agent detection
 
 The `run` context includes an `agent` boolean — `true` when stdout is not a TTY (piped or consumed by an agent), `false` when running in a terminal. Use it to tailor behavior:

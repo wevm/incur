@@ -224,6 +224,17 @@ alias: { state: 's', limit: 'l' }
 tool list -s closed -l 10
 ```
 
+### Deprecated options
+
+Mark options as deprecated with `.meta({ deprecated: true })`. Shows `[deprecated]` in `--help`, `**Deprecated.**` in skill docs, `deprecated: true` in JSON Schema, and emits a stderr warning in TTY mode:
+
+```ts
+options: z.object({
+  zone: z.string().optional().describe('Availability zone').meta({ deprecated: true }),
+  region: z.string().optional().describe('Target region'),
+})
+```
+
 ### Environment variables
 
 ```ts
