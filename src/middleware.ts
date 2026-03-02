@@ -26,6 +26,8 @@ export type Context<
   agent: boolean
   /** The resolved command path. */
   command: string
+  /** The CLI name. */
+  name: string
   /** Parsed environment variables from the CLI-level env schema. */
   env: InferEnv<env>
   /** Set a typed variable for downstream middleware and handlers. */

@@ -433,10 +433,10 @@ cli.command('greet', {
     //        ^? (property) loud: boolean
     return c.ok(
       { message: `hello ${c.args.name}` },
+      //^? (property) message: string
       {
-        //            ^? (property) message: string
         cta: { commands: ['greet world'] },
-        //                   ^? 'greet' | 'other-cmd'
+        //     ^? 'greet' | 'other-cmd'
       },
     )
   },
@@ -468,6 +468,22 @@ internal.command('sync', { run: () => ({ synced: true }) }) // inherits agent-on
 internal.command('status', {
   outputPolicy: 'all', // overrides to show output
   run: () => ({ ok: true }),
+})
+```
+
+### CLI name
+
+The `run` context (and middleware context) includes `name` — the CLI name passed to `Cli.create()`. Useful for composing help text, error messages, and user-facing strings:
+
+```ts
+const cli = Cli.create('deploy-cli', { description: 'Deploy tools' })
+
+cli.command('check', {
+  output: z.string(),
+  run(c) {
+    if (!authenticated()) return `Not logged in. Run \`${c.name} auth login\` to log in.`
+    return 'OK'
+  },
 })
 ```
 

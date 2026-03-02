@@ -283,6 +283,8 @@ export declare namespace create {
           agent: boolean
           /** Positional arguments. */
           args: InferOutput<args>
+          /** The CLI name. */
+          name: string
           /** Parsed environment variables. */
           env: InferOutput<env>
           /** Return an error result with optional CTAs. */
@@ -767,6 +769,7 @@ async function serveImpl(
       agent: !human,
       args,
       env,
+      name,
       options: parsedOptions,
       ok: okFn,
       error: errorFn,
@@ -841,6 +844,7 @@ async function serveImpl(
         agent: !human,
         command: path,
         env: cliEnv,
+        name,
         set(key: string, value: unknown) {
           varsMap[key] = value
         },
@@ -1638,6 +1642,8 @@ type CommandDefinition<
     agent: boolean
     /** Positional arguments. */
     args: InferOutput<args>
+    /** The CLI name. */
+    name: string
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */
