@@ -1252,6 +1252,42 @@ describe('help', () => {
     `)
   })
 
+  test('root command with required args shows help when no args provided (human)', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('fetch', {
+      description: 'Fetch a URL',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      run: ({ args }) => args.url,
+    })
+    const { output, exitCode } = await serve(cli, [])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('fetch — Fetch a URL')
+    expect(output).toContain('Usage: fetch <url>')
+  })
+
+  test('root command with optional args runs command when no args provided (human)', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('fetch', {
+      description: 'Fetch a URL',
+      args: z.object({ url: z.string().optional().describe('URL to fetch') }),
+      run: ({ args }) => args.url ?? 'no url',
+    })
+    const { output } = await serve(cli, [])
+    ;(process.stdout as any).isTTY = false
+    expect(output).toContain('no url')
+  })
+
+  test('root command with optional args runs command when no args provided (agent)', async () => {
+    const cli = Cli.create('fetch', {
+      description: 'Fetch a URL',
+      args: z.object({ url: z.string().optional().describe('URL to fetch') }),
+      run: ({ args }) => args.url ?? 'no url',
+    })
+    const { output } = await serve(cli, [])
+    expect(output).toContain('no url')
+  })
+
   test('--version outputs version string', async () => {
     const cli = Cli.create('tool', { version: '1.2.3' })
     cli.command('ping', { run: () => ({}) })

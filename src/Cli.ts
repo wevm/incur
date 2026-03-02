@@ -579,6 +579,31 @@ async function serveImpl(
   }
 
   if (filtered.length === 0) {
+    if (
+      options.rootCommand &&
+      human &&
+      options.rootCommand.args &&
+      hasRequiredArgs(options.rootCommand.args)
+    ) {
+      // Root command with args but none provided (human mode) — show help
+      const cmd = options.rootCommand
+      writeln(
+        Help.formatCommand(name, {
+          alias: cmd.alias as Record<string, string> | undefined,
+          description: cmd.description ?? options.description,
+          version: options.version,
+          args: cmd.args,
+          env: cmd.env,
+          hint: cmd.hint,
+          options: cmd.options,
+          examples: formatExamples(cmd.examples),
+          usage: cmd.usage,
+          commands: commands.size > 0 ? collectHelpCommands(commands) : undefined,
+          root: true,
+        }),
+      )
+      return
+    }
     if (options.rootCommand) {
       // Root command with no args — treat as root invocation
     } else {
@@ -1180,6 +1205,10 @@ function formatHumanCta(cta: FormattedCtaBlock): string {
 }
 
 /** @internal Type guard for sentinel results. */
+function hasRequiredArgs(args: z.ZodObject<z.ZodRawShape>): boolean {
+  return Object.values(args.shape).some((field) => !field.isOptional())
+}
+
 function isSentinel(value: unknown): value is OkResult | ErrorResult {
   return typeof value === 'object' && value !== null && sentinel in value
 }
