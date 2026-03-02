@@ -860,7 +860,7 @@ async function serveImpl(
         var: varsMap,
       }
       const handleMwSentinel = (result: unknown) => {
-        if (!isSentinel(result)) return
+        if (!isSentinel(result) || result[sentinel] !== 'error') return
         const cta = formatCtaBlock(name, result.cta)
         write({
           ok: false,
