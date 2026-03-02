@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.10
+
+### Patch Changes
+
+- e7564a0: Added `c.error()` to middleware context for structured error short-circuiting. Middleware can now return `c.error({ code, message })` instead of throwing, producing a proper error envelope with optional CTAs.
+
 ## 0.1.9
 
 ### Patch Changes
