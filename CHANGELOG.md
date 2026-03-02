@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.12
+
+### Patch Changes
+
+- a61c474: Added help output in human mode for root command with args when no args provided
+
 ## 0.1.11
 
 ### Patch Changes
