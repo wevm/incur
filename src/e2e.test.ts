@@ -66,7 +66,11 @@ describe('routing', () => {
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "code: COMMAND_NOT_FOUND
-      message: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
+      message: 'nonexistent' is not a command.
+      cta:
+        description: "See available commands:"
+        commands[1]{command}:
+          app --help
       "
     `)
   })
@@ -77,7 +81,10 @@ describe('routing', () => {
     ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "Error: 'nonexistent' is not a command. See 'app --help' for a list of available commands.
+      "Error: 'nonexistent' is not a command.
+
+      See available commands:
+        app --help
       "
     `)
   })
@@ -87,7 +94,11 @@ describe('routing', () => {
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "code: COMMAND_NOT_FOUND
-      message: 'whoami' is not a command. See 'app auth --help' for a list of available commands.
+      message: 'whoami' is not a command.
+      cta:
+        description: "See available commands:"
+        commands[1]{command}:
+          app auth --help
       "
     `)
   })
@@ -97,7 +108,11 @@ describe('routing', () => {
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "code: COMMAND_NOT_FOUND
-      message: 'nope' is not a command. See 'app project deploy --help' for a list of available commands.
+      message: 'nope' is not a command.
+      cta:
+        description: "See available commands:"
+        commands[1]{command}:
+          app project deploy --help
       "
     `)
   })
@@ -494,10 +509,18 @@ describe('error handling', () => {
       {
         "error": {
           "code": "COMMAND_NOT_FOUND",
-          "message": "'nonexistent' is not a command. See 'app --help' for a list of available commands.",
+          "message": "'nonexistent' is not a command.",
         },
         "meta": {
           "command": "nonexistent",
+          "cta": {
+            "commands": [
+              {
+                "command": "app --help",
+              },
+            ],
+            "description": "See available commands:",
+          },
           "duration": "<stripped>",
         },
         "ok": false,
@@ -1477,15 +1500,15 @@ describe('env', () => {
         --web, -w <boolean>      Open browser (default: false)
         --scopes <array>         OAuth scopes
 
-      Environment Variables:
-        AUTH_TOKEN  Pre-existing auth token
-        AUTH_HOST   Auth server hostname (default: api.example.com)
-
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --verbose                           Show full output envelope
+
+      Environment Variables:
+        AUTH_TOKEN  Pre-existing auth token
+        AUTH_HOST   Auth server hostname (default: api.example.com)
       "
     `)
   })

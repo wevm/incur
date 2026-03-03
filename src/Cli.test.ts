@@ -138,7 +138,11 @@ describe('serve', () => {
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "code: COMMAND_NOT_FOUND
-      message: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
+      message: 'nonexistent' is not a command.
+      cta:
+        description: "See available commands:"
+        commands[1]{command}:
+          test --help
       "
     `)
   })
@@ -151,7 +155,10 @@ describe('serve', () => {
     ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "Error: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
+      "Error: 'nonexistent' is not a command.
+
+      See available commands:
+        test --help
       "
     `)
   })
@@ -165,9 +172,13 @@ describe('serve', () => {
       "ok: false
       error:
         code: COMMAND_NOT_FOUND
-        message: 'nonexistent' is not a command. See 'test --help' for a list of available commands.
+        message: 'nonexistent' is not a command.
       meta:
         command: nonexistent
+        cta:
+          description: "See available commands:"
+          commands[1]{command}:
+            test --help
         duration: <stripped>
       "
     `)
@@ -680,7 +691,11 @@ describe('subcommands', () => {
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "code: COMMAND_NOT_FOUND
-      message: 'unknown' is not a command. See 'test pr --help' for a list of available commands.
+      message: 'unknown' is not a command.
+      cta:
+        description: "See available commands:"
+        commands[1]{command}:
+          test pr --help
       "
     `)
   })
@@ -697,7 +712,10 @@ describe('subcommands', () => {
     ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "Error: 'unknown' is not a command. See 'test pr --help' for a list of available commands.
+      "Error: 'unknown' is not a command.
+
+      See available commands:
+        test pr --help
       "
     `)
   })
@@ -1288,6 +1306,21 @@ describe('help', () => {
     expect(output).toContain('no url')
   })
 
+  test('invalid subcommand in group returns COMMAND_NOT_FOUND instead of falling through to root', async () => {
+    const cli = Cli.create('tool', {
+      args: z.object({ url: z.string().describe('URL') }),
+      run: ({ args }) => ({ url: args.url }),
+    })
+    const auth = Cli.create('auth').command('login', { run: () => ({ ok: true }) })
+    cli.command(auth)
+
+    const { output, exitCode } = await serve(cli, ['auth', 'badcmd', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    const parsed = JSON.parse(output)
+    expect(parsed.code).toBe('COMMAND_NOT_FOUND')
+    expect(parsed.message).toContain('badcmd')
+  })
+
   test('--version outputs version string', async () => {
     const cli = Cli.create('tool', { version: '1.2.3' })
     cli.command('ping', { run: () => ({}) })
@@ -1435,15 +1468,15 @@ describe('env', () => {
 
       Usage: test deploy
 
-      Environment Variables:
-        API_TOKEN  Auth token
-        API_URL    API URL (default: https://api.example.com)
-
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --verbose                           Show full output envelope
+
+      Environment Variables:
+        API_TOKEN  Auth token
+        API_URL    API URL (default: https://api.example.com)
       "
     `)
   })

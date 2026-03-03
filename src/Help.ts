@@ -150,24 +150,6 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     }
   }
 
-  // Environment Variables
-  if (env) {
-    const entries = envEntries(env)
-    if (entries.length > 0) {
-      lines.push('')
-      lines.push('Environment Variables:')
-      const maxLen = Math.max(...entries.map((e) => e.name.length))
-      for (const entry of entries) {
-        const padding = ' '.repeat(maxLen - entry.name.length)
-        const desc =
-          entry.defaultValue !== undefined
-            ? `${entry.description} (default: ${entry.defaultValue})`
-            : entry.description
-        lines.push(`  ${entry.name}${padding}  ${desc}`)
-      }
-    }
-  }
-
   // Examples
   if (examples && examples.length > 0) {
     lines.push('')
@@ -204,6 +186,24 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   }
 
   lines.push(...globalOptionsLines(root))
+
+  // Environment Variables
+  if (env) {
+    const entries = envEntries(env)
+    if (entries.length > 0) {
+      lines.push('')
+      lines.push('Environment Variables:')
+      const maxLen = Math.max(...entries.map((e) => e.name.length))
+      for (const entry of entries) {
+        const padding = ' '.repeat(maxLen - entry.name.length)
+        const desc =
+          entry.defaultValue !== undefined
+            ? `${entry.description} (default: ${entry.defaultValue})`
+            : entry.description
+        lines.push(`  ${entry.name}${padding}  ${desc}`)
+      }
+    }
+  }
 
   return lines.join('\n')
 }

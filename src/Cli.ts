@@ -704,7 +704,7 @@ async function serveImpl(
 
   // Fall back to root command when no subcommand matches
   const effective =
-    'error' in resolved && options.rootCommand
+    'error' in resolved && options.rootCommand && !resolved.path
       ? { command: options.rootCommand, path: name, rest: filtered }
       : resolved
 
@@ -736,9 +736,14 @@ async function serveImpl(
 
   if ('error' in effective) {
     const helpCmd = effective.path ? `${name} ${effective.path} --help` : `${name} --help`
-    const message = `'${effective.error}' is not a command. See '${helpCmd}' for a list of available commands.`
+    const message = `'${effective.error}' is not a command.`
+    const cta: FormattedCtaBlock = {
+      description: 'See available commands:',
+      commands: [{ command: helpCmd }],
+    }
     if (human && !verbose) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+      writeln(formatHumanCta(cta))
       exit(1)
       return
     }
@@ -747,6 +752,7 @@ async function serveImpl(
       error: { code: 'COMMAND_NOT_FOUND', message },
       meta: {
         command: effective.error,
+        cta,
         duration: `${Math.round(performance.now() - start)}ms`,
       },
     })
@@ -1200,7 +1206,7 @@ function formatHumanError(error: {
 function formatHumanCta(cta: FormattedCtaBlock): string {
   const lines: string[] = ['', cta.description]
   for (const c of cta.commands) {
-    const desc = c.description ? `  ${c.description}` : ''
+    const desc = c.description ? `  # ${c.description}` : ''
     lines.push(`  ${c.command}${desc}`)
   }
   return lines.join('\n')
