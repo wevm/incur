@@ -1244,8 +1244,8 @@ async function handleStreaming(
 ) {
   // Incremental: no explicit format (default toon), or explicit jsonl
   // Buffered: explicit json/yaml/toon/md
-  const useJsonl = ctx.formatExplicit && ctx.format === 'jsonl'
-  const incremental = useJsonl || !ctx.formatExplicit
+  const useJsonl = ctx.format === 'jsonl'
+  const incremental = useJsonl || (!ctx.formatExplicit && ctx.format === 'toon')
 
   if (incremental) {
     // Incremental output: write each chunk as it arrives
@@ -1280,7 +1280,7 @@ async function handleStreaming(
           }
         }
         if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
-        else if (ctx.renderOutput) ctx.writeln(Formatter.format(value, 'toon'))
+        else if (ctx.renderOutput) ctx.writeln(Formatter.format(value, ctx.format))
       }
 
       // Handle return value — error() or ok() sentinel
