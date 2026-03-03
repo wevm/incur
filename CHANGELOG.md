@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.13
+
+### Patch Changes
+
+- aa32795: Added `version` to the command run context (`c.version`).
+
 ## 0.1.12
 
 ### Patch Changes
