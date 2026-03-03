@@ -1722,6 +1722,35 @@ describe('outputPolicy', () => {
     expect(piped.output).toContain('step: 1')
   })
 
+  test('streaming respects CLI-level default format json', async () => {
+    const cli = Cli.create('test', { format: 'json' })
+    cli.command('stream', {
+      async *run() {
+        yield { step: 1 }
+        yield { step: 2 }
+      },
+    })
+
+    const { output } = await serve(cli, ['stream'])
+    expect(output).toContain('"step": 1')
+    expect(output).toContain('"step": 2')
+    expect(output).not.toContain('step: 1') // should not be toon format
+  })
+
+  test('streaming respects CLI-level default format jsonl', async () => {
+    const cli = Cli.create('test', { format: 'jsonl' })
+    cli.command('stream', {
+      async *run() {
+        yield { step: 1 }
+        yield { step: 2 }
+      },
+    })
+
+    const { output } = await serve(cli, ['stream'])
+    expect(output).toContain('{"type":"chunk","data":{"step":1}}')
+    expect(output).toContain('{"type":"chunk","data":{"step":2}}')
+  })
+
   test('e2e: realistic multi-level CLI with mixed policies', async () => {
     const cli = Cli.create('tool', { description: 'A deployment tool' })
 
