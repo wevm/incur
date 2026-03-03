@@ -1,5 +1,15 @@
 # incur
 
+## 0.1.14
+
+### Patch Changes
+
+- 3f7ca73: Added leading `#` to CTA command descriptions for easier copy-paste.
+- 3f7ca73: Moved environment variables section to bottom of help output.
+- 3f7ca73: Fixed invalid subcommand in a group falling through to root handler instead of returning `COMMAND_NOT_FOUND`. Added CTA with copyable help command to `COMMAND_NOT_FOUND` errors.
+- 50282a8: Added redacted current value indicator for environment variables in help output.
+- 79fbabd: Fixed streaming handler ignoring CLI-level and command-level default `format`. Previously, `handleStreaming` used only `formatExplicit` to decide between incremental and buffered mode, causing CLI defaults like `{ format: 'json' }` to be ignored in favor of hardcoded `'toon'`.
+
 ## 0.1.13
 
 ### Patch Changes
