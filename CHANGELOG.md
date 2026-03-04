@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.15
+
+### Patch Changes
+
+- 5122c9b: Fixed help formatter using `process.env` instead of env source override for "set:" display
+
 ## 0.1.14
 
 ### Patch Changes
