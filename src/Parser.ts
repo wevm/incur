@@ -72,7 +72,9 @@ export function parse<
         const isLast = j === chars.length - 1
         if (!isLast) {
           if (!isBooleanOption(name, optionsSchema))
-            throw new ParseError({ message: `Non-boolean flag -${short} must be last in a stacked alias` })
+            throw new ParseError({
+              message: `Non-boolean flag -${short} must be last in a stacked alias`,
+            })
           rawOptions[name] = true
         } else if (isBooleanOption(name, optionsSchema)) {
           rawOptions[name] = true
