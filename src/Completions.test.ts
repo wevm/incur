@@ -194,9 +194,7 @@ describe('format', () => {
   })
 
   test('zsh: value:description newline separated', () => {
-    expect(Completions.format('zsh', candidates)).toBe(
-      '--target:Build target\n--watch:Watch mode',
-    )
+    expect(Completions.format('zsh', candidates)).toBe('--target:Build target\n--watch:Watch mode')
   })
 
   test('fish: value\\tdescription newline separated', () => {
@@ -224,10 +222,7 @@ describe('format', () => {
   })
 
   test('bash: appends \\x01 sentinel for noSpace candidates', () => {
-    const result = Completions.format('bash', [
-      { value: 'db', noSpace: true },
-      { value: 'build' },
-    ])
+    const result = Completions.format('bash', [{ value: 'db', noSpace: true }, { value: 'build' }])
     expect(result).toBe('db\x01\vbuild')
   })
 })
@@ -296,12 +291,24 @@ describe('completions built-in command', () => {
   test('shows help with --help', async () => {
     const cli = makeCli()
     const output = await serve(cli, ['completions', '--help'])
-    expect(output).toContain('Usage: mycli completions <shell>')
-    expect(output).toContain('bash')
-    expect(output).toContain('zsh')
-    expect(output).toContain('fish')
-    expect(output).toContain('nushell')
-    expect(output).toContain('Setup:')
+    expect(output).toMatchInlineSnapshot(`
+      "mycli completions — Generate shell completion script
+
+      Usage: mycli completions <shell>
+
+      Shells:
+        bash
+        fish
+        nushell
+        zsh
+
+      Setup:
+        bash     eval "$(mycli completions bash)"  # add to ~/.bashrc
+        zsh      eval "$(mycli completions zsh)"   # add to ~/.zshrc
+        fish     mycli completions fish | source   # add to ~/.config/fish/config.fish
+        nushell  see \`mycli completions nushell\`   # add to config.nu
+      "
+    `)
   })
 
   test('errors on missing shell argument', async () => {

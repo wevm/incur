@@ -18,6 +18,7 @@
 - **Return directly** — don't declare a variable just to return it. Use `return { ... }` unless the variable is needed (e.g. self-reference for chaining).
 - **Skip braces for single-statement blocks** — omit `{}` for single-statement `if`, `for`, etc.
 - **Destructure when accessing multiple properties** — prefer `const { a, b } = options` over repeated `options.a`, `options.b`.
+- **IIFE for multi-branch assignment** — use an IIFE instead of nested ternaries when assigning a value from multiple conditions. Add a comment to every branch explaining the case.
 
 ## Type Inference Conventions
 

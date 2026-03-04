@@ -625,6 +625,20 @@ $ my-cli whoami
 # → debug: true
 ```
 
+### Global options
+
+Every incur CLI includes these flags automatically:
+
+| Flag             | Description                                  |
+| ---------------- | -------------------------------------------- |
+| `--help`, `-h`   | Show help for the CLI or a specific command  |
+| `--version`      | Print CLI version                            |
+| `--llms`         | Output agent-readable command manifest       |
+| `--mcp`          | Start as an MCP stdio server                 |
+| `--json`         | Shorthand for `--format json`                |
+| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md`  |
+| `--verbose`      | Include full envelope (`ok`, `data`, `meta`) |
+
 ### Shell completions
 
 Every incur CLI has a built-in `completions` command that generates shell hook scripts for tab completion. The hook calls back into your binary at every tab press, so completions are always in sync with your commands.
@@ -639,20 +653,6 @@ my-cli completions fish | source     # add to ~/.config/fish/config.fish
 Completions are dynamic — subcommands, `--options`, short aliases, and enum values are all suggested based on the current command context. Command groups suppress the trailing space so you can keep tabbing into subcommands.
 
 Run `my-cli completions --help` for setup instructions.
-
-### Global options
-
-Every incur CLI includes these flags automatically:
-
-| Flag             | Description                                  |
-| ---------------- | -------------------------------------------- |
-| `--help`, `-h`   | Show help for the CLI or a specific command  |
-| `--version`      | Print CLI version                            |
-| `--llms`         | Output agent-readable command manifest       |
-| `--mcp`          | Start as an MCP stdio server                 |
-| `--json`         | Shorthand for `--format json`                |
-| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md`  |
-| `--verbose`      | Include full envelope (`ok`, `data`, `meta`) |
 
 ## API Reference
 

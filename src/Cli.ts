@@ -447,12 +447,14 @@ async function serveImpl(
   }
 
   // completions <shell>: print shell hook script to stdout
-  const completionsIdx =
-    filtered[0] === 'completions'
-      ? 0
-      : filtered[0] === name && filtered[1] === 'completions'
-        ? 1
-        : -1
+  const completionsIdx = (() => {
+    // e.g. `completions bash`
+    if (filtered[0] === 'completions') return 0
+    // e.g. `my-cli completions bash`
+    if (filtered[0] === name && filtered[1] === 'completions') return 1
+    // not a completions invocation
+    return -1
+  })()
   if (completionsIdx !== -1 && filtered[completionsIdx] === 'completions') {
     if (help) {
       writeln(
@@ -468,10 +470,20 @@ async function serveImpl(
           '  zsh',
           '',
           'Setup:',
-          `  bash    eval "$(${name} completions bash)"   # add to ~/.bashrc`,
-          `  zsh     eval "$(${name} completions zsh)"    # add to ~/.zshrc`,
-          `  fish    ${name} completions fish | source     # add to ~/.config/fish/config.fish`,
-          `  nushell see \`${name} completions nushell\`    # add to config.nu`,
+          ...(() => {
+            const rows = [
+              ['bash', `eval "$(${name} completions bash)"`, '# add to ~/.bashrc'],
+              ['zsh', `eval "$(${name} completions zsh)"`, '# add to ~/.zshrc'],
+              ['fish', `${name} completions fish | source`, '# add to ~/.config/fish/config.fish'],
+              ['nushell', `see \`${name} completions nushell\``, '# add to config.nu'],
+            ]
+            const shellW = Math.max(...rows.map((r) => r[0]!.length))
+            const cmdW = Math.max(...rows.map((r) => r[1]!.length))
+            return rows.map(
+              ([shell, cmd, comment]) =>
+                `  ${shell!.padEnd(shellW)}  ${cmd!.padEnd(cmdW)}  ${comment}`,
+            )
+          })(),
         ].join('\n'),
       )
       return
