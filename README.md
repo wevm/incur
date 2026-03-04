@@ -239,6 +239,92 @@ $ my-cli --help
 #   --version                           Show version
 ```
 
+### Mount APIs as CLIs
+
+Mount any HTTP server as a command with the `fetch` property. Supports any API
+framework that exposes a [Web Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) handler.
+
+The CLI translates HTTP requests using curl-style flags.
+
+```ts
+import { Cli } from 'incur'
+import { Hono } from 'hono'
+
+const app = new Hono()
+  .get('/users', (c) => c.json({ users: [{ id: 1, name: 'Alice' }] }))
+  .post('/users', async (c) => c.json({ created: true, ...(await c.req.json()) }, 201))
+
+Cli.create('my-cli', {
+  description: 'My CLI',
+  fetch: app.fetch, 
+  // OR
+  // fetch: bunApp.fetch
+  // fetch: denoApp.fetch
+  // fetch: elysiaApp.fetch,
+}).serve()
+```
+
+```sh
+$ my-cli api users
+# → users:
+# →   - id: 1
+# →     name: Alice
+
+$ my-cli api users -X POST -d '{"name":"Bob"}'
+# → created: true
+# → name: Bob
+```
+
+#### As commands
+
+You can also mount Hono apps onto commands:
+
+```ts
+import { Cli } from 'incur'
+import { Hono } from 'hono'
+
+const app = new Hono()
+  .get('/users', (c) => c.json({ users: [{ id: 1, name: 'Alice' }] }))
+  .post('/users', async (c) => c.json({ created: true, ...(await c.req.json()) }, 201))
+
+Cli
+  .create('my-cli', { description: 'My CLI' })
+  .command('users', { fetch: app.fetch })
+  .serve()
+```
+
+#### OpenAPI
+
+Pass an OpenAPI spec alongside `fetch` to generate typed subcommands with args, options, and descriptions extracted from the spec:
+
+```ts
+import { Cli } from 'incur'
+import { app, spec } from './my-hono-openapi-app.js'
+
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('api', { fetch: app.fetch, openapi: spec })
+  .serve()
+```
+
+```sh
+$ my-cli api --help
+# Commands:
+#   listUsers    List users
+#   createUser   Create a user
+#   getUser      Get a user by ID
+
+$ my-cli api listUsers --limit 5
+# → users: ...
+
+$ my-cli api getUser 42
+# → id: 42
+# → name: Alice
+
+$ my-cli api createUser --name Bob
+# → created: true
+# → name: Bob
+```
+
 ## Walkthrough
 
 ### Agent discovery

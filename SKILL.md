@@ -175,6 +175,48 @@ cli.command(pr)
 // → gh pr review approve
 ```
 
+### Fetch API
+
+Mount an HTTP server as a command with `.command('name', { fetch })`. Argv is translated into HTTP requests using curl-style flags:
+
+```ts
+import { Cli } from 'incur'
+import { Hono } from 'hono'
+
+const app = new Hono()
+app.get('/users', (c) => c.json({ users: [{ id: 1, name: 'Alice' }] }))
+app.post('/users', async (c) => c.json({ created: true, ...(await c.req.json()) }, 201))
+
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('api', { fetch: app.fetch })
+  .serve()
+```
+
+```sh
+my-cli api users                          # GET /users
+my-cli api users -X POST -d '{"name":"Bob"}'  # POST /users
+my-cli api users --limit 5                # GET /users?limit=5
+```
+
+### Fetch API + OpenAPI
+
+Pass an OpenAPI spec alongside `fetch` to generate typed subcommands with args, options, and descriptions from the spec:
+
+```ts
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('api', { fetch: app.fetch, openapi: spec })
+  .serve()
+```
+
+```sh
+my-cli api listUsers --limit 5     # GET /users?limit=5
+my-cli api getUser 42              # GET /users/42
+my-cli api createUser --name Bob   # POST /users with body
+my-cli api --help                  # shows typed subcommands
+```
+
+Works with any `(Request) => Response` handler — Hono, Elysia, etc. Specs from `@hono/zod-openapi` are supported directly.
+
 ## Arguments & Options
 
 All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.
