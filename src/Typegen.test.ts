@@ -129,6 +129,46 @@ describe('fromCli', () => {
     expect(commandOrder).toEqual(['alpha', 'middle', 'zebra'])
   })
 
+  test('const schema via z.literal', () => {
+    const cli = Cli.create('test').command('cmd', {
+      options: z.object({ mode: z.literal('strict') }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('mode: "strict"')
+  })
+
+  test('array of union items gets parens', () => {
+    const cli = Cli.create('test').command('cmd', {
+      options: z.object({ values: z.array(z.union([z.string(), z.number()])) }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('values: (string | number)[]')
+  })
+
+  test('null type', () => {
+    const cli = Cli.create('test').command('cmd', {
+      options: z.object({ empty: z.null() }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('empty: null')
+  })
+
+  test('nested object with properties', () => {
+    const cli = Cli.create('test').command('cmd', {
+      options: z.object({ config: z.object({ host: z.string(), port: z.number() }) }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('config: { host: string; port: number }')
+  })
+
   test('mixed top-level and grouped commands', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({}) })

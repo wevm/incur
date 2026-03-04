@@ -107,8 +107,7 @@ export function complete(
       if (name) {
         const values = possibleValues(name, leaf.options)
         if (values) {
-          for (const v of values)
-            if (v.startsWith(current)) candidates.push({ value: v })
+          for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
           return candidates
         }
         if (!isBooleanOption(name, leaf.options)) return candidates
@@ -139,9 +138,7 @@ export function complete(
 export function format(shell: Shell, candidates: Candidate[]): string {
   switch (shell) {
     case 'bash': {
-      return candidates
-        .map((c) => (c.noSpace ? `${c.value}\x01` : c.value))
-        .join('\v')
+      return candidates.map((c) => (c.noSpace ? `${c.value}\x01` : c.value)).join('\v')
     }
     case 'zsh': {
       return candidates
@@ -184,8 +181,7 @@ function resolveOptionName(token: string, entry: CommandEntry): string | undefin
   }
   if (token.startsWith('-') && token.length === 2 && entry.alias) {
     const short = token.slice(1)
-    for (const [name, alias] of Object.entries(entry.alias))
-      if (alias === short) return name
+    for (const [name, alias] of Object.entries(entry.alias)) if (alias === short) return name
   }
   return undefined
 }

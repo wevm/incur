@@ -2293,3 +2293,146 @@ describe('outputPolicy', () => {
     expect(restart.exitCode).toBe(1)
   })
 })
+
+test('--llms scoped to leaf command', async () => {
+  const cli = Cli.create('test')
+  cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+  cli.command('greet', { description: 'Greet someone', run: () => ({}) })
+
+  const { output } = await serve(cli, ['--llms', '--format', 'json', 'ping'])
+  const manifest = JSON.parse(output)
+  expect(manifest.commands).toHaveLength(1)
+  expect(manifest.commands[0].name).toBe('ping')
+})
+
+test('--llms scoped to group', async () => {
+  const cli = Cli.create('test')
+  const pr = Cli.create('pr', { description: 'PR management' })
+    .command('list', { description: 'List PRs', run: () => ({}) })
+    .command('create', { description: 'Create PR', run: () => ({}) })
+  cli.command(pr)
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+
+  const { output } = await serve(cli, ['--llms', '--format', 'json', 'pr'])
+  const manifest = JSON.parse(output)
+  expect(manifest.commands).toHaveLength(2)
+  expect(manifest.commands.every((c: any) => c.name.startsWith('pr '))).toBe(true)
+})
+
+test('--help on root with rootCommand shows command help with subcommands', async () => {
+  const cli = Cli.create('tool', {
+    description: 'A tool',
+    args: z.object({ name: z.string().describe('Name') }),
+    run: () => ({}),
+  })
+  cli.command('status', { description: 'Show status', run: () => ({}) })
+
+  const { output } = await serve(cli, ['--help'])
+  expect(output).toContain('tool — A tool')
+  expect(output).toContain('name')
+  expect(output).toContain('status')
+})
+
+test('streaming: generator yields error in incremental mode', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    async *run(c) {
+      yield { step: 1 }
+      yield c.error({ code: 'STREAM_ERR', message: 'mid-stream failure' })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain('STREAM_ERR')
+  expect(output).toContain('mid-stream failure')
+})
+
+test('streaming: generator yields error in jsonl mode', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    async *run(c) {
+      yield { step: 1 }
+      yield c.error({ code: 'STREAM_ERR', message: 'mid-stream failure' })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail', '--format', 'jsonl'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain('"type":"error"')
+  expect(output).toContain('STREAM_ERR')
+})
+
+test('streaming: generator yields error in buffered mode', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    async *run(c) {
+      yield { step: 1 }
+      yield c.error({ code: 'BUF_ERR', message: 'buffered failure' })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail', '--format', 'json'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain('BUF_ERR')
+})
+
+test('streaming: generator throws in buffered mode', async () => {
+  const cli = Cli.create('test')
+  cli.command('boom', {
+    async *run() {
+      yield { step: 1 }
+      throw new Error('generator exploded')
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['boom', '--format', 'json'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain('generator exploded')
+})
+
+test('streaming: generator returns error in buffered mode', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    async *run(c) {
+      yield { step: 1 }
+      return c.error({ code: 'RET_ERR', message: 'returned error' })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail', '--format', 'json'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain('RET_ERR')
+})
+
+test('deprecated short flag emits warning', async () => {
+  const cli = Cli.create('app').command('deploy', {
+    options: z.object({
+      zone: z.string().optional().describe('Availability zone').meta({ deprecated: true }),
+    }),
+    alias: { zone: 'z' },
+    run: ({ options }) => ({ zone: options.zone }),
+  })
+
+  const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  ;(process.stdout as any).isTTY = true
+  try {
+    await serve(cli, ['deploy', '-z', 'us-east-1'])
+    expect(spy).toHaveBeenCalledWith('Warning: --zone is deprecated\n')
+  } finally {
+    ;(process.stdout as any).isTTY = false
+    spy.mockRestore()
+  }
+})
+
+test('--llms includes hint in skill output', async () => {
+  const cli = Cli.create('test')
+  cli.command('deploy', {
+    description: 'Deploy the app',
+    hint: 'Always confirm before deploying to production',
+    run: () => ({}),
+  })
+
+  const { output } = await serve(cli, ['--llms'])
+  expect(output).toContain('Always confirm before deploying to production')
+})

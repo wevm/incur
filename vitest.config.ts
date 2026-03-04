@@ -6,6 +6,18 @@ export default defineConfig({
     alias: {
       incur: path.resolve(import.meta.dirname, 'src'),
     },
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/**/*.test-d.ts',
+        'src/bin.ts',
+        'src/index.ts',
+        'src/Register.ts',
+        'src/internal/types.ts',
+      ],
+    },
     globals: true,
     passWithNoTests: true,
     projects: [

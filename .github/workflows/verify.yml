@@ -32,6 +32,9 @@ jobs:
         uses: ./.github/actions/install-dependencies
 
       - name: Run tests
-        run: pnpm run test --bail=1
+        run: pnpm run test --bail=1 --coverage
         env:
           CI: true
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4

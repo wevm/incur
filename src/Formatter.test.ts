@@ -256,4 +256,48 @@ describe('format md', () => {
       | 3  | Charlie | user  |"
     `)
   })
+
+  test('formats top-level array of non-objects (lines 72-78)', () => {
+    // Top-level array of non-objects stringifies and re-enters formatMarkdown as scalar
+    const result = Formatter.format(['x', 'y', 'z'], 'md')
+    expect(result).toBe('x,y,z')
+  })
+
+  test('formats array of non-objects as stringified scalar (lines 73-78)', () => {
+    const result = Formatter.format({ tags: ['a', 'b', 'c'] }, 'md')
+    expect(result).toMatchInlineSnapshot(`
+      "## tags
+
+      a,b,c"
+    `)
+  })
+
+  test('formats non-scalar non-array-of-objects value in headings branch (line 101)', () => {
+    // An array of mixed types (not all objects) at a key triggers line 101
+    const result = Formatter.format({ items: [1, 2, 3] }, 'md')
+    expect(result).toMatchInlineSnapshot(`
+      "## items
+
+      1,2,3"
+    `)
+  })
+
+  test('formats single-entry flat object at root as kvTable (line 85)', () => {
+    // Single flat object at root returns kvTable directly (line 85)
+    // Line 106 (kvTable fallback) appears unreachable — needsHeadings is always
+    // true when isFlat is false, so the headings branch (line 91) handles it.
+    const result = Formatter.format({ name: 'solo' }, 'md')
+    expect(result).toMatchInlineSnapshot(`
+      "| Key  | Value |
+      |------|-------|
+      | name | solo  |"
+    `)
+  })
+})
+
+describe('format jsonl', () => {
+  test('falls through to toon', () => {
+    const result = Formatter.format({ message: 'hello' }, 'jsonl')
+    expect(result).toMatchInlineSnapshot(`"message: hello"`)
+  })
 })
