@@ -170,7 +170,8 @@ app.openapi(updateUser, async (c) => {
 })
 
 /** Extract the OpenAPI spec as a plain object. */
-const spec = app.getOpenAPI31Document({
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- avoid TS2742 portability error
+const spec: any = app.getOpenAPI31Document({
   openapi: '3.1.0',
   info: { title: 'Test API', version: '1.0.0' },
 })

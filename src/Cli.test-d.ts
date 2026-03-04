@@ -47,9 +47,9 @@ test('output constrains run return type', () => {
     },
   })
 
+  // @ts-expect-error — return doesn't match output schema
   cli.command('greet', {
     output: z.object({ message: z.string() }),
-    // @ts-expect-error — return doesn't match output schema
     run() {
       return { wrong: 123 }
     },
@@ -64,9 +64,9 @@ test('alias keys are constrained to option keys', () => {
     run: () => ({}),
   })
 
+  // @ts-expect-error — 'foo' is not an option key
   cli.command('list', {
     options: z.object({ state: z.string() }),
-    // @ts-expect-error — 'foo' is not an option key
     alias: { foo: 'f' },
     run: () => ({}),
   })

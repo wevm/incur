@@ -795,7 +795,8 @@ async function serveImpl(
           }),
         )
       }
-    } else {
+    } else if ('command' in resolved) {
+      const cmd = resolved.command
       const isRootCmd = resolved.path === name
       const commandName = isRootCmd ? name : `${name} ${resolved.path}`
       const helpSubcommands =
@@ -804,17 +805,17 @@ async function serveImpl(
           : undefined
       writeln(
         Help.formatCommand(commandName, {
-          alias: resolved.command.alias as Record<string, string> | undefined,
+          alias: cmd.alias as Record<string, string> | undefined,
           aliases: isRootCmd ? options.aliases : undefined,
-          description: resolved.command.description,
+          description: cmd.description,
           version: isRootCmd ? options.version : undefined,
-          args: resolved.command.args,
-          env: resolved.command.env,
+          args: cmd.args,
+          env: cmd.env,
           envSource: options.env,
-          hint: resolved.command.hint,
-          options: resolved.command.options,
-          examples: formatExamples(resolved.command.examples),
-          usage: resolved.command.usage,
+          hint: cmd.hint,
+          options: cmd.options,
+          examples: formatExamples(cmd.examples),
+          usage: cmd.usage,
           commands: helpSubcommands,
           root: isRootCmd,
         }),
@@ -836,7 +837,7 @@ async function serveImpl(
   const start = performance.now()
 
   // Resolve effective format: explicit --format/--json → command default → CLI default → toon
-  const resolvedFormat = 'command' in resolved && resolved.command.format
+  const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
 
   // Fall back to root fetch when no subcommand matches
@@ -966,7 +967,7 @@ async function serveImpl(
       const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, options.env ?? process.env) : {}
       if (fetchMiddleware.length > 0) {
         const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-        const errorFn = (opts: { code: string; message: string; retryable?: boolean; cta?: CtaBlock }): never =>
+        const errorFn = (opts: { code: string; message: string; retryable?: boolean | undefined; cta?: CtaBlock | undefined }): never =>
           ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
           agent: !human,
