@@ -1,5 +1,12 @@
 # incur
 
+## 0.1.16
+
+### Patch Changes
+
+- e3aa038: Added dynamic shell completions for bash, zsh, fish, and nushell. CLIs get a built-in `completions <shell>` command that outputs a hook script. The hook calls back into the binary at every tab press, so completions stay in sync with commands automatically. Supports subcommands, `--options`, short aliases, enum values, and space suppression for command groups.
+- 06580f0: Added short-alias stacking (e.g. `-abc` parsed as `-a -b -c`). The last flag in a stack can consume a value; all preceding flags must be boolean.
+
 ## 0.1.15
 
 ### Patch Changes
