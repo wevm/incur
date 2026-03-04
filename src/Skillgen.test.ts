@@ -64,7 +64,7 @@ test('includes args, options, and examples in output', async () => {
     description: 'Greet someone',
     args: z.object({ name: z.string().describe('Name to greet') }),
     options: z.object({ loud: z.boolean().default(false).describe('Shout') }),
-    examples: [{ command: 'world', description: 'Greet the world' }],
+    examples: [{ args: { name: 'world' }, description: 'Greet the world' }],
     run: () => ({}),
   })
   vi.mocked(importCli).mockResolvedValue(cli)
