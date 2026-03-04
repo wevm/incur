@@ -61,7 +61,7 @@ export type Cli<
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
       name: name,
-      definition: { description?: string | undefined; fetch: FetchHandler; openapi?: Openapi.OpenAPISpec | undefined; outputPolicy?: OutputPolicy | undefined },
+      definition: { basePath?: string | undefined; description?: string | undefined; fetch: FetchHandler; openapi?: Openapi.OpenAPISpec | undefined; outputPolicy?: OutputPolicy | undefined },
     ): Cli<commands, vars, env>
   }
   /** A short description of the CLI. */
@@ -199,7 +199,7 @@ export function create(
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
           if (def.openapi) {
             pending.push(
-              Openapi.generateCommands(def.openapi, def.fetch).then((generated) => {
+              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then((generated) => {
                 commands.set(nameOrCli, {
                   _group: true,
                   description: def.description,
@@ -212,6 +212,7 @@ export function create(
           }
           commands.set(nameOrCli, {
             _fetch: true,
+            basePath: def.basePath,
             description: def.description,
             fetch: def.fetch,
             ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
@@ -909,6 +910,7 @@ async function serveImpl(
 
     const runFetch = async () => {
       const input = Fetch.parseArgv(fetchRest)
+      if (fetchGateway.basePath) input.path = fetchGateway.basePath + input.path
       const request = Fetch.buildRequest(input)
       const response = await fetchGateway.fetch(request)
 
@@ -1451,6 +1453,7 @@ type InternalGroup = {
 /** @internal A fetch gateway entry. */
 type InternalFetchGateway = {
   _fetch: true
+  basePath?: string | undefined
   description?: string | undefined
   fetch: FetchHandler
   outputPolicy?: OutputPolicy | undefined

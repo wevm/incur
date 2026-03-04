@@ -44,6 +44,7 @@ type GeneratedCommand = {
 export async function generateCommands(
   spec: OpenAPISpec,
   fetch: FetchHandler,
+  options: { basePath?: string | undefined } = {},
 ): Promise<Map<string, GeneratedCommand>> {
   const resolved = await dereference(structuredClone(spec) as any) as unknown as OpenAPISpec
   const commands = new Map<string, GeneratedCommand>()
@@ -95,7 +96,7 @@ export async function generateCommands(
         description: op.summary ?? op.description,
         args: argsSchema,
         options: optionsSchema,
-        run: createHandler({ fetch, httpMethod, path, pathParams, queryParams, bodyProps }),
+        run: createHandler({ basePath: options.basePath, fetch, httpMethod, path, pathParams, queryParams, bodyProps }),
       })
     }
   }
@@ -104,6 +105,7 @@ export async function generateCommands(
 }
 
 function createHandler(config: {
+  basePath?: string | undefined
   bodyProps: Record<string, Record<string, unknown>>
   fetch: FetchHandler
   httpMethod: string
@@ -115,7 +117,7 @@ function createHandler(config: {
     const { args = {}, options = {} } = context
 
     // Build URL path with interpolated path params
-    let urlPath = config.path
+    let urlPath = (config.basePath ?? '') + config.path
     for (const p of config.pathParams) {
       const value = args[p.name]
       if (value !== undefined) urlPath = urlPath.replace(`{${p.name}}`, String(value))
