@@ -2,12 +2,13 @@ import { z } from 'zod'
 
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
-  const { description, version, commands = [], root = false } = options
+  const { aliases, description, version, commands = [], root = false } = options
   const lines: string[] = []
 
   // Header
-  lines.push(description ? `${name} \u2014 ${description}` : name)
-  if (version) lines.push(`v${version}`)
+  const title = version ? `${name}@${version}` : name
+  lines.push(description ? `${title} \u2014 ${description}` : title)
+  if (aliases?.length) lines.push(`Aliases: ${aliases.join(', ')}`)
   lines.push('')
 
   // Synopsis
@@ -33,6 +34,8 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
 
 export declare namespace formatRoot {
   type Options = {
+    /** Alternative binary names for this CLI. */
+    aliases?: string[] | undefined
     /** Commands to list. */
     commands?: { name: string; description?: string | undefined }[] | undefined
     /** A short description of the CLI or group. */
@@ -48,6 +51,8 @@ export declare namespace formatCommand {
   type Options = {
     /** Map of option names to single-char aliases. */
     alias?: Record<string, string> | undefined
+    /** Alternative binary names for this CLI. */
+    aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
     args?: z.ZodObject<any> | undefined
     /** Subcommands to list (for CLIs with both a root handler and subcommands). */
@@ -84,6 +89,7 @@ export declare namespace formatCommand {
 export function formatCommand(name: string, options: formatCommand.Options = {}): string {
   const {
     alias,
+    aliases,
     description,
     version,
     args,
@@ -97,8 +103,9 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   const lines: string[] = []
 
   // Header
-  lines.push(description ? `${name} \u2014 ${description}` : name)
-  if (version) lines.push(`v${version}`)
+  const title = version ? `${name}@${version}` : name
+  lines.push(description ? `${title} \u2014 ${description}` : title)
+  if (aliases?.length) lines.push(`Aliases: ${aliases.join(', ')}`)
   lines.push('')
 
   // Synopsis

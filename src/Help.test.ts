@@ -133,4 +133,52 @@ describe('formatRoot', () => {
         --verbose                           Show full output envelope"
     `)
   })
+
+  test('formatRoot shows aliases', () => {
+    const result = Help.formatRoot('my-tool', {
+      description: 'A test CLI',
+      version: '1.0.0',
+      aliases: ['mt', 'myt'],
+      commands: [{ name: 'fetch', description: 'Fetch a URL' }],
+    })
+    expect(result).toMatchInlineSnapshot(`
+      "my-tool@1.0.0 — A test CLI
+      Aliases: mt, myt
+
+      Usage: my-tool <command>
+
+      Commands:
+        fetch  Fetch a URL
+
+      Global Options:
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --help                              Show help
+        --llms                              Print LLM-readable manifest
+        --verbose                           Show full output envelope"
+    `)
+  })
+
+  test('formatCommand shows aliases', () => {
+    const result = Help.formatCommand('my-tool', {
+      description: 'A test CLI',
+      version: '1.0.0',
+      aliases: ['mt', 'myt'],
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+    })
+    expect(result).toMatchInlineSnapshot(`
+      "my-tool@1.0.0 — A test CLI
+      Aliases: mt, myt
+
+      Usage: my-tool <url>
+
+      Arguments:
+        url  URL to fetch
+
+      Global Options:
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --help                              Show help
+        --llms                              Print LLM-readable manifest
+        --verbose                           Show full output envelope"
+    `)
+  })
 })

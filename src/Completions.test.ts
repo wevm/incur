@@ -324,6 +324,55 @@ describe('completions built-in command', () => {
   })
 })
 
+describe('aliases', () => {
+  function makeAliasedCli() {
+    const cli = Cli.create('my-tool', {
+      version: '1.0.0',
+      description: 'A test CLI',
+      aliases: ['mt', 'myt'],
+    })
+    cli.command('fetch', {
+      description: 'Fetch a URL',
+      run() {
+        return { ok: true }
+      },
+    })
+    return cli
+  }
+
+  test('completions fish outputs registration for all names', async () => {
+    const cli = makeAliasedCli()
+    const output = await serve(cli, ['completions', 'fish'])
+    expect(output).toContain('--command my-tool')
+    expect(output).toContain('--command mt')
+    expect(output).toContain('--command myt')
+  })
+
+  test('completions bash outputs registration for all names', async () => {
+    const cli = makeAliasedCli()
+    const output = await serve(cli, ['completions', 'bash'])
+    expect(output).toContain('_incur_complete_my_tool()')
+    expect(output).toContain('_incur_complete_mt()')
+    expect(output).toContain('_incur_complete_myt()')
+  })
+
+  test('completions zsh outputs registration for all names', async () => {
+    const cli = makeAliasedCli()
+    const output = await serve(cli, ['completions', 'zsh'])
+    expect(output).toContain('#compdef my-tool')
+    expect(output).toContain('compdef _incur_complete_mt mt')
+    expect(output).toContain('compdef _incur_complete_myt myt')
+  })
+
+  test('COMPLETE env var registers all names', async () => {
+    const cli = makeAliasedCli()
+    const output = await serve(cli, [], { COMPLETE: 'fish' })
+    expect(output).toContain('--command my-tool')
+    expect(output).toContain('--command mt')
+    expect(output).toContain('--command myt')
+  })
+})
+
 describe('serve integration', () => {
   test('COMPLETE=bash with no words outputs registration script', async () => {
     const cli = makeCli()

@@ -211,6 +211,7 @@ export function create(
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
       return serveImpl(name, commands, argv, {
         ...serveOptions,
+        aliases: def.aliases,
         description: def.description,
         envSchema: def.env,
         format: def.format,
@@ -250,6 +251,8 @@ export declare namespace create {
     alias?: options extends z.ZodObject<any>
       ? Partial<Record<keyof z.output<options>, string>>
       : Record<string, string> | undefined
+    /** Alternative binary names for this CLI (e.g. shorter aliases in package.json `bin`). Shell completions are registered for all names. */
+    aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
     args?: args | undefined
     /** A short description of what the CLI does. */
@@ -379,8 +382,9 @@ async function serveImpl(
     const sepIdx = argv.indexOf('--')
     const words = sepIdx !== -1 ? argv.slice(sepIdx + 1) : argv
     if (words.length === 0) {
-      // Registration mode: print shell hook script
-      stdout(Completions.register(completeShell, name))
+      // Registration mode: print shell hook script for primary name + aliases
+      const names = [name, ...(options.aliases ?? [])]
+      stdout(names.map((n) => Completions.register(completeShell, n)).join('\n'))
     } else {
       const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
       const candidates = Completions.complete(commands, options.rootCommand, words, index)
@@ -501,7 +505,8 @@ async function serveImpl(
       exit(1)
       return
     }
-    writeln(Completions.register(shell as Completions.Shell, name))
+    const names = [name, ...(options.aliases ?? [])]
+    writeln(names.map((n) => Completions.register(shell as Completions.Shell, n)).join('\n'))
     return
   }
 
@@ -668,6 +673,7 @@ async function serveImpl(
       writeln(
         Help.formatCommand(name, {
           alias: cmd.alias as Record<string, string> | undefined,
+          aliases: options.aliases,
           description: cmd.description ?? options.description,
           version: options.version,
           args: cmd.args,
@@ -688,6 +694,7 @@ async function serveImpl(
     } else {
       writeln(
         Help.formatRoot(name, {
+          aliases: options.aliases,
           description: options.description,
           version: options.version,
           commands: collectHelpCommands(commands),
@@ -717,6 +724,7 @@ async function serveImpl(
         writeln(
           Help.formatCommand(name, {
             alias: cmd.alias as Record<string, string> | undefined,
+            aliases: options.aliases,
             description: cmd.description ?? options.description,
             version: options.version,
             args: cmd.args,
@@ -733,6 +741,7 @@ async function serveImpl(
       } else {
         writeln(
           Help.formatRoot(helpName, {
+            aliases: isRoot ? options.aliases : undefined,
             description: helpDesc,
             version: isRoot ? options.version : undefined,
             commands: collectHelpCommands(helpCmds),
@@ -750,6 +759,7 @@ async function serveImpl(
       writeln(
         Help.formatCommand(commandName, {
           alias: resolved.command.alias as Record<string, string> | undefined,
+          aliases: isRootCmd ? options.aliases : undefined,
           description: resolved.command.description,
           version: isRootCmd ? options.version : undefined,
           args: resolved.command.args,
@@ -1132,6 +1142,8 @@ function resolveCommand(
 /** @internal Options for serveImpl, extending public serve.Options with internal metadata. */
 declare namespace serveImpl {
   type Options = serve.Options & {
+    /** Alternative binary names for this CLI. */
+    aliases?: string[] | undefined
     description?: string | undefined
     /** CLI-level env schema. Parsed before middleware runs. */
     envSchema?: z.ZodObject<any> | undefined
