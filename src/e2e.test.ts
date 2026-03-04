@@ -831,8 +831,9 @@ describe('help', () => {
         validate-fail  Fails validation
 
       Built-in Commands:
-        mcp add     Register as an MCP server
-        skills add  Sync skill files to your agent
+        completions  Generate shell completion script
+        mcp add      Register as an MCP server
+        skills add   Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format
@@ -1325,8 +1326,9 @@ describe('root command with subcommands', () => {
         version  Show version
 
       Built-in Commands:
-        mcp add     Register as an MCP server
-        skills add  Sync skill files to your agent
+        completions  Generate shell completion script
+        mcp add      Register as an MCP server
+        skills add   Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format

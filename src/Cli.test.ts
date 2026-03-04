@@ -1168,8 +1168,9 @@ describe('help', () => {
         ping  Health check
 
       Built-in Commands:
-        mcp add     Register as an MCP server
-        skills add  Sync skill files to your agent
+        completions  Generate shell completion script
+        mcp add      Register as an MCP server
+        skills add   Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format
@@ -1200,8 +1201,9 @@ describe('help', () => {
         ping  Health check
 
       Built-in Commands:
-        mcp add     Register as an MCP server
-        skills add  Sync skill files to your agent
+        completions  Generate shell completion script
+        mcp add      Register as an MCP server
+        skills add   Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format
@@ -1348,8 +1350,9 @@ describe('help', () => {
         ping  Ping
 
       Built-in Commands:
-        mcp add     Register as an MCP server
-        skills add  Sync skill files to your agent
+        completions  Generate shell completion script
+        mcp add      Register as an MCP server
+        skills add   Sync skill files to your agent
 
       Global Options:
         --format <toon|json|yaml|md|jsonl>  Output format

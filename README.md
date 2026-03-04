@@ -88,8 +88,9 @@ $ greet --help
 #   name  Name to greet
 #
 # Built-in Commands:
-#   mcp add     Register as an MCP server
-#   skills add  Sync skill files to your agent
+#   completions  Generate shell completion script
+#   mcp add      Register as an MCP server
+#   skills add   Sync skill files to your agent
 #
 # Global Options:
 #   --format <toon|json|yaml|md|jsonl>  Output format
@@ -152,8 +153,9 @@ $ my-cli --help
 #   status   Show repo status
 #
 # Built-in Commands:
-#   mcp add     Register as an MCP server
-#   skills add  Sync skill files to your agent
+#   completions  Generate shell completion script
+#   mcp add      Register as an MCP server
+#   skills add   Sync skill files to your agent
 #
 # Global Options:
 #   --format <toon|json|yaml|md|jsonl>  Output format
@@ -203,8 +205,9 @@ $ my-cli --help
 #   pr  Pull request commands
 #
 # Built-in Commands:
-#   mcp add     Register as an MCP server
-#   skills add  Sync skill files to your agent
+#   completions  Generate shell completion script
+#   mcp add      Register as an MCP server
+#   skills add   Sync skill files to your agent
 #
 # Global Options:
 #   --format <toon|json|yaml|md|jsonl>  Output format
@@ -621,6 +624,21 @@ $ my-cli whoami
 # → requestId: 550e8400-e29b-41d4-a716-446655440000
 # → debug: true
 ```
+
+### Shell completions
+
+Every incur CLI has a built-in `completions` command that generates shell hook scripts for tab completion. The hook calls back into your binary at every tab press, so completions are always in sync with your commands.
+
+```sh
+# Generate and install completions
+eval "$(my-cli completions bash)"    # add to ~/.bashrc
+eval "$(my-cli completions zsh)"     # add to ~/.zshrc
+my-cli completions fish | source     # add to ~/.config/fish/config.fish
+```
+
+Completions are dynamic — subcommands, `--options`, short aliases, and enum values are all suggested based on the current command context. Command groups suppress the trailing space so you can keep tabbing into subcommands.
+
+Run `my-cli completions --help` for setup instructions.
 
 ### Global options
 

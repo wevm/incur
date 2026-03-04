@@ -306,6 +306,7 @@ function globalOptionsLines(root = false): string[] {
 
   if (root) {
     const builtins = [
+      { name: 'completions', desc: 'Generate shell completion script' },
       { name: 'mcp add', desc: 'Register as an MCP server' },
       { name: 'skills add', desc: 'Sync skill files to your agent' },
     ]
