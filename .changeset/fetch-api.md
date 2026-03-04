@@ -1,5 +1,5 @@
 ---
-"incur": minor
+"incur": patch
 ---
 
 Added Fetch API integration — mount any HTTP server as a CLI command.
