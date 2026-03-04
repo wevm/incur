@@ -1,4 +1,5 @@
 import { Cli, Errors, Skill, Typegen, z } from 'incur'
+import { app as honoApp } from '../test/fixtures/hono-api.js'
 
 let __mockSkillsHash: string | undefined
 
@@ -821,6 +822,7 @@ describe('help', () => {
       Usage: app <command>
 
       Commands:
+        api            Proxy to HTTP API
         auth           Authentication commands
         config         Show current configuration
         echo           Echo back arguments
@@ -980,6 +982,7 @@ describe('--llms', () => {
     const names = manifest.commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
+        "api",
         "auth login",
         "auth logout",
         "auth status",
@@ -1180,6 +1183,7 @@ describe('typegen', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
+            'api': { args: {}; options: {} }
             'auth login': { args: {}; options: { hostname: string; web: boolean; scopes: string[] } }
             'auth logout': { args: {}; options: {} }
             'auth status': { args: {}; options: {} }
@@ -1764,6 +1768,176 @@ describe('deprecated flags', () => {
   })
 })
 
+describe('fetch gateway', () => {
+  test('routes to fetch handler', async () => {
+    const { output } = await serve(createApp(), ['api', 'health'])
+    expect(output).toMatchInlineSnapshot(`
+      "ok: true
+      "
+    `)
+  })
+
+  test('path segments map to URL path', async () => {
+    const { output } = await serve(createApp(), ['api', 'users'])
+    expect(output).toContain('Alice')
+  })
+
+  test('path segments with dynamic params', async () => {
+    const { output } = await serve(createApp(), ['api', 'users', '42'])
+    expect(output).toMatchInlineSnapshot(`
+      "id: 42
+      name: Alice
+      "
+    `)
+  })
+
+  test('query params from --key value', async () => {
+    const { output } = await serve(createApp(), ['api', 'users', '--limit', '5'])
+    const { output: jsonOut } = await serve(createApp(), [
+      'api',
+      'users',
+      '--limit',
+      '5',
+      '--format',
+      'json',
+    ])
+    expect(json(jsonOut).limit).toBe(5)
+  })
+
+  test('POST with -X and -d', async () => {
+    const { output } = await serve(createApp(), [
+      'api',
+      'users',
+      '-X',
+      'POST',
+      '-d',
+      '{"name":"Bob"}',
+    ])
+    expect(output).toMatchInlineSnapshot(`
+      "created: true
+      name: Bob
+      "
+    `)
+  })
+
+  test('implicit POST with --body', async () => {
+    const { output } = await serve(createApp(), [
+      'api',
+      'users',
+      '--body',
+      '{"name":"Eve"}',
+    ])
+    expect(output).toMatchInlineSnapshot(`
+      "created: true
+      name: Eve
+      "
+    `)
+  })
+
+  test('DELETE with --method', async () => {
+    const { output } = await serve(createApp(), [
+      'api',
+      'users',
+      '1',
+      '--method',
+      'DELETE',
+    ])
+    expect(output).toMatchInlineSnapshot(`
+      "deleted: true
+      id: 1
+      "
+    `)
+  })
+
+  test('error response produces error envelope', async () => {
+    const { output, exitCode } = await serve(createApp(), ['api', 'error'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: HTTP_404
+      message: not found
+      "
+    `)
+  })
+
+  test('text response', async () => {
+    const { output } = await serve(createApp(), ['api', 'text'])
+    expect(output).toMatchInlineSnapshot(`
+      "hello world
+      "
+    `)
+  })
+
+  test('--format json', async () => {
+    const { output } = await serve(createApp(), ['api', 'health', '--format', 'json'])
+    expect(json(output)).toEqual({ ok: true })
+  })
+
+  test('--verbose wraps in envelope', async () => {
+    const { output } = await serve(createApp(), [
+      'api',
+      'health',
+      '--verbose',
+      '--format',
+      'json',
+    ])
+    const parsed = json(output)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.data).toEqual({ ok: true })
+    expect(parsed.meta.command).toBe('api')
+    expect(parsed.meta.duration).toBeDefined()
+  })
+
+  test('--help shows curl-style flags', async () => {
+    const { output } = await serve(createApp(), ['api', '--help'])
+    expect(output).toContain('Proxy to HTTP API')
+    expect(output).toContain('--method')
+    expect(output).toContain('--header')
+    expect(output).toContain('--body')
+    expect(output).toContain('--data')
+  })
+
+  test('appears in root --help', async () => {
+    const { output } = await serve(createApp(), ['--help'])
+    expect(output).toContain('api')
+    expect(output).toContain('Proxy to HTTP API')
+  })
+
+  test('appears in --llms', async () => {
+    const { output } = await serve(createApp(), ['--llms'])
+    expect(output).toContain('api')
+    expect(output).toContain('Proxy to HTTP API')
+  })
+
+  test('coexists with native commands', async () => {
+    const { output: fetchOut } = await serve(createApp(), ['api', 'health'])
+    expect(fetchOut).toContain('ok: true')
+    const { output: nativeOut } = await serve(createApp(), ['ping'])
+    expect(nativeOut).toContain('pong: true')
+  })
+
+  test('streaming NDJSON response', async () => {
+    const { output } = await serve(createApp(), ['api', 'stream'])
+    expect(output).toMatchInlineSnapshot(`
+      "progress: 1
+      progress: 2
+      "
+    `)
+  })
+
+  test('streaming NDJSON --format json buffers all chunks', async () => {
+    const { output } = await serve(createApp(), ['api', 'stream', '--format', 'json'])
+    expect(json(output)).toEqual([{ progress: 1 }, { progress: 2 }])
+  })
+
+  test('streaming NDJSON --format jsonl', async () => {
+    const { output } = await serve(createApp(), ['api', 'stream', '--format', 'jsonl'])
+    const lines = output.trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines[0]).toEqual({ type: 'chunk', data: { progress: 1 } })
+    expect(lines[1]).toEqual({ type: 'chunk', data: { progress: 2 } })
+    expect(lines[2].type).toBe('done')
+  })
+})
+
 async function serve(
   cli: { serve: Cli.Cli['serve'] },
   argv: string[],
@@ -2174,6 +2348,7 @@ function createApp() {
   cli.command(auth)
   cli.command(project)
   cli.command(config)
+  cli.command('api', { description: 'Proxy to HTTP API', fetch: honoApp.fetch })
 
   return cli
 }

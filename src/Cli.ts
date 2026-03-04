@@ -3,6 +3,7 @@ import type { z } from 'zod'
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ValidationError } from './Errors.js'
+import * as Fetch from './Fetch.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { detectRunner } from './internal/pm.js'
@@ -56,6 +57,11 @@ export type Cli<
       vars,
       env
     >
+    /** Mounts a fetch handler as a command. */
+    <const name extends string>(
+      name: name,
+      definition: { description?: string | undefined; fetch: FetchHandler; outputPolicy?: OutputPolicy | undefined },
+    ): Cli<commands, vars, env>
   }
   /** A short description of the CLI. */
   description?: string | undefined
@@ -174,6 +180,7 @@ export function create(
   const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name
   const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition
   const rootDef = 'run' in def ? (def as CommandDefinition<any, any, any>) : undefined
+  const rootFetch = 'fetch' in def ? (def.fetch as FetchHandler) : undefined
 
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
@@ -186,6 +193,15 @@ export function create(
 
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
+        if (def && 'fetch' in def && typeof def.fetch === 'function') {
+          commands.set(nameOrCli, {
+            _fetch: true,
+            description: def.description,
+            fetch: def.fetch,
+            ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+          } as InternalFetchGateway)
+          return cli
+        }
         commands.set(nameOrCli, def)
         return cli
       }
@@ -219,6 +235,7 @@ export function create(
         middlewares,
         outputPolicy: def.outputPolicy,
         rootCommand: rootDef,
+        rootFetch,
         sync: def.sync,
         vars: def.vars,
         version: def.version,
@@ -261,6 +278,8 @@ export declare namespace create {
     env?: env | undefined
     /** Usage examples for this command. */
     examples?: Example<args, options>[] | undefined
+    /** A fetch handler to use as the root command. All argv tokens are interpreted as path segments and curl-style flags. */
+    fetch?: FetchHandler | undefined
     /** Default output format. Overridden by `--format` or `--json`. */
     format?: Formatter.Format | undefined
     /** Zod schema for named options/flags. */
@@ -689,8 +708,8 @@ async function serveImpl(
       )
       return
     }
-    if (options.rootCommand) {
-      // Root command with no args — treat as root invocation
+    if (options.rootCommand || options.rootFetch) {
+      // Root command/fetch with no args — treat as root invocation
     } else {
       writeln(
         Help.formatRoot(name, {
@@ -708,7 +727,16 @@ async function serveImpl(
   const resolved =
     filtered.length === 0 && options.rootCommand
       ? { command: options.rootCommand, path: name, rest: [] as string[] }
-      : resolveCommand(commands, filtered)
+      : filtered.length === 0 && options.rootFetch
+        ? { fetchGateway: { _fetch: true as const, fetch: options.rootFetch, description: options.description }, middlewares: [] as MiddlewareHandler[], path: name, rest: [] as string[] }
+        : resolveCommand(commands, filtered)
+
+  // --help on a fetch gateway → show fetch-specific help
+  if (help && 'fetchGateway' in resolved) {
+    const commandName = resolved.path === name ? name : `${name} ${resolved.path}`
+    writeln(formatFetchHelp(commandName, resolved.fetchGateway.description))
+    return
+  }
 
   // --help after a command → show help for that command
   if (help) {
@@ -793,11 +821,13 @@ async function serveImpl(
   const resolvedFormat = 'command' in resolved && resolved.command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
 
-  // Fall back to root command when no subcommand matches
+  // Fall back to root fetch when no subcommand matches
   const effective =
-    'error' in resolved && options.rootCommand && !resolved.path
-      ? { command: options.rootCommand, path: name, rest: filtered }
-      : resolved
+    'error' in resolved && options.rootFetch && !resolved.path
+      ? { fetchGateway: { _fetch: true as const, fetch: options.rootFetch, description: options.description }, middlewares: [] as MiddlewareHandler[], path: name, rest: filtered }
+      : 'error' in resolved && options.rootCommand && !resolved.path
+        ? { command: options.rootCommand, path: name, rest: filtered }
+        : resolved
 
   // Resolve outputPolicy: command/group → CLI-level → default ('all')
   const effectiveOutputPolicy =
@@ -849,6 +879,115 @@ async function serveImpl(
       },
     })
     exit(1)
+    return
+  }
+
+  // Fetch gateway execution path
+  if ('fetchGateway' in effective) {
+    const { fetchGateway, path, rest: fetchRest } = effective
+    const fetchMiddleware = [
+      ...(options.middlewares ?? []),
+      ...((effective as any).middlewares ?? []),
+    ]
+
+    const runFetch = async () => {
+      const input = Fetch.parseArgv(fetchRest)
+      const request = Fetch.buildRequest(input)
+      const response = await fetchGateway.fetch(request)
+
+      // Streaming path — NDJSON responses pipe through handleStreaming
+      if (Fetch.isStreamingResponse(response)) {
+        const generator = Fetch.parseStreamingResponse(response)
+        await handleStreaming(generator, {
+          name,
+          path,
+          start,
+          format,
+          formatExplicit,
+          human,
+          renderOutput,
+          verbose,
+          write,
+          writeln,
+          exit,
+        })
+        return
+      }
+
+      const output = await Fetch.parseResponse(response)
+
+      if (output.ok) {
+        write({
+          ok: true,
+          data: output.data,
+          meta: {
+            command: path,
+            duration: `${Math.round(performance.now() - start)}ms`,
+          },
+        })
+      } else {
+        write({
+          ok: false,
+          error: {
+            code: `HTTP_${output.status}`,
+            message: typeof output.data === 'object' && output.data !== null && 'message' in output.data
+              ? String((output.data as any).message)
+              : typeof output.data === 'string' ? output.data : `HTTP ${output.status}`,
+          },
+          meta: {
+            command: path,
+            duration: `${Math.round(performance.now() - start)}ms`,
+          },
+        })
+        exit(1)
+      }
+    }
+
+    try {
+      const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, options.env ?? process.env) : {}
+      if (fetchMiddleware.length > 0) {
+        const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
+        const errorFn = (opts: { code: string; message: string; retryable?: boolean; cta?: CtaBlock }): never =>
+          ({ [sentinel]: 'error', ...opts }) as never
+        const mwCtx: MiddlewareContext = {
+          agent: !human,
+          command: path,
+          env: cliEnv,
+          error: errorFn,
+          name,
+          set(key: string, value: unknown) { varsMap[key] = value },
+          var: varsMap,
+          version: options.version,
+        }
+        const handleMwSentinel = (result: unknown) => {
+          if (!isSentinel(result) || result[sentinel] !== 'error') return
+          const cta = formatCtaBlock(name, result.cta)
+          write({
+            ok: false,
+            error: { code: result.code, message: result.message, ...(result.retryable !== undefined ? { retryable: result.retryable } : undefined) },
+            meta: { command: path, duration: `${Math.round(performance.now() - start)}ms`, ...(cta ? { cta } : undefined) },
+          })
+          exit(1)
+        }
+        const composed = fetchMiddleware.reduceRight(
+          (next: () => Promise<void>, mw) => async () => { handleMwSentinel(await mw(mwCtx, next)) },
+          runFetch,
+        )
+        await composed()
+      } else {
+        await runFetch()
+      }
+    } catch (error) {
+      write({
+        ok: false,
+        error: {
+          code: error instanceof IncurError ? error.code : 'UNKNOWN',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
+      })
+      exit(1)
+    }
     return
   }
 
@@ -1091,6 +1230,13 @@ function resolveCommand(
       rest: string[]
     }
   | {
+      fetchGateway: InternalFetchGateway
+      middlewares: MiddlewareHandler[]
+      outputPolicy?: OutputPolicy | undefined
+      path: string
+      rest: string[]
+    }
+  | {
       help: true
       path: string
       description?: string | undefined
@@ -1106,6 +1252,18 @@ function resolveCommand(
   let remaining = rest
   let inheritedOutputPolicy: OutputPolicy | undefined
   const collectedMiddlewares: MiddlewareHandler[] = []
+
+  // Fetch gateway — all remaining tokens go to the fetch handler
+  if (isFetchGateway(entry)) {
+    const outputPolicy = entry.outputPolicy ?? inheritedOutputPolicy
+    return {
+      fetchGateway: entry,
+      middlewares: collectedMiddlewares,
+      path: path.join(' '),
+      rest: remaining,
+      ...(outputPolicy ? { outputPolicy } : undefined),
+    }
+  }
 
   while (isGroup(entry)) {
     if (entry.outputPolicy) inheritedOutputPolicy = entry.outputPolicy
@@ -1127,6 +1285,17 @@ function resolveCommand(
     path.push(next)
     remaining = remaining.slice(1)
     entry = child
+
+    if (isFetchGateway(entry)) {
+      const outputPolicy = entry.outputPolicy ?? inheritedOutputPolicy
+      return {
+        fetchGateway: entry,
+        middlewares: collectedMiddlewares,
+        path: path.join(' '),
+        rest: remaining,
+        ...(outputPolicy ? { outputPolicy } : undefined),
+      }
+    }
   }
 
   const outputPolicy = entry.outputPolicy ?? inheritedOutputPolicy
@@ -1161,6 +1330,8 @@ declare namespace serveImpl {
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
     rootCommand?: CommandDefinition<any, any, any> | undefined
+    /** Root fetch handler, invoked when no subcommand matches and no rootCommand is set. */
+    rootFetch?: FetchHandler | undefined
     sync?:
       | {
           cwd?: string | undefined
@@ -1212,10 +1383,28 @@ function collectHelpCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
-    if (isGroup(entry)) result.push({ name, description: entry.description })
-    else result.push({ name, description: entry.description })
+    result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** @internal Formats help text for a fetch gateway command. */
+function formatFetchHelp(name: string, description?: string): string {
+  const lines: string[] = []
+  if (description) lines.push(`${name} — ${description}`)
+  else lines.push(name)
+  lines.push('')
+  lines.push(`Usage: ${name} <path> [options]`)
+  lines.push('')
+  lines.push('Path segments are joined into the request URL path.')
+  lines.push('')
+  lines.push('Options:')
+  lines.push('  -X, --method <METHOD>     HTTP method (default: GET, POST if body present)')
+  lines.push('  -H, --header "Key: Val"   Set a request header (repeatable)')
+  lines.push('  -d, --data <json>          Request body (implies POST)')
+  lines.push('      --body <json>          Request body (implies POST)')
+  lines.push('  --<key> <value>            Query string parameter')
+  return lines.join('\n')
 }
 
 /** Shape of the commands map accumulated through `.command()` chains. */
@@ -1224,11 +1413,14 @@ export type CommandsMap = Record<
   { args: Record<string, unknown>; options: Record<string, unknown> }
 >
 
-/** @internal Entry stored in a command map — either a leaf definition or a group. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup
+/** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
+type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway
 
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all'
+
+/** A standard Fetch API handler. */
+type FetchHandler = (req: Request) => Response | Promise<Response>
 
 /** @internal A command group's internal storage. */
 type InternalGroup = {
@@ -1239,9 +1431,22 @@ type InternalGroup = {
   commands: Map<string, CommandEntry>
 }
 
+/** @internal A fetch gateway entry. */
+type InternalFetchGateway = {
+  _fetch: true
+  description?: string | undefined
+  fetch: FetchHandler
+  outputPolicy?: OutputPolicy | undefined
+}
+
 /** @internal Type guard for command groups. */
 function isGroup(entry: CommandEntry): entry is InternalGroup {
   return '_group' in entry
+}
+
+/** @internal Type guard for fetch gateways. */
+function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
+  return '_fetch' in entry
 }
 
 /** @internal Maps CLI instances to their command maps. */
@@ -1570,7 +1775,11 @@ function collectCommands(
   const result: ReturnType<typeof collectCommands> = []
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
-    if (isGroup(entry)) {
+    if (isFetchGateway(entry)) {
+      const cmd: (typeof result)[number] = { name: path.join(' ') }
+      if (entry.description) cmd.description = entry.description
+      result.push(cmd)
+    } else if (isGroup(entry)) {
       result.push(...collectCommands(entry.commands, path))
     } else {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -1609,7 +1818,12 @@ function collectSkillCommands(
   const result: Skill.CommandInfo[] = []
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
-    if (isGroup(entry)) {
+    if (isFetchGateway(entry)) {
+      const cmd: Skill.CommandInfo = { name: path.join(' ') }
+      if (entry.description) cmd.description = entry.description
+      cmd.hint = 'Fetch gateway. Pass path segments and curl-style flags (-X, -H, -d, --key value).'
+      result.push(cmd)
+    } else if (isGroup(entry)) {
       if (entry.description) groups.set(path.join(' '), entry.description)
       result.push(...collectSkillCommands(entry.commands, path, groups))
     } else {

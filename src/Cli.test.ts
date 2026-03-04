@@ -2435,3 +2435,208 @@ test('--llms includes hint in skill output', async () => {
   const { output } = await serve(cli, ['--llms'])
   expect(output).toContain('Always confirm before deploying to production')
 })
+
+describe('fetch', async () => {
+  const { app } = await import('../test/fixtures/hono-api.js')
+
+  test('command with fetch: GET /users', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      description: 'Hono API',
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', 'users'])
+    expect(output).toMatchInlineSnapshot(`
+      "users[1]{id,name}:
+        1,Alice
+      limit: 10
+      "
+    `)
+  })
+
+  test('GET with query params', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', 'users', '--limit', '5'])
+    expect(output).toMatchInlineSnapshot(`
+      "users[1]{id,name}:
+        1,Alice
+      limit: 5
+      "
+    `)
+  })
+
+  test('GET /users/:id via path segments', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', 'users', '42'])
+    expect(output).toMatchInlineSnapshot(`
+      "id: 42
+      name: Alice
+      "
+    `)
+  })
+
+  test('POST with -X and -d', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, [
+      'api',
+      'users',
+      '-X',
+      'POST',
+      '-d',
+      '{"name":"Bob"}',
+    ])
+    expect(output).toMatchInlineSnapshot(`
+      "created: true
+      name: Bob
+      "
+    `)
+  })
+
+  test('implicit POST with --body', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, [
+      'api',
+      'users',
+      '--body',
+      '{"name":"Eve"}',
+    ])
+    expect(output).toMatchInlineSnapshot(`
+      "created: true
+      name: Eve
+      "
+    `)
+  })
+
+  test('DELETE with --method', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, [
+      'api',
+      'users',
+      '1',
+      '--method',
+      'DELETE',
+    ])
+    expect(output).toMatchInlineSnapshot(`
+      "deleted: true
+      id: 1
+      "
+    `)
+  })
+
+  test('error response → exit code 1', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { exitCode, output } = await serve(cli, ['api', 'error'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('HTTP_404')
+  })
+
+  test('--format json', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', 'health', '--format', 'json'])
+    expect(JSON.parse(output)).toEqual({ ok: true })
+  })
+
+  test('--verbose includes request/response meta', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', 'health', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.data).toEqual({ ok: true })
+    expect(parsed.meta.command).toBe('api')
+  })
+
+  test('native + fetch commands coexist', async () => {
+    const cli = Cli.create('test', { description: 'test' })
+      .command('api', { fetch: app.fetch })
+      .command('ping', { run: () => ({ pong: true }) })
+    const { output: fetchOut } = await serve(cli, ['api', 'health'])
+    expect(fetchOut).toContain('ok: true')
+    const { output: nativeOut } = await serve(cli, ['ping'])
+    expect(nativeOut).toContain('pong: true')
+  })
+
+  test('root-level fetch', async () => {
+    const cli = Cli.create('api', { description: 'API', fetch: app.fetch })
+    const { output } = await serve(cli, ['users'])
+    expect(output).toMatchInlineSnapshot(`
+      "users[1]{id,name}:
+        1,Alice
+      limit: 10
+      "
+    `)
+  })
+
+  test('root-level fetch with no args → root path', async () => {
+    const cli = Cli.create('api', { description: 'API', fetch: app.fetch })
+    // Hono returns 404 for / since we don't have a root route
+    const { exitCode } = await serve(cli, [])
+    expect(exitCode).toBe(1)
+  })
+
+  test('--help on fetch command', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      description: 'Proxy to Hono API',
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', '--help'])
+    expect(output).toContain('Proxy to Hono API')
+    expect(output).toContain('--method')
+    expect(output).toContain('--header')
+    expect(output).toContain('--body')
+  })
+
+  test('text response', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['api', 'text'])
+    expect(output).toContain('hello world')
+  })
+
+  test('middleware runs before fetch handler', async () => {
+    let middlewareRan = false
+    const cli = Cli.create('test', { description: 'test' })
+      .use(async (_c, next) => {
+        middlewareRan = true
+        await next()
+      })
+      .command('api', { fetch: app.fetch })
+    await serve(cli, ['api', 'health'])
+    expect(middlewareRan).toBe(true)
+  })
+
+  test('fetch command appears in --llms', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      description: 'Proxy to API',
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['--llms'])
+    expect(output).toContain('api')
+    expect(output).toContain('Proxy to API')
+  })
+
+  test('fetch command appears in --help root', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      description: 'Proxy to API',
+      fetch: app.fetch,
+    })
+    const { output } = await serve(cli, ['--help'])
+    expect(output).toContain('api')
+    expect(output).toContain('Proxy to API')
+  })
+})
