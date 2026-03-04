@@ -1784,7 +1784,10 @@ function emitDeprecationWarnings(
       const raw =
         !deprecatedFlags.has(stripped) && stripped.startsWith('no-') ? stripped.slice(3) : stripped
       if (deprecatedFlags.has(raw)) process.stderr.write(`Warning: --${raw} is deprecated\n`)
-    } else if (token.startsWith('-') && deprecatedShorts.has(token.slice(1)))
-      process.stderr.write(`Warning: --${deprecatedShorts.get(token.slice(1))} is deprecated\n`)
+    } else if (token.startsWith('-') && token.length >= 2) {
+      for (const ch of token.slice(1))
+        if (deprecatedShorts.has(ch))
+          process.stderr.write(`Warning: --${deprecatedShorts.get(ch)} is deprecated\n`)
+    }
   }
 }

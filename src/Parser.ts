@@ -62,21 +62,29 @@ export function parse<
           i += 2
         }
       }
-    } else if (token.startsWith('-') && token.length === 2) {
-      // -f [value]
-      const short = token.slice(1)
-      const name = aliasToName.get(short)
-      if (!name) throw new ParseError({ message: `Unknown flag: ${token}` })
-      if (isBooleanOption(name, optionsSchema)) {
-        rawOptions[name] = true
-        i++
-      } else {
-        const value = argv[i + 1]
-        if (value === undefined)
-          throw new ParseError({ message: `Missing value for flag: ${token}` })
-        setOption(rawOptions, name, value, optionsSchema)
-        i += 2
+    } else if (token.startsWith('-') && !token.startsWith('--') && token.length >= 2) {
+      // -f or -abc (stacked short aliases)
+      const chars = token.slice(1)
+      for (let j = 0; j < chars.length; j++) {
+        const short = chars[j]!
+        const name = aliasToName.get(short)
+        if (!name) throw new ParseError({ message: `Unknown flag: -${short}` })
+        const isLast = j === chars.length - 1
+        if (!isLast) {
+          if (!isBooleanOption(name, optionsSchema))
+            throw new ParseError({ message: `Non-boolean flag -${short} must be last in a stacked alias` })
+          rawOptions[name] = true
+        } else if (isBooleanOption(name, optionsSchema)) {
+          rawOptions[name] = true
+        } else {
+          const value = argv[i + 1]
+          if (value === undefined)
+            throw new ParseError({ message: `Missing value for flag: -${short}` })
+          setOption(rawOptions, name, value, optionsSchema)
+          i++
+        }
       }
+      i++
     } else {
       positionals.push(token)
       i++

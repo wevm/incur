@@ -135,6 +135,14 @@ describe('args and options', () => {
     `)
   })
 
+  test('stacked short aliases (-up value)', async () => {
+    const { output } = await serve(createApp(), ['echo', 'hello', '-up', '>>'])
+    expect(output).toMatchInlineSnapshot(`
+      "result[1]: >> HELLO
+      "
+    `)
+  })
+
   test('multiple options combined', async () => {
     const { output } = await serve(createApp(), ['echo', 'hi', '--upper', '--prefix', '!'])
     expect(output).toMatchInlineSnapshot(`
