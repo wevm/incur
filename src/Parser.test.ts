@@ -173,6 +173,27 @@ describe('parse', () => {
     ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
   })
 
+  test('detects boolean through nested optional+default', () => {
+    const result = Parser.parse(['--verbose'], {
+      options: z.object({ verbose: z.boolean().default(false).optional() }),
+    })
+    expect(result.options).toEqual({ verbose: true })
+  })
+
+  test('detects array through z.optional()', () => {
+    const result = Parser.parse(['--label', 'bug', '--label', 'fix'], {
+      options: z.object({ label: z.array(z.string()).optional() }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'fix'] })
+  })
+
+  test('detects array through z.default()', () => {
+    const result = Parser.parse(['--label', 'bug', '--label', 'fix'], {
+      options: z.object({ label: z.array(z.string()).default([]) }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'fix'] })
+  })
+
   test('parses positional args and options together', () => {
     const result = Parser.parse(['myrepo', '--limit', '5'], {
       args: z.object({ repo: z.string() }),

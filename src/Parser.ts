@@ -147,7 +147,7 @@ export declare namespace parse {
 /** Unwraps ZodDefault/ZodOptional to get the inner type. */
 function unwrap(schema: z.ZodType): z.ZodType {
   let s = schema as any
-  while (s._zod?.def?.innerType) s = s._zod.def.innerType
+  while (s.def?.innerType) s = s.def.innerType
   return s
 }
 
