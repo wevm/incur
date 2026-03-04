@@ -23,13 +23,15 @@
     "zile": "latest"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["bun"]
+    "onlyBuiltDependencies": [
+      "bun"
+    ]
   },
   "packageManager": "pnpm@10.30.2",
   "[!start-pkg]": "",
   "name": "incur",
   "type": "module",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "license": "MIT",
   "repository": {
     "type": "git",

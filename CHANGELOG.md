@@ -1,5 +1,11 @@
 # incur
 
+## 0.1.17
+
+### Patch Changes
+
+- b73feaf: Added `aliases` option to `Cli.create` for registering alternative binary names. Shell completions and help output include all aliases.
+
 ## 0.1.16
 
 ### Patch Changes
