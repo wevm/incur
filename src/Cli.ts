@@ -4,6 +4,7 @@ import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
+import * as Openapi from './Openapi.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { detectRunner } from './internal/pm.js'
@@ -57,10 +58,10 @@ export type Cli<
       vars,
       env
     >
-    /** Mounts a fetch handler as a command. */
+    /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
       name: name,
-      definition: { description?: string | undefined; fetch: FetchHandler; outputPolicy?: OutputPolicy | undefined },
+      definition: { description?: string | undefined; fetch: FetchHandler; openapi?: Openapi.OpenAPISpec | undefined; outputPolicy?: OutputPolicy | undefined },
     ): Cli<commands, vars, env>
   }
   /** A short description of the CLI. */
@@ -184,6 +185,7 @@ export function create(
 
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
+  const pending: Promise<void>[] = []
 
   const cli: Cli = {
     name,
@@ -194,6 +196,20 @@ export function create(
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
         if (def && 'fetch' in def && typeof def.fetch === 'function') {
+          // OpenAPI + fetch → generate typed command group (async, resolved before serve)
+          if (def.openapi) {
+            pending.push(
+              Openapi.generateCommands(def.openapi, def.fetch).then((generated) => {
+                commands.set(nameOrCli, {
+                  _group: true,
+                  description: def.description,
+                  commands: generated as Map<string, CommandEntry>,
+                  ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                } as InternalGroup)
+              }),
+            )
+            return cli
+          }
           commands.set(nameOrCli, {
             _fetch: true,
             description: def.description,
@@ -225,6 +241,7 @@ export function create(
     },
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
+      if (pending.length > 0) await Promise.all(pending)
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,

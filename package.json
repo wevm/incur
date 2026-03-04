@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "latest",
+    "@hono/zod-openapi": "^1.2.2",
     "@types/node": "latest",
     "@vitest/coverage-v8": "^4.0.18",
     "bun": "^1.3.10",
@@ -46,6 +47,7 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@readme/openapi-parser": "^6.0.0",
     "@toon-format/toon": "^2.1.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
