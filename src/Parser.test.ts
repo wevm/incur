@@ -107,6 +107,93 @@ describe('parse', () => {
     ).toThrow(expect.objectContaining({ name: 'Incur.ValidationError' }))
   })
 
+  test('stacks boolean short aliases (-vD)', () => {
+    const result = Parser.parse(['-vD'], {
+      options: z.object({
+        verbose: z.boolean().default(false),
+        debug: z.boolean().default(false),
+      }),
+      alias: { verbose: 'v', debug: 'D' },
+    })
+    expect(result.options).toEqual({ verbose: true, debug: true })
+  })
+
+  test('last flag in stack takes a value (-vDf json)', () => {
+    const result = Parser.parse(['-vDf', 'json'], {
+      options: z.object({
+        verbose: z.boolean().default(false),
+        debug: z.boolean().default(false),
+        format: z.string().default('text'),
+      }),
+      alias: { verbose: 'v', debug: 'D', format: 'f' },
+    })
+    expect(result.options).toEqual({ verbose: true, debug: true, format: 'json' })
+  })
+
+  test('throws ParseError for non-boolean mid-stack', () => {
+    expect(() =>
+      Parser.parse(['-fv'], {
+        options: z.object({
+          format: z.string(),
+          verbose: z.boolean().default(false),
+        }),
+        alias: { format: 'f', verbose: 'v' },
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
+  })
+
+  test('throws ParseError when last flag in stack is missing a value', () => {
+    expect(() =>
+      Parser.parse(['-vf'], {
+        options: z.object({
+          verbose: z.boolean().default(false),
+          format: z.string(),
+        }),
+        alias: { verbose: 'v', format: 'f' },
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
+  })
+
+  test('single boolean short alias still works (-v)', () => {
+    const result = Parser.parse(['-v'], {
+      options: z.object({ verbose: z.boolean().default(false) }),
+      alias: { verbose: 'v' },
+    })
+    expect(result.options).toEqual({ verbose: true })
+  })
+
+  test('throws ParseError for unknown alias in stack', () => {
+    expect(() =>
+      Parser.parse(['-vx'], {
+        options: z.object({
+          verbose: z.boolean().default(false),
+        }),
+        alias: { verbose: 'v' },
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
+  })
+
+  test('detects boolean through nested optional+default', () => {
+    const result = Parser.parse(['--verbose'], {
+      options: z.object({ verbose: z.boolean().default(false).optional() }),
+    })
+    expect(result.options).toEqual({ verbose: true })
+  })
+
+  test('detects array through z.optional()', () => {
+    const result = Parser.parse(['--label', 'bug', '--label', 'fix'], {
+      options: z.object({ label: z.array(z.string()).optional() }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'fix'] })
+  })
+
+  test('detects array through z.default()', () => {
+    const result = Parser.parse(['--label', 'bug', '--label', 'fix'], {
+      options: z.object({ label: z.array(z.string()).default([]) }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'fix'] })
+  })
+
   test('parses positional args and options together', () => {
     const result = Parser.parse(['myrepo', '--limit', '5'], {
       args: z.object({ repo: z.string() }),
