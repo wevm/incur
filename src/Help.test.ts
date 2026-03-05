@@ -29,6 +29,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })
@@ -47,6 +48,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })
@@ -72,6 +74,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })
@@ -114,6 +117,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })
@@ -135,6 +139,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })
@@ -160,6 +165,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })
@@ -185,6 +191,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope"
     `)
   })

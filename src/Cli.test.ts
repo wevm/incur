@@ -580,6 +580,121 @@ describe('--llms', () => {
   })
 })
 
+describe('--schema', () => {
+  test('returns command schema in toon format', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string().describe('Name to greet') }),
+      options: z.object({ loud: z.boolean().default(false).describe('Shout') }),
+      output: z.object({ message: z.string() }),
+      run(c) {
+        return { message: `hello ${c.args.name}` }
+      },
+    })
+    const { output } = await serve(cli, ['greet', '--schema'])
+    expect(output).toContain('args')
+    expect(output).toContain('options')
+    expect(output).toContain('output')
+  })
+
+  test('returns command schema as JSON', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string().describe('Name to greet') }),
+      options: z.object({ loud: z.boolean().default(false).describe('Shout') }),
+      output: z.object({ message: z.string() }),
+      run(c) {
+        return { message: `hello ${c.args.name}` }
+      },
+    })
+    const { output } = await serve(cli, ['greet', '--schema', '--format', 'json'])
+    expect(JSON.parse(output)).toMatchInlineSnapshot(`
+      {
+        "args": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "Name to greet",
+              "type": "string",
+            },
+          },
+          "required": [
+            "name",
+          ],
+          "type": "object",
+        },
+        "options": {
+          "additionalProperties": false,
+          "properties": {
+            "loud": {
+              "default": false,
+              "description": "Shout",
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "loud",
+          ],
+          "type": "object",
+        },
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "message",
+          ],
+          "type": "object",
+        },
+      }
+    `)
+  })
+
+  test('on root command', async () => {
+    const cli = Cli.create('test', {
+      args: z.object({ name: z.string() }),
+      output: z.object({ greeting: z.string() }),
+      run(c) {
+        return { greeting: `hi ${c.args.name}` }
+      },
+    })
+    const { output } = await serve(cli, ['--schema', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.args).toBeDefined()
+    expect(parsed.output).toBeDefined()
+  })
+
+  test('on unknown command shows error', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', { run: () => ({}) })
+    const { output, exitCode } = await serve(cli, ['nope', '--schema'])
+    expect(output).toContain("'nope' is not a command")
+    expect(exitCode).toBe(1)
+  })
+
+  test('on group shows available commands', async () => {
+    const cli = Cli.create('test')
+    const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
+      description: 'List PRs',
+      run: () => ({ items: [] }),
+    })
+    cli.command(pr)
+    const { output } = await serve(cli, ['pr', '--schema'])
+    expect(output).toContain('pr')
+    expect(output).toContain('list')
+  })
+
+  test('omits empty schema sections', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['ping', '--schema', '--format', 'json'])
+    expect(JSON.parse(output)).toMatchInlineSnapshot('{}')
+  })
+})
+
 describe('subcommands', () => {
   test('creates a command group with name and description', () => {
     const pr = Cli.create('pr', { description: 'PR management' })
@@ -743,6 +858,7 @@ describe('subcommands', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -1179,6 +1295,7 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1213,6 +1330,7 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1242,6 +1360,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -1272,6 +1391,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -1364,6 +1484,7 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1391,6 +1512,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -1482,6 +1604,7 @@ describe('env', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
 
       Environment Variables:
@@ -1516,6 +1639,7 @@ describe('env', () => {
           --format <toon|json|yaml|md|jsonl>  Output format
           --help                              Show help
           --llms                              Print LLM-readable manifest
+          --schema                            Show JSON Schema for a command
           --verbose                           Show full output envelope
 
         Environment Variables:

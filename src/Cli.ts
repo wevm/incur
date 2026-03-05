@@ -405,6 +405,7 @@ async function serveImpl(
     mcp: mcpFlag,
     help,
     version,
+    schema,
     rest: filtered,
   } = extractBuiltinFlags(argv)
 
@@ -441,7 +442,7 @@ async function serveImpl(
   }
 
   // Skills staleness check (skip for built-in commands)
-  if (!llms && !help && !version) {
+  if (!llms && !schema && !help && !version) {
     const isSkillsAdd =
       filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
     const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
@@ -823,6 +824,39 @@ async function serveImpl(
         }),
       )
     }
+    return
+  }
+
+  // --schema: output JSON Schema for a command's args, env, options, output
+  if (schema) {
+    if ('help' in resolved) {
+      writeln(
+        Help.formatRoot(`${name} ${resolved.path}`, {
+          description: resolved.description,
+          commands: collectHelpCommands(resolved.commands),
+        }),
+      )
+      return
+    }
+    if ('error' in resolved) {
+      const parent = resolved.path ? `${name} ${resolved.path}` : name
+      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.`)
+      exit(1)
+      return
+    }
+    if ('fetchGateway' in resolved) {
+      writeln('--schema is not supported for fetch commands.')
+      exit(1)
+      return
+    }
+    const cmd = resolved.command
+    const format = formatExplicit ? formatFlag : 'toon'
+    const result: Record<string, unknown> = {}
+    if (cmd.args) result.args = Schema.toJsonSchema(cmd.args)
+    if (cmd.env) result.env = Schema.toJsonSchema(cmd.env)
+    if (cmd.options) result.options = Schema.toJsonSchema(cmd.options)
+    if (cmd.output) result.output = Schema.toJsonSchema(cmd.output)
+    writeln(Formatter.format(result, format))
     return
   }
 
@@ -1379,6 +1413,7 @@ function extractBuiltinFlags(argv: string[]) {
   let mcp = false
   let help = false
   let version = false
+  let schema = false
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
   let filterOutput: string | undefined
@@ -1391,6 +1426,7 @@ function extractBuiltinFlags(argv: string[]) {
     else if (token === '--mcp') mcp = true
     else if (token === '--help' || token === '-h') help = true
     else if (token === '--version') version = true
+    else if (token === '--schema') schema = true
     else if (token === '--json') {
       format = 'json'
       formatExplicit = true
@@ -1404,7 +1440,7 @@ function extractBuiltinFlags(argv: string[]) {
     } else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, filterOutput, llms, mcp, help, version, rest }
+  return { verbose, format, formatExplicit, filterOutput, llms, mcp, help, version, schema, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */

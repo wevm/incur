@@ -850,6 +850,7 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -879,6 +880,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -902,6 +904,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -924,6 +927,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -952,6 +956,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
       "
     `)
@@ -1352,6 +1357,7 @@ describe('root command with subcommands', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1524,6 +1530,7 @@ describe('env', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
+        --schema                            Show JSON Schema for a command
         --verbose                           Show full output envelope
 
       Environment Variables:

@@ -331,6 +331,7 @@ function globalOptionsLines(root = false): string[] {
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
+    { flag: '--schema', desc: 'Show JSON Schema for a command' },
     { flag: '--verbose', desc: 'Show full output envelope' },
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ]
