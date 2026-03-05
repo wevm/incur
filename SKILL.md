@@ -381,6 +381,70 @@ meta:
 
 Without `--verbose`, only `data` is emitted. On errors, only the `error` block is emitted.
 
+### Filtering output
+
+Use `--filter-output` to prune command output to specific keys. Supports dot-notation for nested access, array slices with `[start,end]`, and comma-separated paths:
+
+```ts
+cli.command('users', {
+  description: 'List users',
+  run() {
+    return {
+      users: [
+        { name: 'Alice', email: 'alice@example.com', role: 'admin' },
+        { name: 'Bob', email: 'bob@example.com', role: 'user' },
+        { name: 'Carol', email: 'carol@example.com', role: 'user' },
+      ],
+    }
+  },
+})
+```
+
+```sh
+tool users --filter-output users.name
+# → [3]: Alice,Bob,Carol
+
+tool users --filter-output users[0,2].name
+# → users[2]{name}:
+# →   Alice
+# →   Bob
+```
+
+### Command schema
+
+Use `--schema` to print the JSON Schema for a command's arguments, environment variables, options, and output:
+
+```ts
+cli.command('install', {
+  description: 'Install a package',
+  args: z.object({
+    package: z.string().describe('Package name'),
+  }),
+  options: z.object({
+    saveDev: z.boolean().optional().describe('Save as dev dependency'),
+  }),
+  run({ args }) {
+    return { added: 1 }
+  },
+})
+```
+
+```sh
+tool install --schema
+# → args:
+# →   type: object
+# →   properties:
+# →     package:
+# →       type: string
+# → options:
+# →   type: object
+# →   properties:
+# →     saveDev:
+# →       type: boolean
+```
+
+Use `--schema --format json` for machine-readable output. Not supported on fetch commands.
+
 ### TTY detection
 
 incur adapts output based on whether stdout is a TTY:

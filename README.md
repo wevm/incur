@@ -736,15 +736,70 @@ $ my-cli whoami
 
 Every incur CLI includes these flags automatically:
 
-| Flag             | Description                                  |
-| ---------------- | -------------------------------------------- |
-| `--help`, `-h`   | Show help for the CLI or a specific command  |
-| `--version`      | Print CLI version                            |
-| `--llms`         | Output agent-readable command manifest       |
-| `--mcp`          | Start as an MCP stdio server                 |
-| `--json`         | Shorthand for `--format json`                |
-| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md`  |
-| `--verbose`      | Include full envelope (`ok`, `data`, `meta`) |
+| Flag                     | Description                                            |
+| ------------------------ | ------------------------------------------------------ |
+| `--help`, `-h`           | Show help for the CLI or a specific command             |
+| `--version`              | Print CLI version                                      |
+| `--llms`                 | Output agent-readable command manifest                  |
+| `--mcp`                  | Start as an MCP stdio server                            |
+| `--json`                 | Shorthand for `--format json`                           |
+| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`             |
+| `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
+| `--schema`               | Show JSON Schema for a command's args, options, output  |
+| `--verbose`              | Include full envelope (`ok`, `data`, `meta`)            |
+
+### Filtering output
+
+Use `--filter-output` to prune command output to specific keys. Supports dot-notation for nested keys, array slices, and comma-separated paths:
+
+```ts
+cli.command('users', {
+  description: 'List users',
+  run() {
+    return {
+      users: [
+        { name: 'Alice', email: 'alice@example.com', role: 'admin' },
+        { name: 'Bob', email: 'bob@example.com', role: 'user' },
+        { name: 'Carol', email: 'carol@example.com', role: 'user' },
+      ],
+    }
+  },
+})
+```
+
+```sh
+$ my-cli users --filter-output users.name
+# → [3]: Alice,Bob,Carol
+
+$ my-cli users --filter-output users[0,2].name
+# → users[2]{name}:
+# →   Alice
+# →   Bob
+```
+
+### Command schema
+
+Use `--schema` to inspect the JSON Schema for a command's arguments, options, environment variables, and output — useful for code generation, validation, and tooling:
+
+```sh
+$ my-cli install --schema
+# → args:
+# →   type: object
+# →   properties:
+# →     package:
+# →       type: string
+# → options:
+# →   type: object
+# →   properties:
+# →     saveDev:
+# →       type: boolean
+```
+
+Combine with `--format json` for machine-readable output:
+
+```sh
+$ my-cli install --schema --format json
+```
 
 ### Shell completions
 
