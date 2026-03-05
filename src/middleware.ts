@@ -31,12 +31,10 @@ export type Context<
 > = {
   /** Whether the consumer is an agent (stdout is not a TTY). */
   agent: boolean
-  /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
-  format: Formatter.Format
-  /** Whether the user explicitly passed `--format` or `--json`. */
-  formatExplicit: boolean
   /** The resolved command path. */
   command: string
+  /** Parsed environment variables from the CLI-level env schema. */
+  env: InferEnv<env>
   /** Return an error result, short-circuiting the middleware chain. */
   error: (options: {
     code: string
@@ -45,10 +43,12 @@ export type Context<
     message: string
     retryable?: boolean | undefined
   }) => never
+  /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+  format: Formatter.Format
+  /** Whether the user explicitly passed `--format` or `--json`. */
+  formatExplicit: boolean
   /** The CLI name. */
   name: string
-  /** Parsed environment variables from the CLI-level env schema. */
-  env: InferEnv<env>
   /** Set a typed variable for downstream middleware and handlers. */
   set<key extends string & keyof InferVars<vars>>(key: key, value: InferVars<vars>[key]): void
   /** Variables set by upstream middleware. */
