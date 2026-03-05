@@ -325,6 +325,60 @@ $ my-cli api createUser --name Bob
 # → name: Bob
 ```
 
+### Serve CLIs as APIs
+
+The inverse of mounting — expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.
+
+```ts
+import { Cli, z } from 'incur'
+
+const cli = Cli.create('my-cli', { version: '1.0.0' })
+  .command('users', {
+    args: z.object({ id: z.coerce.number().optional() }),
+    options: z.object({ limit: z.coerce.number().default(10) }),
+    run(c) {
+      if (c.args.id) return { id: c.args.id, name: 'Alice' }
+      return { users: [{ id: 1, name: 'Alice' }], limit: c.options.limit }
+    },
+  })
+
+Bun.serve(cli) // Bun
+Deno.serve(cli.fetch) // Deno
+export default cli // Cloudflare Workers
+app.all('*', c => cli.fetch(c.request)) // Elysia
+app.use(c => cli.fetch(c.req.raw)) // Hono
+export const GET = cli.fetch // Next.js
+export const POST = cli.fetch // Next.js
+```
+
+Path segments map to commands and positional args, query params to options (GET), and JSON body to options (POST):
+
+```
+GET  /users?limit=5    → my-cli users --limit 5
+GET  /users/42         → my-cli users 42
+POST /users { "name": "Bob" }  → my-cli users --name Bob
+```
+
+Responses use the same JSON envelope as `--verbose --format json`:
+
+```json
+{ "ok": true, "data": { "users": [...] }, "meta": { "command": "users", "duration": "3ms" } }
+```
+
+Async generator commands stream as NDJSON (`application/x-ndjson`). Middleware runs the same as in `serve()`.
+
+#### MCP over HTTP
+
+The `fetch` handler automatically exposes an MCP endpoint at `/mcp`. Agents can discover and call your CLI's commands as MCP tools over HTTP — no stdio required:
+
+```
+POST /mcp  { "jsonrpc": "2.0", "method": "initialize", ... }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/list", ... }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "users", ... } }
+```
+
+Non-`/mcp` paths continue routing to the command API as usual.
+
 ## Walkthrough
 
 ### Agent discovery

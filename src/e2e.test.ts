@@ -1952,6 +1952,517 @@ describe('fetch gateway', () => {
   })
 })
 
+async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
+  const res = await cli.fetch(req)
+  const body = await res.json()
+  if (body.meta?.duration) body.meta.duration = '<stripped>'
+  return { status: res.status, body }
+}
+
+describe('fetch api', () => {
+  test('GET /ping → 200 with data', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/ping'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "pong": true,
+          },
+          "meta": {
+            "command": "ping",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('GET /unknown → 404', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/unknown'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_NOT_FOUND",
+            "message": "'unknown' is not a command for 'app'.",
+          },
+          "meta": {
+            "command": "unknown",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
+  })
+
+  test('GET / without root command → 404', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_NOT_FOUND",
+            "message": "No root command defined.",
+          },
+          "meta": {
+            "command": "/",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
+  })
+
+  test('GET with query params → options', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/echo/hi?prefix=yo'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "result": [
+              "yo hi",
+            ],
+          },
+          "meta": {
+            "command": "echo",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('POST with JSON body → options', async () => {
+    const cli = createApp()
+    const req = new Request('http://localhost/project/create/MyProject', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ description: 'A test project' }),
+    })
+    expect(await fetchJson(cli, req)).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "id": "p-new",
+            "url": "https://example.com/projects/p-new",
+          },
+          "meta": {
+            "command": "project create",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('trailing path segments → positional args', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/project/get/p1'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "description": "Main project",
+            "id": "p1",
+            "members": [
+              {
+                "role": "admin",
+                "userId": "u1",
+              },
+            ],
+            "name": "Alpha",
+          },
+          "meta": {
+            "command": "project get",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('nested command (3 levels deep)', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/project/deploy/status/d-456'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "deployId": "d-456",
+            "progress": 75,
+            "status": "running",
+          },
+          "meta": {
+            "command": "project deploy status",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('thrown error → 500', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/explode'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "UNKNOWN",
+            "message": "kaboom",
+          },
+          "meta": {
+            "command": "explode",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 500,
+      }
+    `)
+  })
+
+  test('IncurError → 500 with code', async () => {
+    const cli = createApp()
+    expect(await fetchJson(cli, new Request('http://localhost/explode-clac'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "QUOTA_EXCEEDED",
+            "message": "Rate limit exceeded",
+          },
+          "meta": {
+            "command": "explode-clac",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 500,
+      }
+    `)
+  })
+
+  test('validation error → 400', async () => {
+    const cli = createApp()
+    const { status, body } = await fetchJson(cli, new Request('http://localhost/validate-fail'))
+    expect(status).toBe(400)
+    expect(body.ok).toBe(false)
+    expect(body.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  test('async generator → NDJSON streaming', async () => {
+    const cli = createApp()
+    const res = await cli.fetch(new Request('http://localhost/stream'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/x-ndjson')
+    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "content": "hello",
+          },
+          "type": "chunk",
+        },
+        {
+          "data": {
+            "content": "world",
+          },
+          "type": "chunk",
+        },
+        {
+          "meta": {
+            "command": "stream",
+          },
+          "ok": true,
+          "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('fetch gateway → forwards request', async () => {
+    const handler = (req: Request) => {
+      const url = new URL(req.url)
+      return new Response(JSON.stringify({ path: url.pathname }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const cli = Cli.create('test')
+    cli.command('api', { fetch: handler })
+    const res = await cli.fetch(new Request('http://localhost/api/users'))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchInlineSnapshot(`
+      {
+        "path": "/api/users",
+      }
+    `)
+  })
+
+  test('middleware sets var → command sees it', async () => {
+    const { cli } = createMiddlewareApp()
+    expect(await fetchJson(cli, new Request('http://localhost/whoami'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "requestId": "req-default",
+            "user": "alice",
+          },
+          "meta": {
+            "command": "whoami",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('middleware error → error response', async () => {
+    const cli = Cli.create('test')
+    cli.use((c) => { c.error({ code: 'FORBIDDEN', message: 'nope' }) })
+    cli.command('secret', { run: () => ({ secret: true }) })
+    expect(await fetchJson(cli, new Request('http://localhost/secret'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "FORBIDDEN",
+            "message": "nope",
+          },
+          "meta": {
+            "command": "secret",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 500,
+      }
+    `)
+  })
+
+  describe('mcp over http', () => {
+    function mcpRequest(cli: Cli.Cli<any, any, any>, body: unknown, sessionId?: string) {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      }
+      if (sessionId) headers['mcp-session-id'] = sessionId
+      return cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        }),
+      )
+    }
+
+    async function initSession(cli: Cli.Cli<any, any, any>) {
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      const sessionId = res.headers.get('mcp-session-id')!
+      await mcpRequest(cli, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId)
+      return sessionId
+    }
+
+    test('initialize → returns server info and capabilities', async () => {
+      const cli = createApp()
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect({
+        serverInfo: body.result.serverInfo,
+        hasTools: 'tools' in (body.result.capabilities ?? {}),
+      }).toMatchInlineSnapshot(`
+        {
+          "hasTools": true,
+          "serverInfo": {
+            "name": "app",
+            "version": "3.5.0",
+          },
+        }
+      `)
+    })
+
+    test('tools/list → lists all registered tools', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const names = body.result.tools.map((t: any) => t.name).sort()
+      expect(names).toMatchInlineSnapshot(`
+        [
+          "api",
+          "auth_login",
+          "auth_logout",
+          "auth_status",
+          "config",
+          "echo",
+          "explode",
+          "explode-clac",
+          "noop",
+          "ping",
+          "project_create",
+          "project_delete",
+          "project_deploy_create",
+          "project_deploy_rollback",
+          "project_deploy_status",
+          "project_get",
+          "project_list",
+          "slow",
+          "stream",
+          "stream-error",
+          "stream-ok",
+          "stream-text",
+          "stream-throw",
+          "validate-fail",
+        ]
+      `)
+    })
+
+    test('tools/call → executes command and returns result', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'echo', arguments: { message: 'hello' } },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect({
+        isError: body.result.isError,
+        content: JSON.parse(body.result.content[0].text),
+      }).toMatchInlineSnapshot(`
+        {
+          "content": {
+            "result": [
+              "hello",
+            ],
+          },
+          "isError": undefined,
+        }
+      `)
+    })
+
+    test('tools/call with nested command', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 4,
+          method: 'tools/call',
+          params: { name: 'project_get', arguments: { id: 'p1' } },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(JSON.parse(body.result.content[0].text)).toMatchInlineSnapshot(`
+        {
+          "description": "Main project",
+          "id": "p1",
+          "members": [
+            {
+              "role": "admin",
+              "userId": "u1",
+            },
+          ],
+          "name": "Alpha",
+        }
+      `)
+    })
+
+    test('tools/call with error → isError true', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 5,
+          method: 'tools/call',
+          params: { name: 'explode', arguments: {} },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect({
+        isError: body.result.isError,
+        text: body.result.content[0].text,
+      }).toMatchInlineSnapshot(`
+        {
+          "isError": true,
+          "text": "kaboom",
+        }
+      `)
+    })
+
+    test('non-/mcp paths still work alongside MCP', async () => {
+      const cli = createApp()
+      // Initialize MCP first
+      await initSession(cli)
+      // Regular fetch still works
+      expect(await fetchJson(cli, new Request('http://localhost/ping'))).toMatchInlineSnapshot(`
+        {
+          "body": {
+            "data": {
+              "pong": true,
+            },
+            "meta": {
+              "command": "ping",
+              "duration": "<stripped>",
+            },
+            "ok": true,
+          },
+          "status": 200,
+        }
+      `)
+    })
+  })
+})
+
 async function serve(
   cli: { serve: Cli.Cli['serve'] },
   argv: string[],

@@ -217,6 +217,65 @@ my-cli api --help                  # shows typed subcommands
 
 Works with any `(Request) => Response` handler — Hono, Elysia, etc. Specs from `@hono/zod-openapi` are supported directly.
 
+### Serve CLI as Fetch API
+
+Expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.
+
+```ts
+import { Cli, z } from 'incur'
+
+const cli = Cli.create('my-cli', { version: '1.0.0' })
+  .command('users', {
+    args: z.object({ id: z.coerce.number().optional() }),
+    options: z.object({ limit: z.coerce.number().default(10) }),
+    run(c) {
+      if (c.args.id) return { id: c.args.id, name: 'Alice' }
+      return { users: [{ id: 1, name: 'Alice' }], limit: c.options.limit }
+    },
+  })
+```
+
+```ts
+Bun.serve(cli) // Bun
+Deno.serve(cli.fetch) // Deno
+export default cli // Cloudflare Workers
+app.all('*', c => cli.fetch(c.request)) // Elysia
+app.use(c => cli.fetch(c.req.raw)) // Hono
+export const GET = cli.fetch // Next.js
+export const POST = cli.fetch
+```
+
+Request mapping:
+
+| HTTP | CLI equivalent |
+|------|---------------|
+| `GET /users?limit=5` | `my-cli users --limit 5` |
+| `GET /users/42` | `my-cli users 42` (positional arg) |
+| `POST /users` with JSON body | `my-cli users --name Bob` |
+| `GET /` | root command (or 404) |
+
+Responses are JSON envelopes: `{ "ok": true, "data": { ... }, "meta": { "command": "users", "duration": "3ms" } }`.
+
+Error status codes: 400 for validation errors, 404 for unknown commands, 500 for thrown errors.
+
+Async generator commands stream as NDJSON (`application/x-ndjson`). Middleware runs the same as `serve()`.
+
+#### Fetch gateways
+
+If a resolved command is a fetch gateway (`.command('api', { fetch })`), the request is forwarded to the nested handler.
+
+#### MCP over HTTP
+
+The fetch handler exposes an MCP endpoint at `/mcp`. Agents can discover and call commands as MCP tools over HTTP:
+
+```
+POST /mcp  { "jsonrpc": "2.0", "method": "initialize", ... }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/list", ... }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "users", ... } }
+```
+
+The MCP server is initialized lazily on the first `/mcp` request. Non-`/mcp` paths route to the command API as usual.
+
 ## Arguments & Options
 
 All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.
@@ -846,6 +905,14 @@ await cli.serve(['install', 'express', '--json'], {
 | `stdout` | `(s: string) => void`                 | Override stdout writer         |
 | `exit`   | `(code: number) => void`              | Override exit handler          |
 | `env`    | `Record<string, string \| undefined>` | Override environment variables |
+
+### `cli.fetch(req: Request): Promise<Response>`
+
+Expose the CLI as a Fetch API handler. See [Serve CLI as Fetch API](#serve-cli-as-fetch-api) for full details.
+
+```ts
+Bun.serve(cli)
+```
 
 ## Streaming
 

@@ -52,7 +52,7 @@ export declare namespace serve {
 }
 
 /** @internal Executes a tool call and returns a CallToolResult. */
-async function callTool(
+export async function callTool(
   tool: ToolEntry,
   params: Record<string, unknown>,
   extra?: {
@@ -135,7 +135,7 @@ function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unkn
 }
 
 /** @internal A resolved tool entry from the command tree. */
-type ToolEntry = {
+export type ToolEntry = {
   name: string
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
@@ -143,7 +143,7 @@ type ToolEntry = {
 }
 
 /** @internal Recursively collects leaf commands as tool entries. */
-function collectTools(commands: Map<string, any>, prefix: string[]): ToolEntry[] {
+export function collectTools(commands: Map<string, any>, prefix: string[]): ToolEntry[] {
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
     const path = [...prefix, name]

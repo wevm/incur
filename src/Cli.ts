@@ -71,6 +71,8 @@ export type Cli<
   env: env
   /** The name of the CLI application. */
   name: string
+  /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
+  fetch(req: Request): Promise<Response>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
@@ -187,6 +189,7 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
+  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0')
 
   const cli: Cli = {
     name,
@@ -240,6 +243,16 @@ export function create(
         ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
       })
       return cli
+    },
+
+    async fetch(req: Request) {
+      if (pending.length > 0) await Promise.all(pending)
+      return fetchImpl(name, commands, req, {
+        mcpHandler,
+        middlewares,
+        rootCommand: rootDef,
+        vars: def.vars,
+      })
     },
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
@@ -1253,6 +1266,272 @@ async function serveImpl(
     write(errorOutput)
     exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
   }
+}
+
+/** @internal Options for fetchImpl. */
+declare namespace fetchImpl {
+  type Options = {
+    mcpHandler?: ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>) | undefined
+    middlewares?: MiddlewareHandler[] | undefined
+    rootCommand?: CommandDefinition<any, any, any> | undefined
+    vars?: z.ZodObject<any> | undefined
+  }
+}
+
+/** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
+function createMcpHttpHandler(name: string, version: string) {
+  let transport: any
+
+  return async (req: Request, commands: Map<string, CommandEntry>): Promise<Response> => {
+    if (!transport) {
+      const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
+      const { WebStandardStreamableHTTPServerTransport } = await import(
+        '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
+      )
+
+      const server = new McpServer({ name, version })
+
+      for (const tool of Mcp.collectTools(commands, [])) {
+        const mergedShape: Record<string, any> = {
+          ...tool.command.args?.shape,
+          ...tool.command.options?.shape,
+        }
+        const hasInput = Object.keys(mergedShape).length > 0
+
+        server.registerTool(
+          tool.name,
+          {
+            ...(tool.description ? { description: tool.description } : undefined),
+            ...(hasInput ? { inputSchema: mergedShape } : undefined),
+          },
+          async (...callArgs: any[]) => {
+            const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
+            return Mcp.callTool(tool, params)
+          },
+        )
+      }
+
+      transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        enableJsonResponse: true,
+      })
+      await server.connect(transport)
+    }
+    return transport.handleRequest(req)
+  }
+}
+
+/** @internal Handles an HTTP request by resolving a command and returning a JSON Response. */
+async function fetchImpl(
+  name: string,
+  commands: Map<string, CommandEntry>,
+  req: Request,
+  options: fetchImpl.Options = {},
+): Promise<Response> {
+  const start = performance.now()
+
+  const url = new URL(req.url)
+  const segments = url.pathname.split('/').filter(Boolean)
+
+  // MCP over HTTP: route /mcp to the MCP transport
+  if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
+    return options.mcpHandler(req, commands)
+
+  // Parse options from search params (GET) or body (non-GET)
+  let inputOptions: Record<string, unknown> = {}
+  if (req.method === 'GET')
+    for (const [key, value] of url.searchParams) inputOptions[key] = value
+  else {
+    try {
+      const contentType = req.headers.get('content-type') ?? ''
+      if (contentType.includes('application/json')) inputOptions = (await req.json()) as Record<string, unknown>
+    } catch {}
+  }
+
+  function jsonResponse(body: unknown, status: number) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  // Resolve command from path segments
+  if (segments.length === 0) {
+    // Root path
+    if (options.rootCommand)
+      return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
+    return jsonResponse(
+      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' }, meta: { command: '/', duration: `${Math.round(performance.now() - start)}ms` } },
+      404,
+    )
+  }
+
+  const resolved = resolveCommand(commands, segments)
+
+  if ('error' in resolved)
+    return jsonResponse(
+      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.` }, meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` } },
+      404,
+    )
+
+  if ('help' in resolved)
+    return jsonResponse(
+      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: `'${resolved.path}' is a command group. Specify a subcommand.` }, meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` } },
+      404,
+    )
+
+  if ('fetchGateway' in resolved)
+    return resolved.fetchGateway.fetch(req)
+
+  const { command, path, rest } = resolved
+  return executeCommand(path, command, rest, inputOptions, start, options)
+}
+
+/** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
+async function executeCommand(
+  path: string,
+  command: CommandDefinition<any, any, any>,
+  rest: string[],
+  inputOptions: Record<string, unknown>,
+  start: number,
+  options: fetchImpl.Options,
+): Promise<Response> {
+  function jsonResponse(body: unknown, status: number) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  const sentinel_ = Symbol.for('incur.sentinel')
+  const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
+  let response: Response | undefined
+
+  const runCommand = async () => {
+    const { args } = Parser.parse(rest, { args: command.args })
+    const parsedOptions = command.options ? command.options.parse(inputOptions) : {}
+
+    const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
+    const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never =>
+      ({ [sentinel_]: 'error', ...opts }) as never
+
+    const result = command.run({
+      agent: true,
+      args,
+      env: {},
+      name: path,
+      options: parsedOptions,
+      ok: okFn,
+      error: errorFn,
+      var: varsMap,
+      version: undefined,
+    })
+
+    // Streaming path — async generator → NDJSON response
+    if (isAsyncGenerator(result)) {
+      const stream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder()
+          try {
+            let returnValue: unknown
+            while (true) {
+              const { value, done } = await result.next()
+              if (done) {
+                returnValue = value
+                break
+              }
+              if (isSentinel(value) && (value as any)[sentinel] === 'error') {
+                const tagged = value as any
+                controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: tagged.code, message: tagged.message } }) + '\n'))
+                controller.close()
+                return
+              }
+              controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'))
+            }
+            const meta: Record<string, unknown> = { command: path }
+            if (isSentinel(returnValue) && (returnValue as any)[sentinel] === 'error') {
+              const tagged = returnValue as any
+              controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: tagged.code, message: tagged.message } }) + '\n'))
+            } else {
+              controller.enqueue(encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'))
+            }
+          } catch (error) {
+            controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } }) + '\n'))
+          }
+          controller.close()
+        },
+      })
+      response = new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
+      return
+    }
+
+    const awaited = await result
+    const duration = `${Math.round(performance.now() - start)}ms`
+
+    if (typeof awaited === 'object' && awaited !== null && sentinel_ in awaited) {
+      const tagged = awaited as any
+      if (tagged[sentinel_] === 'error')
+        response = jsonResponse(
+          { ok: false, error: { code: tagged.code, message: tagged.message }, meta: { command: path, duration } },
+          500,
+        )
+      else
+        response = jsonResponse(
+          { ok: true, data: tagged.data, meta: { command: path, duration } },
+          200,
+        )
+      return
+    }
+
+    response = jsonResponse(
+      { ok: true, data: awaited, meta: { command: path, duration } },
+      200,
+    )
+  }
+
+  try {
+    const allMiddleware = options.middlewares ?? []
+    if (allMiddleware.length > 0) {
+      const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never => {
+        const duration = `${Math.round(performance.now() - start)}ms`
+        response = jsonResponse(
+          { ok: false, error: { code: opts.code, message: opts.message }, meta: { command: path, duration } },
+          500,
+        )
+        return undefined as never
+      }
+      const mwCtx: MiddlewareContext = {
+        agent: true,
+        command: path,
+        env: {},
+        error: errorFn,
+        name: path,
+        set(key: string, value: unknown) { varsMap[key] = value },
+        var: varsMap,
+        version: undefined,
+      }
+      const composed = allMiddleware.reduceRight(
+        (next: () => Promise<void>, mw) => async () => { await mw(mwCtx, next) },
+        runCommand,
+      )
+      await composed()
+    } else {
+      await runCommand()
+    }
+  } catch (error) {
+    const duration = `${Math.round(performance.now() - start)}ms`
+    if (error instanceof ValidationError)
+      return jsonResponse(
+        { ok: false, error: { code: 'VALIDATION_ERROR', message: error.message }, meta: { command: path, duration } },
+        400,
+      )
+    return jsonResponse(
+      { ok: false, error: { code: error instanceof IncurError ? error.code : 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }, meta: { command: path, duration } },
+      500,
+    )
+  }
+
+  return response!
 }
 
 /** @internal Formats a validation error for TTY with usage hint. */
