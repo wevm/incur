@@ -2928,3 +2928,480 @@ describe('--filter-output', () => {
     expect(parsed).toEqual({ name: 'alice', age: 30 })
   })
 })
+
+async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
+  const res = await cli.fetch(req)
+  const body = await res.json()
+  body.meta.duration = '<stripped>'
+  return { status: res.status, body }
+}
+
+describe('fetch', () => {
+  test('GET /health → 200', async () => {
+    const cli = Cli.create('test')
+    cli.command('health', { run: () => ({ ok: true }) })
+    expect(await fetchJson(cli, new Request('http://localhost/health'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "ok": true,
+          },
+          "meta": {
+            "command": "health",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('GET /unknown → 404', async () => {
+    const cli = Cli.create('test')
+    cli.command('health', { run: () => ({}) })
+    expect(await fetchJson(cli, new Request('http://localhost/unknown'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_NOT_FOUND",
+            "message": "'unknown' is not a command for 'test'.",
+          },
+          "meta": {
+            "command": "unknown",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
+  })
+
+  test('GET / with root command → 200', async () => {
+    const cli = Cli.create('test', { run: () => ({ root: true }) })
+    expect(await fetchJson(cli, new Request('http://localhost/'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "root": true,
+          },
+          "meta": {
+            "command": "test",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('GET / without root command → 404', async () => {
+    const cli = Cli.create('test')
+    cli.command('health', { run: () => ({}) })
+    expect(await fetchJson(cli, new Request('http://localhost/'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_NOT_FOUND",
+            "message": "No root command defined.",
+          },
+          "meta": {
+            "command": "/",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
+  })
+
+  test('GET search params → options', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ limit: z.coerce.number().default(10) }),
+      run: (c) => ({ limit: c.options.limit }),
+    })
+    expect(await fetchJson(cli, new Request('http://localhost/users?limit=5'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "limit": 5,
+          },
+          "meta": {
+            "command": "users",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('POST body → options', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ name: z.string() }),
+      run: (c) => ({ created: true, name: c.options.name }),
+    })
+    const req = new Request('http://localhost/users', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Bob' }),
+    })
+    expect(await fetchJson(cli, req)).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "created": true,
+            "name": "Bob",
+          },
+          "meta": {
+            "command": "users",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('trailing path segments → positional args', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      args: z.object({ id: z.coerce.number() }),
+      run: (c) => ({ id: c.args.id }),
+    })
+    expect(await fetchJson(cli, new Request('http://localhost/users/42'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "id": 42,
+          },
+          "meta": {
+            "command": "users",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('nested command resolution', async () => {
+    const sub = Cli.create('users')
+    sub.command('list', { run: () => ({ users: [] }) })
+    const cli = Cli.create('test')
+    cli.command(sub)
+    expect(await fetchJson(cli, new Request('http://localhost/users/list'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "users": [],
+          },
+          "meta": {
+            "command": "users list",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('validation error → 400', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      args: z.object({ id: z.coerce.number() }),
+      run: (c) => ({ id: c.args.id }),
+    })
+    const { status, body } = await fetchJson(cli, new Request('http://localhost/users'))
+    expect(status).toBe(400)
+    expect(body.ok).toBe(false)
+    expect(body.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  test('thrown error → 500', async () => {
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run() {
+        throw new Error('boom')
+      },
+    })
+    expect(await fetchJson(cli, new Request('http://localhost/fail'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "UNKNOWN",
+            "message": "boom",
+          },
+          "meta": {
+            "command": "fail",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 500,
+      }
+    `)
+  })
+
+  test('async generator → NDJSON streaming response', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run() {
+        yield { progress: 1 }
+        yield { progress: 2 }
+        return { done: true }
+      },
+    })
+    const res = await cli.fetch(new Request('http://localhost/stream'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/x-ndjson')
+    const text = await res.text()
+    const lines = text.trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "progress": 1,
+          },
+          "type": "chunk",
+        },
+        {
+          "data": {
+            "progress": 2,
+          },
+          "type": "chunk",
+        },
+        {
+          "meta": {
+            "command": "stream",
+          },
+          "ok": true,
+          "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('middleware sets var → command sees it', async () => {
+    const cli = Cli.create('test', {
+      vars: z.object({ user: z.string().default('anonymous') }),
+    })
+    cli.use(async (c, next) => {
+      c.set('user', 'alice')
+      await next()
+    })
+    cli.command('whoami', {
+      run: (c) => ({ user: c.var.user }),
+    })
+    expect(await fetchJson(cli, new Request('http://localhost/whoami'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "user": "alice",
+          },
+          "meta": {
+            "command": "whoami",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('middleware error → error response', async () => {
+    const cli = Cli.create('test')
+    cli.use((c) => {
+      c.error({ code: 'UNAUTHORIZED', message: 'not allowed' })
+    })
+    cli.command('secret', { run: () => ({ secret: true }) })
+    expect(await fetchJson(cli, new Request('http://localhost/secret'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "UNAUTHORIZED",
+            "message": "not allowed",
+          },
+          "meta": {
+            "command": "secret",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 500,
+      }
+    `)
+  })
+
+  test('fetch gateway → forwards request', async () => {
+    const handler = (req: Request) => {
+      const url = new URL(req.url)
+      return new Response(JSON.stringify({ path: url.pathname }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const cli = Cli.create('test')
+    cli.command('api', { fetch: handler })
+    const res = await cli.fetch(new Request('http://localhost/api/users/list'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchInlineSnapshot(`
+      {
+        "path": "/api/users/list",
+      }
+    `)
+  })
+
+  describe('mcp over http', () => {
+    function mcpCli() {
+      const cli = Cli.create('test', { version: '1.0.0' })
+      cli.command('greet', {
+        description: 'Greet someone',
+        args: z.object({ name: z.string() }),
+        run: (c) => ({ message: `hello ${c.args.name}` }),
+      })
+      cli.command('ping', {
+        description: 'Ping',
+        run: () => ({ pong: true }),
+      })
+      return cli
+    }
+
+    async function mcpRequest(cli: Cli.Cli<any, any, any>, body: unknown, sessionId?: string) {
+      const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+      if (sessionId) headers['mcp-session-id'] = sessionId
+      return cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        }),
+      )
+    }
+
+    async function initSession(cli: Cli.Cli<any, any, any>) {
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      const sessionId = res.headers.get('mcp-session-id')
+      const body = await res.json()
+      // Send initialized notification
+      await mcpRequest(cli, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId!)
+      return { sessionId: sessionId!, body }
+    }
+
+    test('POST /mcp with initialize → valid MCP response', async () => {
+      const cli = mcpCli()
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect({
+        serverInfo: body.result.serverInfo,
+        hasTools: 'tools' in (body.result.capabilities ?? {}),
+      }).toMatchInlineSnapshot(`
+        {
+          "hasTools": true,
+          "serverInfo": {
+            "name": "test",
+            "version": "1.0.0",
+          },
+        }
+      `)
+    })
+
+    test('POST /mcp with tools/list → returns registered tools', async () => {
+      const cli = mcpCli()
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const tools = body.result.tools.map((t: any) => ({
+        name: t.name,
+        description: t.description,
+        hasInputSchema: Object.keys(t.inputSchema?.properties ?? {}).length > 0,
+      }))
+      expect(tools).toMatchInlineSnapshot(`
+        [
+          {
+            "description": "Greet someone",
+            "hasInputSchema": true,
+            "name": "greet",
+          },
+          {
+            "description": "Ping",
+            "hasInputSchema": false,
+            "name": "ping",
+          },
+        ]
+      `)
+    })
+
+    test('POST /mcp with tools/call → executes command', async () => {
+      const cli = mcpCli()
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'greet', arguments: { name: 'world' } },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect({
+        isError: body.result.isError,
+        content: JSON.parse(body.result.content[0].text),
+      }).toMatchInlineSnapshot(`
+        {
+          "content": {
+            "message": "hello world",
+          },
+          "isError": undefined,
+        }
+      `)
+    })
+
+    test('non-/mcp paths still route to command API', async () => {
+      const cli = mcpCli()
+      const { body } = await fetchJson(cli, new Request('http://localhost/ping'))
+      expect(body.data).toMatchInlineSnapshot(`
+        {
+          "pong": true,
+        }
+      `)
+    })
+  })
+})
