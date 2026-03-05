@@ -114,10 +114,15 @@ $ greet --help
 #   skills add   Sync skill files to your agent
 #
 # Global Options:
+#   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
+#   --schema                            Show JSON Schema for a command
+#   --token-count                       Print token count of output instead of output
+#   --token-limit <n>                   Limit output to n tokens (characters)
+#   --token-offset <n>                  Skip first n tokens of output (for pagination)
 #   --verbose                           Show full output envelope
 #   --version                           Show version
 ```
@@ -179,10 +184,15 @@ $ my-cli --help
 #   skills add   Sync skill files to your agent
 #
 # Global Options:
+#   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
+#   --schema                            Show JSON Schema for a command
+#   --token-count                       Print token count of output instead of output
+#   --token-limit <n>                   Limit output to n tokens (characters)
+#   --token-offset <n>                  Skip first n tokens of output (for pagination)
 #   --verbose                           Show full output envelope
 #   --version                           Show version
 ```
@@ -231,10 +241,15 @@ $ my-cli --help
 #   skills add   Sync skill files to your agent
 #
 # Global Options:
+#   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
+#   --schema                            Show JSON Schema for a command
+#   --token-count                       Print token count of output instead of output
+#   --token-limit <n>                   Limit output to n tokens (characters)
+#   --token-offset <n>                  Skip first n tokens of output (for pagination)
 #   --verbose                           Show full output envelope
 #   --version                           Show version
 ```
@@ -800,6 +815,9 @@ Every incur CLI includes these flags automatically:
 | `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`             |
 | `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
 | `--schema`               | Show JSON Schema for a command's args, options, output  |
+| `--token-count`          | Print token count of output instead of output           |
+| `--token-limit <n>`      | Limit output to n tokens (for pagination)               |
+| `--token-offset <n>`     | Skip first n tokens of output (for pagination)          |
 | `--verbose`              | Include full envelope (`ok`, `data`, `meta`)            |
 
 ### Filtering output
@@ -829,6 +847,28 @@ $ my-cli users --filter-output users[0,2].name
 # → users[2]{name}:
 # →   Alice
 # →   Bob
+```
+
+### Token pagination
+
+Use `--token-count`, `--token-limit`, and `--token-offset` to manage large outputs. Tokens are estimated using LLM tokenization rules (~96% accuracy).
+
+```sh
+# Check how many tokens a command produces
+$ my-cli users --token-count
+# → 42
+
+# Limit output to the first 20 tokens
+$ my-cli users --token-limit 20
+# → users[3]{name,email,role}:
+# →   Alice,alice@example.
+# → [truncated: showing tokens 0–20 of 42]
+
+# Paginate: get the next page
+$ my-cli users --token-offset 20 --token-limit 20
+# → com,admin
+# →   Bob,bob@example.com,
+# → [truncated: showing tokens 20–40 of 42]
 ```
 
 ### Command schema

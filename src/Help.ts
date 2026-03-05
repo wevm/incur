@@ -332,6 +332,9 @@ function globalOptionsLines(root = false): string[] {
     { flag: '--llms', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
     { flag: '--schema', desc: 'Show JSON Schema for a command' },
+    { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
+    { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
+    { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
     { flag: '--verbose', desc: 'Show full output envelope' },
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ]

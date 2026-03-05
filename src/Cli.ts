@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 
+import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import * as Completions from './Completions.js'
 import * as Filter from './Filter.js'
 import type { FieldError } from './Errors.js'
@@ -419,6 +420,9 @@ async function serveImpl(
     format: formatFlag,
     formatExplicit,
     filterOutput,
+    tokenLimit,
+    tokenOffset,
+    tokenCount,
     llms,
     mcp: mcpFlag,
     help,
@@ -909,27 +913,69 @@ async function serveImpl(
 
   const filterPaths = filterOutput ? Filter.parse(filterOutput) : undefined
 
+  function truncate(s: string): { text: string; truncated: boolean; nextOffset?: number | undefined } {
+    if (tokenLimit == null && tokenOffset == null) return { text: s, truncated: false }
+    const total = estimateTokenCount(s)
+    const offset = tokenOffset ?? 0
+    const end = tokenLimit != null ? offset + tokenLimit : total
+    if (offset === 0 && end >= total) return { text: s, truncated: false }
+    const sliced = sliceByTokens(s, offset, end)
+    const actualEnd = Math.min(end, total)
+    const nextOffset = actualEnd < total ? actualEnd : undefined
+    return {
+      text: `${sliced}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
+      truncated: true,
+      nextOffset,
+    }
+  }
+
   function write(output: Output) {
     if (filterPaths && output.ok && output.data != null)
       output = { ...output, data: Filter.apply(output.data, filterPaths) }
+    if (tokenCount) {
+      const base = output.ok ? output.data : output.error
+      const formatted = base != null ? Formatter.format(base, format) : ''
+      return writeln(String(estimateTokenCount(formatted)))
+    }
     const cta = output.meta.cta
     if (human && !verbose) {
-      if (output.ok && output.data != null && renderOutput)
-        writeln(Formatter.format(output.data, format))
-      else if (!output.ok) writeln(formatHumanError(output.error))
+      if (output.ok && output.data != null && renderOutput) {
+        const t = truncate(Formatter.format(output.data, format))
+        writeln(t.text)
+      } else if (!output.ok) writeln(formatHumanError(output.error))
       if (cta) writeln(formatHumanCta(cta))
       return
     }
-    if (verbose) return writeln(Formatter.format(output, format))
+    if (verbose) {
+      if (tokenLimit != null || tokenOffset != null) {
+        // Truncate data separately so meta (including nextOffset) is always visible
+        const dataFormatted = output.ok && output.data != null
+          ? Formatter.format(output.data, format)
+          : !output.ok
+            ? Formatter.format(output.error, format)
+            : ''
+        const t = truncate(dataFormatted)
+        if (t.truncated) {
+          const envelope: Record<string, unknown> = output.ok
+            ? { ok: true, data: t.text }
+            : { ok: false, error: t.text }
+          const meta: Record<string, unknown> = { ...output.meta }
+          if (t.nextOffset != null) meta.nextOffset = t.nextOffset
+          envelope.meta = meta
+          return writeln(Formatter.format(envelope, format))
+        }
+      }
+      return writeln(Formatter.format(output, format))
+    }
     const base = output.ok ? output.data : output.error
     const formatted = Formatter.format(base, format)
     if (!cta) {
-      if (formatted) writeln(formatted)
+      if (formatted) writeln(truncate(formatted).text)
       return
     }
     const payload =
       typeof base === 'object' && base !== null ? { ...base, cta } : { data: base, cta }
-    writeln(Formatter.format(payload, format))
+    writeln(truncate(Formatter.format(payload, format)).text)
   }
 
   if ('error' in effective) {
@@ -985,6 +1031,7 @@ async function serveImpl(
           human,
           renderOutput,
           verbose,
+          truncate,
           write,
           writeln,
           exit,
@@ -1141,6 +1188,7 @@ async function serveImpl(
         human,
         renderOutput,
         verbose,
+        truncate,
         write,
         writeln,
         exit,
@@ -1759,6 +1807,9 @@ function extractBuiltinFlags(argv: string[]) {
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
   let filterOutput: string | undefined
+  let tokenLimit: number | undefined
+  let tokenOffset: number | undefined
+  let tokenCount = false
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -1779,10 +1830,17 @@ function extractBuiltinFlags(argv: string[]) {
     } else if (token === '--filter-output' && argv[i + 1]) {
       filterOutput = argv[i + 1]!
       i++
-    } else rest.push(token)
+    } else if (token === '--token-limit' && argv[i + 1]) {
+      tokenLimit = Number(argv[i + 1])
+      i++
+    } else if (token === '--token-offset' && argv[i + 1]) {
+      tokenOffset = Number(argv[i + 1])
+      i++
+    } else if (token === '--token-count') tokenCount = true
+    else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, filterOutput, llms, mcp, help, version, schema, rest }
+  return { verbose, format, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, mcp, help, version, schema, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
@@ -1954,6 +2012,7 @@ async function handleStreaming(
     human: boolean
     renderOutput: boolean
     verbose: boolean
+    truncate: (s: string) => { text: string; truncated: boolean; nextOffset?: number | undefined }
     write: (output: Output) => void
     writeln: (s: string) => void
     exit: (code: number) => void
@@ -1997,7 +2056,7 @@ async function handleStreaming(
           }
         }
         if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
-        else if (ctx.renderOutput) ctx.writeln(Formatter.format(value, ctx.format))
+        else if (ctx.renderOutput) ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
 
       // Handle return value — error() or ok() sentinel
@@ -2382,6 +2441,8 @@ declare namespace Output {
     cta?: FormattedCtaBlock | undefined
     /** Wall-clock duration of the command. */
     duration: string
+    /** Offset to pass as `--token-offset` to fetch the next page of truncated output. */
+    nextOffset?: number | undefined
   }
 }
 

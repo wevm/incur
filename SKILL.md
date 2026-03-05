@@ -469,6 +469,24 @@ tool users --filter-output users[0,2].name
 # →   Bob
 ```
 
+### Token pagination
+
+Use `--token-count`, `--token-limit`, and `--token-offset` to manage large outputs. Tokens are estimated using LLM tokenization rules (~96% accuracy).
+
+```sh
+# Check token count
+tool users --token-count
+# → 42
+
+# Limit to first 20 tokens
+tool users --token-limit 20
+
+# Paginate with offset
+tool users --token-offset 20 --token-limit 20
+```
+
+With `--verbose`, truncated output includes `meta.nextOffset` for programmatic pagination.
+
 ### Command schema
 
 Use `--schema` to print the JSON Schema for a command's arguments, environment variables, options, and output:

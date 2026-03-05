@@ -859,6 +859,9 @@ describe('subcommands', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -1296,6 +1299,9 @@ describe('help', () => {
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1331,6 +1337,9 @@ describe('help', () => {
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1361,6 +1370,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -1392,6 +1404,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -1485,6 +1500,9 @@ describe('help', () => {
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1513,6 +1531,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -1605,6 +1626,9 @@ describe('env', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
 
       Environment Variables:
@@ -1640,6 +1664,9 @@ describe('env', () => {
           --help                              Show help
           --llms                              Print LLM-readable manifest
           --schema                            Show JSON Schema for a command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
           --verbose                           Show full output envelope
 
         Environment Variables:

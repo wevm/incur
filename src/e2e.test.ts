@@ -413,6 +413,97 @@ describe('undefined output', () => {
   })
 })
 
+describe('--token-limit and --token-offset', () => {
+  test('--token-limit truncates output', async () => {
+    const { output } = await serve(createApp(), ['ping', '--token-limit', '5'])
+    expect(output).toMatchInlineSnapshot(`
+      "pong: true
+      "
+    `)
+  })
+
+  test('--token-offset skips beginning of output', async () => {
+    const { output } = await serve(createApp(), ['ping', '--token-offset', '6'])
+    expect(output).toMatchInlineSnapshot(`
+      "
+      [truncated: showing tokens 6–3 of 3]
+      "
+    `)
+  })
+
+  test('--token-limit and --token-offset together for pagination', async () => {
+    const { output } = await serve(createApp(), ['ping', '--token-offset', '2', '--token-limit', '4'])
+    expect(output).toMatchInlineSnapshot(`
+      " true
+      [truncated: showing tokens 2–3 of 3]
+      "
+    `)
+  })
+
+  test('no truncation when output fits within limit', async () => {
+    const { output } = await serve(createApp(), ['ping', '--token-limit', '1000'])
+    expect(output).toMatchInlineSnapshot(`
+      "pong: true
+      "
+    `)
+  })
+
+  test('works with --verbose', async () => {
+    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '20'])
+    expect(output).toMatchInlineSnapshot(`
+      "{
+        "ok": true,
+        "data": {
+          "pong": true
+        },
+        "meta": {
+          "command": "ping",
+          "duration": "<stripped>"
+        }
+      }
+      "
+    `)
+  })
+
+  test('--verbose includes meta.nextOffset when truncated', async () => {
+    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '2'])
+    expect(output).toContain('"nextOffset"')
+    expect(output).toContain('[truncated:')
+  })
+
+  test('--verbose omits meta.nextOffset when not truncated', async () => {
+    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '10000'])
+    const parsed = json(output)
+    expect(parsed.meta.nextOffset).toBeUndefined()
+  })
+
+  test('--token-offset only', async () => {
+    const { output } = await serve(createApp(), ['ping', '--format', 'json', '--token-offset', '5'])
+    expect(output).toMatchInlineSnapshot(`
+      "
+      [truncated: showing tokens 5–5 of 5]
+      "
+    `)
+  })
+})
+
+describe('--token-count', () => {
+  test('outputs token count instead of data', async () => {
+    const { output } = await serve(createApp(), ['ping', '--token-count'])
+    expect(output.trim()).toBe('3')
+  })
+
+  test('works with --format json', async () => {
+    const { output } = await serve(createApp(), ['ping', '--token-count', '--format', 'json'])
+    expect(output.trim()).toBe('5')
+  })
+
+  test('works with --filter-output', async () => {
+    const { output } = await serve(createApp(), ['ping', '--filter-output', 'pong', '--token-count'])
+    expect(output.trim()).toBe('1')
+  })
+})
+
 describe('error handling', () => {
   test('thrown Error shows structured error', async () => {
     const { output, exitCode } = await serve(createApp(), ['explode'])
@@ -851,6 +942,9 @@ describe('help', () => {
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -881,6 +975,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -905,6 +1002,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -928,6 +1028,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -957,6 +1060,9 @@ describe('help', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
       "
     `)
@@ -1358,6 +1464,9 @@ describe('root command with subcommands', () => {
         --llms                              Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
         --version                           Show version
       "
@@ -1531,6 +1640,9 @@ describe('env', () => {
         --help                              Show help
         --llms                              Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope
 
       Environment Variables:
