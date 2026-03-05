@@ -1,5 +1,7 @@
 import type { z } from 'zod'
 
+import type * as Formatter from './Formatter.js'
+
 /** @internal Infers the output type of a vars schema, or `{}` if undefined. */
 type InferVars<vars extends z.ZodObject<any> | undefined> =
   vars extends z.ZodObject<any> ? z.output<vars> : {}
@@ -29,6 +31,10 @@ export type Context<
 > = {
   /** Whether the consumer is an agent (stdout is not a TTY). */
   agent: boolean
+  /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+  format: Formatter.Format
+  /** Whether the user explicitly passed `--format` or `--json`. */
+  formatExplicit: boolean
   /** The resolved command path. */
   command: string
   /** Return an error result, short-circuiting the middleware chain. */

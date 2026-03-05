@@ -2237,6 +2237,43 @@ describe('outputPolicy', () => {
     expect(captured).toEqual({ agent: false, command: 'deploy' })
   })
 
+  test('e2e: middleware and run context expose format metadata', async () => {
+    let mwCaptured:
+      | {
+          format: string
+          formatExplicit: boolean
+        }
+      | undefined
+    let runCaptured:
+      | {
+          format: string
+          formatExplicit: boolean
+        }
+      | undefined
+
+    const cli = Cli.create('test')
+      .use(async (c, next) => {
+        mwCaptured = {
+          format: c.format,
+          formatExplicit: c.formatExplicit,
+        }
+        await next()
+      })
+      .command('deploy', {
+        run(c) {
+          runCaptured = {
+            format: c.format,
+            formatExplicit: c.formatExplicit,
+          }
+          return { ok: true }
+        },
+      })
+
+    await serve(cli, ['deploy', '--format', 'json'])
+    expect(mwCaptured).toEqual({ format: 'json', formatExplicit: true })
+    expect(runCaptured).toEqual({ format: 'json', formatExplicit: true })
+  })
+
   test('e2e: middleware works with streaming handlers', async () => {
     const order: string[] = []
     const cli = Cli.create('test')

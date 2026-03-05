@@ -323,6 +323,10 @@ export declare namespace create {
       | ((context: {
           /** Whether the consumer is an agent (stdout is not a TTY). */
           agent: boolean
+          /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+          format: Formatter.Format
+          /** Whether the user explicitly passed `--format` or `--json`. */
+          formatExplicit: boolean
           /** Positional arguments. */
           args: InferOutput<args>
           /** The CLI name. */
@@ -1012,6 +1016,8 @@ async function serveImpl(
           ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
           agent: !human,
+          format,
+          formatExplicit,
           command: path,
           env: cliEnv,
           error: errorFn,
@@ -1099,6 +1105,8 @@ async function serveImpl(
 
     const result = command.run({
       agent: !human,
+      format,
+      formatExplicit,
       args,
       env,
       name,
@@ -1185,6 +1193,8 @@ async function serveImpl(
       }
       const mwCtx: MiddlewareContext = {
         agent: !human,
+        format,
+        formatExplicit,
         command: path,
         env: cliEnv,
         error: errorFn,
@@ -2095,6 +2105,10 @@ type CommandDefinition<
   run(context: {
     /** Whether the consumer is an agent (stdout is not a TTY). */
     agent: boolean
+    /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+    format: Formatter.Format
+    /** Whether the user explicitly passed `--format` or `--json`. */
+    formatExplicit: boolean
     /** Positional arguments. */
     args: InferOutput<args>
     /** The CLI name. */

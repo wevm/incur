@@ -187,6 +187,8 @@ test('middleware() without generic gives empty context', () => {
   middleware((c, _next) => {
     expectTypeOf(c.var).toEqualTypeOf<{}>()
     expectTypeOf(c.env).toEqualTypeOf<{}>()
+    expectTypeOf(c.format).toEqualTypeOf<'toon' | 'json' | 'yaml' | 'md' | 'jsonl'>()
+    expectTypeOf(c.formatExplicit).toEqualTypeOf<boolean>()
   })
 })
 
@@ -274,5 +276,16 @@ test('env is typed in per-command middleware', () => {
       },
     ],
     run: () => ({}),
+  })
+})
+
+test('run() context exposes format metadata', () => {
+  const cli = Cli.create('test')
+  cli.command('ping', {
+    run(c) {
+      expectTypeOf(c.format).toEqualTypeOf<'toon' | 'json' | 'yaml' | 'md' | 'jsonl'>()
+      expectTypeOf(c.formatExplicit).toEqualTypeOf<boolean>()
+      return { pong: true }
+    },
   })
 })
