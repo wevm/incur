@@ -35,6 +35,7 @@ export type Context<
   error: (options: {
     code: string
     cta?: CtaBlock | undefined
+    exitCode?: number | undefined
     message: string
     retryable?: boolean | undefined
   }) => never

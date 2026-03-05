@@ -333,6 +333,7 @@ export declare namespace create {
           error: (options: {
             code: string
             cta?: CtaBlock | undefined
+            exitCode?: number | undefined
             message: string
             retryable?: boolean | undefined
           }) => never
@@ -973,7 +974,7 @@ async function serveImpl(
       const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, options.env ?? process.env) : {}
       if (fetchMiddleware.length > 0) {
         const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-        const errorFn = (opts: { code: string; message: string; retryable?: boolean | undefined; cta?: CtaBlock | undefined }): never =>
+        const errorFn = (opts: { code: string; exitCode?: number | undefined; message: string; retryable?: boolean | undefined; cta?: CtaBlock | undefined }): never =>
           ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
           agent: !human,
@@ -987,13 +988,14 @@ async function serveImpl(
         }
         const handleMwSentinel = (result: unknown) => {
           if (!isSentinel(result) || result[sentinel] !== 'error') return
-          const cta = formatCtaBlock(name, result.cta)
+          const err = result as ErrorResult
+          const cta = formatCtaBlock(name, err.cta)
           write({
             ok: false,
-            error: { code: result.code, message: result.message, ...(result.retryable !== undefined ? { retryable: result.retryable } : undefined) },
+            error: { code: err.code, message: err.message, ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined) },
             meta: { command: path, duration: `${Math.round(performance.now() - start)}ms`, ...(cta ? { cta } : undefined) },
           })
-          exit(1)
+          exit(err.exitCode ?? 1)
         }
         const composed = fetchMiddleware.reduceRight(
           (next: () => Promise<void>, mw) => async () => { handleMwSentinel(await mw(mwCtx, next)) },
@@ -1012,7 +1014,7 @@ async function serveImpl(
         },
         meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
       })
-      exit(1)
+      exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
     }
     return
   }
@@ -1053,6 +1055,7 @@ async function serveImpl(
     }
     const errorFn = (opts: {
       code: string
+      exitCode?: number | undefined
       message: string
       retryable?: boolean | undefined
       cta?: CtaBlock | undefined
@@ -1105,12 +1108,13 @@ async function serveImpl(
           },
         })
       } else {
+        const err = awaited as ErrorResult
         write({
           ok: false,
           error: {
-            code: awaited.code,
-            message: awaited.message,
-            ...(awaited.retryable !== undefined ? { retryable: awaited.retryable } : undefined),
+            code: err.code,
+            message: err.message,
+            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
           },
           meta: {
             command: path,
@@ -1118,7 +1122,7 @@ async function serveImpl(
             ...(cta ? { cta } : undefined),
           },
         })
-        exit(1)
+        exit(err.exitCode ?? 1)
       }
     } else {
       write({
@@ -1138,6 +1142,7 @@ async function serveImpl(
     if (allMiddleware.length > 0) {
       const errorFn = (opts: {
         code: string
+        exitCode?: number | undefined
         message: string
         retryable?: boolean | undefined
         cta?: CtaBlock | undefined
@@ -1158,13 +1163,14 @@ async function serveImpl(
       }
       const handleMwSentinel = (result: unknown) => {
         if (!isSentinel(result) || result[sentinel] !== 'error') return
-        const cta = formatCtaBlock(name, result.cta)
+        const err = result as ErrorResult
+        const cta = formatCtaBlock(name, err.cta)
         write({
           ok: false,
           error: {
-            code: result.code,
-            message: result.message,
-            ...(result.retryable !== undefined ? { retryable: result.retryable } : undefined),
+            code: err.code,
+            message: err.message,
+            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
           },
           meta: {
             command: path,
@@ -1172,7 +1178,7 @@ async function serveImpl(
             ...(cta ? { cta } : undefined),
           },
         })
-        exit(1)
+        exit(err.exitCode ?? 1)
       }
       const composed = allMiddleware.reduceRight(
         (next: () => Promise<void>, mw) => async () => {
@@ -1211,7 +1217,7 @@ async function serveImpl(
     }
 
     write(errorOutput)
-    exit(1)
+    exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
   }
 }
 
@@ -1508,6 +1514,7 @@ type ErrorResult = {
   code: string
   message: string
   retryable?: boolean | undefined
+  exitCode?: number | undefined
   cta?: CtaBlock | undefined
 }
 
@@ -1613,7 +1620,7 @@ async function handleStreaming(
                 }),
               )
             else ctx.writeln(formatHumanError({ code: tagged.code, message: tagged.message }))
-            ctx.exit(1)
+            ctx.exit(tagged.exitCode ?? 1)
             return
           }
         }
@@ -1637,7 +1644,7 @@ async function handleStreaming(
             }),
           )
         else ctx.writeln(formatHumanError({ code: err.code, message: err.message }))
-        ctx.exit(1)
+        ctx.exit(err.exitCode ?? 1)
         return
       }
 
@@ -1678,7 +1685,7 @@ async function handleStreaming(
             message: error instanceof Error ? error.message : String(error),
           }),
         )
-      ctx.exit(1)
+      ctx.exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
     }
   } else {
     // Buffered output: collect all chunks, write as single value
@@ -1706,7 +1713,7 @@ async function handleStreaming(
                 duration: `${Math.round(performance.now() - ctx.start)}ms`,
               },
             })
-            ctx.exit(1)
+            ctx.exit(tagged.exitCode ?? 1)
             return
           }
         }
@@ -1727,7 +1734,7 @@ async function handleStreaming(
             duration: `${Math.round(performance.now() - ctx.start)}ms`,
           },
         })
-        ctx.exit(1)
+        ctx.exit(err.exitCode ?? 1)
         return
       }
 
@@ -1757,7 +1764,7 @@ async function handleStreaming(
           duration: `${Math.round(performance.now() - ctx.start)}ms`,
         },
       })
-      ctx.exit(1)
+      ctx.exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
     }
   }
 }
@@ -2062,6 +2069,7 @@ type CommandDefinition<
     error: (options: {
       code: string
       cta?: CtaBlock | undefined
+      exitCode?: number | undefined
       message: string
       retryable?: boolean | undefined
     }) => never

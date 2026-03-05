@@ -251,6 +251,18 @@ test('middleware error() returns never', () => {
   })
 })
 
+test('c.error() accepts optional exitCode', () => {
+  Cli.create('test').command('fail', {
+    run(c) {
+      // with exitCode
+      c.error({ code: 'ERR', message: 'fail', exitCode: 10 })
+      // without exitCode
+      c.error({ code: 'ERR', message: 'fail' })
+      return {}
+    },
+  })
+})
+
 test('env is typed in per-command middleware', () => {
   Cli.create('test', {
     env: z.object({ API_TOKEN: z.string() }),

@@ -2413,6 +2413,88 @@ test('streaming: generator returns error in buffered mode', async () => {
   expect(output).toContain('RET_ERR')
 })
 
+test('c.error({ exitCode }) uses custom exit code', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    run(c) {
+      return c.error({ code: 'AUTH', message: 'not authed', exitCode: 10 })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail'])
+  expect(exitCode).toBe(10)
+  expect(output).toMatchInlineSnapshot(`
+    "code: AUTH
+    message: not authed
+    "
+  `)
+})
+
+test('c.error() without exitCode defaults to 1', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    run(c) {
+      return c.error({ code: 'BAD', message: 'fail' })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail'])
+  expect(exitCode).toBe(1)
+  expect(output).toMatchInlineSnapshot(`
+    "code: BAD
+    message: fail
+    "
+  `)
+})
+
+test('middleware c.error({ exitCode }) uses custom exit code', async () => {
+  const cli = Cli.create('test')
+  cli.use((c) => {
+    return c.error({ code: 'MW_ERR', message: 'blocked', exitCode: 42 })
+  })
+  cli.command('anything', { run: () => ({}) })
+
+  const { output, exitCode } = await serve(cli, ['anything'])
+  expect(exitCode).toBe(42)
+  expect(output).toMatchInlineSnapshot(`
+    "code: MW_ERR
+    message: blocked
+    "
+  `)
+})
+
+test('thrown IncurError with exitCode uses custom exit code', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    run() {
+      throw new Errors.IncurError({ code: 'RATE_LIMITED', message: 'too fast', exitCode: 99 })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail'])
+  expect(exitCode).toBe(99)
+  expect(output).toMatchInlineSnapshot(`
+    "code: RATE_LIMITED
+    message: too fast
+    retryable: false
+    "
+  `)
+})
+
+test('streaming: c.error({ exitCode }) in yield uses custom exit code', async () => {
+  const cli = Cli.create('test')
+  cli.command('fail', {
+    async *run(c) {
+      yield { step: 1 }
+      yield c.error({ code: 'STREAM_ERR', message: 'mid-stream', exitCode: 77 })
+    },
+  })
+
+  const { output, exitCode } = await serve(cli, ['fail', '--format', 'jsonl'])
+  expect(exitCode).toBe(77)
+  expect(output).toContain('STREAM_ERR')
+})
+
 test('deprecated short flag emits warning', async () => {
   const cli = Cli.create('app').command('deploy', {
     options: z.object({

@@ -41,12 +41,15 @@ export class IncurError extends BaseError {
   hint: string | undefined
   /** Whether the operation can be retried. */
   retryable: boolean
+  /** Process exit code. When set, `serve()` uses this instead of `1`. */
+  exitCode: number | undefined
 
   constructor(options: IncurError.Options) {
     super(options.message, options.cause ? { cause: options.cause } : undefined)
     this.code = options.code
     this.hint = options.hint
     this.retryable = options.retryable ?? false
+    this.exitCode = options.exitCode
   }
 }
 
@@ -61,6 +64,8 @@ export declare namespace IncurError {
     hint?: string | undefined
     /** Whether the operation can be retried. Defaults to `false`. */
     retryable?: boolean | undefined
+    /** Process exit code. When set, `serve()` uses this instead of `1`. */
+    exitCode?: number | undefined
     /** The underlying cause. */
     cause?: Error | undefined
   }
