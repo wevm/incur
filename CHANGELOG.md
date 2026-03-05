@@ -1,5 +1,11 @@
 # incur
 
+## 0.2.2
+
+### Patch Changes
+
+- 9454412: Added `--token-count`, `--token-limit`, and `--token-offset` global options for token-aware output pagination. Uses LLM tokenization estimation (~96% accuracy via `tokenx`). In `--verbose` mode, truncated output includes `meta.nextOffset` for programmatic pagination.
+
 ## 0.2.1
 
 ### Patch Changes
