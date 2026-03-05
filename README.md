@@ -121,7 +121,7 @@ $ greet --help
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for a command
 #   --token-count                       Print token count of output instead of output
-#   --token-limit <n>                   Limit output to n tokens (characters)
+#   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
 #   --verbose                           Show full output envelope
 #   --version                           Show version
@@ -191,7 +191,7 @@ $ my-cli --help
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for a command
 #   --token-count                       Print token count of output instead of output
-#   --token-limit <n>                   Limit output to n tokens (characters)
+#   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
 #   --verbose                           Show full output envelope
 #   --version                           Show version
@@ -248,7 +248,7 @@ $ my-cli --help
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for a command
 #   --token-count                       Print token count of output instead of output
-#   --token-limit <n>                   Limit output to n tokens (characters)
+#   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
 #   --verbose                           Show full output envelope
 #   --version                           Show version
