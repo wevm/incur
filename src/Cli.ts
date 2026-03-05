@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 
 import * as Completions from './Completions.js'
+import * as Filter from './Filter.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
@@ -399,6 +400,7 @@ async function serveImpl(
     verbose,
     format: formatFlag,
     formatExplicit,
+    filterOutput,
     llms,
     mcp: mcpFlag,
     help,
@@ -853,7 +855,11 @@ async function serveImpl(
     ('outputPolicy' in resolved && resolved.outputPolicy) || options.outputPolicy
   const renderOutput = !(human && !formatExplicit && effectiveOutputPolicy === 'agent-only')
 
+  const filterPaths = filterOutput ? Filter.parse(filterOutput) : undefined
+
   function write(output: Output) {
+    if (filterPaths && output.ok && output.data != null)
+      output = { ...output, data: Filter.apply(output.data, filterPaths) }
     const cta = output.meta.cta
     if (human && !verbose) {
       if (output.ok && output.data != null && renderOutput)
@@ -1375,6 +1381,7 @@ function extractBuiltinFlags(argv: string[]) {
   let version = false
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
+  let filterOutput: string | undefined
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -1391,10 +1398,13 @@ function extractBuiltinFlags(argv: string[]) {
       format = argv[i + 1] as Formatter.Format
       formatExplicit = true
       i++
+    } else if (token === '--filter-output' && argv[i + 1]) {
+      filterOutput = argv[i + 1]!
+      i++
     } else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, llms, mcp, help, version, rest }
+  return { verbose, format, formatExplicit, filterOutput, llms, mcp, help, version, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */

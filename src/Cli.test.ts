@@ -739,6 +739,7 @@ describe('subcommands', () => {
         list
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1173,6 +1174,7 @@ describe('help', () => {
         skills add   Sync skill files to your agent
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1206,6 +1208,7 @@ describe('help', () => {
         skills add   Sync skill files to your agent
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1235,6 +1238,7 @@ describe('help', () => {
         name  Name
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1264,6 +1268,7 @@ describe('help', () => {
         list  List PRs
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1354,6 +1359,7 @@ describe('help', () => {
         skills add   Sync skill files to your agent
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1381,6 +1387,7 @@ describe('help', () => {
       Run "tool status" to check deployment progress.
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1471,6 +1478,7 @@ describe('env', () => {
       Usage: test deploy
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1504,6 +1512,7 @@ describe('env', () => {
         Usage: test deploy
 
         Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --help                              Show help
           --llms                              Print LLM-readable manifest
@@ -2638,5 +2647,78 @@ describe('fetch', async () => {
     const { output } = await serve(cli, ['--help'])
     expect(output).toContain('api')
     expect(output).toContain('Proxy to API')
+  })
+})
+
+describe('--filter-output', () => {
+  test('selects specific keys', async () => {
+    const cli = Cli.create('test')
+    cli.command('user', {
+      run() {
+        return { name: 'alice', age: 30, email: 'alice@example.com' }
+      },
+    })
+    const { output } = await serve(cli, ['user', '--filter-output', 'name,age'])
+    expect(output).toMatchInlineSnapshot(`
+      "name: alice
+      age: 30
+      "
+    `)
+  })
+
+  test('returns scalar for single key', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      run(c) {
+        return { message: `hello ${c.args.name}` }
+      },
+    })
+    const { output } = await serve(cli, ['greet', 'world', '--filter-output', 'message'])
+    expect(output).toMatchInlineSnapshot(`
+      "hello world
+      "
+    `)
+  })
+
+  test('dot notation filters nested keys', async () => {
+    const cli = Cli.create('test')
+    cli.command('profile', {
+      run() {
+        return { user: { name: 'alice', email: 'a@b.com' }, status: 'active' }
+      },
+    })
+    const { output } = await serve(cli, ['profile', '--filter-output', 'user.name'])
+    expect(output).toMatchInlineSnapshot(`
+      "user:
+        name: alice
+      "
+    `)
+  })
+
+  test('array slice', async () => {
+    const cli = Cli.create('test')
+    cli.command('list', {
+      run() {
+        return { items: [1, 2, 3, 4, 5] }
+      },
+    })
+    const { output } = await serve(cli, ['list', '--filter-output', 'items[0,3]'])
+    expect(output).toMatchInlineSnapshot(`
+      "items[3]: 1,2,3
+      "
+    `)
+  })
+
+  test('works with --format json', async () => {
+    const cli = Cli.create('test')
+    cli.command('user', {
+      run() {
+        return { name: 'alice', age: 30, email: 'alice@example.com' }
+      },
+    })
+    const { output } = await serve(cli, ['user', '--filter-output', 'name,age', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed).toEqual({ name: 'alice', age: 30 })
   })
 })

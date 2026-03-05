@@ -25,6 +25,7 @@ describe('formatCommand', () => {
         --limit <number>  Max PRs to return (default: 30)
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -42,6 +43,7 @@ describe('formatCommand', () => {
       Usage: tool ping
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -66,6 +68,7 @@ describe('formatCommand', () => {
         title  Title
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -107,6 +110,7 @@ describe('formatRoot', () => {
         issue list  List issues
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -127,6 +131,7 @@ describe('formatRoot', () => {
         ping  Health check
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -151,6 +156,7 @@ describe('formatRoot', () => {
         fetch  Fetch a URL
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -175,6 +181,7 @@ describe('formatRoot', () => {
         url  URL to fetch
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest

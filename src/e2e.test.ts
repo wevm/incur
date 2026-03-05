@@ -845,6 +845,7 @@ describe('help', () => {
         skills add   Sync skill files to your agent
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -874,6 +875,7 @@ describe('help', () => {
         status  Show authentication status
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -896,6 +898,7 @@ describe('help', () => {
         status    Check deployment status
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -917,6 +920,7 @@ describe('help', () => {
         --archived <boolean>  Include archived (default: false)
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -944,6 +948,7 @@ describe('help', () => {
         $ app project deploy create production --branch release --dryRun true  # Dry run a production deploy
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1342,6 +1347,7 @@ describe('root command with subcommands', () => {
         skills add   Sync skill files to your agent
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
@@ -1514,6 +1520,7 @@ describe('env', () => {
         --scopes <array>         OAuth scopes
 
       Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms                              Print LLM-readable manifest
