@@ -189,6 +189,10 @@ test('middleware() without generic gives empty context', () => {
     expectTypeOf(c.env).toEqualTypeOf<{}>()
     expectTypeOf(c.format).toEqualTypeOf<'toon' | 'json' | 'yaml' | 'md' | 'jsonl'>()
     expectTypeOf(c.formatExplicit).toEqualTypeOf<boolean>()
+    expectTypeOf(c.human.enabled).toEqualTypeOf<boolean>()
+    expectTypeOf(c.human.stream).toEqualTypeOf<NodeJS.WriteStream | undefined>()
+    expectTypeOf(c.human.write).returns.toEqualTypeOf<void>()
+    expectTypeOf(c.human.writeln).returns.toEqualTypeOf<void>()
   })
 })
 
@@ -285,6 +289,12 @@ test('run() context exposes format metadata', () => {
     run(c) {
       expectTypeOf(c.format).toEqualTypeOf<'toon' | 'json' | 'yaml' | 'md' | 'jsonl'>()
       expectTypeOf(c.formatExplicit).toEqualTypeOf<boolean>()
+      expectTypeOf(c.human.enabled).toEqualTypeOf<boolean>()
+      expectTypeOf(c.human.stream).toEqualTypeOf<NodeJS.WriteStream | undefined>()
+      expectTypeOf(c.human.write).parameters.toEqualTypeOf<[text: string]>()
+      expectTypeOf(c.human.write).returns.toEqualTypeOf<void>()
+      expectTypeOf(c.human.writeln).parameters.toEqualTypeOf<[text: string]>()
+      expectTypeOf(c.human.writeln).returns.toEqualTypeOf<void>()
       return { pong: true }
     },
   })

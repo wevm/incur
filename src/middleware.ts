@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 
 import type * as Formatter from './Formatter.js'
+import type { Human } from './internal/run.js'
 
 /** @internal Infers the output type of a vars schema, or `{}` if undefined. */
 type InferVars<vars extends z.ZodObject<any> | undefined> =
@@ -47,6 +48,8 @@ export type Context<
   format: Formatter.Format
   /** Whether the user explicitly passed `--format` or `--json`. */
   formatExplicit: boolean
+  /** Human-only output helpers. */
+  human: Human
   /** The CLI name. */
   name: string
   /** Set a typed variable for downstream middleware and handlers. */

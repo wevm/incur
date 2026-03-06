@@ -1,11 +1,14 @@
 import { Cli, Errors, z } from 'incur'
 
 const originalIsTTY = process.stdout.isTTY
+const originalStderrIsTTY = process.stderr.isTTY
 beforeAll(() => {
   ;(process.stdout as any).isTTY = false
+  ;(process.stderr as any).isTTY = false
 })
 afterAll(() => {
   ;(process.stdout as any).isTTY = originalIsTTY
+  ;(process.stderr as any).isTTY = originalStderrIsTTY
 })
 
 let __mockSkillsHash: string | undefined
@@ -21,18 +24,23 @@ async function serve(
   options: Cli.serve.Options = {},
 ) {
   let output = ''
+  let stderr = ''
   let exitCode: number | undefined
+  const stdout = options.stdout ?? ((s: string) => { output += s })
+  const stderrWriter = options.stderr ?? ((s: string) => { process.stderr.write(s) })
+  const exit = options.exit ?? ((code: number) => { exitCode = code })
   await cli.serve(argv, {
-    stdout(s) {
-      output += s
-    },
-    exit(code) {
-      exitCode = code
-    },
     ...options,
+    stderr(s) {
+      stderr += s
+      stderrWriter(s)
+    },
+    stdout,
+    exit,
   })
   return {
     output: output.replace(/duration: \d+ms/, 'duration: <stripped>'),
+    stderr,
     exitCode,
   }
 }
@@ -2683,6 +2691,119 @@ test('streaming: c.error({ exitCode }) in yield uses custom exit code', async ()
   expect(output).toContain('STREAM_ERR')
 })
 
+describe('human output', () => {
+  beforeEach(() => {
+    __mockSkillsHash = undefined
+  })
+
+  afterEach(() => {
+    __mockSkillsHash = undefined
+    ;(process.stdout as any).isTTY = false
+    ;(process.stderr as any).isTTY = false
+  })
+
+  test('run() writes human output to stderr only', async () => {
+    ;(process.stderr as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('deploy', {
+      run(c) {
+        c.human.writeln('Deploying...')
+        return { ok: true }
+      },
+    })
+
+    const { output, stderr } = await serve(cli, ['deploy'], { stderr() {} })
+    expect(output).toContain('ok: true')
+    expect(stderr).toBe('Deploying...\n')
+  })
+
+  test('human output stays active when stdout is piped', async () => {
+    ;(process.stdout as any).isTTY = false
+    ;(process.stderr as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('status', {
+      run(c) {
+        c.human.writeln('Checking status...')
+        return { agent: c.agent, human: c.human.enabled }
+      },
+    })
+
+    const { output, stderr } = await serve(cli, ['status', '--format', 'json'], { stderr() {} })
+    expect(JSON.parse(output)).toEqual({ agent: true, human: true })
+    expect(stderr).toBe('Checking status...\n')
+  })
+
+  test('human output noops when stderr is not a tty', async () => {
+    ;(process.stderr as any).isTTY = false
+    const cli = Cli.create('test')
+    cli.command('status', {
+      run(c) {
+        c.human.writeln('hidden')
+        return { human: c.human.enabled }
+      },
+    })
+
+    const { output, stderr } = await serve(cli, ['status'], { stderr() {} })
+    expect(output).toContain('human: false')
+    expect(stderr).toBe('')
+  })
+
+  test('middleware receives the same human output helpers', async () => {
+    ;(process.stderr as any).isTTY = true
+    const cli = Cli.create('test')
+      .use(async (c, next) => {
+        c.human.writeln(`Running ${c.command}...`)
+        await next()
+      })
+      .command('status', {
+        run() {
+          return { ok: true }
+        },
+      })
+
+    const { output, stderr } = await serve(cli, ['status'], { stderr() {} })
+    expect(output).toContain('ok: true')
+    expect(stderr).toBe('Running status...\n')
+  })
+
+  test('streaming human output does not break jsonl output', async () => {
+    ;(process.stderr as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        c.human.writeln('Starting stream...')
+        yield { step: 1 }
+        c.human.writeln('Between chunks...')
+        yield { step: 2 }
+      },
+    })
+
+    const { output, stderr } = await serve(cli, ['stream', '--format', 'jsonl'], { stderr() {} })
+    const lines = output.trim().split('\n').map((line) => JSON.parse(line))
+    expect(lines[0]).toEqual({ type: 'chunk', data: { step: 1 } })
+    expect(lines[1]).toEqual({ type: 'chunk', data: { step: 2 } })
+    expect(lines[2].type).toBe('done')
+    expect(stderr).toBe('Starting stream...\nBetween chunks...\n')
+  })
+
+  test('agent-only still allows human output', async () => {
+    ;(process.stdout as any).isTTY = true
+    ;(process.stderr as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('deploy', {
+      outputPolicy: 'agent-only',
+      run(c) {
+        c.human.writeln('Deploying...')
+        return { ok: true }
+      },
+    })
+
+    const { output, stderr } = await serve(cli, ['deploy'], { stderr() {} })
+    expect(output).toBe('')
+    expect(stderr).toBe('Deploying...\n')
+  })
+})
+
 test('deprecated short flag emits warning', async () => {
   const cli = Cli.create('app').command('deploy', {
     options: z.object({
@@ -3008,6 +3129,32 @@ describe('fetch', () => {
       {
         "body": {
           "data": {
+            "ok": true,
+          },
+          "meta": {
+            "command": "health",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('human writes are ignored in fetch()', async () => {
+    const cli = Cli.create('test')
+    cli.command('health', {
+      run(c) {
+        c.human.writeln('hidden')
+        return { ok: true, human: c.human.enabled }
+      },
+    })
+    expect(await fetchJson(cli, new Request('http://localhost/health'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "human": false,
             "ok": true,
           },
           "meta": {

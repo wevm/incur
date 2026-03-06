@@ -10,6 +10,7 @@ import * as Openapi from './Openapi.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { detectRunner } from './internal/pm.js'
+import { createHuman, createRunContext, type RunContext } from './internal/run.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
@@ -251,8 +252,10 @@ export function create(
       return fetchImpl(name, commands, req, {
         mcpHandler,
         middlewares,
+        name,
         rootCommand: rootDef,
         vars: def.vars,
+        version: def.version,
       })
     },
 
@@ -334,33 +337,7 @@ export declare namespace create {
     vars?: vars | undefined
     /** The root command handler. When provided, creates a leaf CLI with no subcommands. */
     run?:
-      | ((context: {
-          /** Whether the consumer is an agent (stdout is not a TTY). */
-          agent: boolean
-          /** Positional arguments. */
-          args: InferOutput<args>
-          /** Parsed environment variables. */
-          env: InferOutput<env>
-          /** Return an error result with optional CTAs. */
-          error: (options: {
-            code: string
-            cta?: CtaBlock | undefined
-            exitCode?: number | undefined
-            message: string
-            retryable?: boolean | undefined
-          }) => never
-          /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
-          format: Formatter.Format
-          /** Whether the user explicitly passed `--format` or `--json`. */
-          formatExplicit: boolean
-          /** The CLI name. */
-          name: string
-          /** Return a success result with optional metadata (e.g. CTAs). */
-          ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
-          options: InferOutput<options>
-          /** Variables set by middleware. */
-          var: InferVars<vars>
-        }) =>
+      | ((context: RunContext<args, env, options, output, vars, CtaBlock>) =>
           | InferReturn<output>
           | Promise<InferReturn<output>>
           | AsyncGenerator<InferReturn<output>, unknown, unknown>)
@@ -399,6 +376,8 @@ export declare namespace serve {
     env?: Record<string, string | undefined> | undefined
     /** Override exit handler. Defaults to `process.exit`. */
     exit?: ((code: number) => void) | undefined
+    /** Override stderr writer for human-only output. Defaults to `process.stderr.write`. */
+    stderr?: ((s: string) => void) | undefined
     /** Override stdout writer. Defaults to `process.stdout.write`. */
     stdout?: ((s: string) => void) | undefined
   }
@@ -413,6 +392,7 @@ async function serveImpl(
   options: serveImpl.Options = {},
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
+  const stderr = options.stderr ?? ((s: string) => process.stderr.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
 
   const {
@@ -458,6 +438,13 @@ async function serveImpl(
 
   // Human mode: stdout is a TTY.
   const human = process.stdout.isTTY === true
+  const humanOutput = createHuman({
+    enabled: process.stderr.isTTY === true,
+    ...(process.stderr.isTTY === true && options.stderr === undefined
+      ? { stream: process.stderr }
+      : undefined),
+    write: stderr,
+  })
 
   function writeln(s: string) {
     stdout(s.endsWith('\n') ? s : `${s}\n`)
@@ -476,7 +463,7 @@ async function serveImpl(
         if (Skill.hash(entries) !== stored) {
           const runner = detectRunner()
           const spec = SyncMcp.detectPackageSpecifier(name)
-          process.stderr.write(
+          stderr(
             `⚠ Skills are out of date. Run '${runner} ${spec} skills add' to update.\n\n`,
           )
         }
@@ -1081,6 +1068,7 @@ async function serveImpl(
           error: errorFn,
           format,
           formatExplicit,
+          human: humanOutput,
           name,
           set(key: string, value: unknown) { varsMap[key] = value },
           var: varsMap,
@@ -1146,6 +1134,7 @@ async function serveImpl(
         rest,
         command.options,
         command.alias as Record<string, string> | undefined,
+        stderr,
       )
 
     const env = command.env ? Parser.parseEnv(command.env, envSource) : {}
@@ -1163,19 +1152,22 @@ async function serveImpl(
       return { [sentinel]: 'error', ...opts } as never
     }
 
-    const result = command.run({
-      agent: !human,
-      args,
-      env,
-      error: errorFn,
-      format,
-      formatExplicit,
-      name,
-      ok: okFn,
-      options: parsedOptions,
-      var: varsMap,
-      version: options.version,
-    })
+    const result = command.run(
+      createRunContext({
+        agent: !human,
+        args,
+        env,
+        error: errorFn,
+        format,
+        formatExplicit,
+        human: humanOutput,
+        name,
+        ok: okFn,
+        options: parsedOptions,
+        var: varsMap,
+        version: options.version,
+      }),
+    )
 
     // Streaming path — async generator
     if (isAsyncGenerator(result)) {
@@ -1259,6 +1251,7 @@ async function serveImpl(
         error: errorFn,
         format,
         formatExplicit,
+        human: humanOutput,
         name,
         set(key: string, value: unknown) {
           varsMap[key] = value
@@ -1331,8 +1324,10 @@ declare namespace fetchImpl {
   type Options = {
     mcpHandler?: ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>) | undefined
     middlewares?: MiddlewareHandler[] | undefined
+    name: string
     rootCommand?: CommandDefinition<any, any, any> | undefined
     vars?: z.ZodObject<any> | undefined
+    version?: string | undefined
   }
 }
 
@@ -1384,7 +1379,7 @@ async function fetchImpl(
   name: string,
   commands: Map<string, CommandEntry>,
   req: Request,
-  options: fetchImpl.Options = {},
+  options: fetchImpl.Options = { name },
 ): Promise<Response> {
   const start = performance.now()
 
@@ -1512,23 +1507,33 @@ async function executeCommand(
     const { args } = Parser.parse(rest, { args: command.args })
     const parsedOptions = command.options ? command.options.parse(inputOptions) : {}
 
-    const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
-    const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never =>
+    const okFn = (data: unknown, _meta: { cta?: unknown | undefined } = {}): never =>
+      ({ [sentinel_]: 'ok', data }) as never
+    const errorFn = (opts: {
+      code: string
+      cta?: unknown | undefined
+      exitCode?: number | undefined
+      message: string
+      retryable?: boolean | undefined
+    }): never =>
       ({ [sentinel_]: 'error', ...opts }) as never
 
-    const result = command.run({
-      agent: true,
-      args,
-      env: {},
-      error: errorFn,
-      format: 'json',
-      formatExplicit: true,
-      name: path,
-      ok: okFn,
-      options: parsedOptions,
-      var: varsMap,
-      version: undefined,
-    })
+    const result = command.run(
+      createRunContext({
+        agent: true,
+        args,
+        env: {},
+        error: errorFn,
+        format: 'json',
+        formatExplicit: true,
+        human: createHuman(),
+        name: options.name,
+        ok: okFn,
+        options: parsedOptions,
+        var: varsMap,
+        version: options.version,
+      }),
+    )
 
     // Streaming path — async generator → NDJSON response
     if (isAsyncGenerator(result)) {
@@ -1610,10 +1615,11 @@ async function executeCommand(
         error: errorFn,
         format: 'json',
         formatExplicit: true,
-        name: path,
+        human: createHuman(),
+        name: options.name,
         set(key: string, value: unknown) { varsMap[key] = value },
         var: varsMap,
-        version: undefined,
+        version: options.version,
       }
       const composed = allMiddleware.reduceRight(
         (next: () => Promise<void>, mw) => async () => { await mw(mwCtx, next) },
@@ -2489,35 +2495,7 @@ type CommandDefinition<
   /** Alternative usage patterns shown in help output. */
   usage?: Usage<args, options>[] | undefined
   /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
-  run(context: {
-    /** Whether the consumer is an agent (stdout is not a TTY). */
-    agent: boolean
-    /** Positional arguments. */
-    args: InferOutput<args>
-    /** Parsed environment variables. */
-    env: InferOutput<env>
-    /** Return an error result with optional CTAs. */
-    error: (options: {
-      code: string
-      cta?: CtaBlock | undefined
-      exitCode?: number | undefined
-      message: string
-      retryable?: boolean | undefined
-    }) => never
-    /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
-    format: Formatter.Format
-    /** Whether the user explicitly passed `--format` or `--json`. */
-    formatExplicit: boolean
-    /** The CLI name. */
-    name: string
-    /** Return a success result with optional metadata (e.g. CTAs). */
-    ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
-    options: InferOutput<options>
-    /** Variables set by middleware. */
-    var: InferVars<vars>
-    /** The CLI version string. */
-    version: string | undefined
-  }):
+  run(context: RunContext<args, env, options, output, vars, CtaBlock>):
     | InferReturn<output>
     | Promise<InferReturn<output>>
     | AsyncGenerator<InferReturn<output>, unknown, unknown>
@@ -2544,6 +2522,7 @@ function emitDeprecationWarnings(
   argv: string[],
   optionsSchema: z.ZodObject<any> | undefined,
   alias?: Record<string, string> | undefined,
+  stderr: (s: string) => void = (s) => process.stderr.write(s),
 ) {
   if (!optionsSchema) return
   const shape = optionsSchema.shape as Record<string, any>
@@ -2563,11 +2542,11 @@ function emitDeprecationWarnings(
       const stripped = token.split('=')[0]!.slice(2)
       const raw =
         !deprecatedFlags.has(stripped) && stripped.startsWith('no-') ? stripped.slice(3) : stripped
-      if (deprecatedFlags.has(raw)) process.stderr.write(`Warning: --${raw} is deprecated\n`)
+      if (deprecatedFlags.has(raw)) stderr(`Warning: --${raw} is deprecated\n`)
     } else if (token.startsWith('-') && token.length >= 2) {
       for (const ch of token.slice(1))
         if (deprecatedShorts.has(ch))
-          process.stderr.write(`Warning: --${deprecatedShorts.get(ch)} is deprecated\n`)
+          stderr(`Warning: --${deprecatedShorts.get(ch)} is deprecated\n`)
     }
   }
 }

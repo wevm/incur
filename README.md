@@ -687,16 +687,53 @@ $ my-cli deploy --zone us-east-1
 # Warning: --zone is deprecated
 ```
 
-### Agent detection
+### Human output
 
-The `run` context includes an `agent` boolean — `true` when stdout is not a TTY (piped or consumed by an agent), `false` when running in a terminal. Use it to tailor behavior:
+The `run` context includes `human`, a dedicated human-only output channel. It writes to stderr when a terminal is attached, never mixes with structured stdout output, and safely no-ops when unavailable:
 
 ```ts
 cli.command('deploy', {
   args: z.object({ env: z.enum(['staging', 'production']) }),
   run(c) {
-    if (!c.agent) console.log(`Deploying to ${c.args.env}...`)
+    c.human.writeln(`Deploying to ${c.args.env}...`)
     return { url: `https://${c.args.env}.example.com` }
+  },
+})
+```
+
+Use `c.human.stream` when you want to hand a live TTY stream to a third-party spinner or progress library.
+
+```ts
+import ora from 'ora'
+
+cli.command('deploy', {
+  async run(c) {
+    const spinner = c.human.stream
+      ? ora({ stream: c.human.stream, text: 'Deploying...' }).start()
+      : undefined
+
+    try {
+      await deployApp()
+      spinner?.succeed('Done')
+      return { ok: true }
+    } catch (err) {
+      spinner?.fail('Failed')
+      throw err
+    }
+  },
+})
+```
+
+### Agent detection
+
+The `run` context also includes an `agent` boolean — `true` when stdout is not a TTY (piped or consumed by an agent), `false` when running in a terminal. `c.agent` and `c.human.enabled` are independent, so a command can still render human progress on stderr while writing machine-readable stdout:
+
+```ts
+cli.command('deploy', {
+  args: z.object({ env: z.enum(['staging', 'production']) }),
+  run(c) {
+    c.human.writeln(`Deploying to ${c.args.env}...`)
+    return { agent: c.agent, human: c.human.enabled }
   },
 })
 ```
@@ -807,18 +844,18 @@ Every incur CLI includes these flags automatically:
 
 | Flag                     | Description                                            |
 | ------------------------ | ------------------------------------------------------ |
-| `--help`, `-h`           | Show help for the CLI or a specific command             |
+| `--help`, `-h`           | Show help for the CLI or a specific command            |
 | `--version`              | Print CLI version                                      |
-| `--llms`                 | Output agent-readable command manifest                  |
-| `--mcp`                  | Start as an MCP stdio server                            |
-| `--json`                 | Shorthand for `--format json`                           |
-| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`             |
+| `--llms`                 | Output agent-readable command manifest                 |
+| `--mcp`                  | Start as an MCP stdio server                           |
+| `--json`                 | Shorthand for `--format json`                          |
+| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
 | `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
-| `--schema`               | Show JSON Schema for a command's args, options, output  |
-| `--token-count`          | Print token count of output instead of output           |
-| `--token-limit <n>`      | Limit output to n tokens (for pagination)               |
-| `--token-offset <n>`     | Skip first n tokens of output (for pagination)          |
-| `--verbose`              | Include full envelope (`ok`, `data`, `meta`)            |
+| `--schema`               | Show JSON Schema for a command's args, options, output |
+| `--token-count`          | Print token count of output instead of output          |
+| `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
+| `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
+| `--verbose`              | Include full envelope (`ok`, `data`, `meta`)           |
 
 ### Filtering output
 
