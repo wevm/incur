@@ -13,8 +13,8 @@ export async function sync(
   commands: Map<string, any>,
   options: sync.Options = {},
 ): Promise<sync.Result> {
-  const cwd = options.cwd ?? resolvePackageRoot()
   const { depth = 1, description, global = true } = options
+  const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
