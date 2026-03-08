@@ -28,7 +28,7 @@ describe('formatCommand', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -50,7 +50,7 @@ describe('formatCommand', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -79,7 +79,7 @@ describe('formatCommand', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -125,7 +125,7 @@ describe('formatRoot', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -150,7 +150,7 @@ describe('formatRoot', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -179,7 +179,7 @@ describe('formatRoot', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -208,7 +208,7 @@ describe('formatRoot', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens

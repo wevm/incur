@@ -23,6 +23,33 @@ export type File = {
   content: string
 }
 
+/** Generates a compact Markdown command index for `--llms`. */
+export function index(name: string, commands: CommandInfo[], description?: string | undefined): string {
+  const lines: string[] = [`# ${name}`]
+  if (description) lines.push('', description)
+  lines.push('')
+  lines.push('| Command | Description |')
+  lines.push('|---------|-------------|')
+  for (const cmd of commands) {
+    const signature = buildSignature(name, cmd)
+    const desc = cmd.description ?? ''
+    lines.push(`| \`${signature}\` | ${desc} |`)
+  }
+  lines.push('', `Run \`${name} --llms-full\` for full manifest. Run \`${name} <command> --schema\` for argument details.`)
+  return lines.join('\n')
+}
+
+/** @internal Builds a command signature with arg placeholders. */
+function buildSignature(cli: string, cmd: CommandInfo): string {
+  const base = `${cli} ${cmd.name}`
+  if (!cmd.args) return base
+  const shape = cmd.args.shape as Record<string, z.ZodType>
+  const json = Schema.toJsonSchema(cmd.args)
+  const required = new Set((json.required as string[] | undefined) ?? [])
+  const argNames = Object.keys(shape).map((k) => (required.has(k) ? `<${k}>` : `[${k}]`))
+  return `${base} ${argNames.join(' ')}`
+}
+
 /** Generates a Markdown skill file from a CLI name and collected command data. */
 export function generate(
   name: string,

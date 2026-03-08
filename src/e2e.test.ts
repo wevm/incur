@@ -939,7 +939,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
@@ -973,7 +973,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1000,7 +1000,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1026,7 +1026,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1058,7 +1058,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1090,9 +1090,9 @@ describe('help', () => {
   })
 })
 
-describe('--llms', () => {
+describe('--llms-full', () => {
   test('json manifest lists all leaf commands sorted', async () => {
-    const { output } = await serve(createApp(), ['--llms', '--format', 'json'])
+    const { output } = await serve(createApp(), ['--llms-full', '--format', 'json'])
     const manifest = json(output)
     expect(manifest.version).toBe('incur.v1')
     const names = manifest.commands.map((c: any) => c.name)
@@ -1127,7 +1127,7 @@ describe('--llms', () => {
   })
 
   test('manifest includes schema.args and schema.options separately', async () => {
-    const { output } = await serve(createApp(), ['--llms', '--format', 'json'])
+    const { output } = await serve(createApp(), ['--llms-full', '--format', 'json'])
     const projectList = json(output).commands.find((c: any) => c.name === 'project list')
     expect(projectList.schema.options.properties).toMatchInlineSnapshot(`
       {
@@ -1157,7 +1157,7 @@ describe('--llms', () => {
   })
 
   test('manifest includes schema.output', async () => {
-    const { output } = await serve(createApp(), ['--llms', '--format', 'json'])
+    const { output } = await serve(createApp(), ['--llms-full', '--format', 'json'])
     const projectGet = json(output).commands.find((c: any) => c.name === 'project get')
     expect(projectGet.schema.output).toMatchInlineSnapshot(`
       {
@@ -1204,13 +1204,13 @@ describe('--llms', () => {
   })
 
   test('manifest omits schema when no schemas defined', async () => {
-    const { output } = await serve(createApp(), ['--llms', '--format', 'json'])
+    const { output } = await serve(createApp(), ['--llms-full', '--format', 'json'])
     const ping = json(output).commands.find((c: any) => c.name === 'ping')
     expect(ping.schema).toBeUndefined()
   })
 
-  test('scoped --llms to group', async () => {
-    const { output } = await serve(createApp(), ['auth', '--llms', '--format', 'json'])
+  test('scoped --llms-full to group', async () => {
+    const { output } = await serve(createApp(), ['auth', '--llms-full', '--format', 'json'])
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
@@ -1221,8 +1221,8 @@ describe('--llms', () => {
     `)
   })
 
-  test('scoped --llms to nested group', async () => {
-    const { output } = await serve(createApp(), ['project', 'deploy', '--llms', '--format', 'json'])
+  test('scoped --llms-full to nested group', async () => {
+    const { output } = await serve(createApp(), ['project', 'deploy', '--llms-full', '--format', 'json'])
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
@@ -1233,27 +1233,27 @@ describe('--llms', () => {
     `)
   })
 
-  test('default --llms outputs markdown', async () => {
-    const { output } = await serve(createApp(), ['--llms'])
+  test('default --llms-full outputs markdown', async () => {
+    const { output } = await serve(createApp(), ['--llms-full'])
     expect(output).toContain('# app')
     expect(output).toContain('auth login')
     expect(output).toContain('project list')
   })
 
-  test('--llms markdown includes argument tables', async () => {
-    const { output } = await serve(createApp(), ['project', '--llms'])
+  test('--llms-full markdown includes argument tables', async () => {
+    const { output } = await serve(createApp(), ['project', '--llms-full'])
     expect(output).toContain('Arguments')
     expect(output).toContain('`id`')
   })
 
-  test('--llms markdown includes options tables', async () => {
-    const { output } = await serve(createApp(), ['project', '--llms'])
+  test('--llms-full markdown includes options tables', async () => {
+    const { output } = await serve(createApp(), ['project', '--llms-full'])
     expect(output).toContain('Options')
     expect(output).toContain('`--limit`')
   })
 
-  test('--llms json includes examples on commands', async () => {
-    const { output } = await serve(createApp(), ['project', 'deploy', '--llms', '--format', 'json'])
+  test('--llms-full json includes examples on commands', async () => {
+    const { output } = await serve(createApp(), ['project', 'deploy', '--llms-full', '--format', 'json'])
     const deployCreate = json(output).commands.find((c: any) => c.name === 'project deploy create')
     expect(deployCreate.examples).toMatchInlineSnapshot(`
       [
@@ -1269,27 +1269,268 @@ describe('--llms', () => {
     `)
   })
 
-  test('--llms json omits examples when not defined', async () => {
-    const { output } = await serve(createApp(), ['--llms', '--format', 'json'])
+  test('--llms-full json omits examples when not defined', async () => {
+    const { output } = await serve(createApp(), ['--llms-full', '--format', 'json'])
     const ping = json(output).commands.find((c: any) => c.name === 'ping')
     expect(ping.examples).toBeUndefined()
   })
 
-  test('--llms markdown includes examples section', async () => {
-    const { output } = await serve(createApp(), ['--llms'])
+  test('--llms-full markdown includes examples section', async () => {
+    const { output } = await serve(createApp(), ['--llms-full'])
     expect(output).toContain('Examples')
     expect(output).toContain('Deploy staging from main')
     expect(output).toContain('app project deploy create staging')
   })
 
-  test('--llms markdown includes output tables', async () => {
-    const { output } = await serve(createApp(), ['project', '--llms'])
+  test('--llms-full markdown includes output tables', async () => {
+    const { output } = await serve(createApp(), ['project', '--llms-full'])
     expect(output).toContain('Output')
+  })
+
+  test('--llms-full --format yaml', async () => {
+    const { output } = await serve(createApp(), ['--llms-full', '--format', 'yaml'])
+    expect(output).toContain('version: incur.v1')
+  })
+})
+
+describe('--llms', () => {
+  test('outputs compact markdown table with all commands', async () => {
+    const { output } = await serve(createApp(), ['--llms'])
+    expect(output).toMatchInlineSnapshot(`
+      "# app
+
+      A comprehensive CLI application for testing.
+
+      | Command | Description |
+      |---------|-------------|
+      | \`app api\` | Proxy to HTTP API |
+      | \`app auth login\` | Log in to the service |
+      | \`app auth logout\` | Log out of the service |
+      | \`app auth status\` | Show authentication status |
+      | \`app config [key]\` | Show current configuration |
+      | \`app echo <message> [repeat]\` | Echo back arguments |
+      | \`app explode\` | Always fails |
+      | \`app explode-clac\` | Fails with IncurError |
+      | \`app noop\` | Returns nothing |
+      | \`app ping\` | Health check |
+      | \`app project create <name>\` | Create a new project |
+      | \`app project delete <id>\` | Delete a project |
+      | \`app project deploy create <env>\` | Create a deployment |
+      | \`app project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy status <deployId>\` | Check deployment status |
+      | \`app project get <id>\` | Get a project by ID |
+      | \`app project list\` | List projects |
+      | \`app slow\` | Async command |
+      | \`app stream\` | Stream chunks |
+      | \`app stream-error\` | Stream with mid-stream error |
+      | \`app stream-ok\` | Stream with ok() return |
+      | \`app stream-text\` | Stream plain text |
+      | \`app stream-throw\` | Stream that throws |
+      | \`app validate-fail <email> <age>\` | Fails validation |
+
+      Run \`app --llms-full\` for full manifest. Run \`app <command> --schema\` for argument details.
+      "
+    `)
+  })
+
+  test('json manifest has name + description only, no schema/examples', async () => {
+    const { output } = await serve(createApp(), ['--llms', '--format', 'json'])
+    expect(json(output)).toMatchInlineSnapshot(`
+      {
+        "commands": [
+          {
+            "description": "Proxy to HTTP API",
+            "name": "api",
+          },
+          {
+            "description": "Log in to the service",
+            "name": "auth login",
+          },
+          {
+            "description": "Log out of the service",
+            "name": "auth logout",
+          },
+          {
+            "description": "Show authentication status",
+            "name": "auth status",
+          },
+          {
+            "description": "Show current configuration",
+            "name": "config",
+          },
+          {
+            "description": "Echo back arguments",
+            "name": "echo",
+          },
+          {
+            "description": "Always fails",
+            "name": "explode",
+          },
+          {
+            "description": "Fails with IncurError",
+            "name": "explode-clac",
+          },
+          {
+            "description": "Returns nothing",
+            "name": "noop",
+          },
+          {
+            "description": "Health check",
+            "name": "ping",
+          },
+          {
+            "description": "Create a new project",
+            "name": "project create",
+          },
+          {
+            "description": "Delete a project",
+            "name": "project delete",
+          },
+          {
+            "description": "Create a deployment",
+            "name": "project deploy create",
+          },
+          {
+            "description": "Rollback a deployment",
+            "name": "project deploy rollback",
+          },
+          {
+            "description": "Check deployment status",
+            "name": "project deploy status",
+          },
+          {
+            "description": "Get a project by ID",
+            "name": "project get",
+          },
+          {
+            "description": "List projects",
+            "name": "project list",
+          },
+          {
+            "description": "Async command",
+            "name": "slow",
+          },
+          {
+            "description": "Stream chunks",
+            "name": "stream",
+          },
+          {
+            "description": "Stream with mid-stream error",
+            "name": "stream-error",
+          },
+          {
+            "description": "Stream with ok() return",
+            "name": "stream-ok",
+          },
+          {
+            "description": "Stream plain text",
+            "name": "stream-text",
+          },
+          {
+            "description": "Stream that throws",
+            "name": "stream-throw",
+          },
+          {
+            "description": "Fails validation",
+            "name": "validate-fail",
+          },
+        ],
+        "version": "incur.v1",
+      }
+    `)
+  })
+
+  test('scoped to group', async () => {
+    const { output } = await serve(createApp(), ['auth', '--llms'])
+    expect(output).toMatchInlineSnapshot(`
+      "# app auth
+
+      Authentication commands
+
+      | Command | Description |
+      |---------|-------------|
+      | \`app auth auth login\` | Log in to the service |
+      | \`app auth auth logout\` | Log out of the service |
+      | \`app auth auth status\` | Show authentication status |
+
+      Run \`app auth --llms-full\` for full manifest. Run \`app auth <command> --schema\` for argument details.
+      "
+    `)
+  })
+
+  test('scoped to nested group', async () => {
+    const { output } = await serve(createApp(), ['project', 'deploy', '--llms'])
+    expect(output).toMatchInlineSnapshot(`
+      "# app project deploy
+
+      Deployment commands
+
+      | Command | Description |
+      |---------|-------------|
+      | \`app project deploy project deploy create <env>\` | Create a deployment |
+      | \`app project deploy project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy project deploy status <deployId>\` | Check deployment status |
+
+      Run \`app project deploy --llms-full\` for full manifest. Run \`app project deploy <command> --schema\` for argument details.
+      "
+    `)
   })
 
   test('--llms --format yaml', async () => {
     const { output } = await serve(createApp(), ['--llms', '--format', 'yaml'])
-    expect(output).toContain('version: incur.v1')
+    expect(output).toMatchInlineSnapshot(`
+      "version: incur.v1
+      commands:
+        - name: api
+          description: Proxy to HTTP API
+        - name: auth login
+          description: Log in to the service
+        - name: auth logout
+          description: Log out of the service
+        - name: auth status
+          description: Show authentication status
+        - name: config
+          description: Show current configuration
+        - name: echo
+          description: Echo back arguments
+        - name: explode
+          description: Always fails
+        - name: explode-clac
+          description: Fails with IncurError
+        - name: noop
+          description: Returns nothing
+        - name: ping
+          description: Health check
+        - name: project create
+          description: Create a new project
+        - name: project delete
+          description: Delete a project
+        - name: project deploy create
+          description: Create a deployment
+        - name: project deploy rollback
+          description: Rollback a deployment
+        - name: project deploy status
+          description: Check deployment status
+        - name: project get
+          description: Get a project by ID
+        - name: project list
+          description: List projects
+        - name: slow
+          description: Async command
+        - name: stream
+          description: Stream chunks
+        - name: stream-error
+          description: Stream with mid-stream error
+        - name: stream-ok
+          description: Stream with ok() return
+        - name: stream-text
+          description: Stream plain text
+        - name: stream-throw
+          description: Stream that throws
+        - name: validate-fail
+          description: Fails validation
+      "
+    `)
   })
 })
 
@@ -1461,7 +1702,7 @@ describe('root command with subcommands', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
@@ -1638,7 +1879,7 @@ describe('env', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1652,8 +1893,8 @@ describe('env', () => {
     `)
   })
 
-  test('--llms json includes schema.env', async () => {
-    const { output } = await serve(createApp(), ['auth', '--llms', '--format', 'json'])
+  test('--llms-full json includes schema.env', async () => {
+    const { output } = await serve(createApp(), ['auth', '--llms-full', '--format', 'json'])
     const login = json(output).commands.find((c: any) => c.name === 'auth login')
     expect(login.schema.env.properties).toMatchInlineSnapshot(`
       {
@@ -1670,8 +1911,8 @@ describe('env', () => {
     `)
   })
 
-  test('--llms markdown includes env vars table', async () => {
-    const { output } = await serve(createApp(), ['auth', '--llms'])
+  test('--llms-full markdown includes env vars table', async () => {
+    const { output } = await serve(createApp(), ['auth', '--llms-full'])
     expect(output).toContain('Environment Variables')
     expect(output).toContain('`AUTH_TOKEN`')
     expect(output).toContain('`AUTH_HOST`')

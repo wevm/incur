@@ -424,6 +424,7 @@ async function serveImpl(
     tokenOffset,
     tokenCount,
     llms,
+    llmsFull,
     mcp: mcpFlag,
     help,
     version,
@@ -464,7 +465,7 @@ async function serveImpl(
   }
 
   // Skills staleness check (skip for built-in commands)
-  if (!llms && !schema && !help && !version) {
+  if (!llms && !llmsFull && !schema && !help && !version) {
     const isSkillsAdd =
       filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
     const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
@@ -484,15 +485,17 @@ async function serveImpl(
     }
   }
 
-  if (llms) {
+  if (llms || llmsFull) {
     // Scope to a subtree if command tokens are provided
     let scopedCommands = commands
     const prefix: string[] = []
+    let scopedDescription: string | undefined = options.description
     for (const token of filtered) {
       const entry = scopedCommands.get(token)
       if (!entry) break
       if (isGroup(entry)) {
         scopedCommands = entry.commands
+        scopedDescription = entry.description
         prefix.push(token)
       } else {
         // Leaf command — scope to just this command
@@ -501,14 +504,26 @@ async function serveImpl(
       }
     }
 
+    if (llmsFull) {
+      if (!formatExplicit || formatFlag === 'md') {
+        const groups = new Map<string, string>()
+        const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+        const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
+        writeln(Skill.generate(scopedName, cmds, groups))
+        return
+      }
+      writeln(Formatter.format(buildManifest(scopedCommands, prefix), formatFlag))
+      return
+    }
+
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
       const cmds = collectSkillCommands(scopedCommands, prefix, groups)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
-      writeln(Skill.generate(scopedName, cmds, groups))
+      writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
     }
-    writeln(Formatter.format(buildManifest(scopedCommands, prefix), formatFlag))
+    writeln(Formatter.format(buildIndexManifest(scopedCommands, prefix), formatFlag))
     return
   }
 
@@ -1800,6 +1815,7 @@ declare namespace serveImpl {
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
   let llms = false
+  let llmsFull = false
   let mcp = false
   let help = false
   let version = false
@@ -1816,6 +1832,7 @@ function extractBuiltinFlags(argv: string[]) {
     const token = argv[i]!
     if (token === '--verbose') verbose = true
     else if (token === '--llms') llms = true
+    else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
     else if (token === '--help' || token === '-h') help = true
     else if (token === '--version') version = true
@@ -1840,7 +1857,7 @@ function extractBuiltinFlags(argv: string[]) {
     else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, mcp, help, version, schema, rest }
+  return { verbose, format, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp, help, version, schema, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
@@ -2221,6 +2238,35 @@ function formatCta(name: string, cta: Cta): FormattedCta {
     for (const [key, value] of Object.entries(cta.options))
       cmd += value === true ? ` --${key} <${key}>` : ` --${key} ${value}`
   return { command: cmd, ...(cta.description ? { description: cta.description } : undefined) }
+}
+
+/** @internal Builds the `--llms` index manifest (name + description only) from the command tree. */
+function buildIndexManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
+  return {
+    version: 'incur.v1',
+    commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+  }
+}
+
+/** @internal Recursively collects leaf commands with name + description only. */
+function collectIndexCommands(
+  commands: Map<string, CommandEntry>,
+  prefix: string[],
+): { name: string; description?: string | undefined }[] {
+  const result: { name: string; description?: string | undefined }[] = []
+  for (const [name, entry] of commands) {
+    const path = [...prefix, name]
+    if (isGroup(entry)) {
+      result.push(...collectIndexCommands(entry.commands, path))
+    } else {
+      const cmd: (typeof result)[number] = { name: path.join(' ') }
+      if (isFetchGateway(entry)) {
+        if (entry.description) cmd.description = entry.description
+      } else if (entry.description) cmd.description = entry.description
+      result.push(cmd)
+    }
+  }
+  return result
 }
 
 /** @internal Builds the `--llms` manifest from the command tree. */

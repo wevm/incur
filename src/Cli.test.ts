@@ -378,12 +378,12 @@ describe('serve', () => {
   })
 })
 
-describe('--llms', () => {
+describe('--llms-full', () => {
   test('outputs manifest with version and commands', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.version).toBe('incur.v1')
     expect(manifest.commands).toHaveLength(1)
@@ -399,7 +399,7 @@ describe('--llms', () => {
       run: ({ args }) => ({ message: `hello ${args.name}` }),
     })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands[0].schema.args).toEqual({
       type: 'object',
@@ -423,7 +423,7 @@ describe('--llms', () => {
       run: ({ args }) => ({ message: `hello ${args.name}` }),
     })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands[0].schema.output).toEqual({
       type: 'object',
@@ -437,7 +437,7 @@ describe('--llms', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands[0].schema).toBeUndefined()
   })
@@ -457,7 +457,7 @@ describe('--llms', () => {
       })
     cli.command(pr)
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands).toHaveLength(2)
     expect(manifest.commands[0].name).toBe('pr create')
@@ -474,7 +474,7 @@ describe('--llms', () => {
     pr.command(review)
     cli.command(pr)
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands[0].name).toBe('pr review approve')
     expect(manifest.commands[0].description).toBe('Approve a review')
@@ -484,7 +484,7 @@ describe('--llms', () => {
     const cli = Cli.create('test')
     cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
-    const { output } = await serve(cli, ['--llms'])
+    const { output } = await serve(cli, ['--llms-full'])
     expect(output).toContain('# test ping')
     expect(output).toContain('Health check')
   })
@@ -493,7 +493,7 @@ describe('--llms', () => {
     const cli = Cli.create('test')
     cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'yaml'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'yaml'])
     expect(output).toContain('version: incur.v1')
     expect(output).toContain('name: ping')
   })
@@ -508,7 +508,7 @@ describe('--llms', () => {
       run: ({ args }) => ({ message: `hello ${args.name}` }),
     })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     expect(JSON.parse(output)).toMatchInlineSnapshot(`
       {
         "commands": [
@@ -572,11 +572,74 @@ describe('--llms', () => {
       run: ({ args }) => ({ message: `hello ${args.name}` }),
     })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'md'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'md'])
     expect(output).toContain('# test greet')
     expect(output).toContain('## Arguments')
     expect(output).toContain('## Output')
     expect(output).not.toMatch(/^---$/m)
+  })
+})
+
+describe('--llms', () => {
+  test('outputs compact command index', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({}) })
+    cli.command('greet', {
+      description: 'Greet someone',
+      args: z.object({ name: z.string() }),
+      run: () => ({}),
+    })
+
+    const { output } = await serve(cli, ['--llms-full'])
+    expect(output).toMatchInlineSnapshot(`
+      "# test greet
+
+      Greet someone
+
+      ## Arguments
+
+      | Name | Type | Required | Description |
+      |------|------|----------|-------------|
+      | \`name\` | \`string\` | yes |  |
+
+      # test ping
+
+      Health check
+      "
+    `)
+  })
+
+  test('--llms --json strips schemas', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      description: 'Greet someone',
+      args: z.object({ name: z.string() }),
+      output: z.object({ message: z.string() }),
+      run: () => ({ message: 'hi' }),
+    })
+
+    const { output } = await serve(cli, ['--llms', '--json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.version).toBe('incur.v1')
+    expect(manifest.commands).toHaveLength(1)
+    expect(manifest.commands[0].name).toBe('greet')
+    expect(manifest.commands[0].description).toBe('Greet someone')
+    expect(manifest.commands[0].schema).toBeUndefined()
+    expect(manifest.commands[0].examples).toBeUndefined()
+  })
+
+  test('scopes to subtree', async () => {
+    const cli = Cli.create('test')
+    const group = Cli.create('auth', { description: 'Authentication' })
+    group.command('login', { description: 'Log in', run: () => ({}) })
+    group.command('logout', { description: 'Log out', run: () => ({}) })
+    cli.command(group)
+    cli.command('ping', { description: 'Health check', run: () => ({}) })
+
+    const { output } = await serve(cli, ['auth', '--llms'])
+    expect(output).toContain('test auth auth login')
+    expect(output).toContain('test auth auth logout')
+    expect(output).not.toContain('ping')
   })
 })
 
@@ -857,7 +920,7 @@ describe('subcommands', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1261,7 +1324,7 @@ describe('leaf cli', () => {
     const cli = Cli.create('app')
     cli.command(ping)
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands).toHaveLength(1)
     expect(manifest.commands[0].name).toBe('ping')
@@ -1296,7 +1359,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
@@ -1334,7 +1397,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
@@ -1368,7 +1431,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1402,7 +1465,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1497,7 +1560,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
@@ -1529,7 +1592,7 @@ describe('help', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1624,7 +1687,7 @@ describe('env', () => {
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
-        --llms                              Print LLM-readable manifest
+        --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for a command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1662,7 +1725,7 @@ describe('env', () => {
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --help                              Show help
-          --llms                              Print LLM-readable manifest
+          --llms, --llms-full                 Print LLM-readable manifest
           --schema                            Show JSON Schema for a command
           --token-count                       Print token count of output (instead of output)
           --token-limit <n>                   Limit output to n tokens
@@ -1721,7 +1784,7 @@ describe('env', () => {
       },
     })
 
-    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const { output } = await serve(cli, ['--llms-full', '--format', 'json'])
     const cmd = JSON.parse(output).commands.find((c: any) => c.name === 'deploy')
     expect(cmd.schema.env).toMatchInlineSnapshot(`
       {
@@ -1751,7 +1814,7 @@ describe('env', () => {
       },
     })
 
-    const { output } = await serve(cli, ['--llms'])
+    const { output } = await serve(cli, ['--llms-full'])
     expect(output).toContain('Environment Variables')
     expect(output).toContain('`API_TOKEN`')
   })
@@ -2495,7 +2558,7 @@ test('--llms scoped to leaf command', async () => {
   cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
   cli.command('greet', { description: 'Greet someone', run: () => ({}) })
 
-  const { output } = await serve(cli, ['--llms', '--format', 'json', 'ping'])
+  const { output } = await serve(cli, ['--llms-full', '--format', 'json', 'ping'])
   const manifest = JSON.parse(output)
   expect(manifest.commands).toHaveLength(1)
   expect(manifest.commands[0].name).toBe('ping')
@@ -2509,7 +2572,7 @@ test('--llms scoped to group', async () => {
   cli.command(pr)
   cli.command('ping', { description: 'Health check', run: () => ({}) })
 
-  const { output } = await serve(cli, ['--llms', '--format', 'json', 'pr'])
+  const { output } = await serve(cli, ['--llms-full', '--format', 'json', 'pr'])
   const manifest = JSON.parse(output)
   expect(manifest.commands).toHaveLength(2)
   expect(manifest.commands.every((c: any) => c.name.startsWith('pr '))).toBe(true)
@@ -2711,7 +2774,7 @@ test('--llms includes hint in skill output', async () => {
     run: () => ({}),
   })
 
-  const { output } = await serve(cli, ['--llms'])
+  const { output } = await serve(cli, ['--llms-full'])
   expect(output).toContain('Always confirm before deploying to production')
 })
 
@@ -2904,7 +2967,7 @@ describe('fetch', async () => {
       description: 'Proxy to API',
       fetch: app.fetch,
     })
-    const { output } = await serve(cli, ['--llms'])
+    const { output } = await serve(cli, ['--llms-full'])
     expect(output).toContain('api')
     expect(output).toContain('Proxy to API')
   })

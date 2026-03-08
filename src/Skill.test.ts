@@ -145,6 +145,41 @@ test('concatenates multiple commands', () => {
   `)
 })
 
+describe('index', () => {
+  test('generates compact command index', () => {
+    const result = Skill.index('test', [
+      { name: 'ping', description: 'Health check' },
+      { name: 'greet', description: 'Greet someone', args: z.object({ name: z.string() }) },
+    ])
+    expect(result).toMatchInlineSnapshot(`
+      "# test
+
+      | Command | Description |
+      |---------|-------------|
+      | \`test ping\` | Health check |
+      | \`test greet <name>\` | Greet someone |
+
+      Run \`test --llms-full\` for full manifest. Run \`test <command> --schema\` for argument details."
+    `)
+  })
+
+  test('uses brackets for optional args', () => {
+    const result = Skill.index('test', [
+      {
+        name: 'install',
+        description: 'Install a package',
+        args: z.object({ package: z.string().optional() }),
+      },
+    ])
+    expect(result).toContain('`test install [package]`')
+  })
+
+  test('handles commands without descriptions', () => {
+    const result = Skill.index('test', [{ name: 'ping' }])
+    expect(result).toContain('| `test ping` |  |')
+  })
+})
+
 describe('hash', () => {
   test('returns consistent hash for same commands', () => {
     const commands: Skill.CommandInfo[] = [
