@@ -329,7 +329,7 @@ function globalOptionsLines(root = false): string[] {
     { flag: '--filter-output <keys>', desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])' },
     { flag: '--format <toon|json|yaml|md|jsonl>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
-    { flag: '--llms', desc: 'Print LLM-readable manifest' },
+    { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
     { flag: '--schema', desc: 'Show JSON Schema for a command' },
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
