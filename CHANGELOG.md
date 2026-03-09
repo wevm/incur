@@ -1,5 +1,16 @@
 # incur
 
+## 0.3.0
+
+### Minor Changes
+
+- 9add1a0: **Breaking:** Renamed `--llms` to `--llms-full`. Added a new `--llms` flag that outputs a compact command index (table of command signatures + descriptions) instead of the full manifest. This reduced token usage by ~95% for agents that already know the CLI and just need a quick reminder of available commands.
+
+### Patch Changes
+
+- a2610bc: Added `requires_bin` and fallback descriptions to generated skill frontmatter.
+- dd7a1af: Fixed `--no-global` resolving `cwd` to the CLI's installation directory instead of `process.cwd()`.
+
 ## 0.2.2
 
 ### Patch Changes
