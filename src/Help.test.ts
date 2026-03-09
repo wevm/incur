@@ -88,6 +88,17 @@ describe('formatCommand', () => {
     `)
   })
 
+  test('shows count type in help for meta count', () => {
+    const result = Help.formatCommand('tool run', {
+      options: z.object({
+        verbose: z.number().default(0).meta({ count: true }).describe('Verbosity level'),
+      }),
+      alias: { verbose: 'v' },
+    })
+    expect(result).toContain('--verbose, -v <count>')
+    expect(result).toContain('Verbosity level')
+  })
+
   test('shows [deprecated] tag for deprecated options', () => {
     const result = Help.formatCommand('tool deploy', {
       description: 'Deploy app',

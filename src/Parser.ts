@@ -51,7 +51,10 @@ export function parse<
         const raw = token.slice(2)
         const name = kebabToCamel.get(raw) ?? raw
         if (!knownOptions.has(name)) throw new ParseError({ message: `Unknown flag: ${token}` })
-        if (isBooleanOption(name, optionsSchema)) {
+        if (isCountOption(name, optionsSchema)) {
+          rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
+          i++
+        } else if (isBooleanOption(name, optionsSchema)) {
           rawOptions[name] = true
           i++
         } else {
@@ -71,11 +74,17 @@ export function parse<
         if (!name) throw new ParseError({ message: `Unknown flag: -${short}` })
         const isLast = j === chars.length - 1
         if (!isLast) {
-          if (!isBooleanOption(name, optionsSchema))
+          if (isCountOption(name, optionsSchema)) {
+            rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
+          } else if (isBooleanOption(name, optionsSchema)) {
+            rawOptions[name] = true
+          } else {
             throw new ParseError({
               message: `Non-boolean flag -${short} must be last in a stacked alias`,
             })
-          rawOptions[name] = true
+          }
+        } else if (isCountOption(name, optionsSchema)) {
+          rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
         } else if (isBooleanOption(name, optionsSchema)) {
           rawOptions[name] = true
         } else {
@@ -159,6 +168,14 @@ function isBooleanOption(name: string, schema: z.ZodObject<any> | undefined): bo
   const field = schema.shape[name]
   if (!field) return false
   return unwrap(field).constructor.name === 'ZodBoolean'
+}
+
+/** Checks if an option is a count type (z.count()). */
+function isCountOption(name: string, schema: z.ZodObject<any> | undefined): boolean {
+  if (!schema) return false
+  const field = schema.shape[name]
+  if (!field) return false
+  return typeof field.meta === 'function' && field.meta()?.count === true
 }
 
 /** Checks if an option's inner type is an array. */

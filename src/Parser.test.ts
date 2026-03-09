@@ -194,6 +194,56 @@ describe('parse', () => {
     expect(result.options).toEqual({ label: ['bug', 'fix'] })
   })
 
+  test('count defaults to 0 when flag not provided', () => {
+    const result = Parser.parse([], {
+      options: z.object({ verbose: z.number().default(0).meta({ count: true }) }),
+    })
+    expect(result.options).toEqual({ verbose: 0 })
+  })
+
+  test('count single flag increments to 1', () => {
+    const result = Parser.parse(['--verbose'], {
+      options: z.object({ verbose: z.number().default(0).meta({ count: true }) }),
+    })
+    expect(result.options).toEqual({ verbose: 1 })
+  })
+
+  test('count repeated flags increment', () => {
+    const result = Parser.parse(['--verbose', '--verbose'], {
+      options: z.object({ verbose: z.number().default(0).meta({ count: true }) }),
+    })
+    expect(result.options).toEqual({ verbose: 2 })
+  })
+
+  test('count stacked alias increments', () => {
+    const result = Parser.parse(['-vv'], {
+      options: z.object({ verbose: z.number().default(0).meta({ count: true }) }),
+      alias: { verbose: 'v' },
+    })
+    expect(result.options).toEqual({ verbose: 2 })
+  })
+
+  test('count mixed stacking with boolean', () => {
+    const result = Parser.parse(['-vvD'], {
+      options: z.object({
+        verbose: z.number().default(0).meta({ count: true }),
+        debug: z.boolean().default(false),
+      }),
+      alias: { verbose: 'v', debug: 'D' },
+    })
+    expect(result.options).toEqual({ verbose: 2, debug: true })
+  })
+
+  test('count .describe() works', () => {
+    const result = Parser.parse(['-v'], {
+      options: z.object({
+        verbose: z.number().default(0).meta({ count: true }).describe('Verbosity level'),
+      }),
+      alias: { verbose: 'v' },
+    })
+    expect(result.options).toEqual({ verbose: 1 })
+  })
+
   test('parses positional args and options together', () => {
     const result = Parser.parse(['myrepo', '--limit', '5'], {
       args: z.object({ repo: z.string() }),

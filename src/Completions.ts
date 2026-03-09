@@ -186,10 +186,11 @@ function resolveOptionName(token: string, entry: CommandEntry): string | undefin
   return undefined
 }
 
-/** @internal Checks if an option's inner type is boolean. */
+/** @internal Checks if an option's inner type is boolean or count. */
 function isBooleanOption(name: string, schema: z.ZodObject<any>): boolean {
   const field = schema.shape[name]
   if (!field) return false
+  if (typeof field.meta === 'function' && field.meta()?.count === true) return true
   return unwrap(field).constructor.name === 'ZodBoolean'
 }
 

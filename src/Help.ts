@@ -268,12 +268,19 @@ function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> 
 
 /** Resolves a human-readable type name from a Zod schema. */
 function resolveTypeName(schema: unknown): string {
+  if (isCountSchema(schema)) return 'count'
   const unwrapped = unwrap(schema)
   if (unwrapped instanceof z.ZodString) return 'string'
   if (unwrapped instanceof z.ZodNumber) return 'number'
   if (unwrapped instanceof z.ZodBoolean) return 'boolean'
   if (unwrapped instanceof z.ZodArray) return 'array'
   return 'value'
+}
+
+/** Checks if a schema is a count type (`.meta({ count: true })`). */
+function isCountSchema(schema: unknown): boolean {
+  const s = schema as any
+  return typeof s?.meta === 'function' && s.meta()?.count === true
 }
 
 /** Unwraps optional/default/nullable wrappers to get the inner type. */
