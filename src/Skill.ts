@@ -115,12 +115,15 @@ function renderGroup(
   const descParts: string[] = []
   if (groupDesc) descParts.push(groupDesc.replace(/\.$/, ''))
   if (childDescs.length > 0) descParts.push(childDescs.join(', '))
-  const description = descParts.join('. ') || undefined
+  const description =
+    descParts.length > 0
+      ? `${descParts.join('. ')}. Run \`${title} --help\` for usage details.`
+      : `Run \`${title} --help\` for usage details.`
 
   const slug = title.replace(/\s+/g, '-')
   const fm = ['---', `name: ${slug}`]
-  if (description)
-    fm.push(`description: ${description}. Run \`${title} --help\` for usage details.`)
+  fm.push(`description: ${description}`)
+  fm.push(`requires_bin: ${cli}`)
   fm.push(`command: ${title}`, '---')
 
   const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')

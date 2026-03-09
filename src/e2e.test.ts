@@ -2872,6 +2872,7 @@ describe('.well-known/skills', () => {
       "---
       name: app-ping
       description: Health check. Run \`app ping --help\` for usage details.
+      requires_bin: app
       command: app ping
       ---
 

@@ -253,6 +253,7 @@ describe('split', () => {
       "---
       name: gh-auth
       description: Authenticate with GitHub. Log in, Check status. Run \`gh auth --help\` for usage details.
+      requires_bin: gh
       command: gh auth
       ---
 
@@ -270,6 +271,7 @@ describe('split', () => {
       "---
       name: gh-pr
       description: Manage pull requests. List PRs, Create PR. Run \`gh pr --help\` for usage details.
+      requires_bin: gh
       command: gh pr
       ---
 
@@ -329,9 +331,16 @@ describe('split', () => {
     expect(files[0]!.content).toContain('Run `gh auth login --help` for usage details.')
   })
 
-  test('omits --help hint when no descriptions exist', () => {
+  test('emits fallback description when no explicit descriptions exist', () => {
     const files = Skill.split('test', [{ name: 'ping' }], 1)
-    expect(files[0]!.content).not.toContain('--help')
+    expect(files[0]!.content).toContain(
+      'description: Run `test ping --help` for usage details.',
+    )
+  })
+
+  test('includes requires_bin in frontmatter', () => {
+    const files = Skill.split('gh', [{ name: 'auth login', description: 'Log in' }], 1)
+    expect(files[0]!.content).toContain('requires_bin: gh')
   })
 
   test('no per-command frontmatter in split files', () => {
