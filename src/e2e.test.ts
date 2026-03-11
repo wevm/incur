@@ -1018,9 +1018,9 @@ describe('help', () => {
       Usage: app project list [options]
 
       Options:
-        --limit, -l <number>  Max results (default: 20)
-        --sort, -s <value>    Sort field (default: name)
-        --archived <boolean>  Include archived (default: false)
+        --limit, -l <number>               Max results (default: 20)
+        --sort, -s <name|created|updated>  Sort field (default: name)
+        --archived <boolean>               Include archived (default: false)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])

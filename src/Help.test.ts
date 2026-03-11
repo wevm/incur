@@ -99,6 +99,26 @@ describe('formatCommand', () => {
     expect(result).toContain('Verbosity level')
   })
 
+  test('shows enum values for z.enum options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        env: z.enum(['staging', 'production']).describe('Target environment'),
+      }),
+    })
+    expect(result).toContain('--env <staging|production>')
+  })
+
+  test('shows literal values for z.union of z.literal options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        level: z
+          .union([z.literal('low'), z.literal('medium'), z.literal('high')])
+          .describe('Priority level'),
+      }),
+    })
+    expect(result).toContain('--level <low|medium|high>')
+  })
+
   test('shows [deprecated] tag for deprecated options', () => {
     const result = Help.formatCommand('tool deploy', {
       description: 'Deploy app',

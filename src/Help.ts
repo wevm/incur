@@ -274,6 +274,17 @@ function resolveTypeName(schema: unknown): string {
   if (unwrapped instanceof z.ZodNumber) return 'number'
   if (unwrapped instanceof z.ZodBoolean) return 'boolean'
   if (unwrapped instanceof z.ZodArray) return 'array'
+  if (unwrapped instanceof z.ZodEnum) {
+    const values = Object.values((unwrapped as any)._zod.def.entries) as string[]
+    return values.join('|')
+  }
+  if (unwrapped instanceof z.ZodUnion) {
+    const options = (unwrapped as any)._zod?.def?.options as z.ZodType[] | undefined
+    if (options?.every((o: z.ZodType) => o instanceof z.ZodLiteral)) {
+      const values = options.map((o: z.ZodType) => String((o as any)._zod.def.values[0]))
+      return values.join('|')
+    }
+  }
   return 'value'
 }
 
@@ -333,7 +344,10 @@ function globalOptionsLines(root = false): string[] {
   }
 
   const flags = [
-    { flag: '--filter-output <keys>', desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])' },
+    {
+      flag: '--filter-output <keys>',
+      desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])',
+    },
     { flag: '--format <toon|json|yaml|md|jsonl>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },
