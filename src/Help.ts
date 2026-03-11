@@ -8,11 +8,11 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
   // Header
   const title = version ? `${name}@${version}` : name
   lines.push(description ? `${title} \u2014 ${description}` : title)
+  if (aliases?.length) lines.push(`Aliases: ${aliases.join(', ')}`)
   lines.push('')
 
   // Synopsis
   lines.push(`Usage: ${name} <command>`)
-  if (aliases?.length) lines.push(`Aliases: ${aliases.join(', ')}`)
 
   // Commands
   if (commands.length > 0) {
@@ -105,6 +105,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   // Header
   const title = version ? `${name}@${version}` : name
   lines.push(description ? `${title} \u2014 ${description}` : title)
+  if (aliases?.length) lines.push(`Aliases: ${aliases.join(', ')}`)
   lines.push('')
 
   // Synopsis
@@ -127,7 +128,6 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     const commandSuffix = options.commands && options.commands.length > 0 ? ' | <command>' : ''
     lines.push(`Usage: ${synopsis}${opts ? ' [options]' : ''}${commandSuffix}`)
   }
-  if (aliases?.length) lines.push(`Aliases: ${aliases.join(', ')}`)
 
   // Arguments
   if (args) {

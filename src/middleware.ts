@@ -10,16 +10,11 @@ type InferVars<vars extends z.ZodObject<any> | undefined> =
 type InferEnv<env extends z.ZodObject<any> | undefined> =
   env extends z.ZodObject<any> ? z.output<env> : {}
 
-/** @internal Infers the output type of an options schema, or `{}` if undefined. */
-type InferOptions<options extends z.ZodObject<any> | undefined> =
-  options extends z.ZodObject<any> ? z.output<options> : {}
-
 /** Middleware handler that runs before/after command execution. */
 export type Handler<
   vars extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
-  options extends z.ZodObject<any> | undefined = undefined,
-> = (context: Context<vars, env, options>, next: () => Promise<void>) => Promise<void> | void
+> = (context: Context<vars, env>, next: () => Promise<void>) => Promise<void> | void
 
 /** CTA block for middleware error/ok responses. */
 type CtaBlock = {
@@ -33,7 +28,6 @@ type CtaBlock = {
 export type Context<
   vars extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
-  options extends z.ZodObject<any> | undefined = undefined,
 > = {
   /** Whether the consumer is an agent (stdout is not a TTY). */
   agent: boolean
@@ -55,8 +49,6 @@ export type Context<
   formatExplicit: boolean
   /** The CLI name. */
   name: string
-  /** Parsed options from the root CLI-level options schema. */
-  options: InferOptions<options>
   /** Set a typed variable for downstream middleware and handlers. */
   set<key extends string & keyof InferVars<vars>>(key: key, value: InferVars<vars>[key]): void
   /** Variables set by upstream middleware. */
@@ -65,11 +57,10 @@ export type Context<
   version: string | undefined
 }
 
-/** Creates a strictly typed middleware handler. Pass the vars schema as a generic for typed `c.set()` and `c.var`, the env schema for typed `c.env`, and the options schema for typed `c.options`. */
+/** Creates a strictly typed middleware handler. Pass the vars schema as a generic for typed `c.set()` and `c.var`, and the env schema for typed `c.env`. */
 export default function middleware<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
-  const options extends z.ZodObject<any> | undefined = undefined,
->(handler: Handler<vars, env, options>): Handler<vars, env, options> {
+>(handler: Handler<vars, env>): Handler<vars, env> {
   return handler
 }

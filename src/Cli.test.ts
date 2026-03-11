@@ -2270,24 +2270,6 @@ describe('outputPolicy', () => {
     expect(capturedEnv).toEqual({ API_TOKEN: 'secret-123', API_URL: 'https://api.example.com' })
   })
 
-  test('e2e: middleware receives parsed CLI-level options', async () => {
-    let capturedOptions: any
-    const cli = Cli.create('test', {
-      options: z.object({
-        token: z.string().default(''),
-        dry: z.boolean().default(false),
-      }),
-    })
-      .use(async (c, next) => {
-        capturedOptions = c.options
-        await next()
-      })
-      .command('deploy', { run: () => ({ ok: true }) })
-
-    await serve(cli, ['deploy', '--token', 'abc123', '--dry'])
-    expect(capturedOptions).toEqual({ token: 'abc123', dry: true })
-  })
-
   test('e2e: CLI-level env validation error before middleware runs', async () => {
     const cli = Cli.create('test', {
       env: z.object({ API_TOKEN: z.string() }),
