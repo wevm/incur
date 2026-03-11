@@ -199,9 +199,9 @@ describe('formatRoot', () => {
     })
     expect(result).toMatchInlineSnapshot(`
       "my-tool@1.0.0 — A test CLI
-      Aliases: mt, myt
 
       Usage: my-tool <command>
+      Aliases: mt, myt
 
       Commands:
         fetch  Fetch a URL
@@ -228,9 +228,9 @@ describe('formatRoot', () => {
     })
     expect(result).toMatchInlineSnapshot(`
       "my-tool@1.0.0 — A test CLI
-      Aliases: mt, myt
 
       Usage: my-tool <url>
+      Aliases: mt, myt
 
       Arguments:
         url  URL to fetch

@@ -279,6 +279,43 @@ test('env is typed in per-command middleware', () => {
   })
 })
 
+test('options are typed in middleware via .use()', () => {
+  Cli.create('test', {
+    options: z.object({
+      token: z.string(),
+      verbose: z.boolean().default(false),
+    }),
+  }).use((c, _next) => {
+    expectTypeOf(c.options.token).toEqualTypeOf<string>()
+    expectTypeOf(c.options.verbose).toEqualTypeOf<boolean>()
+  })
+})
+
+test('without options, c.options is empty object in middleware', () => {
+  Cli.create('test').use((c, _next) => {
+    expectTypeOf(c.options).toEqualTypeOf<{}>()
+  })
+})
+
+test('middleware<vars, env, options>() infers all three types', () => {
+  const cli = Cli.create('test', {
+    env: z.object({ API_TOKEN: z.string() }),
+    options: z.object({ token: z.string() }),
+    vars: z.object({ user: z.string() }),
+  })
+
+  const mw = middleware<typeof cli.vars, typeof cli.env, typeof cli.options>((c, _next) => {
+    expectTypeOf(c.env.API_TOKEN).toEqualTypeOf<string>()
+    expectTypeOf(c.options.token).toEqualTypeOf<string>()
+    expectTypeOf(c.var.user).toEqualTypeOf<string>()
+    c.set('user', 'alice')
+  })
+
+  expectTypeOf(mw).toEqualTypeOf<
+    MiddlewareHandler<typeof cli.vars, typeof cli.env, typeof cli.options>
+  >()
+})
+
 test('run() context exposes format metadata', () => {
   const cli = Cli.create('test')
   cli.command('ping', {
