@@ -48,7 +48,7 @@ export type Cli<
     >
     /** Mounts a sub-CLI as a command group. */
     <const name extends string, const sub extends CommandsMap>(
-      cli: Cli<sub, any, any> & { name: name },
+      cli: Cli<sub, any, any, any> & { name: name },
     ): Cli<
       commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] },
       vars,
