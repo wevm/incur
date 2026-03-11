@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.0
+
+### Minor Changes
+
+- 966d41b: Added typed `c.options` to middleware context, exposing parsed CLI-level options to middleware.
+
 ## 0.3.2
 
 ### Patch Changes
