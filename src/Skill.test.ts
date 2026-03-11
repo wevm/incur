@@ -333,9 +333,7 @@ describe('split', () => {
 
   test('emits fallback description when no explicit descriptions exist', () => {
     const files = Skill.split('test', [{ name: 'ping' }], 1)
-    expect(files[0]!.content).toContain(
-      'description: Run `test ping --help` for usage details.',
-    )
+    expect(files[0]!.content).toContain('description: Run `test ping --help` for usage details.')
   })
 
   test('includes requires_bin in frontmatter', () => {

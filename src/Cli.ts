@@ -1,18 +1,18 @@
+import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import type { z } from 'zod'
 
-import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import * as Completions from './Completions.js'
-import * as Filter from './Filter.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
-import * as Openapi from './Openapi.js'
+import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
+import * as Openapi from './Openapi.js'
 export type { MiddlewareHandler }
 import * as Parser from './Parser.js'
 import type { Register } from './Register.js'
@@ -63,7 +63,13 @@ export type Cli<
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
       name: name,
-      definition: { basePath?: string | undefined; description?: string | undefined; fetch: FetchHandler; openapi?: Openapi.OpenAPISpec | undefined; outputPolicy?: OutputPolicy | undefined },
+      definition: {
+        basePath?: string | undefined
+        description?: string | undefined
+        fetch: FetchHandler
+        openapi?: Openapi.OpenAPISpec | undefined
+        outputPolicy?: OutputPolicy | undefined
+      },
     ): Cli<commands, vars, env>
   }
   /** A short description of the CLI. */
@@ -204,14 +210,16 @@ export function create(
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
           if (def.openapi) {
             pending.push(
-              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then((generated) => {
-                commands.set(nameOrCli, {
-                  _group: true,
-                  description: def.description,
-                  commands: generated as Map<string, CommandEntry>,
-                  ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                } as InternalGroup)
-              }),
+              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then(
+                (generated) => {
+                  commands.set(nameOrCli, {
+                    _group: true,
+                    description: def.description,
+                    commands: generated as Map<string, CommandEntry>,
+                    ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                  } as InternalGroup)
+                },
+              ),
             )
             return cli
           }
@@ -786,7 +794,16 @@ async function serveImpl(
     filtered.length === 0 && options.rootCommand
       ? { command: options.rootCommand, path: name, rest: [] as string[] }
       : filtered.length === 0 && options.rootFetch
-        ? { fetchGateway: { _fetch: true as const, fetch: options.rootFetch, description: options.description }, middlewares: [] as MiddlewareHandler[], path: name, rest: [] as string[] }
+        ? {
+            fetchGateway: {
+              _fetch: true as const,
+              fetch: options.rootFetch,
+              description: options.description,
+            },
+            middlewares: [] as MiddlewareHandler[],
+            path: name,
+            rest: [] as string[],
+          }
         : resolveCommand(commands, filtered)
 
   // --help on a fetch gateway → show fetch-specific help
@@ -916,7 +933,16 @@ async function serveImpl(
   // Fall back to root fetch when no subcommand matches
   const effective =
     'error' in resolved && options.rootFetch && !resolved.path
-      ? { fetchGateway: { _fetch: true as const, fetch: options.rootFetch, description: options.description }, middlewares: [] as MiddlewareHandler[], path: name, rest: filtered }
+      ? {
+          fetchGateway: {
+            _fetch: true as const,
+            fetch: options.rootFetch,
+            description: options.description,
+          },
+          middlewares: [] as MiddlewareHandler[],
+          path: name,
+          rest: filtered,
+        }
       : 'error' in resolved && options.rootCommand && !resolved.path
         ? { command: options.rootCommand, path: name, rest: filtered }
         : resolved
@@ -928,7 +954,11 @@ async function serveImpl(
 
   const filterPaths = filterOutput ? Filter.parse(filterOutput) : undefined
 
-  function truncate(s: string): { text: string; truncated: boolean; nextOffset?: number | undefined } {
+  function truncate(s: string): {
+    text: string
+    truncated: boolean
+    nextOffset?: number | undefined
+  } {
     if (tokenLimit == null && tokenOffset == null) return { text: s, truncated: false }
     const total = estimateTokenCount(s)
     const offset = tokenOffset ?? 0
@@ -964,11 +994,12 @@ async function serveImpl(
     if (verbose) {
       if (tokenLimit != null || tokenOffset != null) {
         // Truncate data separately so meta (including nextOffset) is always visible
-        const dataFormatted = output.ok && output.data != null
-          ? Formatter.format(output.data, format)
-          : !output.ok
-            ? Formatter.format(output.error, format)
-            : ''
+        const dataFormatted =
+          output.ok && output.data != null
+            ? Formatter.format(output.data, format)
+            : !output.ok
+              ? Formatter.format(output.error, format)
+              : ''
         const t = truncate(dataFormatted)
         if (t.truncated) {
           const envelope: Record<string, unknown> = output.ok
@@ -1070,9 +1101,12 @@ async function serveImpl(
           ok: false,
           error: {
             code: `HTTP_${output.status}`,
-            message: typeof output.data === 'object' && output.data !== null && 'message' in output.data
-              ? String((output.data as any).message)
-              : typeof output.data === 'string' ? output.data : `HTTP ${output.status}`,
+            message:
+              typeof output.data === 'object' && output.data !== null && 'message' in output.data
+                ? String((output.data as any).message)
+                : typeof output.data === 'string'
+                  ? output.data
+                  : `HTTP ${output.status}`,
           },
           meta: {
             command: path,
@@ -1084,11 +1118,18 @@ async function serveImpl(
     }
 
     try {
-      const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, options.env ?? process.env) : {}
+      const cliEnv = options.envSchema
+        ? Parser.parseEnv(options.envSchema, options.env ?? process.env)
+        : {}
       if (fetchMiddleware.length > 0) {
         const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-        const errorFn = (opts: { code: string; exitCode?: number | undefined; message: string; retryable?: boolean | undefined; cta?: CtaBlock | undefined }): never =>
-          ({ [sentinel]: 'error', ...opts }) as never
+        const errorFn = (opts: {
+          code: string
+          exitCode?: number | undefined
+          message: string
+          retryable?: boolean | undefined
+          cta?: CtaBlock | undefined
+        }): never => ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
           agent: !human,
           command: path,
@@ -1097,7 +1138,9 @@ async function serveImpl(
           format,
           formatExplicit,
           name,
-          set(key: string, value: unknown) { varsMap[key] = value },
+          set(key: string, value: unknown) {
+            varsMap[key] = value
+          },
           var: varsMap,
           version: options.version,
         }
@@ -1107,13 +1150,23 @@ async function serveImpl(
           const cta = formatCtaBlock(name, err.cta)
           write({
             ok: false,
-            error: { code: err.code, message: err.message, ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined) },
-            meta: { command: path, duration: `${Math.round(performance.now() - start)}ms`, ...(cta ? { cta } : undefined) },
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+            },
+            meta: {
+              command: path,
+              duration: `${Math.round(performance.now() - start)}ms`,
+              ...(cta ? { cta } : undefined),
+            },
           })
           exit(err.exitCode ?? 1)
         }
         const composed = fetchMiddleware.reduceRight(
-          (next: () => Promise<void>, mw) => async () => { handleMwSentinel(await mw(mwCtx, next)) },
+          (next: () => Promise<void>, mw) => async () => {
+            handleMwSentinel(await mw(mwCtx, next))
+          },
           runFetch,
         )
         await composed()
@@ -1344,7 +1397,9 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
-    mcpHandler?: ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>) | undefined
+    mcpHandler?:
+      | ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>)
+      | undefined
     middlewares?: MiddlewareHandler[] | undefined
     rootCommand?: CommandDefinition<any, any, any> | undefined
     vars?: z.ZodObject<any> | undefined
@@ -1358,9 +1413,8 @@ function createMcpHttpHandler(name: string, version: string) {
   return async (req: Request, commands: Map<string, CommandEntry>): Promise<Response> => {
     if (!transport) {
       const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
-      const { WebStandardStreamableHTTPServerTransport } = await import(
-        '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-      )
+      const { WebStandardStreamableHTTPServerTransport } =
+        await import('@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js')
 
       const server = new McpServer({ name, version })
 
@@ -1455,12 +1509,12 @@ async function fetchImpl(
 
   // Parse options from search params (GET) or body (non-GET)
   let inputOptions: Record<string, unknown> = {}
-  if (req.method === 'GET')
-    for (const [key, value] of url.searchParams) inputOptions[key] = value
+  if (req.method === 'GET') for (const [key, value] of url.searchParams) inputOptions[key] = value
   else {
     try {
       const contentType = req.headers.get('content-type') ?? ''
-      if (contentType.includes('application/json')) inputOptions = (await req.json()) as Record<string, unknown>
+      if (contentType.includes('application/json'))
+        inputOptions = (await req.json()) as Record<string, unknown>
     } catch {}
   }
 
@@ -1477,7 +1531,11 @@ async function fetchImpl(
     if (options.rootCommand)
       return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
     return jsonResponse(
-      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' }, meta: { command: '/', duration: `${Math.round(performance.now() - start)}ms` } },
+      {
+        ok: false,
+        error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' },
+        meta: { command: '/', duration: `${Math.round(performance.now() - start)}ms` },
+      },
       404,
     )
   }
@@ -1486,18 +1544,31 @@ async function fetchImpl(
 
   if ('error' in resolved)
     return jsonResponse(
-      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.` }, meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` } },
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.`,
+        },
+        meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` },
+      },
       404,
     )
 
   if ('help' in resolved)
     return jsonResponse(
-      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: `'${resolved.path}' is a command group. Specify a subcommand.` }, meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` } },
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.path}' is a command group. Specify a subcommand.`,
+        },
+        meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` },
+      },
       404,
     )
 
-  if ('fetchGateway' in resolved)
-    return resolved.fetchGateway.fetch(req)
+  if ('fetchGateway' in resolved) return resolved.fetchGateway.fetch(req)
 
   const { command, path, rest } = resolved
   return executeCommand(path, command, rest, inputOptions, start, options)
@@ -1528,8 +1599,11 @@ async function executeCommand(
     const parsedOptions = command.options ? command.options.parse(inputOptions) : {}
 
     const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
-    const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never =>
-      ({ [sentinel_]: 'error', ...opts }) as never
+    const errorFn = (opts: {
+      code: string
+      message: string
+      exitCode?: number | undefined
+    }): never => ({ [sentinel_]: 'error', ...opts }) as never
 
     const result = command.run({
       agent: true,
@@ -1560,26 +1634,60 @@ async function executeCommand(
               }
               if (isSentinel(value) && (value as any)[sentinel] === 'error') {
                 const tagged = value as any
-                controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: tagged.code, message: tagged.message } }) + '\n'))
+                controller.enqueue(
+                  encoder.encode(
+                    JSON.stringify({
+                      type: 'error',
+                      ok: false,
+                      error: { code: tagged.code, message: tagged.message },
+                    }) + '\n',
+                  ),
+                )
                 controller.close()
                 return
               }
-              controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'))
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
+              )
             }
             const meta: Record<string, unknown> = { command: path }
             if (isSentinel(returnValue) && (returnValue as any)[sentinel] === 'error') {
               const tagged = returnValue as any
-              controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: tagged.code, message: tagged.message } }) + '\n'))
+              controller.enqueue(
+                encoder.encode(
+                  JSON.stringify({
+                    type: 'error',
+                    ok: false,
+                    error: { code: tagged.code, message: tagged.message },
+                  }) + '\n',
+                ),
+              )
             } else {
-              controller.enqueue(encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'))
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'),
+              )
             }
           } catch (error) {
-            controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } }) + '\n'))
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'error',
+                  ok: false,
+                  error: {
+                    code: 'UNKNOWN',
+                    message: error instanceof Error ? error.message : String(error),
+                  },
+                }) + '\n',
+              ),
+            )
           }
           controller.close()
         },
       })
-      response = new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
+      response = new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'application/x-ndjson' },
+      })
       return
     }
 
@@ -1590,7 +1698,11 @@ async function executeCommand(
       const tagged = awaited as any
       if (tagged[sentinel_] === 'error')
         response = jsonResponse(
-          { ok: false, error: { code: tagged.code, message: tagged.message }, meta: { command: path, duration } },
+          {
+            ok: false,
+            error: { code: tagged.code, message: tagged.message },
+            meta: { command: path, duration },
+          },
           500,
         )
       else
@@ -1601,19 +1713,24 @@ async function executeCommand(
       return
     }
 
-    response = jsonResponse(
-      { ok: true, data: awaited, meta: { command: path, duration } },
-      200,
-    )
+    response = jsonResponse({ ok: true, data: awaited, meta: { command: path, duration } }, 200)
   }
 
   try {
     const allMiddleware = options.middlewares ?? []
     if (allMiddleware.length > 0) {
-      const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never => {
+      const errorFn = (opts: {
+        code: string
+        message: string
+        exitCode?: number | undefined
+      }): never => {
         const duration = `${Math.round(performance.now() - start)}ms`
         response = jsonResponse(
-          { ok: false, error: { code: opts.code, message: opts.message }, meta: { command: path, duration } },
+          {
+            ok: false,
+            error: { code: opts.code, message: opts.message },
+            meta: { command: path, duration },
+          },
           500,
         )
         return undefined as never
@@ -1626,12 +1743,16 @@ async function executeCommand(
         format: 'json',
         formatExplicit: true,
         name: path,
-        set(key: string, value: unknown) { varsMap[key] = value },
+        set(key: string, value: unknown) {
+          varsMap[key] = value
+        },
         var: varsMap,
         version: undefined,
       }
       const composed = allMiddleware.reduceRight(
-        (next: () => Promise<void>, mw) => async () => { await mw(mwCtx, next) },
+        (next: () => Promise<void>, mw) => async () => {
+          await mw(mwCtx, next)
+        },
         runCommand,
       )
       await composed()
@@ -1642,11 +1763,22 @@ async function executeCommand(
     const duration = `${Math.round(performance.now() - start)}ms`
     if (error instanceof ValidationError)
       return jsonResponse(
-        { ok: false, error: { code: 'VALIDATION_ERROR', message: error.message }, meta: { command: path, duration } },
+        {
+          ok: false,
+          error: { code: 'VALIDATION_ERROR', message: error.message },
+          meta: { command: path, duration },
+        },
         400,
       )
     return jsonResponse(
-      { ok: false, error: { code: error instanceof IncurError ? error.code : 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }, meta: { command: path, duration } },
+      {
+        ok: false,
+        error: {
+          code: error instanceof IncurError ? error.code : 'UNKNOWN',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        meta: { command: path, duration },
+      },
       500,
     )
   }
@@ -1857,7 +1989,22 @@ function extractBuiltinFlags(argv: string[]) {
     else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp, help, version, schema, rest }
+  return {
+    verbose,
+    format,
+    formatExplicit,
+    filterOutput,
+    tokenLimit,
+    tokenOffset,
+    tokenCount,
+    llms,
+    llmsFull,
+    mcp,
+    help,
+    version,
+    schema,
+    rest,
+  }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
@@ -2073,7 +2220,8 @@ async function handleStreaming(
           }
         }
         if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
-        else if (ctx.renderOutput) ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
+        else if (ctx.renderOutput)
+          ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
 
       // Handle return value — error() or ok() sentinel

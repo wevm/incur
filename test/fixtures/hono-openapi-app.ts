@@ -145,7 +145,10 @@ const updateUser = createRoute({
         'application/json': {
           schema: z.object({
             name: z.string().openapi({ example: 'Updated' }),
-            active: z.boolean().optional().openapi({ example: true, description: 'Whether user is active' }),
+            active: z
+              .boolean()
+              .optional()
+              .openapi({ example: true, description: 'Whether user is active' }),
           }),
         },
       },
@@ -166,7 +169,10 @@ const updateUser = createRoute({
 app.openapi(updateUser, async (c) => {
   const { id } = c.req.valid('param')
   const body = c.req.valid('json')
-  return c.json({ id, name: body.name, ...(body.active !== undefined ? { active: body.active } : {}) }, 200)
+  return c.json(
+    { id, name: body.name, ...(body.active !== undefined ? { active: body.active } : {}) },
+    200,
+  )
 })
 
 /** Extract the OpenAPI spec as a plain object. */

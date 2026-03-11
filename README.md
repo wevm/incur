@@ -271,7 +271,7 @@ const app = new Hono()
 
 Cli.create('my-cli', {
   description: 'My CLI',
-  fetch: app.fetch, 
+  fetch: app.fetch,
   // OR
   // fetch: bunApp.fetch
   // fetch: denoApp.fetch
@@ -302,10 +302,7 @@ const app = new Hono()
   .get('/users', (c) => c.json({ users: [{ id: 1, name: 'Alice' }] }))
   .post('/users', async (c) => c.json({ created: true, ...(await c.req.json()) }, 201))
 
-Cli
-  .create('my-cli', { description: 'My CLI' })
-  .command('users', { fetch: app.fetch })
-  .serve()
+Cli.create('my-cli', { description: 'My CLI' }).command('users', { fetch: app.fetch }).serve()
 ```
 
 #### OpenAPI
@@ -347,21 +344,20 @@ The inverse of mounting — expose your CLI as a standard Fetch API handler with
 ```ts
 import { Cli, z } from 'incur'
 
-const cli = Cli.create('my-cli', { version: '1.0.0' })
-  .command('users', {
-    args: z.object({ id: z.coerce.number().optional() }),
-    options: z.object({ limit: z.coerce.number().default(10) }),
-    run(c) {
-      if (c.args.id) return { id: c.args.id, name: 'Alice' }
-      return { users: [{ id: 1, name: 'Alice' }], limit: c.options.limit }
-    },
-  })
+const cli = Cli.create('my-cli', { version: '1.0.0' }).command('users', {
+  args: z.object({ id: z.coerce.number().optional() }),
+  options: z.object({ limit: z.coerce.number().default(10) }),
+  run(c) {
+    if (c.args.id) return { id: c.args.id, name: 'Alice' }
+    return { users: [{ id: 1, name: 'Alice' }], limit: c.options.limit }
+  },
+})
 
 Bun.serve(cli) // Bun
 Deno.serve(cli.fetch) // Deno
 export default cli // Cloudflare Workers
-app.all('*', c => cli.fetch(c.request)) // Elysia
-app.use(c => cli.fetch(c.req.raw)) // Hono
+app.all('*', (c) => cli.fetch(c.request)) // Elysia
+app.use((c) => cli.fetch(c.req.raw)) // Hono
 export const GET = cli.fetch // Next.js
 export const POST = cli.fetch // Next.js
 ```
@@ -807,18 +803,18 @@ Every incur CLI includes these flags automatically:
 
 | Flag                     | Description                                            |
 | ------------------------ | ------------------------------------------------------ |
-| `--help`, `-h`           | Show help for the CLI or a specific command             |
+| `--help`, `-h`           | Show help for the CLI or a specific command            |
 | `--version`              | Print CLI version                                      |
-| `--llms`                 | Output agent-readable command manifest                  |
-| `--mcp`                  | Start as an MCP stdio server                            |
-| `--json`                 | Shorthand for `--format json`                           |
-| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`             |
+| `--llms`                 | Output agent-readable command manifest                 |
+| `--mcp`                  | Start as an MCP stdio server                           |
+| `--json`                 | Shorthand for `--format json`                          |
+| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
 | `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
-| `--schema`               | Show JSON Schema for a command's args, options, output  |
-| `--token-count`          | Print token count of output instead of output           |
-| `--token-limit <n>`      | Limit output to n tokens (for pagination)               |
-| `--token-offset <n>`     | Skip first n tokens of output (for pagination)          |
-| `--verbose`              | Include full envelope (`ok`, `data`, `meta`)            |
+| `--schema`               | Show JSON Schema for a command's args, options, output |
+| `--token-count`          | Print token count of output instead of output          |
+| `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
+| `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
+| `--verbose`              | Include full envelope (`ok`, `data`, `meta`)           |
 
 ### Filtering output
 

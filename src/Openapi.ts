@@ -46,7 +46,7 @@ export async function generateCommands(
   fetch: FetchHandler,
   options: { basePath?: string | undefined } = {},
 ): Promise<Map<string, GeneratedCommand>> {
-  const resolved = await dereference(structuredClone(spec) as any) as unknown as OpenAPISpec
+  const resolved = (await dereference(structuredClone(spec) as any)) as unknown as OpenAPISpec
   const commands = new Map<string, GeneratedCommand>()
   const paths = (resolved.paths ?? {}) as Record<string, Record<string, unknown>>
 
@@ -96,7 +96,15 @@ export async function generateCommands(
         description: op.summary ?? op.description,
         args: argsSchema,
         options: optionsSchema,
-        run: createHandler({ basePath: options.basePath, fetch, httpMethod, path, pathParams, queryParams, bodyProps }),
+        run: createHandler({
+          basePath: options.basePath,
+          fetch,
+          httpMethod,
+          path,
+          pathParams,
+          queryParams,
+          bodyProps,
+        }),
       })
     }
   }
@@ -135,8 +143,7 @@ function createHandler(config: {
     const bodyKeys = Object.keys(config.bodyProps)
     if (bodyKeys.length > 0) {
       const bodyObj: Record<string, unknown> = {}
-      for (const key of bodyKeys)
-        if (options[key] !== undefined) bodyObj[key] = options[key]
+      for (const key of bodyKeys) if (options[key] !== undefined) bodyObj[key] = options[key]
       if (Object.keys(bodyObj).length > 0) body = JSON.stringify(bodyObj)
     }
 
@@ -180,8 +187,10 @@ function coerceIfNeeded(schema: z.ZodType): z.ZodType {
   const inner = isOptional ? schema.unwrap() : schema
 
   // Direct number/boolean
-  if (inner instanceof z.ZodNumber) return isOptional ? z.coerce.number().optional() : z.coerce.number()
-  if (inner instanceof z.ZodBoolean) return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
+  if (inner instanceof z.ZodNumber)
+    return isOptional ? z.coerce.number().optional() : z.coerce.number()
+  if (inner instanceof z.ZodBoolean)
+    return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
 
   // Union containing number (e.g. type: ["number", "null"] from OpenAPI 3.1)
   if (inner instanceof z.ZodUnion) {

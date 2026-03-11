@@ -66,13 +66,7 @@ describe('parseArgv', () => {
   })
 
   test('multiple headers', () => {
-    const input = Fetch.parseArgv([
-      'users',
-      '-H',
-      'X-A: 1',
-      '-H',
-      'X-B: 2',
-    ])
+    const input = Fetch.parseArgv(['users', '-H', 'X-A: 1', '-H', 'X-B: 2'])
     expect(input.headers.get('X-A')).toBe('1')
     expect(input.headers.get('X-B')).toBe('2')
   })
@@ -123,16 +117,12 @@ describe('buildRequest', () => {
   })
 
   test('builds POST request with body', () => {
-    const req = Fetch.buildRequest(
-      Fetch.parseArgv(['users', '-X', 'POST', '-d', '{"name":"Bob"}']),
-    )
+    const req = Fetch.buildRequest(Fetch.parseArgv(['users', '-X', 'POST', '-d', '{"name":"Bob"}']))
     expect(req.method).toBe('POST')
   })
 
   test('builds request with headers', () => {
-    const req = Fetch.buildRequest(
-      Fetch.parseArgv(['users', '-H', 'X-Api-Key: secret']),
-    )
+    const req = Fetch.buildRequest(Fetch.parseArgv(['users', '-H', 'X-Api-Key: secret']))
     expect(req.headers.get('X-Api-Key')).toBe('secret')
   })
 })

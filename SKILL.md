@@ -187,9 +187,7 @@ const app = new Hono()
 app.get('/users', (c) => c.json({ users: [{ id: 1, name: 'Alice' }] }))
 app.post('/users', async (c) => c.json({ created: true, ...(await c.req.json()) }, 201))
 
-Cli.create('my-cli', { description: 'My CLI' })
-  .command('api', { fetch: app.fetch })
-  .serve()
+Cli.create('my-cli', { description: 'My CLI' }).command('api', { fetch: app.fetch }).serve()
 ```
 
 ```sh
@@ -224,35 +222,34 @@ Expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun
 ```ts
 import { Cli, z } from 'incur'
 
-const cli = Cli.create('my-cli', { version: '1.0.0' })
-  .command('users', {
-    args: z.object({ id: z.coerce.number().optional() }),
-    options: z.object({ limit: z.coerce.number().default(10) }),
-    run(c) {
-      if (c.args.id) return { id: c.args.id, name: 'Alice' }
-      return { users: [{ id: 1, name: 'Alice' }], limit: c.options.limit }
-    },
-  })
+const cli = Cli.create('my-cli', { version: '1.0.0' }).command('users', {
+  args: z.object({ id: z.coerce.number().optional() }),
+  options: z.object({ limit: z.coerce.number().default(10) }),
+  run(c) {
+    if (c.args.id) return { id: c.args.id, name: 'Alice' }
+    return { users: [{ id: 1, name: 'Alice' }], limit: c.options.limit }
+  },
+})
 ```
 
 ```ts
 Bun.serve(cli) // Bun
 Deno.serve(cli.fetch) // Deno
 export default cli // Cloudflare Workers
-app.all('*', c => cli.fetch(c.request)) // Elysia
-app.use(c => cli.fetch(c.req.raw)) // Hono
+app.all('*', (c) => cli.fetch(c.request)) // Elysia
+app.use((c) => cli.fetch(c.req.raw)) // Hono
 export const GET = cli.fetch // Next.js
 export const POST = cli.fetch
 ```
 
 Request mapping:
 
-| HTTP | CLI equivalent |
-|------|---------------|
-| `GET /users?limit=5` | `my-cli users --limit 5` |
-| `GET /users/42` | `my-cli users 42` (positional arg) |
-| `POST /users` with JSON body | `my-cli users --name Bob` |
-| `GET /` | root command (or 404) |
+| HTTP                         | CLI equivalent                     |
+| ---------------------------- | ---------------------------------- |
+| `GET /users?limit=5`         | `my-cli users --limit 5`           |
+| `GET /users/42`              | `my-cli users 42` (positional arg) |
+| `POST /users` with JSON body | `my-cli users --name Bob`          |
+| `GET /`                      | root command (or 404)              |
 
 Responses are JSON envelopes: `{ "ok": true, "data": { ... }, "meta": { "command": "users", "duration": "3ms" } }`.
 

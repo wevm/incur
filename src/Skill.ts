@@ -24,7 +24,11 @@ export type File = {
 }
 
 /** Generates a compact Markdown command index for `--llms`. */
-export function index(name: string, commands: CommandInfo[], description?: string | undefined): string {
+export function index(
+  name: string,
+  commands: CommandInfo[],
+  description?: string | undefined,
+): string {
   const lines: string[] = [`# ${name}`]
   if (description) lines.push('', description)
   lines.push('')
@@ -35,7 +39,10 @@ export function index(name: string, commands: CommandInfo[], description?: strin
     const desc = cmd.description ?? ''
     lines.push(`| \`${signature}\` | ${desc} |`)
   }
-  lines.push('', `Run \`${name} --llms-full\` for full manifest. Run \`${name} <command> --schema\` for argument details.`)
+  lines.push(
+    '',
+    `Run \`${name} --llms-full\` for full manifest. Run \`${name} <command> --schema\` for argument details.`,
+  )
   return lines.join('\n')
 }
 

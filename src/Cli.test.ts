@@ -2824,14 +2824,7 @@ describe('fetch', async () => {
     const cli = Cli.create('test', { description: 'test' }).command('api', {
       fetch: app.fetch,
     })
-    const { output } = await serve(cli, [
-      'api',
-      'users',
-      '-X',
-      'POST',
-      '-d',
-      '{"name":"Bob"}',
-    ])
+    const { output } = await serve(cli, ['api', 'users', '-X', 'POST', '-d', '{"name":"Bob"}'])
     expect(output).toMatchInlineSnapshot(`
       "created: true
       name: Bob
@@ -2843,12 +2836,7 @@ describe('fetch', async () => {
     const cli = Cli.create('test', { description: 'test' }).command('api', {
       fetch: app.fetch,
     })
-    const { output } = await serve(cli, [
-      'api',
-      'users',
-      '--body',
-      '{"name":"Eve"}',
-    ])
+    const { output } = await serve(cli, ['api', 'users', '--body', '{"name":"Eve"}'])
     expect(output).toMatchInlineSnapshot(`
       "created: true
       name: Eve
@@ -2860,13 +2848,7 @@ describe('fetch', async () => {
     const cli = Cli.create('test', { description: 'test' }).command('api', {
       fetch: app.fetch,
     })
-    const { output } = await serve(cli, [
-      'api',
-      'users',
-      '1',
-      '--method',
-      'DELETE',
-    ])
+    const { output } = await serve(cli, ['api', 'users', '1', '--method', 'DELETE'])
     expect(output).toMatchInlineSnapshot(`
       "deleted: true
       id: 1
@@ -3151,7 +3133,8 @@ describe('fetch', () => {
       options: z.object({ limit: z.coerce.number().default(10) }),
       run: (c) => ({ limit: c.options.limit }),
     })
-    expect(await fetchJson(cli, new Request('http://localhost/users?limit=5'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/users?limit=5')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -3292,7 +3275,10 @@ describe('fetch', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/x-ndjson')
     const text = await res.text()
-    const lines = text.trim().split('\n').map((l) => JSON.parse(l))
+    const lines = text
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -3405,7 +3391,10 @@ describe('fetch', () => {
     }
 
     async function mcpRequest(cli: Cli.Cli<any, any, any>, body: unknown, sessionId?: string) {
-      const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      }
       if (sessionId) headers['mcp-session-id'] = sessionId
       return cli.fetch(
         new Request('http://localhost/mcp', {

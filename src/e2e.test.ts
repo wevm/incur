@@ -1,4 +1,5 @@
 import { Cli, Errors, Skill, Typegen, z } from 'incur'
+
 import { app as honoApp } from '../test/fixtures/hono-api.js'
 
 let __mockSkillsHash: string | undefined
@@ -432,7 +433,13 @@ describe('--token-limit and --token-offset', () => {
   })
 
   test('--token-limit and --token-offset together for pagination', async () => {
-    const { output } = await serve(createApp(), ['ping', '--token-offset', '2', '--token-limit', '4'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--token-offset',
+      '2',
+      '--token-limit',
+      '4',
+    ])
     expect(output).toMatchInlineSnapshot(`
       " true
       [truncated: showing tokens 2–3 of 3]
@@ -449,7 +456,14 @@ describe('--token-limit and --token-offset', () => {
   })
 
   test('works with --verbose', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '20'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--verbose',
+      '--format',
+      'json',
+      '--token-limit',
+      '20',
+    ])
     expect(output).toMatchInlineSnapshot(`
       "{
         "ok": true,
@@ -466,13 +480,27 @@ describe('--token-limit and --token-offset', () => {
   })
 
   test('--verbose includes meta.nextOffset when truncated', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '2'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--verbose',
+      '--format',
+      'json',
+      '--token-limit',
+      '2',
+    ])
     expect(output).toContain('"nextOffset"')
     expect(output).toContain('[truncated:')
   })
 
   test('--verbose omits meta.nextOffset when not truncated', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '10000'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--verbose',
+      '--format',
+      'json',
+      '--token-limit',
+      '10000',
+    ])
     const parsed = json(output)
     expect(parsed.meta.nextOffset).toBeUndefined()
   })
@@ -499,7 +527,12 @@ describe('--token-count', () => {
   })
 
   test('works with --filter-output', async () => {
-    const { output } = await serve(createApp(), ['ping', '--filter-output', 'pong', '--token-count'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--filter-output',
+      'pong',
+      '--token-count',
+    ])
     expect(output.trim()).toBe('1')
   })
 })
@@ -1222,7 +1255,13 @@ describe('--llms-full', () => {
   })
 
   test('scoped --llms-full to nested group', async () => {
-    const { output } = await serve(createApp(), ['project', 'deploy', '--llms-full', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'project',
+      'deploy',
+      '--llms-full',
+      '--format',
+      'json',
+    ])
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
@@ -1253,7 +1292,13 @@ describe('--llms-full', () => {
   })
 
   test('--llms-full json includes examples on commands', async () => {
-    const { output } = await serve(createApp(), ['project', 'deploy', '--llms-full', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'project',
+      'deploy',
+      '--llms-full',
+      '--format',
+      'json',
+    ])
     const deployCreate = json(output).commands.find((c: any) => c.name === 'project deploy create')
     expect(deployCreate.examples).toMatchInlineSnapshot(`
       [
@@ -2188,12 +2233,7 @@ describe('fetch gateway', () => {
   })
 
   test('implicit POST with --body', async () => {
-    const { output } = await serve(createApp(), [
-      'api',
-      'users',
-      '--body',
-      '{"name":"Eve"}',
-    ])
+    const { output } = await serve(createApp(), ['api', 'users', '--body', '{"name":"Eve"}'])
     expect(output).toMatchInlineSnapshot(`
       "created: true
       name: Eve
@@ -2202,13 +2242,7 @@ describe('fetch gateway', () => {
   })
 
   test('DELETE with --method', async () => {
-    const { output } = await serve(createApp(), [
-      'api',
-      'users',
-      '1',
-      '--method',
-      'DELETE',
-    ])
+    const { output } = await serve(createApp(), ['api', 'users', '1', '--method', 'DELETE'])
     expect(output).toMatchInlineSnapshot(`
       "deleted: true
       id: 1
@@ -2240,13 +2274,7 @@ describe('fetch gateway', () => {
   })
 
   test('--verbose wraps in envelope', async () => {
-    const { output } = await serve(createApp(), [
-      'api',
-      'health',
-      '--verbose',
-      '--format',
-      'json',
-    ])
+    const { output } = await serve(createApp(), ['api', 'health', '--verbose', '--format', 'json'])
     const parsed = json(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ ok: true })
@@ -2298,7 +2326,10 @@ describe('fetch gateway', () => {
 
   test('streaming NDJSON --format jsonl', async () => {
     const { output } = await serve(createApp(), ['api', 'stream', '--format', 'jsonl'])
-    const lines = output.trim().split('\n').map((l) => JSON.parse(l))
+    const lines = output
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
     expect(lines[0]).toEqual({ type: 'chunk', data: { progress: 1 } })
     expect(lines[1]).toEqual({ type: 'chunk', data: { progress: 2 } })
     expect(lines[2].type).toBe('done')
@@ -2374,7 +2405,8 @@ describe('fetch api', () => {
 
   test('GET with query params → options', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/echo/hi?prefix=yo'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/echo/hi?prefix=yo')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -2420,7 +2452,8 @@ describe('fetch api', () => {
 
   test('trailing path segments → positional args', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/project/get/p1'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/project/get/p1')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -2447,7 +2480,8 @@ describe('fetch api', () => {
 
   test('nested command (3 levels deep)', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/project/deploy/status/d-456'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/project/deploy/status/d-456')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -2488,7 +2522,8 @@ describe('fetch api', () => {
 
   test('IncurError → 500 with code', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/explode-clac'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/explode-clac')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "error": {
@@ -2519,7 +2554,10 @@ describe('fetch api', () => {
     const res = await cli.fetch(new Request('http://localhost/stream'))
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/x-ndjson')
-    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l))
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -2585,7 +2623,9 @@ describe('fetch api', () => {
 
   test('middleware error → error response', async () => {
     const cli = Cli.create('test')
-    cli.use((c) => { c.error({ code: 'FORBIDDEN', message: 'nope' }) })
+    cli.use((c) => {
+      c.error({ code: 'FORBIDDEN', message: 'nope' })
+    })
     cli.command('secret', { run: () => ({ secret: true }) })
     expect(await fetchJson(cli, new Request('http://localhost/secret'))).toMatchInlineSnapshot(`
       {

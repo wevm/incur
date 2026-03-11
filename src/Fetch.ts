@@ -102,8 +102,7 @@ export function buildRequest(input: FetchInput): Request {
 
   if (input.body !== undefined) {
     init.body = input.body
-    if (!input.headers.has('content-type'))
-      input.headers.set('content-type', 'application/json')
+    if (!input.headers.has('content-type')) input.headers.set('content-type', 'application/json')
   }
 
   return new Request(url.toString(), init)
