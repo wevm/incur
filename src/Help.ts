@@ -165,10 +165,10 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     lines.push('')
     lines.push('Examples:')
     const maxLen = Math.max(
-      ...examples.map((e) => (e.command ? `$ ${name} ${e.command}` : `$ ${name}`).length),
+      ...examples.map((e) => (e.command ? `${name} ${e.command}` : name).length),
     )
     for (const ex of examples) {
-      const cmd = ex.command ? `$ ${name} ${ex.command}` : `$ ${name}`
+      const cmd = ex.command ? `${name} ${ex.command}` : name
       if (ex.description)
         lines.push(`  ${cmd}${' '.repeat(maxLen - cmd.length)}  # ${ex.description}`)
       else lines.push(`  ${cmd}`)

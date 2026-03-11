@@ -1051,8 +1051,8 @@ describe('help', () => {
         --dry-run <boolean>    Dry run mode (default: false)
 
       Examples:
-        $ app project deploy create staging                                    # Deploy staging from main
-        $ app project deploy create production --branch release --dryRun true  # Dry run a production deploy
+        app project deploy create staging                                    # Deploy staging from main
+        app project deploy create production --branch release --dryRun true  # Dry run a production deploy
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
