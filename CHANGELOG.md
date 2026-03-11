@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.2
+
+### Patch Changes
+
+- d2ef65b: Added enum and union-of-literal values in help text instead of generic `<value>` placeholder.
+
 ## 0.3.1
 
 ### Patch Changes
