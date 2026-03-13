@@ -110,8 +110,8 @@ $ greet --help
 #
 # Built-in Commands:
 #   completions  Generate shell completion script
-#   mcp add      Register as an MCP server
-#   skills add   Sync skill files to your agent
+#   mcp add      Register as MCP server
+#   skills add   Sync skill files to agents
 #
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -119,7 +119,7 @@ $ greet --help
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
-#   --schema                            Show JSON Schema for a command
+#   --schema                            Show JSON Schema for command
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
@@ -180,8 +180,8 @@ $ my-cli --help
 #
 # Built-in Commands:
 #   completions  Generate shell completion script
-#   mcp add      Register as an MCP server
-#   skills add   Sync skill files to your agent
+#   mcp add      Register as MCP server
+#   skills add   Sync skill files to agents
 #
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -189,7 +189,7 @@ $ my-cli --help
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
-#   --schema                            Show JSON Schema for a command
+#   --schema                            Show JSON Schema for command
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
@@ -237,8 +237,8 @@ $ my-cli --help
 #
 # Built-in Commands:
 #   completions  Generate shell completion script
-#   mcp add      Register as an MCP server
-#   skills add   Sync skill files to your agent
+#   mcp add      Register as MCP server
+#   skills add   Sync skill files to agents
 #
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -246,7 +246,7 @@ $ my-cli --help
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
-#   --schema                            Show JSON Schema for a command
+#   --schema                            Show JSON Schema for command
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
@@ -400,7 +400,7 @@ Agents can only use your CLI if they know it exists. incur solves this with thre
 # Auto-generate and install agent skill files (recommended – lighter on tokens)
 my-cli skills add
 
-# Register as an MCP server for your agents
+# Register as MCP server for your agents
 my-cli mcp add
 
 # Output machine-readable manifest
@@ -810,7 +810,7 @@ Every incur CLI includes these flags automatically:
 | `--json`                 | Shorthand for `--format json`                          |
 | `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
 | `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
-| `--schema`               | Show JSON Schema for a command's args, options, output |
+| `--schema`               | Show JSON Schema for command's args, options, output |
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |

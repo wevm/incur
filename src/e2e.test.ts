@@ -965,8 +965,8 @@ describe('help', () => {
 
       Built-in Commands:
         completions  Generate shell completion script
-        mcp add      Register as an MCP server
-        skills add   Sync skill files to your agent
+        mcp add      Register as MCP server
+        skills add   Sync skill files to agents
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -974,7 +974,7 @@ describe('help', () => {
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -1007,7 +1007,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -1034,7 +1034,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -1060,7 +1060,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -1092,7 +1092,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -1740,8 +1740,8 @@ describe('root command with subcommands', () => {
 
       Built-in Commands:
         completions  Generate shell completion script
-        mcp add      Register as an MCP server
-        skills add   Sync skill files to your agent
+        mcp add      Register as MCP server
+        skills add   Sync skill files to agents
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -1749,7 +1749,7 @@ describe('root command with subcommands', () => {
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -1925,7 +1925,7 @@ describe('env', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output

@@ -602,7 +602,7 @@ async function serveImpl(
     if (help) {
       writeln(
         [
-          `${name} skills add — Sync skill files to your agent`,
+          `${name} skills add — Sync skill files to agents`,
           '',
           `Usage: ${name} skills add [options]`,
           '',
@@ -678,7 +678,7 @@ async function serveImpl(
     if (help) {
       writeln(
         [
-          `${name} mcp add — Register as an MCP server for your agent`,
+          `${name} mcp add — Register as MCP server for your agent`,
           '',
           `Usage: ${name} mcp add [options]`,
           '',
@@ -2138,8 +2138,9 @@ function formatHumanError(error: {
 /** @internal Formats a CTA block for human-readable TTY output. */
 function formatHumanCta(cta: FormattedCtaBlock): string {
   const lines: string[] = ['', cta.description]
+  const maxLen = Math.max(...cta.commands.map((c) => c.command.length))
   for (const c of cta.commands) {
-    const desc = c.description ? `  # ${c.description}` : ''
+    const desc = c.description ? `  ${''.padEnd(maxLen - c.command.length)}# ${c.description}` : ''
     lines.push(`  ${c.command}${desc}`)
   }
   return lines.join('\n')

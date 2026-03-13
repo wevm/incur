@@ -29,7 +29,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -51,7 +51,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -80,7 +80,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -157,7 +157,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -182,7 +182,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -211,7 +211,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
@@ -240,7 +240,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
-        --schema                            Show JSON Schema for a command
+        --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output

@@ -332,8 +332,8 @@ function globalOptionsLines(root = false): string[] {
   if (root) {
     const builtins = [
       { name: 'completions', desc: 'Generate shell completion script' },
-      { name: 'mcp add', desc: 'Register as an MCP server' },
-      { name: 'skills add', desc: 'Sync skill files to your agent' },
+      { name: 'mcp add', desc: 'Register as MCP server' },
+      { name: 'skills add', desc: 'Sync skill files to agents' },
     ]
     const maxCmd = Math.max(...builtins.map((b) => b.name.length))
     lines.push(
@@ -352,7 +352,7 @@ function globalOptionsLines(root = false): string[] {
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
-    { flag: '--schema', desc: 'Show JSON Schema for a command' },
+    { flag: '--schema', desc: 'Show JSON Schema for command' },
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
