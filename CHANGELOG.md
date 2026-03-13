@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.4
+
+### Patch Changes
+
+- 83aa331: Tweaked help and CTA outputs.
+
 ## 0.3.3
 
 ### Patch Changes
