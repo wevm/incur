@@ -150,7 +150,18 @@ function collectEntries(
 function resolvePackageRoot(): string {
   const bin = process.argv[1]
   if (!bin) return process.cwd()
-  let dir = path.dirname(fsSync.realpathSync(bin))
+  let dir: string
+  try {
+    dir = path.dirname(fsSync.realpathSync(bin))
+  } catch {
+    // Bun compiled binaries use a virtual `/$bunfs/` path for argv[1] that
+    // doesn't exist on the real filesystem.  Fall back to the real executable.
+    try {
+      dir = path.dirname(fsSync.realpathSync(process.execPath))
+    } catch {
+      return process.cwd()
+    }
+  }
   const root = path.parse(dir).root
   while (dir !== root) {
     try {
