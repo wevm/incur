@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.5
+
+### Patch Changes
+
+- 05d89f3: Fixed `resolvePackageRoot` failing with `ENOENT` when running from a Bun compiled binary.
+
 ## 0.3.4
 
 ### Patch Changes
