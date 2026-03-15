@@ -1,8 +1,10 @@
 import { z } from 'zod'
 
+import { toKebab } from './internal/helpers.js'
+
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
-  const { aliases, description, version, commands = [], root = false } = options
+  const { aliases, configFlag, description, version, commands = [], root = false } = options
   const lines: string[] = []
 
   // Header
@@ -27,7 +29,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines(root))
+  lines.push(...globalOptionsLines(root, configFlag))
 
   return lines.join('\n')
 }
@@ -36,6 +38,8 @@ export declare namespace formatRoot {
   type Options = {
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
+    /** Flag name for config file path (e.g. `'config'` renders `--config <path>`). */
+    configFlag?: string | undefined
     /** Commands to list. */
     commands?: { name: string; description?: string | undefined }[] | undefined
     /** A short description of the CLI or group. */
@@ -55,6 +59,8 @@ export declare namespace formatCommand {
     aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
     args?: z.ZodObject<any> | undefined
+    /** Flag name for config file path (e.g. `'config'` renders `--config <path>`). */
+    configFlag?: string | undefined
     /** Subcommands to list (for CLIs with both a root handler and subcommands). */
     commands?: { name: string; description?: string | undefined }[] | undefined
     /** A short description of what the command does. */
@@ -90,6 +96,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   const {
     alias,
     aliases,
+    configFlag,
     description,
     version,
     args,
@@ -195,7 +202,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     }
   }
 
-  lines.push(...globalOptionsLines(root))
+  lines.push(...globalOptionsLines(root, configFlag))
 
   // Environment Variables
   if (env) {
@@ -320,13 +327,8 @@ function extractDeprecated(schema: unknown): boolean | undefined {
   return meta?.deprecated === true ? true : undefined
 }
 
-/** Converts a camelCase string to kebab-case. */
-function toKebab(str: string): string {
-  return str.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
-}
-
 /** Renders the built-in commands and global options block. Root-only items are hidden for subcommands. */
-function globalOptionsLines(root = false): string[] {
+function globalOptionsLines(root = false, configFlag?: string): string[] {
   const lines: string[] = []
 
   if (root) {
@@ -344,6 +346,9 @@ function globalOptionsLines(root = false): string[] {
   }
 
   const flags = [
+    ...(configFlag
+      ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
+      : []),
     {
       flag: '--filter-output <keys>',
       desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])',
@@ -352,13 +357,16 @@ function globalOptionsLines(root = false): string[] {
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
+    ...(configFlag
+      ? [{ flag: `--no-${configFlag}`, desc: 'Disable JSON option defaults for this run' }]
+      : []),
     { flag: '--schema', desc: 'Show JSON Schema for command' },
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
     { flag: '--verbose', desc: 'Show full output envelope' },
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
-  ]
+  ].sort((a, b) => a.flag.localeCompare(b.flag))
   const maxLen = Math.max(...flags.map((f) => f.flag.length))
   lines.push(
     '',

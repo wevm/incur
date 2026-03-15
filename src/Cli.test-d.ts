@@ -289,3 +289,42 @@ test('run() context exposes format metadata', () => {
     },
   })
 })
+
+test('create() accepts config-file defaults options', () => {
+  Cli.create('test', {
+    config: {},
+  })
+
+  Cli.create('test', {
+    config: { flag: 'config' },
+  })
+
+  Cli.create('test', {
+    config: { files: ['.myrc.json', '~/.config/my/config.json'] },
+  })
+
+  Cli.create('test', {
+    config: {
+      flag: 'config',
+      files: ['config.toml'],
+      loader: async (path) => {
+        if (!path) return undefined
+        return { key: 'value' }
+      },
+    },
+  })
+
+  Cli.create('test', {
+    config: { loader: async () => ({ key: 'value' }) },
+  })
+
+  Cli.create('test', {
+    // @ts-expect-error — flag must be a string
+    config: { flag: true },
+  })
+
+  Cli.create('test', {
+    // @ts-expect-error — files must be string[]
+    config: { files: [42] },
+  })
+})
