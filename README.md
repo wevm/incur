@@ -810,11 +810,60 @@ Every incur CLI includes these flags automatically:
 | `--json`                 | Shorthand for `--format json`                          |
 | `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
 | `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
-| `--schema`               | Show JSON Schema for command's args, options, output |
+| `--schema`               | Show JSON Schema for command's args, options, output   |
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
 | `--verbose`              | Include full envelope (`ok`, `data`, `meta`)           |
+
+### Config file
+
+Load option defaults from a JSON config file. Opt in with `config` on `Cli.create()`:
+
+```ts
+const cli = Cli.create('my-cli', {
+  config: {
+    flag: 'config',
+    files: ['my-cli.json', '~/.config/my-cli/config.json'],
+  },
+})
+```
+
+- `flag` — registers `--config <path>` and `--no-config` as global flags. The flag name is configurable (`{ flag: 'settings' }` → `--settings`/`--no-settings`). Omit to auto-load only.
+- `files` — ordered search paths. First existing file wins. Supports resolving `~`. Defaults to `['<cli>.json']`.
+- `loader` — custom loader function for non-JSON formats. Receives the resolved path (or `undefined`) and returns the config tree:
+
+```ts
+const cli = Cli.create('my-cli', {
+  config: {
+    files: ['my-cli.toml'],
+    async loader(path) {
+      if (!path) return undefined
+      return TOML.parse(await readFile(path, 'utf8'))
+    },
+  },
+})
+```
+
+Config files are nested JSON trees mirroring the command hierarchy. Scalars and arrays are option defaults; objects are subcommand namespaces:
+
+```json
+{
+  "verbose": true,
+  "echo": {
+    "upper": true,
+    "prefix": "cfg"
+  },
+  "project": {
+    "list": {
+      "limit": 25,
+      "save-dev": true
+    }
+  }
+}
+```
+
+Precedence is `argv > config > zod defaults`. Keys may use camelCase or kebab-case. Only command `options` are loaded — `args`, `env`, and built-in commands are unaffected.
 
 ### Filtering output
 

@@ -43,3 +43,25 @@ test('narrows both args and options together', () => {
   expectTypeOf(result.args).toEqualTypeOf<{ repo: string }>()
   expectTypeOf(result.options).toEqualTypeOf<{ limit: number }>()
 })
+
+test('defaults are typed from z.input of the options schema', () => {
+  const result = Parser.parse([], {
+    defaults: { limit: '5' },
+    options: z.object({ limit: z.coerce.number().default(30) }),
+  })
+  expectTypeOf(result.options).toEqualTypeOf<{ limit: number }>()
+})
+
+test('defaults do not leak any', () => {
+  type Options = z.ZodObject<{
+    limit: z.ZodDefault<z.ZodNumber>
+    saveDev: z.ZodOptional<z.ZodBoolean>
+  }>
+
+  expectTypeOf<Parser.parse.Options<undefined, Options>>().toEqualTypeOf<{
+    args?: undefined
+    alias?: Record<string, string> | undefined
+    defaults?: Partial<z.input<Options>> | undefined
+    options?: Options
+  }>()
+})
