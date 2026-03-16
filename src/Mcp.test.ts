@@ -237,7 +237,7 @@ describe('Mcp', () => {
       input,
       output,
       middlewares,
-      varsSchema: z.object({ ran: z.boolean().default(false) }),
+      vars: z.object({ ran: z.boolean().default(false) }),
     })
 
     input.write(
@@ -324,7 +324,7 @@ describe('Mcp', () => {
     const done = Mcp.serve('test-cli', '1.0.0', commands, {
       input,
       output,
-      varsSchema: z.object({ group: z.string().default('none') }),
+      vars: z.object({ group: z.string().default('none') }),
     })
 
     input.write(
