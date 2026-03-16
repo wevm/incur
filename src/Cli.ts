@@ -1207,199 +1207,95 @@ async function serveImpl(
     ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
-  // Initialize vars from schema defaults
-  const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-  const envSource = options.env ?? process.env
+  if (human)
+    emitDeprecationWarnings(
+      rest,
+      command.options,
+      command.alias as Record<string, string> | undefined,
+    )
 
-  const runCommand = async () => {
-    const { args, options: parsedOptions } = Parser.parse(rest, {
-      alias: command.alias as Record<string, string> | undefined,
-      args: command.args,
-      options: command.options,
-    })
+  const result = await Command.execute(command, {
+    agent: !human,
+    argv: rest,
+    env: options.envSchema,
+    envSource: options.env,
+    format,
+    formatExplicit,
+    inputOptions: {},
+    middlewares: allMiddleware,
+    name,
+    path,
+    vars: options.vars,
+    version: options.version,
+  })
 
-    if (human)
-      emitDeprecationWarnings(
-        rest,
-        command.options,
-        command.alias as Record<string, string> | undefined,
-      )
+  const duration = `${Math.round(performance.now() - start)}ms`
 
-    const env = command.env ? Parser.parseEnv(command.env, envSource) : {}
-
-    const okFn = (data: unknown, meta: { cta?: CtaBlock | undefined } = {}): never => {
-      return { [sentinel]: 'ok', data, cta: meta.cta } as never
-    }
-    const errorFn = (opts: {
-      code: string
-      exitCode?: number | undefined
-      message: string
-      retryable?: boolean | undefined
-      cta?: CtaBlock | undefined
-    }): never => {
-      return { [sentinel]: 'error', ...opts } as never
-    }
-
-    const result = command.run({
-      agent: !human,
-      args,
-      env,
-      error: errorFn,
+  // Streaming path — async generator
+  if ('stream' in result) {
+    await handleStreaming(result.stream, {
+      name,
+      path,
+      start,
       format,
       formatExplicit,
-      name,
-      ok: okFn,
-      options: parsedOptions,
-      var: varsMap,
-      version: options.version,
+      human,
+      renderOutput,
+      verbose,
+      truncate,
+      write,
+      writeln,
+      exit,
     })
-
-    // Streaming path — async generator
-    if (isAsyncGenerator(result)) {
-      await handleStreaming(result, {
-        name,
-        path,
-        start,
-        format,
-        formatExplicit,
-        human,
-        renderOutput,
-        verbose,
-        truncate,
-        write,
-        writeln,
-        exit,
-      })
-      return
-    }
-
-    const awaited = await result
-
-    if (isSentinel(awaited)) {
-      const cta = formatCtaBlock(name, awaited.cta)
-      if (awaited[sentinel] === 'ok') {
-        write({
-          ok: true,
-          data: awaited.data,
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
-          },
-        })
-      } else {
-        const err = awaited as ErrorResult
-        write({
-          ok: false,
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-          },
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
-          },
-        })
-        exit(err.exitCode ?? 1)
-      }
-    } else {
-      write({
-        ok: true,
-        data: awaited,
-        meta: {
-          command: path,
-          duration: `${Math.round(performance.now() - start)}ms`,
-        },
-      })
-    }
+    return
   }
 
-  try {
-    const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, envSource) : {}
-
-    if (allMiddleware.length > 0) {
-      const errorFn = (opts: {
-        code: string
-        exitCode?: number | undefined
-        message: string
-        retryable?: boolean | undefined
-        cta?: CtaBlock | undefined
-      }): never => {
-        return { [sentinel]: 'error', ...opts } as never
-      }
-      const mwCtx: MiddlewareContext = {
-        agent: !human,
-        command: path,
-        env: cliEnv,
-        error: errorFn,
-        format,
-        formatExplicit,
-        name,
-        set(key: string, value: unknown) {
-          varsMap[key] = value
-        },
-        var: varsMap,
-        version: options.version,
-      }
-      const handleMwSentinel = (result: unknown) => {
-        if (!isSentinel(result) || result[sentinel] !== 'error') return
-        const err = result as ErrorResult
-        const cta = formatCtaBlock(name, err.cta)
-        write({
-          ok: false,
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-          },
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
-          },
-        })
-        exit(err.exitCode ?? 1)
-      }
-      const composed = allMiddleware.reduceRight(
-        (next: () => Promise<void>, mw) => async () => {
-          handleMwSentinel(await mw(mwCtx, next))
-        },
-        runCommand,
-      )
-      await composed()
-    } else {
-      await runCommand()
-    }
-  } catch (error) {
-    const errorOutput: Output = {
-      ok: false,
-      error: {
-        code:
-          error instanceof IncurError
-            ? error.code
-            : error instanceof ValidationError
-              ? 'VALIDATION_ERROR'
-              : 'UNKNOWN',
-        message: error instanceof Error ? error.message : String(error),
-        ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
-        ...(error instanceof ValidationError ? { fieldErrors: error.fieldErrors } : undefined),
-      },
+  if (result.ok) {
+    const cta = formatCtaBlock(name, result.cta)
+    write({
+      ok: true,
+      data: result.data,
       meta: {
         command: path,
-        duration: `${Math.round(performance.now() - start)}ms`,
+        duration,
+        ...(cta ? { cta } : undefined),
       },
-    }
+    })
+  } else {
+    const cta = formatCtaBlock(name, result.cta)
 
-    if (human && !formatExplicit && error instanceof ValidationError) {
-      writeln(formatHumanValidationError(name, path, command, error, options.env))
+    if (human && !formatExplicit && result.error.fieldErrors) {
+      writeln(
+        formatHumanValidationError(
+          name,
+          path,
+          command,
+          new ValidationError({
+            message: result.error.message,
+            fieldErrors: result.error.fieldErrors,
+          }),
+          options.env,
+        ),
+      )
       exit(1)
       return
     }
 
-    write(errorOutput)
-    exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+    write({
+      ok: false,
+      error: {
+        code: result.error.code,
+        message: result.error.message,
+        ...(result.error.retryable !== undefined ? { retryable: result.error.retryable } : undefined),
+        ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
+      },
+      meta: {
+        command: path,
+        duration,
+        ...(cta ? { cta } : undefined),
+      },
+    })
+    exit(result.exitCode ?? 1)
   }
 }
 
@@ -2105,16 +2001,6 @@ function hasRequiredArgs(args: z.ZodObject<z.ZodRawShape>): boolean {
 
 function isSentinel(value: unknown): value is OkResult | ErrorResult {
   return typeof value === 'object' && value !== null && sentinel in value
-}
-
-/** @internal Type guard for async generators returned by streaming `run` handlers. */
-function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unknown, unknown> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Symbol.asyncIterator in value &&
-    typeof (value as any).next === 'function'
-  )
 }
 
 /** @internal Handles streaming output from an async generator `run` handler. */

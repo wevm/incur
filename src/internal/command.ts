@@ -51,6 +51,15 @@ export async function execute(command: any, options: execute.Options): Promise<e
 
   const varsMap: Record<string, unknown> = varsSchema ? varsSchema.parse({}) : {}
   let result: execute.Result | undefined
+  // For streaming with middleware: runCommand suspends on streamConsumed so middleware "after"
+  // runs after the stream is consumed. The wrapped generator resolves it in its finally block.
+  // resultReady signals that result has been set (for streams, before the chain finishes).
+  let streamConsumed: Promise<void> | undefined
+  let resolveStreamConsumed: (() => void) | undefined
+  let resolveResultReady: (() => void) | undefined
+  const resultReady = new Promise<void>((r) => {
+    resolveResultReady = r
+  })
 
   const runCommand = async () => {
     // Parse args and options
@@ -106,9 +115,27 @@ export async function execute(command: any, options: execute.Options): Promise<e
       version,
     })
 
-    // Streaming: return the generator for the transport to consume
+    // Streaming: wrap the generator so middleware "after" runs after consumption.
+    // When middleware is active, runCommand suspends until the stream is fully consumed,
+    // keeping the middleware chain alive around the stream's lifetime.
     if (isAsyncGenerator(raw)) {
-      result = { stream: raw }
+      if (middlewares.length > 0) {
+        streamConsumed = new Promise<void>((r) => {
+          resolveStreamConsumed = r
+        })
+        async function* wrapped() {
+          try {
+            yield* raw as AsyncGenerator<unknown, unknown, unknown>
+          } finally {
+            resolveStreamConsumed!()
+          }
+        }
+        result = { stream: wrapped() }
+        resolveResultReady!()
+        await streamConsumed
+      } else {
+        result = { stream: raw }
+      }
       return
     }
 
@@ -184,7 +211,14 @@ export async function execute(command: any, options: execute.Options): Promise<e
         },
         runCommand,
       )
-      await composed()
+      // Start the chain and race against resultReady. For streams with middleware,
+      // runCommand suspends on streamConsumed (keeping middleware "after" deferred)
+      // but signals resultReady so we can return the stream immediately. The transport
+      // consumes the stream, which resolves streamConsumed, letting middleware "after" run.
+      const chainPromise = composed()
+      await Promise.race([chainPromise, resultReady])
+      if (streamConsumed) return result!
+      await chainPromise
     } else {
       await runCommand()
     }
@@ -211,7 +245,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     }
   }
 
-  return result!
+  return result ?? { ok: true, data: undefined }
 }
 
 /** @internal Splits flat params into args vs options using schema shapes. */
