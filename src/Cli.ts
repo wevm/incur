@@ -8,6 +8,7 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
+import * as Execute from './internal/execute.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -257,10 +258,13 @@ export function create(
     async fetch(req: Request) {
       if (pending.length > 0) await Promise.all(pending)
       return fetchImpl(name, commands, req, {
+        envSchema: def.env,
         mcpHandler,
         middlewares,
+        name,
         rootCommand: rootDef,
         vars: def.vars,
+        version: def.version,
       })
     },
 
@@ -442,7 +446,12 @@ async function serveImpl(
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
-    await Mcp.serve(name, options.version ?? '0.0.0', commands)
+    await Mcp.serve(name, options.version ?? '0.0.0', commands, {
+      middlewares: options.middlewares,
+      envSchema: options.envSchema,
+      varsSchema: options.vars,
+      version: options.version,
+    })
     return
   }
 
@@ -1397,12 +1406,28 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    /** CLI-level env schema. */
+    envSchema?: z.ZodObject<any> | undefined
+    /** Group-level middleware collected during command resolution. */
+    groupMiddlewares?: MiddlewareHandler[] | undefined
     mcpHandler?:
-      | ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>)
+      | ((
+          req: Request,
+          commands: Map<string, CommandEntry>,
+          mcpOptions?: {
+            middlewares?: MiddlewareHandler[] | undefined
+            envSchema?: z.ZodObject<any> | undefined
+            varsSchema?: z.ZodObject<any> | undefined
+          },
+        ) => Promise<Response>)
       | undefined
     middlewares?: MiddlewareHandler[] | undefined
+    /** CLI name. */
+    name?: string | undefined
     rootCommand?: CommandDefinition<any, any, any> | undefined
     vars?: z.ZodObject<any> | undefined
+    /** CLI version string. */
+    version?: string | undefined
   }
 }
 
@@ -1410,7 +1435,15 @@ declare namespace fetchImpl {
 function createMcpHttpHandler(name: string, version: string) {
   let transport: any
 
-  return async (req: Request, commands: Map<string, CommandEntry>): Promise<Response> => {
+  return async (
+    req: Request,
+    commands: Map<string, CommandEntry>,
+    mcpOptions?: {
+      middlewares?: MiddlewareHandler[] | undefined
+      envSchema?: z.ZodObject<any> | undefined
+      varsSchema?: z.ZodObject<any> | undefined
+    },
+  ): Promise<Response> => {
     if (!transport) {
       const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
       const { WebStandardStreamableHTTPServerTransport } =
@@ -1433,7 +1466,13 @@ function createMcpHttpHandler(name: string, version: string) {
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            return Mcp.callTool(tool, params)
+            return Mcp.callTool(tool, params, {
+              name,
+              version,
+              middlewares: mcpOptions?.middlewares,
+              envSchema: mcpOptions?.envSchema,
+              varsSchema: mcpOptions?.varsSchema,
+            })
           },
         )
       }
@@ -1462,7 +1501,11 @@ async function fetchImpl(
 
   // MCP over HTTP: route /mcp to the MCP transport
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
-    return options.mcpHandler(req, commands)
+    return options.mcpHandler(req, commands, {
+      middlewares: options.middlewares,
+      envSchema: options.envSchema,
+      varsSchema: options.vars,
+    })
 
   // .well-known/skills/ — Agent Skills Discovery (RFC)
   if (
@@ -1571,7 +1614,11 @@ async function fetchImpl(
   if ('fetchGateway' in resolved) return resolved.fetchGateway.fetch(req)
 
   const { command, path, rest } = resolved
-  return executeCommand(path, command, rest, inputOptions, start, options)
+  const groupMiddlewares = 'middlewares' in resolved ? resolved.middlewares : []
+  return executeCommand(path, command, rest, inputOptions, start, {
+    ...options,
+    groupMiddlewares,
+  })
 }
 
 /** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
@@ -1590,200 +1637,106 @@ async function executeCommand(
     })
   }
 
-  const sentinel_ = Symbol.for('incur.sentinel')
-  const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-  let response: Response | undefined
+  const allMiddleware = [
+    ...(options.middlewares ?? []),
+    ...((options.groupMiddlewares as MiddlewareHandler[] | undefined) ?? []),
+    ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
+  ]
 
-  const runCommand = async () => {
-    const { args } = Parser.parse(rest, { args: command.args })
-    const parsedOptions = command.options ? command.options.parse(inputOptions) : {}
+  const result = await Execute.execute({
+    command,
+    argv: rest,
+    inputOptions,
+    agent: true,
+    format: 'json',
+    formatExplicit: true,
+    name: options.name ?? path,
+    path,
+    version: options.version,
+    envSchema: options.envSchema,
+    varsSchema: options.vars,
+    middlewares: allMiddleware,
+    parseMode: 'split',
+  })
 
-    const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
-    const errorFn = (opts: {
-      code: string
-      message: string
-      exitCode?: number | undefined
-    }): never => ({ [sentinel_]: 'error', ...opts }) as never
+  const duration = `${Math.round(performance.now() - start)}ms`
 
-    const result = command.run({
-      agent: true,
-      args,
-      env: {},
-      error: errorFn,
-      format: 'json',
-      formatExplicit: true,
-      name: path,
-      ok: okFn,
-      options: parsedOptions,
-      var: varsMap,
-      version: undefined,
-    })
-
-    // Streaming path — async generator → NDJSON response
-    if (isAsyncGenerator(result)) {
-      const stream = new ReadableStream({
-        async start(controller) {
-          const encoder = new TextEncoder()
-          try {
-            let returnValue: unknown
-            while (true) {
-              const { value, done } = await result.next()
-              if (done) {
-                returnValue = value
-                break
-              }
-              if (isSentinel(value) && (value as any)[sentinel] === 'error') {
-                const tagged = value as any
-                controller.enqueue(
-                  encoder.encode(
-                    JSON.stringify({
-                      type: 'error',
-                      ok: false,
-                      error: { code: tagged.code, message: tagged.message },
-                    }) + '\n',
-                  ),
-                )
-                controller.close()
-                return
-              }
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
-              )
-            }
-            const meta: Record<string, unknown> = { command: path }
-            if (isSentinel(returnValue) && (returnValue as any)[sentinel] === 'error') {
-              const tagged = returnValue as any
-              controller.enqueue(
-                encoder.encode(
-                  JSON.stringify({
-                    type: 'error',
-                    ok: false,
-                    error: { code: tagged.code, message: tagged.message },
-                  }) + '\n',
-                ),
-              )
-            } else {
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'),
-              )
-            }
-          } catch (error) {
+  // Streaming path — async generator → NDJSON response
+  if ('stream' in result) {
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder()
+        try {
+          for await (const value of result.stream) {
             controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: 'error',
-                  ok: false,
-                  error: {
-                    code: 'UNKNOWN',
-                    message: error instanceof Error ? error.message : String(error),
-                  },
-                }) + '\n',
-              ),
+              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
             )
           }
-          controller.close()
-        },
-      })
-      response = new Response(stream, {
-        status: 200,
-        headers: { 'content-type': 'application/x-ndjson' },
-      })
-      return
-    }
-
-    const awaited = await result
-    const duration = `${Math.round(performance.now() - start)}ms`
-
-    if (typeof awaited === 'object' && awaited !== null && sentinel_ in awaited) {
-      const tagged = awaited as any
-      if (tagged[sentinel_] === 'error')
-        response = jsonResponse(
-          {
-            ok: false,
-            error: { code: tagged.code, message: tagged.message },
-            meta: { command: path, duration },
-          },
-          500,
-        )
-      else
-        response = jsonResponse(
-          { ok: true, data: tagged.data, meta: { command: path, duration } },
-          200,
-        )
-      return
-    }
-
-    response = jsonResponse({ ok: true, data: awaited, meta: { command: path, duration } }, 200)
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: 'done',
+                ok: true,
+                meta: { command: path },
+              }) + '\n',
+            ),
+          )
+        } catch (error) {
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: 'error',
+                ok: false,
+                error: {
+                  code: 'UNKNOWN',
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              }) + '\n',
+            ),
+          )
+        }
+        controller.close()
+      },
+    })
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'application/x-ndjson' },
+    })
   }
 
-  try {
-    const allMiddleware = options.middlewares ?? []
-    if (allMiddleware.length > 0) {
-      const errorFn = (opts: {
-        code: string
-        message: string
-        exitCode?: number | undefined
-      }): never => {
-        const duration = `${Math.round(performance.now() - start)}ms`
-        response = jsonResponse(
-          {
-            ok: false,
-            error: { code: opts.code, message: opts.message },
-            meta: { command: path, duration },
-          },
-          500,
-        )
-        return undefined as never
-      }
-      const mwCtx: MiddlewareContext = {
-        agent: true,
-        command: path,
-        env: {},
-        error: errorFn,
-        format: 'json',
-        formatExplicit: true,
-        name: path,
-        set(key: string, value: unknown) {
-          varsMap[key] = value
-        },
-        var: varsMap,
-        version: undefined,
-      }
-      const composed = allMiddleware.reduceRight(
-        (next: () => Promise<void>, mw) => async () => {
-          await mw(mwCtx, next)
-        },
-        runCommand,
-      )
-      await composed()
-    } else {
-      await runCommand()
-    }
-  } catch (error) {
-    const duration = `${Math.round(performance.now() - start)}ms`
-    if (error instanceof ValidationError)
-      return jsonResponse(
-        {
-          ok: false,
-          error: { code: 'VALIDATION_ERROR', message: error.message },
-          meta: { command: path, duration },
-        },
-        400,
-      )
+  if (!result.ok) {
+    const cta = formatCtaBlock(options.name ?? path, result.cta as CtaBlock | undefined)
     return jsonResponse(
       {
         ok: false,
         error: {
-          code: error instanceof IncurError ? error.code : 'UNKNOWN',
-          message: error instanceof Error ? error.message : String(error),
+          code: result.error.code,
+          message: result.error.message,
+          ...(result.error.retryable !== undefined ? { retryable: result.error.retryable } : undefined),
         },
-        meta: { command: path, duration },
+        meta: {
+          command: path,
+          duration,
+          ...(cta ? { cta } : undefined),
+        },
       },
-      500,
+      result.error.code === 'VALIDATION_ERROR' ? 400 : 500,
     )
   }
 
-  return response!
+  const cta = formatCtaBlock(options.name ?? path, result.cta as CtaBlock | undefined)
+  return jsonResponse(
+    {
+      ok: true,
+      data: result.data,
+      meta: {
+        command: path,
+        duration,
+        ...(cta ? { cta } : undefined),
+      },
+    },
+    200,
+  )
 }
 
 /** @internal Formats a validation error for TTY with usage hint. */

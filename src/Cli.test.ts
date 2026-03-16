@@ -3375,6 +3375,83 @@ describe('fetch', () => {
     `)
   })
 
+  test('group middleware runs for nested commands', async () => {
+    const sub = Cli.create('admin', {
+      vars: z.object({ role: z.string().default('none') }),
+    })
+    sub.use(async (c, next) => {
+      c.set('role', 'admin')
+      await next()
+    })
+    sub.command('status', {
+      run: (c) => ({ role: c.var.role }),
+    })
+    const cli = Cli.create('test', {
+      vars: z.object({ role: z.string().default('none') }),
+    })
+    cli.command(sub)
+    expect(await fetchJson(cli, new Request('http://localhost/admin/status'))).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "role": "admin",
+          },
+          "meta": {
+            "command": "admin status",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('cli-level env schema is parsed', async () => {
+    const cli = Cli.create('test', {
+      env: z.object({ APP_TOKEN: z.string().default('fallback') }),
+    })
+    cli.use(async (c, next) => {
+      // env should be parsed from envSchema
+      ;(globalThis as any).__testEnv = c.env
+      await next()
+    })
+    cli.command('check', { run: () => ({ ok: true }) })
+    await cli.fetch(new Request('http://localhost/check'))
+    expect((globalThis as any).__testEnv).toEqual({ APP_TOKEN: 'fallback' })
+    delete (globalThis as any).__testEnv
+  })
+
+  test('retryable error is propagated', async () => {
+    const cli = Cli.create('test')
+    cli.command('rate-limit', {
+      run: (c) => c.error({ code: 'RATE_LIMITED', message: 'slow down', retryable: true }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/rate-limit'))
+    expect(body.ok).toBe(false)
+    expect(body.error.retryable).toBe(true)
+  })
+
+  test('cta block is propagated', async () => {
+    const cli = Cli.create('test')
+    cli.command('done', {
+      run: (c) =>
+        c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Next steps:' } }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/done'))
+    expect(body.ok).toBe(true)
+    expect(body.meta.cta).toMatchInlineSnapshot(`
+      {
+        "commands": [
+          {
+            "command": "test list",
+          },
+        ],
+        "description": "Next steps:",
+      }
+    `)
+  })
+
   describe('mcp over http', () => {
     function mcpCli() {
       const cli = Cli.create('test', { version: '1.0.0' })

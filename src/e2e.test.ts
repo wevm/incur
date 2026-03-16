@@ -2441,6 +2441,18 @@ describe('fetch api', () => {
           },
           "meta": {
             "command": "project create",
+            "cta": {
+              "commands": [
+                {
+                  "command": "app project get p-new",
+                  "description": "View "MyProject"",
+                },
+                {
+                  "command": "app project list",
+                },
+              ],
+              "description": "Suggested commands:",
+            },
             "duration": "<stripped>",
           },
           "ok": true,
@@ -2524,21 +2536,22 @@ describe('fetch api', () => {
     const cli = createApp()
     expect(await fetchJson(cli, new Request('http://localhost/explode-clac')))
       .toMatchInlineSnapshot(`
-      {
-        "body": {
-          "error": {
-            "code": "QUOTA_EXCEEDED",
-            "message": "Rate limit exceeded",
+        {
+          "body": {
+            "error": {
+              "code": "QUOTA_EXCEEDED",
+              "message": "Rate limit exceeded",
+              "retryable": true,
+            },
+            "meta": {
+              "command": "explode-clac",
+              "duration": "<stripped>",
+            },
+            "ok": false,
           },
-          "meta": {
-            "command": "explode-clac",
-            "duration": "<stripped>",
-          },
-          "ok": false,
-        },
-        "status": 500,
-      }
-    `)
+          "status": 500,
+        }
+      `)
   })
 
   test('validation error → 400', async () => {

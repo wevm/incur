@@ -216,6 +216,149 @@ describe('Mcp', () => {
     ])
   })
 
+  test('middleware runs for tool calls', async () => {
+    const commands = new Map<string, any>()
+    commands.set('secret', {
+      description: 'Protected command',
+      run: () => ({ secret: 'data' }),
+    })
+    const middlewares = [
+      async (_c: any, next: () => Promise<void>) => {
+        _c.set('ran', true)
+        await next()
+      },
+    ]
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk: Buffer) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', commands, {
+      input,
+      output,
+      middlewares,
+      varsSchema: z.object({ ran: z.boolean().default(false) }),
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'secret', arguments: {} } })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const responses = chunks.map((c) => JSON.parse(c.trim()))
+    const callRes = responses.find((r: any) => r.id === 2)
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"secret":"data"}' }])
+  })
+
+  test('middleware error blocks tool call', async () => {
+    const commands = new Map<string, any>()
+    commands.set('secret', {
+      description: 'Protected',
+      run: () => ({ secret: true }),
+    })
+    const middlewares = [
+      (c: any) => {
+        c.error({ code: 'FORBIDDEN', message: 'not allowed' })
+      },
+    ]
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk: Buffer) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', commands, {
+      input,
+      output,
+      middlewares,
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'secret', arguments: {} } })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const responses = chunks.map((c) => JSON.parse(c.trim()))
+    const callRes = responses.find((r: any) => r.id === 2)
+    expect(callRes.result.isError).toBe(true)
+    expect(callRes.result.content[0].text).toBe('not allowed')
+  })
+
+  test('group middleware runs for nested tool calls', async () => {
+    const commands = new Map<string, any>()
+    const groupMiddleware = async (c: any, next: () => Promise<void>) => {
+      c.set('group', 'admin')
+      await next()
+    }
+    commands.set('admin', {
+      _group: true,
+      description: 'Admin commands',
+      middlewares: [groupMiddleware],
+      commands: new Map([
+        [
+          'status',
+          {
+            description: 'Admin status',
+            run: (c: any) => ({ group: c.var.group }),
+          },
+        ],
+      ]),
+    })
+
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk: Buffer) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', commands, {
+      input,
+      output,
+      varsSchema: z.object({ group: z.string().default('none') }),
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'admin_status', arguments: {} } })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const responses = chunks.map((c) => JSON.parse(c.trim()))
+    const callRes = responses.find((r: any) => r.id === 2)
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"group":"admin"}' }])
+  })
+
+  test('env schema is parsed for tool calls', async () => {
+    const commands = new Map<string, any>()
+    commands.set('check-env', {
+      description: 'Check env',
+      env: z.object({ MY_VAR: z.string().default('default-val') }),
+      run: (c: any) => ({ val: c.env.MY_VAR }),
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'check-env', arguments: {} } },
+    ])
+    const data = JSON.parse(res.result.content[0].text)
+    expect(data.val).toBe('default-val')
+  })
+
   test('streaming command sends progress notifications', async () => {
     const input = new PassThrough()
     const output = new PassThrough()

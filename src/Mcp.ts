@@ -1,7 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Readable, Writable } from 'node:stream'
+import type { z } from 'zod'
 
+import type { Handler as MiddlewareHandler } from './middleware.js'
+import * as Execute from './internal/execute.js'
 import * as Schema from './Schema.js'
 
 /** Starts a stdio MCP server that exposes commands as tools. */
@@ -30,7 +33,14 @@ export async function serve(
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
         const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
         const extra = hasInput ? callArgs[1] : callArgs[0]
-        return callTool(tool, params, extra)
+        return callTool(tool, params, {
+          extra,
+          name,
+          version,
+          middlewares: options.middlewares,
+          envSchema: options.envSchema,
+          varsSchema: options.varsSchema,
+        })
       },
     )
   }
@@ -44,10 +54,18 @@ export async function serve(
 export declare namespace serve {
   /** Options for the MCP server. */
   type Options = {
+    /** CLI-level env schema. */
+    envSchema?: z.ZodObject<any> | undefined
     /** Override input stream. Defaults to `process.stdin`. */
     input?: Readable | undefined
+    /** Middleware handlers registered on the root CLI. */
+    middlewares?: MiddlewareHandler[] | undefined
     /** Override output stream. Defaults to `process.stdout`. */
     output?: Writable | undefined
+    /** Vars schema for middleware variables. */
+    varsSchema?: z.ZodObject<any> | undefined
+    /** CLI version string. */
+    version?: string | undefined
   }
 }
 
@@ -55,83 +73,70 @@ export declare namespace serve {
 export async function callTool(
   tool: ToolEntry,
   params: Record<string, unknown>,
-  extra?: {
-    _meta?: { progressToken?: string | number }
-    sendNotification?: (n: any) => Promise<void>
-  },
+  options: {
+    extra?: {
+      _meta?: { progressToken?: string | number }
+      sendNotification?: (n: any) => Promise<void>
+    }
+    name?: string | undefined
+    version?: string | undefined
+    middlewares?: MiddlewareHandler[] | undefined
+    envSchema?: z.ZodObject<any> | undefined
+    varsSchema?: z.ZodObject<any> | undefined
+  } = {},
 ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
-  try {
-    const { args, options } = splitParams(params, tool.command)
-    const parsedArgs = tool.command.args ? tool.command.args.parse(args) : {}
-    const parsedOptions = tool.command.options ? tool.command.options.parse(options) : {}
-    const parsedEnv = tool.command.env ? tool.command.env.parse(process.env) : {}
+  const allMiddleware = [
+    ...(options.middlewares ?? []),
+    ...((tool.middlewares as MiddlewareHandler[] | undefined) ?? []),
+    ...((tool.command.middleware as MiddlewareHandler[] | undefined) ?? []),
+  ]
 
-    const sentinel = Symbol.for('incur.sentinel')
-    const okFn = (data: unknown): never => ({ [sentinel]: 'ok', data }) as never
-    const errorFn = (opts: { code: string; message: string }): never =>
-      ({ [sentinel]: 'error', ...opts }) as never
+  const result = await Execute.execute({
+    command: tool.command,
+    argv: [],
+    inputOptions: params,
+    agent: true,
+    format: 'json',
+    formatExplicit: true,
+    name: options.name ?? tool.name,
+    path: tool.name,
+    version: options.version,
+    envSchema: options.envSchema,
+    varsSchema: options.varsSchema,
+    middlewares: allMiddleware,
+    parseMode: 'flat',
+  })
 
-    const raw = tool.command.run({
-      args: parsedArgs,
-      env: parsedEnv,
-      options: parsedOptions,
-      ok: okFn,
-      error: errorFn,
-    })
-
+  if ('stream' in result) {
     // Streaming: send progress notifications per chunk, then return buffered result
-    if (isAsyncGenerator(raw)) {
-      const chunks: unknown[] = []
-      const progressToken = extra?._meta?.progressToken
-      let i = 0
-      for await (const chunk of raw) {
-        if (typeof chunk === 'object' && chunk !== null && sentinel in chunk) {
-          const tagged = chunk as any
-          if (tagged[sentinel] === 'error')
-            return {
-              content: [{ type: 'text', text: tagged.message ?? 'Command failed' }],
-              isError: true,
-            }
-        }
+    const chunks: unknown[] = []
+    const progressToken = options.extra?._meta?.progressToken
+    let i = 0
+    try {
+      for await (const chunk of result.stream) {
         chunks.push(chunk)
-        if (progressToken !== undefined && extra?.sendNotification)
-          await extra.sendNotification({
+        if (progressToken !== undefined && options.extra?.sendNotification)
+          await options.extra.sendNotification({
             method: 'notifications/progress' as const,
             params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
           })
       }
-      return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+        isError: true,
+      }
     }
+    return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+  }
 
-    const awaited = await raw
-
-    if (typeof awaited === 'object' && awaited !== null && sentinel in awaited) {
-      const tagged = awaited as any
-      if (tagged[sentinel] === 'error')
-        return {
-          content: [{ type: 'text', text: tagged.message ?? 'Command failed' }],
-          isError: true,
-        }
-      return { content: [{ type: 'text', text: JSON.stringify(tagged.data ?? null) }] }
-    }
-
-    return { content: [{ type: 'text', text: JSON.stringify(awaited ?? null) }] }
-  } catch (err) {
+  if (!result.ok)
     return {
-      content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+      content: [{ type: 'text', text: result.error.message ?? 'Command failed' }],
       isError: true,
     }
-  }
-}
 
-/** @internal Type guard for async generators. */
-function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unknown, unknown> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Symbol.asyncIterator in value &&
-    typeof (value as any).next === 'function'
-  )
+  return { content: [{ type: 'text', text: JSON.stringify(result.data ?? null) }] }
 }
 
 /** @internal A resolved tool entry from the command tree. */
@@ -140,20 +145,31 @@ export type ToolEntry = {
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
   command: any
+  middlewares?: MiddlewareHandler[] | undefined
 }
 
 /** @internal Recursively collects leaf commands as tool entries. */
-export function collectTools(commands: Map<string, any>, prefix: string[]): ToolEntry[] {
+export function collectTools(
+  commands: Map<string, any>,
+  prefix: string[],
+  parentMiddlewares: MiddlewareHandler[] = [],
+): ToolEntry[] {
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
-    if ('_group' in entry && entry._group) result.push(...collectTools(entry.commands, path))
-    else {
+    if ('_group' in entry && entry._group) {
+      const groupMw = [
+        ...parentMiddlewares,
+        ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
+      ]
+      result.push(...collectTools(entry.commands, path, groupMw))
+    } else {
       result.push({
         name: path.join('_'),
         description: entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
         command: entry,
+        ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })
     }
   }
@@ -179,17 +195,4 @@ function buildToolSchema(
   return { type: 'object', properties }
 }
 
-/** @internal Splits flat params into args vs options using schema shapes. */
-function splitParams(
-  params: Record<string, unknown>,
-  command: any,
-): { args: Record<string, unknown>; options: Record<string, unknown> } {
-  const argKeys = new Set(command.args ? Object.keys(command.args.shape) : [])
-  const a: Record<string, unknown> = {}
-  const o: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(params)) {
-    if (argKeys.has(key)) a[key] = value
-    else o[key] = value
-  }
-  return { args: a, options: o }
-}
+
