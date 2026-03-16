@@ -4,7 +4,7 @@ import type { Readable, Writable } from 'node:stream'
 import type { z } from 'zod'
 
 import type { Handler as MiddlewareHandler } from './middleware.js'
-import * as Execute from './internal/execute.js'
+import * as Command from './internal/command.js'
 import * as Schema from './Schema.js'
 
 /** Starts a stdio MCP server that exposes commands as tools. */
@@ -38,8 +38,8 @@ export async function serve(
           name,
           version,
           middlewares: options.middlewares,
-          envSchema: options.envSchema,
-          varsSchema: options.varsSchema,
+          env: options.env,
+          vars: options.vars,
         })
       },
     )
@@ -55,7 +55,7 @@ export declare namespace serve {
   /** Options for the MCP server. */
   type Options = {
     /** CLI-level env schema. */
-    envSchema?: z.ZodObject<any> | undefined
+    env?: z.ZodObject<any> | undefined
     /** Override input stream. Defaults to `process.stdin`. */
     input?: Readable | undefined
     /** Middleware handlers registered on the root CLI. */
@@ -63,7 +63,7 @@ export declare namespace serve {
     /** Override output stream. Defaults to `process.stdout`. */
     output?: Writable | undefined
     /** Vars schema for middleware variables. */
-    varsSchema?: z.ZodObject<any> | undefined
+    vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version?: string | undefined
   }
@@ -81,8 +81,8 @@ export async function callTool(
     name?: string | undefined
     version?: string | undefined
     middlewares?: MiddlewareHandler[] | undefined
-    envSchema?: z.ZodObject<any> | undefined
-    varsSchema?: z.ZodObject<any> | undefined
+    env?: z.ZodObject<any> | undefined
+    vars?: z.ZodObject<any> | undefined
   } = {},
 ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
   const allMiddleware = [
@@ -91,20 +91,19 @@ export async function callTool(
     ...((tool.command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
-  const result = await Execute.execute({
-    command: tool.command,
-    argv: [],
-    inputOptions: params,
+  const result = await Command.execute(tool.command, {
     agent: true,
+    argv: [],
+    env: options.env,
     format: 'json',
     formatExplicit: true,
-    name: options.name ?? tool.name,
-    path: tool.name,
-    version: options.version,
-    envSchema: options.envSchema,
-    varsSchema: options.varsSchema,
+    inputOptions: params,
     middlewares: allMiddleware,
+    name: options.name ?? tool.name,
     parseMode: 'flat',
+    path: tool.name,
+    vars: options.vars,
+    version: options.version,
   })
 
   if ('stream' in result) {

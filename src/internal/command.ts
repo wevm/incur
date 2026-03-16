@@ -32,9 +32,8 @@ type ErrorResult = {
 }
 
 /** @internal Unified command execution used by CLI, HTTP, and MCP transports. */
-export async function execute(options: execute.Options): Promise<execute.Result> {
+export async function execute(command: any, options: execute.Options): Promise<execute.Result> {
   const {
-    command,
     argv,
     inputOptions,
     agent,
@@ -44,8 +43,8 @@ export async function execute(options: execute.Options): Promise<execute.Result>
     path,
     version,
     envSource = process.env,
-    envSchema,
-    varsSchema,
+    env: envSchema,
+    vars: varsSchema,
     middlewares = [],
   } = options
   const parseMode = options.parseMode ?? 'argv'
@@ -236,10 +235,8 @@ export declare namespace execute {
     agent: boolean
     /** Raw positional tokens (already separated from flags). For HTTP/MCP, pass `[]`. */
     argv: string[]
-    /** The resolved command definition. */
-    command: any
     /** CLI-level env schema. */
-    envSchema?: z.ZodObject<any> | undefined
+    env?: z.ZodObject<any> | undefined
     /** Source for environment variables. Defaults to `process.env`. */
     envSource?: Record<string, string | undefined> | undefined
     /** The resolved output format. */
@@ -262,7 +259,7 @@ export declare namespace execute {
     /** The resolved command path. */
     path: string
     /** Vars schema for middleware variables. */
-    varsSchema?: z.ZodObject<any> | undefined
+    vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version: string | undefined
   }

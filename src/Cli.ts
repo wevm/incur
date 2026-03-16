@@ -8,7 +8,7 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
-import * as Execute from './internal/execute.js'
+import * as Command from './internal/command.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -448,8 +448,8 @@ async function serveImpl(
   if (mcpFlag) {
     await Mcp.serve(name, options.version ?? '0.0.0', commands, {
       middlewares: options.middlewares,
-      envSchema: options.envSchema,
-      varsSchema: options.vars,
+      env: options.envSchema,
+      vars: options.vars,
       version: options.version,
     })
     return
@@ -1416,8 +1416,8 @@ declare namespace fetchImpl {
           commands: Map<string, CommandEntry>,
           mcpOptions?: {
             middlewares?: MiddlewareHandler[] | undefined
-            envSchema?: z.ZodObject<any> | undefined
-            varsSchema?: z.ZodObject<any> | undefined
+            env?: z.ZodObject<any> | undefined
+            vars?: z.ZodObject<any> | undefined
           },
         ) => Promise<Response>)
       | undefined
@@ -1440,8 +1440,8 @@ function createMcpHttpHandler(name: string, version: string) {
     commands: Map<string, CommandEntry>,
     mcpOptions?: {
       middlewares?: MiddlewareHandler[] | undefined
-      envSchema?: z.ZodObject<any> | undefined
-      varsSchema?: z.ZodObject<any> | undefined
+      env?: z.ZodObject<any> | undefined
+      vars?: z.ZodObject<any> | undefined
     },
   ): Promise<Response> => {
     if (!transport) {
@@ -1470,8 +1470,8 @@ function createMcpHttpHandler(name: string, version: string) {
               name,
               version,
               middlewares: mcpOptions?.middlewares,
-              envSchema: mcpOptions?.envSchema,
-              varsSchema: mcpOptions?.varsSchema,
+              env: mcpOptions?.env,
+              vars: mcpOptions?.vars,
             })
           },
         )
@@ -1503,8 +1503,8 @@ async function fetchImpl(
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
     return options.mcpHandler(req, commands, {
       middlewares: options.middlewares,
-      envSchema: options.envSchema,
-      varsSchema: options.vars,
+      env: options.envSchema,
+      vars: options.vars,
     })
 
   // .well-known/skills/ — Agent Skills Discovery (RFC)
@@ -1643,20 +1643,19 @@ async function executeCommand(
     ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
-  const result = await Execute.execute({
-    command,
-    argv: rest,
-    inputOptions,
+  const result = await Command.execute(command, {
     agent: true,
+    argv: rest,
+    env: options.envSchema,
     format: 'json',
     formatExplicit: true,
-    name: options.name ?? path,
-    path,
-    version: options.version,
-    envSchema: options.envSchema,
-    varsSchema: options.vars,
+    inputOptions,
     middlewares: allMiddleware,
+    name: options.name ?? path,
     parseMode: 'split',
+    path,
+    vars: options.vars,
+    version: options.version,
   })
 
   const duration = `${Math.round(performance.now() - start)}ms`
