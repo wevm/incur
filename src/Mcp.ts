@@ -28,6 +28,7 @@ export async function serve(
       {
         ...(tool.description ? { description: tool.description } : undefined),
         ...(hasInput ? { inputSchema: mergedShape } : undefined),
+        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
       },
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
@@ -84,7 +85,7 @@ export async function callTool(
     env?: z.ZodObject<any> | undefined
     vars?: z.ZodObject<any> | undefined
   } = {},
-): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
+): Promise<{ content: { type: 'text'; text: string }[]; structuredContent?: Record<string, unknown>; isError?: boolean }> {
   const allMiddleware = [
     ...(options.middlewares ?? []),
     ...((tool.middlewares as MiddlewareHandler[] | undefined) ?? []),
@@ -135,7 +136,11 @@ export async function callTool(
       isError: true,
     }
 
-  return { content: [{ type: 'text', text: JSON.stringify(result.data ?? null) }] }
+  const data = result.data ?? null
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data) }],
+    ...(data !== null && tool.outputSchema ? { structuredContent: data as Record<string, unknown> } : undefined),
+  }
 }
 
 /** @internal A resolved tool entry from the command tree. */
@@ -143,6 +148,7 @@ export type ToolEntry = {
   name: string
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
+  outputSchema?: Record<string, unknown> | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
 }
@@ -167,6 +173,7 @@ export function collectTools(
         name: path.join('_'),
         description: entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
+        ...(entry.output ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> } : undefined),
         command: entry,
         ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })
@@ -193,5 +200,4 @@ function buildToolSchema(
   if (required.length > 0) return { type: 'object', properties, required }
   return { type: 'object', properties }
 }
-
 
