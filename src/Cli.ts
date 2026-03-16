@@ -351,6 +351,8 @@ export declare namespace create {
           agent: boolean
           /** Positional arguments. */
           args: InferOutput<args>
+          /** Whether this is a dry-run invocation. Only `true` when the command sets `dryRun: true`. */
+          dryRun: boolean
           /** Parsed environment variables. */
           env: InferOutput<env>
           /** Return an error result with optional CTAs. */
@@ -429,6 +431,7 @@ async function serveImpl(
 
   const {
     verbose,
+    dryRun,
     format: formatFlag,
     formatExplicit,
     filterOutput,
@@ -1142,6 +1145,7 @@ async function serveImpl(
         const mwCtx: MiddlewareContext = {
           agent: !human,
           command: path,
+          dryRun,
           env: cliEnv,
           error: errorFn,
           format,
@@ -1217,6 +1221,7 @@ async function serveImpl(
   const result = await Command.execute(command, {
     agent: !human,
     argv: rest,
+    dryRun,
     env: options.envSchema,
     envSource: options.env,
     format,
@@ -1258,6 +1263,7 @@ async function serveImpl(
       meta: {
         command: path,
         duration,
+        ...(result.dryRun ? { dryRun: true } : undefined),
         ...(cta ? { cta } : undefined),
       },
     })
@@ -1302,6 +1308,8 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    /** Whether this is a dry-run invocation. */
+    dryRun?: boolean | undefined
     /** CLI-level env schema. */
     envSchema?: z.ZodObject<any> | undefined
     /** Group-level middleware collected during command resolution. */
@@ -1391,6 +1399,7 @@ async function fetchImpl(
   options: fetchImpl.Options = {},
 ): Promise<Response> {
   const start = performance.now()
+  if (req.headers.get('x-dry-run') === 'true') options = { ...options, dryRun: true }
 
   const url = new URL(req.url)
   const segments = url.pathname.split('/').filter(Boolean)
@@ -1542,6 +1551,7 @@ async function executeCommand(
   const result = await Command.execute(command, {
     agent: true,
     argv: rest,
+    dryRun: options.dryRun,
     env: options.envSchema,
     format: 'json',
     formatExplicit: true,
@@ -1627,6 +1637,7 @@ async function executeCommand(
       meta: {
         command: path,
         duration,
+        ...(result.dryRun ? { dryRun: true } : undefined),
         ...(cta ? { cta } : undefined),
       },
     },
@@ -1794,6 +1805,7 @@ declare namespace serveImpl {
 /** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
+  let dryRun = false
   let llms = false
   let llmsFull = false
   let mcp = false
@@ -1811,6 +1823,7 @@ function extractBuiltinFlags(argv: string[]) {
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
     if (token === '--verbose') verbose = true
+    else if (token === '--dry-run') dryRun = true
     else if (token === '--llms') llms = true
     else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
@@ -1839,6 +1852,7 @@ function extractBuiltinFlags(argv: string[]) {
 
   return {
     verbose,
+    dryRun,
     format,
     formatExplicit,
     filterOutput,
@@ -2527,6 +2541,8 @@ type CommandDefinition<
     agent: boolean
     /** Positional arguments. */
     args: InferOutput<args>
+    /** Whether this is a dry-run invocation. Only `true` when the command sets `dryRun: true`. */
+    dryRun: boolean
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */

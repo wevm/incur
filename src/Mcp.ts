@@ -91,9 +91,12 @@ export async function callTool(
     ...((tool.command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
+  const dryRun = (options.extra?._meta as any)?.dryRun === true
+
   const result = await Command.execute(tool.command, {
     agent: true,
     argv: [],
+    dryRun: dryRun || undefined,
     env: options.env,
     format: 'json',
     formatExplicit: true,

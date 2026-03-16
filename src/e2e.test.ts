@@ -969,6 +969,7 @@ describe('help', () => {
         skills add   Sync skill files to agents
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1003,6 +1004,7 @@ describe('help', () => {
         status  Show authentication status
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1030,6 +1032,7 @@ describe('help', () => {
         status    Check deployment status
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1056,6 +1059,7 @@ describe('help', () => {
         --archived <boolean>               Include archived (default: false)
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1088,6 +1092,7 @@ describe('help', () => {
         app project deploy create production --branch release --dryRun true  # Dry run a production deploy
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1744,6 +1749,7 @@ describe('root command with subcommands', () => {
         skills add   Sync skill files to agents
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1921,6 +1927,7 @@ describe('env', () => {
         --scopes <array>         OAuth scopes
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -2945,6 +2952,104 @@ describe('.well-known/skills', () => {
     const cli = createApp()
     const result = await fetchSkills(cli, '/.well-known/skills/bad-path')
     expect(result.status).toBe(404)
+  })
+})
+
+describe('--dry-run', () => {
+  test('run() receives c.dryRun = true', async () => {
+    let receivedDryRun: boolean | undefined
+    const cli = Cli.create('app', { version: '1.0.0' }).command('sync', {
+      args: z.object({ org: z.string() }),
+      run(c) {
+        receivedDryRun = c.dryRun
+        if (c.dryRun) return { wouldSync: [c.args.org] }
+        return { synced: 1 }
+      },
+    })
+    const { output } = await serve(cli, ['sync', 'acme', '--dry-run', '--verbose', '--json'])
+    expect(receivedDryRun).toBe(true)
+    const parsed = json(output)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.meta.dryRun).toBe(true)
+    expect(parsed.data).toEqual({ wouldSync: ['acme'] })
+  })
+
+  test('c.dryRun = false without --dry-run', async () => {
+    let receivedDryRun: boolean | undefined
+    const cli = Cli.create('app', { version: '1.0.0' }).command('sync', {
+      args: z.object({ org: z.string() }),
+      run(c) {
+        receivedDryRun = c.dryRun
+        return { synced: 1 }
+      },
+    })
+    await serve(cli, ['sync', 'acme'])
+    expect(receivedDryRun).toBe(false)
+  })
+
+  test('validation errors still fire during dry-run', async () => {
+    const cli = Cli.create('app', { version: '1.0.0' }).command('deploy', {
+      args: z.object({ env: z.string() }),
+      run() {
+        return { ok: true }
+      },
+    })
+    const { output, exitCode } = await serve(cli, ['deploy', '--dry-run', '--verbose', '--json'])
+    const parsed = json(output)
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error.code).toBe('VALIDATION_ERROR')
+    expect(exitCode).toBe(1)
+  })
+
+  test('middleware receives c.dryRun during dry-run', async () => {
+    let mwDryRun: boolean | undefined
+    const cli = Cli.create('app', { version: '1.0.0' }).command('ping', {
+      run() {
+        return { pong: true }
+      },
+    })
+    cli.use(async (c, next) => {
+      mwDryRun = c.dryRun
+      await next()
+    })
+    await serve(cli, ['ping', '--dry-run'])
+    expect(mwDryRun).toBe(true)
+  })
+
+  test('middleware receives c.dryRun = false without --dry-run', async () => {
+    let mwDryRun: boolean | undefined
+    const cli = Cli.create('app', { version: '1.0.0' }).command('ping', {
+      run() {
+        return { pong: true }
+      },
+    })
+    cli.use(async (c, next) => {
+      mwDryRun = c.dryRun
+      await next()
+    })
+    await serve(cli, ['ping'])
+    expect(mwDryRun).toBe(false)
+  })
+
+  test('HTTP: X-Dry-Run header sets c.dryRun', async () => {
+    let receivedDryRun: boolean | undefined
+    const cli = Cli.create('app', { version: '1.0.0' }).command('deploy', {
+      args: z.object({ env: z.string() }),
+      run(c) {
+        receivedDryRun = c.dryRun
+        if (c.dryRun) return { wouldDeploy: c.args.env }
+        return { url: 'https://example.com' }
+      },
+    })
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/deploy/staging', { headers: { 'x-dry-run': 'true' } }),
+    )
+    expect(receivedDryRun).toBe(true)
+    expect(status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(body.meta.dryRun).toBe(true)
+    expect(body.data).toEqual({ wouldDeploy: 'staging' })
   })
 })
 

@@ -917,6 +917,7 @@ describe('subcommands', () => {
         list
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1356,6 +1357,7 @@ describe('help', () => {
         skills add   Sync skill files to agents
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1394,6 +1396,7 @@ describe('help', () => {
         skills add   Sync skill files to agents
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1428,6 +1431,7 @@ describe('help', () => {
         name  Name
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1462,6 +1466,7 @@ describe('help', () => {
         list  List PRs
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1557,6 +1562,7 @@ describe('help', () => {
         skills add   Sync skill files to agents
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1589,6 +1595,7 @@ describe('help', () => {
       Run "tool status" to check deployment progress.
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1684,6 +1691,7 @@ describe('env', () => {
       Usage: test deploy
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -1722,6 +1730,7 @@ describe('env', () => {
         Usage: test deploy
 
         Global Options:
+          --dry-run                           Preview parsed inputs without executing
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --help                              Show help

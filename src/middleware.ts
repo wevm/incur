@@ -33,6 +33,8 @@ export type Context<
   agent: boolean
   /** The resolved command path. */
   command: string
+  /** Whether the invocation is a dry run (`--dry-run` was passed). */
+  dryRun: boolean
   /** Parsed environment variables from the CLI-level env schema. */
   env: InferEnv<env>
   /** Return an error result, short-circuiting the middleware chain. */
