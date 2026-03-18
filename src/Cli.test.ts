@@ -1838,6 +1838,76 @@ describe('env', () => {
   })
 })
 
+describe('built-in commands', () => {
+  test('bare completions shows missing shell error', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['completions'])
+    expect(output).toContain('Missing shell argument')
+  })
+
+  test('completions --help shows help', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['completions', '--help'])
+    expect(output).toContain('test completions')
+    expect(output).toContain('Generate shell completion script')
+  })
+
+  test('bare mcp shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp'])
+    expect(output).toContain('test mcp')
+    expect(output).toContain('Register as MCP server')
+    expect(output).toContain('add')
+  })
+
+  test('mcp --help shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp', '--help'])
+    expect(output).toContain('test mcp')
+    expect(output).toContain('add')
+  })
+
+  test('mcp add --help shows options', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp', 'add', '--help'])
+    expect(output).toContain('test mcp add')
+    expect(output).toContain('--command')
+    expect(output).toContain('--no-global')
+    expect(output).toContain('--agent')
+  })
+
+  test('bare skills shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills'])
+    expect(output).toContain('test skills')
+    expect(output).toContain('Sync skill files to agents')
+    expect(output).toContain('add')
+  })
+
+  test('skills --help shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills', '--help'])
+    expect(output).toContain('test skills')
+    expect(output).toContain('add')
+  })
+
+  test('skills add --help shows options', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills', 'add', '--help'])
+    expect(output).toContain('test skills add')
+    expect(output).toContain('--depth')
+    expect(output).toContain('--no-global')
+  })
+})
+
 describe('skills staleness', () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>
 

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { builtinCommands } from './internal/builtins.js'
+
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
   const { aliases, description, version, commands = [], root = false } = options
@@ -330,11 +332,11 @@ function globalOptionsLines(root = false): string[] {
   const lines: string[] = []
 
   if (root) {
-    const builtins = [
-      { name: 'completions', desc: 'Generate shell completion script' },
-      { name: 'mcp add', desc: 'Register as MCP server' },
-      { name: 'skills add', desc: 'Sync skill files to agents' },
-    ]
+    const builtins = builtinCommands.flatMap((b) =>
+      b.subcommands
+        ? b.subcommands.map((s) => ({ name: `${b.name} ${s.name}`, desc: s.description }))
+        : [{ name: b.name, desc: b.description }],
+    )
     const maxCmd = Math.max(...builtins.map((b) => b.name.length))
     lines.push(
       '',

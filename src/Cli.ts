@@ -8,6 +8,7 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
+import { builtinCommands } from './internal/builtins.js'
 import * as Command from './internal/command.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
@@ -468,6 +469,26 @@ async function serveImpl(
     } else {
       const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
       const candidates = Completions.complete(commands, options.rootCommand, words, index)
+      // Add built-in commands (completions, mcp, skills) to completions
+      const current = words[index] ?? ''
+      const nonFlags = words.slice(0, index).filter((w) => !w.startsWith('-'))
+      if (nonFlags.length <= 1) {
+        for (const b of builtinCommands) {
+          if (b.name.startsWith(current) && !candidates.some((c) => c.value === b.name))
+            candidates.push({
+              value: b.name,
+              description: b.description,
+              ...(b.subcommands ? { noSpace: true } : undefined),
+            })
+        }
+      } else if (nonFlags.length === 2) {
+        const parent = nonFlags[nonFlags.length - 1]
+        const builtin = builtinCommands.find((b) => b.name === parent && b.subcommands)
+        if (builtin?.subcommands)
+          for (const sub of builtin.subcommands)
+            if (sub.name.startsWith(current))
+              candidates.push({ value: sub.name, description: sub.description })
+      }
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
     }
@@ -607,19 +628,15 @@ async function serveImpl(
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
   const skillsIdx =
     filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
-  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills' && filtered[skillsIdx + 1] === 'add') {
+  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
+    if (filtered[skillsIdx + 1] !== 'add') {
+      const b = builtinCommands.find((c) => c.name === 'skills')!
+      writeln(formatBuiltinHelp(name, b))
+      return
+    }
     if (help) {
-      writeln(
-        [
-          `${name} skills add — Sync skill files to agents`,
-          '',
-          `Usage: ${name} skills add [options]`,
-          '',
-          'Options:',
-          '  --depth <number>  Grouping depth for skill files (default: 1)',
-          '  --no-global       Install to project instead of globally',
-        ].join('\n'),
-      )
+      const b = builtinCommands.find((c) => c.name === 'skills')!
+      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
     const rest = filtered.slice(skillsIdx + 2)
@@ -683,20 +700,15 @@ async function serveImpl(
 
   // mcp add: register CLI as MCP server via `npx add-mcp`
   const mcpIdx = filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
-  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp' && filtered[mcpIdx + 1] === 'add') {
+  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp') {
+    if (filtered[mcpIdx + 1] !== 'add') {
+      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      writeln(formatBuiltinHelp(name, b))
+      return
+    }
     if (help) {
-      writeln(
-        [
-          `${name} mcp add — Register as MCP server for your agent`,
-          '',
-          `Usage: ${name} mcp add [options]`,
-          '',
-          'Options:',
-          '  -c, --command <cmd>  Override the command agents will run (e.g. "pnpm my-cli --mcp")',
-          '  --no-global          Install to project instead of globally',
-          '  --agent <agent>      Target a specific agent (e.g. claude-code, cursor)',
-        ].join('\n'),
-      )
+      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
     const rest = filtered.slice(mcpIdx + 2)
@@ -1864,6 +1876,31 @@ function collectHelpCommands(
     result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** @internal Formats group-level help for a built-in command (e.g. `cli skills`). */
+function formatBuiltinHelp(
+  cli: string,
+  builtin: (typeof builtinCommands)[number],
+): string {
+  return Help.formatRoot(`${cli} ${builtin.name}`, {
+    description: builtin.description,
+    commands: builtin.subcommands?.map((s) => ({ name: s.name, description: s.description })),
+  })
+}
+
+/** @internal Formats subcommand-level help for a built-in command (e.g. `cli skills add --help`). */
+function formatBuiltinSubcommandHelp(
+  cli: string,
+  builtin: (typeof builtinCommands)[number],
+  subName: string,
+): string {
+  const sub = builtin.subcommands?.find((s) => s.name === subName)
+  return Help.formatCommand(`${cli} ${builtin.name} ${subName}`, {
+    alias: sub?.alias,
+    description: sub?.description,
+    options: sub?.options,
+  })
 }
 
 /** @internal Formats help text for a fetch gateway command. */

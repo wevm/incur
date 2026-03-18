@@ -391,6 +391,35 @@ describe('serve integration', () => {
     expect(output).toContain('db')
   })
 
+  test('COMPLETE=bash includes built-in commands at root', async () => {
+    const cli = makeCli()
+    const output = await serve(cli, ['--', 'mycli', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '1',
+    })
+    expect(output).toContain('completions')
+    expect(output).toContain('mcp')
+    expect(output).toContain('skills')
+  })
+
+  test('COMPLETE=bash suggests add for skills subcommand', async () => {
+    const cli = makeCli()
+    const output = await serve(cli, ['--', 'mycli', 'skills', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '2',
+    })
+    expect(output).toContain('add')
+  })
+
+  test('COMPLETE=bash suggests add for mcp subcommand', async () => {
+    const cli = makeCli()
+    const output = await serve(cli, ['--', 'mycli', 'mcp', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '2',
+    })
+    expect(output).toContain('add')
+  })
+
   test('COMPLETE=zsh with words outputs candidates in zsh format', async () => {
     const cli = makeCli()
     const output = await serve(cli, ['--', 'mycli', '--'], {
