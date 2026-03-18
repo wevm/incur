@@ -314,7 +314,6 @@ async function main() {
 
   // ── Scenario computation ────────────────────────────────────────────
 
-  const sessions = 1000
   const callsPerSession = 5
   const uniqueCmds = 3
 
@@ -343,12 +342,6 @@ async function main() {
   const costA = cost(bkA)
   const costB = cost(bkB)
   const costC = cost(bkC)
-  const atScaleCostA = sessions * costA
-  const atScaleCostB = sessions * costB
-  const atScaleCostC = sessions * costC
-  const savingsVsA = Math.round(((atScaleCostA - atScaleCostC) / atScaleCostA) * 100)
-
-  const usd = (n: number) => `$${n.toFixed(2)}`
   const usd4 = (n: number) => `$${n.toFixed(4)}`
 
   // ── Helpers ────────────────────────────────────────────────────────────
@@ -408,9 +401,6 @@ async function main() {
   out(`## Per-Session Breakdown (${callsPerSession} calls, ${uniqueCmds} unique commands)`)
   out('')
   out('```')
-  const inputA = bkA.session + bkA.discovery + bkA.response
-  const inputB = bkB.session + bkB.discovery + bkB.response
-  const inputC = bkC.session + bkC.discovery + bkC.response
 
   const pct = (...vals: number[]) => {
     const max = Math.max(...vals)

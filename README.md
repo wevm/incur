@@ -845,25 +845,37 @@ const cli = Cli.create('my-cli', {
 })
 ```
 
-Config files are nested JSON trees mirroring the command hierarchy. Scalars and arrays are option defaults; objects are subcommand namespaces:
+Config files use a structured format with `options` and `commands` keys, mirroring the `Cli.create()` / `.command()` hierarchy:
 
 ```json
 {
-  "verbose": true,
-  "echo": {
-    "upper": true,
-    "prefix": "cfg"
+  "options": {
+    "verbose": true
   },
-  "project": {
-    "list": {
-      "limit": 25,
-      "save-dev": true
+  "commands": {
+    "echo": {
+      "options": {
+        "upper": true,
+        "prefix": "cfg"
+      }
+    },
+    "project": {
+      "commands": {
+        "list": {
+          "options": {
+            "limit": 25,
+            "save-dev": true
+          }
+        }
+      }
     }
   }
 }
 ```
 
-Precedence is `argv > config > zod defaults`. Keys may use camelCase or kebab-case. Only command `options` are loaded — `args`, `env`, and built-in commands are unaffected.
+Precedence is `argv > config > zod defaults`. Only command `options` are loaded — `args`, `env`, and built-in commands are unaffected.
+
+Use `incur gen` to auto-generate a `config.schema.json` to distribute with your CLI for consumer autocomplete.
 
 ### Filtering output
 

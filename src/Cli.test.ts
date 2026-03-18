@@ -120,9 +120,13 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'test.json'),
       JSON.stringify({
-        echo: {
-          prefix: 'cfg',
-          upper: true,
+        commands: {
+          echo: {
+            options: {
+              prefix: 'cfg',
+              upper: true,
+            },
+          },
         },
       }),
     )
@@ -140,8 +144,10 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'test.json'),
       JSON.stringify({
-        rootValue: 'cfg-root',
-        echo: { prefix: 'cfg' },
+        options: { rootValue: 'cfg-root' },
+        commands: {
+          echo: { options: { prefix: 'cfg' } },
+        },
       }),
     )
 
@@ -156,10 +162,16 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'test.json'),
       JSON.stringify({
-        project: {
-          list: {
-            label: ['cfg'],
-            limit: 25,
+        commands: {
+          project: {
+            commands: {
+              list: {
+                options: {
+                  label: ['cfg'],
+                  limit: 25,
+                },
+              },
+            },
           },
         },
       }),
@@ -173,18 +185,13 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'test.json'),
       JSON.stringify({
-        echo: {
-          prefix: 'auto',
-        },
+        commands: { echo: { options: { prefix: 'auto' } } },
       }),
     )
     await writeFile(
       join(dir, 'custom.json'),
       JSON.stringify({
-        echo: {
-          prefix: 'custom',
-          upper: true,
-        },
+        commands: { echo: { options: { prefix: 'custom', upper: true } } },
       }),
     )
 
@@ -201,17 +208,13 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'one.json'),
       JSON.stringify({
-        echo: {
-          prefix: 'one',
-        },
+        commands: { echo: { options: { prefix: 'one' } } },
       }),
     )
     await writeFile(
       join(dir, 'two.json'),
       JSON.stringify({
-        echo: {
-          prefix: 'two',
-        },
+        commands: { echo: { options: { prefix: 'two' } } },
       }),
     )
 
@@ -262,7 +265,7 @@ describe('config defaults', () => {
   })
 
   test('fails when the selected config section is not an object', async () => {
-    await writeFile(join(dir, 'test.json'), JSON.stringify({ echo: true }))
+    await writeFile(join(dir, 'test.json'), JSON.stringify({ commands: { echo: true } }))
 
     const { exitCode, output } = await serve(createConfigCli(), ['echo'])
     expect(exitCode).toBe(1)
@@ -273,9 +276,7 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'test.json'),
       JSON.stringify({
-        echo: {
-          upper: 'nope',
-        },
+        commands: { echo: { options: { upper: 'nope' } } },
       }),
     )
 
@@ -288,9 +289,7 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'test.json'),
       JSON.stringify({
-        echo: {
-          prefix: 123,
-        },
+        commands: { echo: { options: { prefix: 123 } } },
       }),
     )
 
@@ -332,7 +331,7 @@ describe('config defaults', () => {
     await writeFile(
       join(dir, 'custom.json'),
       JSON.stringify({
-        echo: { prefix: 'custom' },
+        commands: { echo: { options: { prefix: 'custom' } } },
       }),
     )
 
@@ -346,7 +345,10 @@ describe('config defaults', () => {
   })
 
   test('searches files list in order, first match wins', async () => {
-    await writeFile(join(dir, '.testrc.json'), JSON.stringify({ echo: { prefix: 'rc' } }))
+    await writeFile(
+      join(dir, '.testrc.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'rc' } } } }),
+    )
 
     const cli = Cli.create('test', {
       config: { files: ['test.json', '.testrc.json'] },
@@ -361,7 +363,10 @@ describe('config defaults', () => {
   })
 
   test('files: [] disables auto-discovery', async () => {
-    await writeFile(join(dir, 'test.json'), JSON.stringify({ echo: { prefix: 'should-not-load' } }))
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'should-not-load' } } } }),
+    )
 
     const cli = Cli.create('test', {
       config: { files: [] },
@@ -379,7 +384,10 @@ describe('config defaults', () => {
     const configDir = join(homedir(), '.config', 'test-incur-files-tilde')
     await mkdir(configDir, { recursive: true })
     try {
-      await writeFile(join(configDir, 'config.json'), JSON.stringify({ echo: { prefix: 'home' } }))
+      await writeFile(
+        join(configDir, 'config.json'),
+        JSON.stringify({ commands: { echo: { options: { prefix: 'home' } } } }),
+      )
 
       const cli = Cli.create('test', {
         config: { files: ['test.json', '~/.config/test-incur-files-tilde/config.json'] },
@@ -397,8 +405,14 @@ describe('config defaults', () => {
   })
 
   test('explicit --flag overrides files list', async () => {
-    await writeFile(join(dir, '.testrc.json'), JSON.stringify({ echo: { prefix: 'rc' } }))
-    await writeFile(join(dir, 'override.json'), JSON.stringify({ echo: { prefix: 'override' } }))
+    await writeFile(
+      join(dir, '.testrc.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'rc' } } } }),
+    )
+    await writeFile(
+      join(dir, 'override.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'override' } } } }),
+    )
 
     const cli = Cli.create('test', {
       config: { flag: 'config', files: ['.testrc.json'] },
@@ -426,7 +440,7 @@ describe('config defaults', () => {
             const eq = line.indexOf('=')
             if (eq !== -1) obj[line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
           }
-          return { echo: obj }
+          return { commands: { echo: { options: obj } } }
         },
       },
     })
@@ -445,7 +459,7 @@ describe('config defaults', () => {
         files: [],
         loader: async (path) => {
           expect(path).toBeUndefined()
-          return { echo: { prefix: 'from-loader' } }
+          return { commands: { echo: { options: { prefix: 'from-loader' } } } }
         },
       },
     })
@@ -479,7 +493,7 @@ describe('config defaults', () => {
         files: [],
         loader: async () => {
           loaderCalled = true
-          return { echo: { prefix: 'should-not-load' } }
+          return { commands: { echo: { options: { prefix: 'should-not-load' } } } }
         },
       },
     })
@@ -512,6 +526,69 @@ describe('config defaults', () => {
     expect(output).toContain('Remote config server unreachable')
   })
 
+  test('--no-flag disables auto-discovery without prior --flag', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'auto-loaded' } } } }),
+    )
+
+    const { output } = await serve(createConfigCli('config'), ['echo', '--no-config', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '', upper: false })
+  })
+
+  test('--config without a value produces an error', async () => {
+    const { exitCode, output } = await serve(createConfigCli('config'), ['echo', '--config'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Missing value for flag')
+  })
+
+  test('--config= (empty value) produces an error', async () => {
+    const { exitCode, output } = await serve(createConfigCli('config'), ['echo', '--config='])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Missing value for flag')
+  })
+
+  test('--no-settings works with custom flag name', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'auto' } } } }),
+    )
+
+    const { output } = await serve(createConfigCli('settings'), ['echo', '--no-settings', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '', upper: false })
+  })
+
+  test('camelCase config keys are accepted at cli level', async () => {
+    const cli = Cli.create('test', { config: {} })
+    cli.command('echo', {
+      options: z.object({ saveDev: z.boolean().default(false) }),
+      run: (c) => c.options,
+    })
+
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { 'save-dev': true } } } }),
+    )
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ saveDev: true })
+  })
+
+  test('config defaults with only subcommand namespaces yields no option defaults', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: {
+          echo: { options: { prefix: 'child' } },
+          project: { commands: { list: { options: { limit: 50 } } } },
+        },
+      }),
+    )
+
+    const rootResult = await serve(createConfigCli(), ['--json'])
+    expect(JSON.parse(rootResult.output)).toEqual({ rootValue: 'root-default' })
+  })
+
   test('explicit --flag path is forwarded to custom loader', async () => {
     await writeFile(join(dir, 'custom.dat'), 'prefix=custom-loader')
 
@@ -522,7 +599,7 @@ describe('config defaults', () => {
           if (!path) return undefined
           const raw = await readFile(path, 'utf8')
           const [, value] = raw.split('=')
-          return { echo: { prefix: value!.trim() } }
+          return { commands: { echo: { options: { prefix: value!.trim() } } } }
         },
       },
     })

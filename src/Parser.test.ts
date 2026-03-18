@@ -311,6 +311,27 @@ describe('parse', () => {
     expect(result.options).toEqual({ limit: 5 })
   })
 
+  test('defaults with no options schema throws on non-empty defaults', () => {
+    expect(() =>
+      Parser.parse([], {
+        defaults: { limit: 10 } as any,
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
+  })
+
+  test('defaults with no options schema and empty defaults is a no-op', () => {
+    const result = Parser.parse([], { defaults: {} as any })
+    expect(result.options).toEqual({})
+  })
+
+  test('config array defaults are used when argv omits the option', () => {
+    const result = Parser.parse([], {
+      defaults: { label: ['bug', 'feature'] },
+      options: z.object({ label: z.array(z.string()).default([]) }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'feature'] })
+  })
+
   test('refined option schemas validate only the merged winning values', () => {
     const result = Parser.parse(['--min', '1', '--max', '3'], {
       defaults: { min: 'oops' } as any,

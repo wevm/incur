@@ -2204,7 +2204,7 @@ describe('fetch gateway', () => {
   })
 
   test('query params from --key value', async () => {
-    const { output } = await serve(createApp(), ['api', 'users', '--limit', '5'])
+    await serve(createApp(), ['api', 'users', '--limit', '5'])
     const { output: jsonOut } = await serve(createApp(), [
       'api',
       'users',

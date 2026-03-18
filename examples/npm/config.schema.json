@@ -1,0 +1,137 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "saveDev": {
+                  "description": "Save as dev dependency",
+                  "type": "boolean"
+                },
+                "saveExact": {
+                  "description": "Save exact version",
+                  "type": "boolean"
+                },
+                "global": {
+                  "description": "Install globally",
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "info": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "init": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "yes": {
+                  "type": "boolean",
+                  "description": "Skip prompts and use defaults"
+                },
+                "scope": {
+                  "description": "Package scope",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "publish": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tag": {
+                  "default": "latest",
+                  "description": "Distribution tag",
+                  "type": "string"
+                },
+                "access": {
+                  "default": "public",
+                  "description": "Package access level",
+                  "type": "string",
+                  "enum": [
+                    "public",
+                    "restricted"
+                  ]
+                },
+                "dryRun": {
+                  "type": "boolean",
+                  "description": "Report what would be published"
+                },
+                "otp": {
+                  "description": "One-time password for 2FA",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "run": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "uninstall": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "global": {
+                  "type": "boolean",
+                  "description": "Remove global package"
+                }
+              }
+            }
+          }
+        },
+        "outdated": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "global": {
+                  "type": "boolean",
+                  "description": "Check global packages"
+                },
+                "long": {
+                  "type": "boolean",
+                  "description": "Show extended information"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

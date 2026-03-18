@@ -1,6 +1,6 @@
-import { access, constants, readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import * as fs from 'node:fs/promises'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import type { z } from 'zod'
 
@@ -295,6 +295,8 @@ export function create(
   }
 
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
+  if (def.options) toRootOptions.set(cli, def.options)
+  if (def.config !== undefined) toConfigEnabled.set(cli, true)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
@@ -2159,9 +2161,9 @@ declare namespace loadCommandOptionDefaults {
 /** @internal Resolves a config file path, expanding `~` to home dir. */
 function resolveConfigPath(filePath: string): string {
   if (filePath.startsWith('~/') || filePath === '~') {
-    return join(homedir(), filePath.slice(1))
+    return path.join(os.homedir(), filePath.slice(1))
   }
-  return resolve(process.cwd(), filePath)
+  return path.resolve(process.cwd(), filePath)
 }
 
 /** @internal Returns the first readable file from a list of paths, or `undefined`. */
@@ -2169,7 +2171,7 @@ async function findFirstExisting(paths: string[]): Promise<string | undefined> {
   for (const p of paths) {
     const resolved = resolveConfigPath(p)
     try {
-      await access(resolved, constants.R_OK)
+      await fs.access(resolved, fs.constants.R_OK)
       return resolved
     } catch {}
   }
@@ -2183,7 +2185,7 @@ async function readJsonConfig(
 ): Promise<Record<string, unknown> | undefined> {
   let raw: string
   try {
-    raw = await readFile(targetPath, 'utf8')
+    raw = await fs.readFile(targetPath, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       if (explicit) throw new ParseError({ message: `Config file not found: ${targetPath}` })
@@ -2219,7 +2221,9 @@ function extractCommandSection(
   let node: unknown = parsed
   for (const seg of segments) {
     if (!isRecord(node)) return undefined
-    node = node[seg]
+    const commands = node.commands
+    if (!isRecord(commands)) return undefined
+    node = commands[seg]
     if (node === undefined) return undefined
   }
   if (!isRecord(node))
@@ -2227,13 +2231,12 @@ function extractCommandSection(
       message: `Invalid config section for '${path}': expected an object`,
     })
 
-  // Separate option defaults (scalars/arrays) from subcommand namespaces (objects)
-  const options: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(node)) {
-    if (!isRecord(value)) {
-      options[key] = value
-    }
-  }
+  const options = node.options
+  if (options === undefined) return undefined
+  if (!isRecord(options))
+    throw new ParseError({
+      message: `Invalid config 'options' for '${path}': expected an object`,
+    })
   return Object.keys(options).length > 0 ? options : undefined
 }
 
@@ -2317,7 +2320,13 @@ export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
 
 /** @internal Maps root CLI instances to their command definitions. */
-const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
+export const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
+
+/** @internal Maps CLI instances to their root options schema. */
+export const toRootOptions = new WeakMap<Cli, z.ZodObject<any>>()
+
+/** @internal Maps CLI instances to whether config file loading is enabled. */
+export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()

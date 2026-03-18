@@ -1,0 +1,21 @@
+{
+  "$schema": "./config.schema.json",
+  "commands": {
+    "install": {
+      "options": {
+        "saveExact": true
+      }
+    },
+    "publish": {
+      "options": {
+        "access": "public",
+        "tag": "latest"
+      }
+    },
+    "outdated": {
+      "options": {
+        "long": true
+      }
+    }
+  }
+}
