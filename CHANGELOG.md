@@ -1,5 +1,13 @@
 # incur
 
+## 0.3.5
+
+### Patch Changes
+
+- 8952a65: Fixed built-in commands (`skills`, `mcp`) showing root command errors when invoked without subcommand. Bare `skills`/`mcp` and `--help` now show their own help with available subcommands. Added built-in commands to shell completions. Fixed skill name sanitization for CLI names containing dots.
+- 05d89f3: Fixed `resolvePackageRoot` failing with `ENOENT` when running from a Bun compiled binary.
+- 64295d2: Added unified command execution across CLI, HTTP, and MCP transports.
+
 ## 0.3.4
 
 ### Patch Changes
