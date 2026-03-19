@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import type { FieldError } from '../Errors.js'
 import { IncurError, ValidationError } from '../Errors.js'
@@ -329,3 +329,97 @@ function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unkn
     typeof (value as any).next === 'function'
   )
 }
+
+/** Common metadata shared by command definitions and built-in commands. */
+export type CommandMeta<options extends z.ZodObject<any> | undefined = undefined> = {
+  /** Map of option names to single-char aliases. */
+  alias?: options extends z.ZodObject<any>
+    ? Partial<Record<keyof z.output<options>, string>>
+    : Record<string, string> | undefined
+  /** A short description of what the command does. */
+  description?: string | undefined
+  /** Zod schema for named options/flags. */
+  options?: options | undefined
+}
+
+/** @internal Creates a builtin subcommand with typesafe alias inference. */
+function subcommand<const options extends z.ZodObject<any> | undefined = undefined>(
+  def: CommandMeta<options> & { name: string },
+) {
+  return def
+}
+
+/** Supported shell names for completions. */
+export const shells = ['bash', 'fish', 'nushell', 'zsh'] as const
+
+/** A supported shell name. */
+export type Shell = (typeof shells)[number]
+
+/** Built-in command metadata shared by help, completions, and handler logic. */
+export const builtinCommands = [
+  {
+    name: 'completions',
+    description: 'Generate shell completion script',
+    args: z.object({
+      shell: z.enum(shells).describe('Shell to generate completions for'),
+    }),
+    hint(name) {
+      const rows = [
+        ['bash', `eval "$(${name} completions bash)"`, '# add to ~/.bashrc'],
+        ['fish', `${name} completions fish | source`, '# add to ~/.config/fish/config.fish'],
+        ['nushell', `see \`${name} completions nushell\``, '# add to config.nu'],
+        ['zsh', `eval "$(${name} completions zsh)"`, '# add to ~/.zshrc'],
+      ] as const
+      const shellW = Math.max(...rows.map((r) => r[0].length))
+      const cmdW = Math.max(...rows.map((r) => r[1].length))
+      return (
+        'Setup:\n' +
+        rows
+          .map(([s, cmd, comment]) => `  ${s.padEnd(shellW)}  ${cmd.padEnd(cmdW)}  ${comment}`)
+          .join('\n')
+      )
+    },
+  },
+  {
+    name: 'mcp',
+    description: 'Register as MCP server',
+    subcommands: [
+      subcommand({
+        name: 'add',
+        description: 'Register as MCP server',
+        alias: { command: 'c' },
+        options: z.object({
+          agent: z
+            .string()
+            .optional()
+            .describe('Target a specific agent (e.g. claude-code, cursor)'),
+          command: z
+            .string()
+            .optional()
+            .describe('Override the command agents will run (e.g. "pnpm my-cli --mcp")'),
+          noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
+        }),
+      }),
+    ],
+  },
+  {
+    name: 'skills',
+    description: 'Sync skill files to agents',
+    subcommands: [
+      subcommand({
+        name: 'add',
+        description: 'Sync skill files to agents',
+        options: z.object({
+          depth: z.number().optional().describe('Grouping depth for skill files (default: 1)'),
+          noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
+        }),
+      }),
+    ],
+  },
+] satisfies {
+  name: string
+  args?: z.ZodObject<any> | undefined
+  description: string
+  hint?: ((name: string) => string) | undefined
+  subcommands?: (CommandMeta<z.ZodObject<any>> & { name: string })[] | undefined
+}[]

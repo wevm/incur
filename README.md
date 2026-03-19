@@ -810,7 +810,7 @@ Every incur CLI includes these flags automatically:
 | `--json`                 | Shorthand for `--format json`                          |
 | `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
 | `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
-| `--schema`               | Show JSON Schema for command's args, options, output |
+| `--schema`               | Show JSON Schema for command's args, options, output   |
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |

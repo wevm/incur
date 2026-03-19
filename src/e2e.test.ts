@@ -963,7 +963,7 @@ describe('help', () => {
         stream-throw   Stream that throws
         validate-fail  Fails validation
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -1738,7 +1738,7 @@ describe('root command with subcommands', () => {
         info     Show info
         version  Show version
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents

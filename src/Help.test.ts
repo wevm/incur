@@ -88,6 +88,17 @@ describe('formatCommand', () => {
     `)
   })
 
+  test('synopsis uses key name for non-union args and expanded values for enums', () => {
+    const result = Help.formatCommand('tool run', {
+      args: z.object({
+        port: z.number().describe('Port number'),
+        verbose: z.boolean().optional().describe('Verbose'),
+        mode: z.enum(['fast', 'slow']).describe('Mode'),
+      }),
+    })
+    expect(result).toContain('Usage: tool run <port> [verbose] <fast|slow>')
+  })
+
   test('shows count type in help for meta count', () => {
     const result = Help.formatCommand('tool run', {
       options: z.object({

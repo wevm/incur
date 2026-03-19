@@ -3,8 +3,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Readable, Writable } from 'node:stream'
 import type { z } from 'zod'
 
-import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Command from './internal/command.js'
+import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
 
 /** Starts a stdio MCP server that exposes commands as tools. */
@@ -193,5 +193,3 @@ function buildToolSchema(
   if (required.length > 0) return { type: 'object', properties, required }
   return { type: 'object', properties }
 }
-
-

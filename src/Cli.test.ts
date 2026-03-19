@@ -1350,7 +1350,7 @@ describe('help', () => {
       Commands:
         ping  Health check
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -1388,7 +1388,7 @@ describe('help', () => {
       Commands:
         ping  Health check
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -1551,7 +1551,7 @@ describe('help', () => {
       Commands:
         ping  Ping
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -1839,11 +1839,11 @@ describe('env', () => {
 })
 
 describe('built-in commands', () => {
-  test('bare completions shows missing shell error', async () => {
+  test('bare completions shows help', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
     const { output } = await serve(cli, ['completions'])
-    expect(output).toContain('Missing shell argument')
+    expect(output).toContain('Generate shell completion script')
   })
 
   test('completions --help shows help', async () => {
@@ -3460,7 +3460,8 @@ describe('fetch', () => {
       vars: z.object({ role: z.string().default('none') }),
     })
     cli.command(sub)
-    expect(await fetchJson(cli, new Request('http://localhost/admin/status'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/admin/status')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -3505,8 +3506,7 @@ describe('fetch', () => {
   test('cta block is propagated', async () => {
     const cli = Cli.create('test')
     cli.command('done', {
-      run: (c) =>
-        c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Next steps:' } }),
+      run: (c) => c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Next steps:' } }),
     })
     const { body } = await fetchJson(cli, new Request('http://localhost/done'))
     expect(body.ok).toBe(true)
