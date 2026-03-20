@@ -355,6 +355,7 @@ function globalOptionsLines(root = false): string[] {
   }
 
   const flags = [
+    { flag: '--dry-run', desc: 'Preview parsed inputs without executing' },
     {
       flag: '--filter-output <keys>',
       desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])',

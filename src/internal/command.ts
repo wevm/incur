@@ -37,6 +37,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     argv,
     inputOptions,
     agent,
+    dryRun = false,
     format,
     formatExplicit,
     name,
@@ -104,6 +105,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     const raw = command.run({
       agent,
       args,
+      dryRun,
       env: commandEnv,
       error: errorFn,
       format,
@@ -193,6 +195,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       const mwCtx: MiddlewareContext = {
         agent,
         command: path,
+        dryRun,
         env: cliEnv,
         error: errorFn,
         format: format as any,
@@ -245,7 +248,10 @@ export async function execute(command: any, options: execute.Options): Promise<e
     }
   }
 
-  return result ?? { ok: true, data: undefined }
+  const final = result ?? { ok: true, data: undefined }
+  // Tag dry-run results from commands that opted into execution
+  if (dryRun && 'ok' in final && final.ok) final.dryRun = true
+  return final
 }
 
 /** @internal Splits flat params into args vs options using schema shapes. */
@@ -269,6 +275,8 @@ export declare namespace execute {
     agent: boolean
     /** Raw positional tokens (already separated from flags). For HTTP/MCP, pass `[]`. */
     argv: string[]
+    /** Whether this is a dry-run invocation. */
+    dryRun?: boolean | undefined
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
     /** Source for environment variables. Defaults to `process.env`. */
@@ -300,7 +308,7 @@ export declare namespace execute {
 
   /** Result of executing a command. */
   type Result =
-    | { ok: true; data: unknown; cta?: CtaBlock | undefined }
+    | { ok: true; data: unknown; cta?: CtaBlock | undefined; dryRun?: true | undefined }
     | {
         ok: false
         error: {

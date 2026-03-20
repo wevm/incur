@@ -25,6 +25,7 @@ describe('formatCommand', () => {
         --limit <number>  Max PRs to return (default: 30)
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -47,6 +48,7 @@ describe('formatCommand', () => {
       Usage: tool ping
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -76,6 +78,7 @@ describe('formatCommand', () => {
         title  Title
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -164,6 +167,7 @@ describe('formatRoot', () => {
         issue list  List issues
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -189,6 +193,7 @@ describe('formatRoot', () => {
         ping  Health check
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -218,6 +223,7 @@ describe('formatRoot', () => {
         fetch  Fetch a URL
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
@@ -247,6 +253,7 @@ describe('formatRoot', () => {
         url  URL to fetch
 
       Global Options:
+        --dry-run                           Preview parsed inputs without executing
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --help                              Show help
