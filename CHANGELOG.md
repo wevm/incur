@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.6
+
+### Patch Changes
+
+- 9b2ab98: Updated help output
+
 ## 0.3.5
 
 ### Patch Changes
