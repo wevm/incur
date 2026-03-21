@@ -1,7 +1,6 @@
 import type { z } from 'zod'
 
-/** Supported shells for completion generation. */
-export type Shell = 'bash' | 'fish' | 'nushell' | 'zsh'
+import type { Shell } from './internal/command.js'
 
 /** A completion candidate with an optional description. */
 export type Candidate = {

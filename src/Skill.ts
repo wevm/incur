@@ -127,7 +127,11 @@ function renderGroup(
       ? `${descParts.join('. ')}. Run \`${title} --help\` for usage details.`
       : `Run \`${title} --help\` for usage details.`
 
-  const slug = title.replace(/\s+/g, '-')
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '')
   const fm = ['---', `name: ${slug}`]
   fm.push(`description: ${description}`)
   fm.push(`requires_bin: ${cli}`)

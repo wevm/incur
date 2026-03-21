@@ -11,6 +11,8 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
+import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
+import * as Command from './internal/command.js'
 import { isRecord } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
@@ -261,10 +263,13 @@ export function create(
     async fetch(req: Request) {
       if (pending.length > 0) await Promise.all(pending)
       return fetchImpl(name, commands, req, {
+        envSchema: def.env,
         mcpHandler,
         middlewares,
+        name,
         rootCommand: rootDef,
         vars: def.vars,
+        version: def.version,
       })
     },
 
@@ -487,12 +492,17 @@ async function serveImpl(
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
-    await Mcp.serve(name, options.version ?? '0.0.0', commands)
+    await Mcp.serve(name, options.version ?? '0.0.0', commands, {
+      middlewares: options.middlewares,
+      env: options.envSchema,
+      vars: options.vars,
+      version: options.version,
+    })
     return
   }
 
   // COMPLETE: dynamic shell completions (called by shell hook at tab-press)
-  const completeShell = process.env.COMPLETE as Completions.Shell | undefined
+  const completeShell = process.env.COMPLETE as Shell | undefined
   if (completeShell) {
     // Remove separator `--` from argv
     const sepIdx = argv.indexOf('--')
@@ -504,6 +514,26 @@ async function serveImpl(
     } else {
       const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
       const candidates = Completions.complete(commands, options.rootCommand, words, index)
+      // Add built-in commands (completions, mcp, skills) to completions
+      const current = words[index] ?? ''
+      const nonFlags = words.slice(0, index).filter((w) => !w.startsWith('-'))
+      if (nonFlags.length <= 1) {
+        for (const b of builtinCommands) {
+          if (b.name.startsWith(current) && !candidates.some((c) => c.value === b.name))
+            candidates.push({
+              value: b.name,
+              description: b.description,
+              ...(b.subcommands ? { noSpace: true } : undefined),
+            })
+        }
+      } else if (nonFlags.length === 2) {
+        const parent = nonFlags[nonFlags.length - 1]
+        const builtin = builtinCommands.find((b) => b.name === parent && b.subcommands)
+        if (builtin?.subcommands)
+          for (const sub of builtin.subcommands)
+            if (sub.name.startsWith(current))
+              candidates.push({ value: sub.name, description: sub.description })
+      }
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
     }
@@ -582,73 +612,48 @@ async function serveImpl(
     // not a completions invocation
     return -1
   })()
+  // TODO: refactor built-in command handlers (completions, skills, mcp) into a generic dispatch loop on `builtinCommands`
   if (completionsIdx !== -1 && filtered[completionsIdx] === 'completions') {
-    if (help) {
+    const shell = filtered[completionsIdx + 1]
+    if (help || !shell) {
+      const b = builtinCommands.find((c) => c.name === 'completions')!
       writeln(
-        [
-          `${name} completions — Generate shell completion script`,
-          '',
-          `Usage: ${name} completions <shell>`,
-          '',
-          'Shells:',
-          '  bash',
-          '  fish',
-          '  nushell',
-          '  zsh',
-          '',
-          'Setup:',
-          ...(() => {
-            const rows = [
-              ['bash', `eval "$(${name} completions bash)"`, '# add to ~/.bashrc'],
-              ['zsh', `eval "$(${name} completions zsh)"`, '# add to ~/.zshrc'],
-              ['fish', `${name} completions fish | source`, '# add to ~/.config/fish/config.fish'],
-              ['nushell', `see \`${name} completions nushell\``, '# add to config.nu'],
-            ]
-            const shellW = Math.max(...rows.map((r) => r[0]!.length))
-            const cmdW = Math.max(...rows.map((r) => r[1]!.length))
-            return rows.map(
-              ([shell, cmd, comment]) =>
-                `  ${shell!.padEnd(shellW)}  ${cmd!.padEnd(cmdW)}  ${comment}`,
-            )
-          })(),
-        ].join('\n'),
+        Help.formatCommand(`${name} completions`, {
+          args: b.args,
+          description: b.description,
+          hideGlobalOptions: true,
+          hint: b.hint?.(name),
+        }),
       )
       return
     }
-    const shell = filtered[completionsIdx + 1]
-    if (!shell || !['bash', 'fish', 'nushell', 'zsh'].includes(shell)) {
+    if (!shells.includes(shell as any)) {
       writeln(
         formatHumanError({
           code: 'INVALID_SHELL',
-          message: shell
-            ? `Unknown shell '${shell}'. Supported: bash, fish, nushell, zsh`
-            : `Missing shell argument. Usage: ${name} completions <bash|fish|nushell|zsh>`,
+          message: `Unknown shell '${shell}'. Supported: ${shells.join(', ')}`,
         }),
       )
       exit(1)
       return
     }
     const names = [name, ...(options.aliases ?? [])]
-    writeln(names.map((n) => Completions.register(shell as Completions.Shell, n)).join('\n'))
+    writeln(names.map((n) => Completions.register(shell as Shell, n)).join('\n'))
     return
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
   const skillsIdx =
     filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
-  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills' && filtered[skillsIdx + 1] === 'add') {
+  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
+    if (filtered[skillsIdx + 1] !== 'add') {
+      const b = builtinCommands.find((c) => c.name === 'skills')!
+      writeln(formatBuiltinHelp(name, b))
+      return
+    }
     if (help) {
-      writeln(
-        [
-          `${name} skills add — Sync skill files to agents`,
-          '',
-          `Usage: ${name} skills add [options]`,
-          '',
-          'Options:',
-          '  --depth <number>  Grouping depth for skill files (default: 1)',
-          '  --no-global       Install to project instead of globally',
-        ].join('\n'),
-      )
+      const b = builtinCommands.find((c) => c.name === 'skills')!
+      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
     const rest = filtered.slice(skillsIdx + 2)
@@ -712,20 +717,15 @@ async function serveImpl(
 
   // mcp add: register CLI as MCP server via `npx add-mcp`
   const mcpIdx = filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
-  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp' && filtered[mcpIdx + 1] === 'add') {
+  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp') {
+    if (filtered[mcpIdx + 1] !== 'add') {
+      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      writeln(formatBuiltinHelp(name, b))
+      return
+    }
     if (help) {
-      writeln(
-        [
-          `${name} mcp add — Register as MCP server for your agent`,
-          '',
-          `Usage: ${name} mcp add [options]`,
-          '',
-          'Options:',
-          '  -c, --command <cmd>  Override the command agents will run (e.g. "pnpm my-cli --mcp")',
-          '  --no-global          Install to project instead of globally',
-          '  --agent <agent>      Target a specific agent (e.g. claude-code, cursor)',
-        ].join('\n'),
-      )
+      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
     const rest = filtered.slice(mcpIdx + 2)
@@ -1243,220 +1243,150 @@ async function serveImpl(
     ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
-  // Initialize vars from schema defaults
-  const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-  const envSource = options.env ?? process.env
+  if (human)
+    emitDeprecationWarnings(
+      rest,
+      command.options,
+      command.alias as Record<string, string> | undefined,
+    )
 
-  const runCommand = async () => {
-    const defaults = configEnabled
-      ? await loadCommandOptionDefaults(name, path, {
-          configDisabled,
-          configPath,
-          files: options.config?.files,
-          loader: options.config?.loader,
-        })
-      : undefined
-    const { args, options: parsedOptions } = Parser.parse(rest, {
-      alias: command.alias as Record<string, string> | undefined,
-      args: command.args,
-      defaults,
-      options: command.options,
-    })
-
-    if (human)
-      emitDeprecationWarnings(
-        rest,
-        command.options,
-        command.alias as Record<string, string> | undefined,
-      )
-
-    const env = command.env ? Parser.parseEnv(command.env, envSource) : {}
-
-    const okFn = (data: unknown, meta: { cta?: CtaBlock | undefined } = {}): never => {
-      return { [sentinel]: 'ok', data, cta: meta.cta } as never
-    }
-    const errorFn = (opts: {
-      code: string
-      exitCode?: number | undefined
-      message: string
-      retryable?: boolean | undefined
-      cta?: CtaBlock | undefined
-    }): never => {
-      return { [sentinel]: 'error', ...opts } as never
-    }
-
-    const result = command.run({
-      agent: !human,
-      args,
-      env,
-      error: errorFn,
-      format,
-      formatExplicit,
-      name,
-      ok: okFn,
-      options: parsedOptions,
-      var: varsMap,
-      version: options.version,
-    })
-
-    // Streaming path — async generator
-    if (isAsyncGenerator(result)) {
-      await handleStreaming(result, {
-        name,
-        path,
-        start,
-        format,
-        formatExplicit,
-        human,
-        renderOutput,
-        verbose,
-        truncate,
-        write,
-        writeln,
-        exit,
+  let defaults: Record<string, unknown> | undefined
+  if (configEnabled) {
+    try {
+      defaults = await loadCommandOptionDefaults(name, path, {
+        configDisabled,
+        configPath,
+        files: options.config?.files,
+        loader: options.config?.loader,
       })
-      return
-    }
-
-    const awaited = await result
-
-    if (isSentinel(awaited)) {
-      const cta = formatCtaBlock(name, awaited.cta)
-      if (awaited[sentinel] === 'ok') {
-        write({
-          ok: true,
-          data: awaited.data,
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
-          },
-        })
-      } else {
-        const err = awaited as ErrorResult
-        write({
-          ok: false,
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-          },
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
-          },
-        })
-        exit(err.exitCode ?? 1)
-      }
-    } else {
+    } catch (error) {
       write({
-        ok: true,
-        data: awaited,
-        meta: {
-          command: path,
-          duration: `${Math.round(performance.now() - start)}ms`,
+        ok: false,
+        error: {
+          code: error instanceof IncurError ? error.code : 'UNKNOWN',
+          message: error instanceof Error ? error.message : String(error),
         },
+        meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
       })
+      exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+      return
     }
   }
 
-  try {
-    const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, envSource) : {}
+  const result = await Command.execute(command, {
+    agent: !human,
+    argv: rest,
+    defaults,
+    env: options.envSchema,
+    envSource: options.env,
+    format,
+    formatExplicit,
+    inputOptions: {},
+    middlewares: allMiddleware,
+    name,
+    path,
+    vars: options.vars,
+    version: options.version,
+  })
 
-    if (allMiddleware.length > 0) {
-      const errorFn = (opts: {
-        code: string
-        exitCode?: number | undefined
-        message: string
-        retryable?: boolean | undefined
-        cta?: CtaBlock | undefined
-      }): never => {
-        return { [sentinel]: 'error', ...opts } as never
-      }
-      const mwCtx: MiddlewareContext = {
-        agent: !human,
-        command: path,
-        env: cliEnv,
-        error: errorFn,
-        format,
-        formatExplicit,
-        name,
-        set(key: string, value: unknown) {
-          varsMap[key] = value
-        },
-        var: varsMap,
-        version: options.version,
-      }
-      const handleMwSentinel = (result: unknown) => {
-        if (!isSentinel(result) || result[sentinel] !== 'error') return
-        const err = result as ErrorResult
-        const cta = formatCtaBlock(name, err.cta)
-        write({
-          ok: false,
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-          },
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
-          },
-        })
-        exit(err.exitCode ?? 1)
-      }
-      const composed = allMiddleware.reduceRight(
-        (next: () => Promise<void>, mw) => async () => {
-          handleMwSentinel(await mw(mwCtx, next))
-        },
-        runCommand,
-      )
-      await composed()
-    } else {
-      await runCommand()
-    }
-  } catch (error) {
-    const errorOutput: Output = {
-      ok: false,
-      error: {
-        code:
-          error instanceof IncurError
-            ? error.code
-            : error instanceof ValidationError
-              ? 'VALIDATION_ERROR'
-              : 'UNKNOWN',
-        message: error instanceof Error ? error.message : String(error),
-        ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
-        ...(error instanceof ValidationError ? { fieldErrors: error.fieldErrors } : undefined),
-      },
+  const duration = `${Math.round(performance.now() - start)}ms`
+
+  // Streaming path — async generator
+  if ('stream' in result) {
+    await handleStreaming(result.stream, {
+      name,
+      path,
+      start,
+      format,
+      formatExplicit,
+      human,
+      renderOutput,
+      verbose,
+      truncate,
+      write,
+      writeln,
+      exit,
+    })
+    return
+  }
+
+  if (result.ok) {
+    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
+    write({
+      ok: true,
+      data: result.data,
       meta: {
         command: path,
-        duration: `${Math.round(performance.now() - start)}ms`,
+        duration,
+        ...(cta ? { cta } : undefined),
       },
-    }
+    })
+  } else {
+    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
 
-    if (human && !formatExplicit && error instanceof ValidationError) {
-      writeln(formatHumanValidationError(name, path, command, error, options.env, configFlag))
+    if (human && !formatExplicit && result.error.fieldErrors) {
+      writeln(
+        formatHumanValidationError(
+          name,
+          path,
+          command,
+          new ValidationError({
+            message: result.error.message,
+            fieldErrors: result.error.fieldErrors,
+          }),
+          options.env,
+          configFlag,
+        ),
+      )
       exit(1)
       return
     }
 
-    write(errorOutput)
-    exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+    write({
+      ok: false,
+      error: {
+        code: result.error.code,
+        message: result.error.message,
+        ...(result.error.retryable !== undefined
+          ? { retryable: result.error.retryable }
+          : undefined),
+        ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
+      },
+      meta: {
+        command: path,
+        duration,
+        ...(cta ? { cta } : undefined),
+      },
+    })
+    exit(result.exitCode ?? 1)
   }
 }
 
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    /** CLI-level env schema. */
+    envSchema?: z.ZodObject<any> | undefined
+    /** Group-level middleware collected during command resolution. */
+    groupMiddlewares?: MiddlewareHandler[] | undefined
     mcpHandler?:
-      | ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>)
+      | ((
+          req: Request,
+          commands: Map<string, CommandEntry>,
+          mcpOptions?: {
+            middlewares?: MiddlewareHandler[] | undefined
+            env?: z.ZodObject<any> | undefined
+            vars?: z.ZodObject<any> | undefined
+          },
+        ) => Promise<Response>)
       | undefined
     middlewares?: MiddlewareHandler[] | undefined
+    /** CLI name. */
+    name?: string | undefined
     rootCommand?: CommandDefinition<any, any, any> | undefined
     vars?: z.ZodObject<any> | undefined
+    /** CLI version string. */
+    version?: string | undefined
   }
 }
 
@@ -1464,7 +1394,15 @@ declare namespace fetchImpl {
 function createMcpHttpHandler(name: string, version: string) {
   let transport: any
 
-  return async (req: Request, commands: Map<string, CommandEntry>): Promise<Response> => {
+  return async (
+    req: Request,
+    commands: Map<string, CommandEntry>,
+    mcpOptions?: {
+      middlewares?: MiddlewareHandler[] | undefined
+      env?: z.ZodObject<any> | undefined
+      vars?: z.ZodObject<any> | undefined
+    },
+  ): Promise<Response> => {
     if (!transport) {
       const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
       const { WebStandardStreamableHTTPServerTransport } =
@@ -1487,7 +1425,13 @@ function createMcpHttpHandler(name: string, version: string) {
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            return Mcp.callTool(tool, params)
+            return Mcp.callTool(tool, params, {
+              name,
+              version,
+              middlewares: mcpOptions?.middlewares,
+              env: mcpOptions?.env,
+              vars: mcpOptions?.vars,
+            })
           },
         )
       }
@@ -1516,7 +1460,11 @@ async function fetchImpl(
 
   // MCP over HTTP: route /mcp to the MCP transport
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
-    return options.mcpHandler(req, commands)
+    return options.mcpHandler(req, commands, {
+      middlewares: options.middlewares,
+      env: options.envSchema,
+      vars: options.vars,
+    })
 
   // .well-known/skills/ — Agent Skills Discovery (RFC)
   if (
@@ -1625,7 +1573,11 @@ async function fetchImpl(
   if ('fetchGateway' in resolved) return resolved.fetchGateway.fetch(req)
 
   const { command, path, rest } = resolved
-  return executeCommand(path, command, rest, inputOptions, start, options)
+  const groupMiddlewares = 'middlewares' in resolved ? resolved.middlewares : []
+  return executeCommand(path, command, rest, inputOptions, start, {
+    ...options,
+    groupMiddlewares,
+  })
 }
 
 /** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
@@ -1644,200 +1596,107 @@ async function executeCommand(
     })
   }
 
-  const sentinel_ = Symbol.for('incur.sentinel')
-  const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-  let response: Response | undefined
+  const allMiddleware = [
+    ...(options.middlewares ?? []),
+    ...((options.groupMiddlewares as MiddlewareHandler[] | undefined) ?? []),
+    ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
+  ]
 
-  const runCommand = async () => {
-    const { args } = Parser.parse(rest, { args: command.args })
-    const parsedOptions = command.options ? command.options.parse(inputOptions) : {}
+  const result = await Command.execute(command, {
+    agent: true,
+    argv: rest,
+    env: options.envSchema,
+    format: 'json',
+    formatExplicit: true,
+    inputOptions,
+    middlewares: allMiddleware,
+    name: options.name ?? path,
+    parseMode: 'split',
+    path,
+    vars: options.vars,
+    version: options.version,
+  })
 
-    const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
-    const errorFn = (opts: {
-      code: string
-      message: string
-      exitCode?: number | undefined
-    }): never => ({ [sentinel_]: 'error', ...opts }) as never
+  const duration = `${Math.round(performance.now() - start)}ms`
 
-    const result = command.run({
-      agent: true,
-      args,
-      env: {},
-      error: errorFn,
-      format: 'json',
-      formatExplicit: true,
-      name: path,
-      ok: okFn,
-      options: parsedOptions,
-      var: varsMap,
-      version: undefined,
-    })
-
-    // Streaming path — async generator → NDJSON response
-    if (isAsyncGenerator(result)) {
-      const stream = new ReadableStream({
-        async start(controller) {
-          const encoder = new TextEncoder()
-          try {
-            let returnValue: unknown
-            while (true) {
-              const { value, done } = await result.next()
-              if (done) {
-                returnValue = value
-                break
-              }
-              if (isSentinel(value) && (value as any)[sentinel] === 'error') {
-                const tagged = value as any
-                controller.enqueue(
-                  encoder.encode(
-                    JSON.stringify({
-                      type: 'error',
-                      ok: false,
-                      error: { code: tagged.code, message: tagged.message },
-                    }) + '\n',
-                  ),
-                )
-                controller.close()
-                return
-              }
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
-              )
-            }
-            const meta: Record<string, unknown> = { command: path }
-            if (isSentinel(returnValue) && (returnValue as any)[sentinel] === 'error') {
-              const tagged = returnValue as any
-              controller.enqueue(
-                encoder.encode(
-                  JSON.stringify({
-                    type: 'error',
-                    ok: false,
-                    error: { code: tagged.code, message: tagged.message },
-                  }) + '\n',
-                ),
-              )
-            } else {
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'),
-              )
-            }
-          } catch (error) {
+  // Streaming path — async generator → NDJSON response
+  if ('stream' in result) {
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder()
+        try {
+          for await (const value of result.stream) {
             controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: 'error',
-                  ok: false,
-                  error: {
-                    code: 'UNKNOWN',
-                    message: error instanceof Error ? error.message : String(error),
-                  },
-                }) + '\n',
-              ),
+              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
             )
           }
-          controller.close()
-        },
-      })
-      response = new Response(stream, {
-        status: 200,
-        headers: { 'content-type': 'application/x-ndjson' },
-      })
-      return
-    }
-
-    const awaited = await result
-    const duration = `${Math.round(performance.now() - start)}ms`
-
-    if (typeof awaited === 'object' && awaited !== null && sentinel_ in awaited) {
-      const tagged = awaited as any
-      if (tagged[sentinel_] === 'error')
-        response = jsonResponse(
-          {
-            ok: false,
-            error: { code: tagged.code, message: tagged.message },
-            meta: { command: path, duration },
-          },
-          500,
-        )
-      else
-        response = jsonResponse(
-          { ok: true, data: tagged.data, meta: { command: path, duration } },
-          200,
-        )
-      return
-    }
-
-    response = jsonResponse({ ok: true, data: awaited, meta: { command: path, duration } }, 200)
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: 'done',
+                ok: true,
+                meta: { command: path },
+              }) + '\n',
+            ),
+          )
+        } catch (error) {
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: 'error',
+                ok: false,
+                error: {
+                  code: 'UNKNOWN',
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              }) + '\n',
+            ),
+          )
+        }
+        controller.close()
+      },
+    })
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'application/x-ndjson' },
+    })
   }
 
-  try {
-    const allMiddleware = options.middlewares ?? []
-    if (allMiddleware.length > 0) {
-      const errorFn = (opts: {
-        code: string
-        message: string
-        exitCode?: number | undefined
-      }): never => {
-        const duration = `${Math.round(performance.now() - start)}ms`
-        response = jsonResponse(
-          {
-            ok: false,
-            error: { code: opts.code, message: opts.message },
-            meta: { command: path, duration },
-          },
-          500,
-        )
-        return undefined as never
-      }
-      const mwCtx: MiddlewareContext = {
-        agent: true,
-        command: path,
-        env: {},
-        error: errorFn,
-        format: 'json',
-        formatExplicit: true,
-        name: path,
-        set(key: string, value: unknown) {
-          varsMap[key] = value
-        },
-        var: varsMap,
-        version: undefined,
-      }
-      const composed = allMiddleware.reduceRight(
-        (next: () => Promise<void>, mw) => async () => {
-          await mw(mwCtx, next)
-        },
-        runCommand,
-      )
-      await composed()
-    } else {
-      await runCommand()
-    }
-  } catch (error) {
-    const duration = `${Math.round(performance.now() - start)}ms`
-    if (error instanceof ValidationError)
-      return jsonResponse(
-        {
-          ok: false,
-          error: { code: 'VALIDATION_ERROR', message: error.message },
-          meta: { command: path, duration },
-        },
-        400,
-      )
+  if (!result.ok) {
+    const cta = formatCtaBlock(options.name ?? path, result.cta as CtaBlock | undefined)
     return jsonResponse(
       {
         ok: false,
         error: {
-          code: error instanceof IncurError ? error.code : 'UNKNOWN',
-          message: error instanceof Error ? error.message : String(error),
+          code: result.error.code,
+          message: result.error.message,
+          ...(result.error.retryable !== undefined
+            ? { retryable: result.error.retryable }
+            : undefined),
         },
-        meta: { command: path, duration },
+        meta: {
+          command: path,
+          duration,
+          ...(cta ? { cta } : undefined),
+        },
       },
-      500,
+      result.error.code === 'VALIDATION_ERROR' ? 400 : 500,
     )
   }
 
-  return response!
+  const cta = formatCtaBlock(options.name ?? path, result.cta as CtaBlock | undefined)
+  return jsonResponse(
+    {
+      ok: true,
+      data: result.data,
+      meta: {
+        command: path,
+        duration,
+        ...(cta ? { cta } : undefined),
+      },
+    },
+    200,
+  )
 }
 
 /** @internal Formats a validation error for TTY with usage hint. */
@@ -2251,6 +2110,29 @@ function collectHelpCommands(
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/** @internal Formats group-level help for a built-in command (e.g. `cli skills`). */
+function formatBuiltinHelp(cli: string, builtin: (typeof builtinCommands)[number]): string {
+  return Help.formatRoot(`${cli} ${builtin.name}`, {
+    description: builtin.description,
+    commands: builtin.subcommands?.map((s) => ({ name: s.name, description: s.description })),
+  })
+}
+
+/** @internal Formats subcommand-level help for a built-in command (e.g. `cli skills add --help`). */
+function formatBuiltinSubcommandHelp(
+  cli: string,
+  builtin: (typeof builtinCommands)[number],
+  subName: string,
+): string {
+  const sub = builtin.subcommands?.find((s) => s.name === subName)
+  return Help.formatCommand(`${cli} ${builtin.name} ${subName}`, {
+    alias: sub?.alias,
+    description: sub?.description,
+    hideGlobalOptions: true,
+    options: sub?.options,
+  })
+}
+
 /** @internal Formats help text for a fetch gateway command. */
 function formatFetchHelp(name: string, description?: string): string {
   const lines: string[] = []
@@ -2392,16 +2274,6 @@ function hasRequiredArgs(args: z.ZodObject<z.ZodRawShape>): boolean {
 
 function isSentinel(value: unknown): value is OkResult | ErrorResult {
   return typeof value === 'object' && value !== null && sentinel in value
-}
-
-/** @internal Type guard for async generators returned by streaming `run` handlers. */
-function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unknown, unknown> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Symbol.asyncIterator in value &&
-    typeof (value as any).next === 'function'
-  )
 }
 
 /** @internal Handles streaming output from an async generator `run` handler. */
@@ -2888,15 +2760,9 @@ type CommandDefinition<
   output extends z.ZodType | undefined = undefined,
   vars extends z.ZodObject<any> | undefined = undefined,
   cliEnv extends z.ZodObject<any> | undefined = undefined,
-> = {
-  /** Map of option names to single-char aliases. */
-  alias?: options extends z.ZodObject<any>
-    ? Partial<Record<keyof z.output<options>, string>>
-    : Record<string, string> | undefined
+> = CommandMeta<options> & {
   /** Zod schema for positional arguments. */
   args?: args | undefined
-  /** A short description of what the command does. */
-  description?: string | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
   env?: env | undefined
   /** Usage examples for this command. */
@@ -2905,8 +2771,6 @@ type CommandDefinition<
   format?: Formatter.Format | undefined
   /** Plain text hint displayed after examples and before global options. */
   hint?: string | undefined
-  /** Zod schema for named options/flags. */
-  options?: options | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
   /**

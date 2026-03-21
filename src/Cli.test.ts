@@ -1901,7 +1901,7 @@ describe('help', () => {
       Commands:
         ping  Health check
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -1939,7 +1939,7 @@ describe('help', () => {
       Commands:
         ping  Health check
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -2102,7 +2102,7 @@ describe('help', () => {
       Commands:
         ping  Ping
 
-      Built-in Commands:
+      Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
         skills add   Sync skill files to agents
@@ -2386,6 +2386,76 @@ describe('env', () => {
 
     await serve(cli, ['deploy'], { env: { DEBUG: 'true', PORT: '8080' } })
     expect(receivedEnv).toEqual({ DEBUG: true, PORT: 8080 })
+  })
+})
+
+describe('built-in commands', () => {
+  test('bare completions shows help', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['completions'])
+    expect(output).toContain('Generate shell completion script')
+  })
+
+  test('completions --help shows help', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['completions', '--help'])
+    expect(output).toContain('test completions')
+    expect(output).toContain('Generate shell completion script')
+  })
+
+  test('bare mcp shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp'])
+    expect(output).toContain('test mcp')
+    expect(output).toContain('Register as MCP server')
+    expect(output).toContain('add')
+  })
+
+  test('mcp --help shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp', '--help'])
+    expect(output).toContain('test mcp')
+    expect(output).toContain('add')
+  })
+
+  test('mcp add --help shows options', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp', 'add', '--help'])
+    expect(output).toContain('test mcp add')
+    expect(output).toContain('--command')
+    expect(output).toContain('--no-global')
+    expect(output).toContain('--agent')
+  })
+
+  test('bare skills shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills'])
+    expect(output).toContain('test skills')
+    expect(output).toContain('Sync skill files to agents')
+    expect(output).toContain('add')
+  })
+
+  test('skills --help shows help with subcommands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills', '--help'])
+    expect(output).toContain('test skills')
+    expect(output).toContain('add')
+  })
+
+  test('skills add --help shows options', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills', 'add', '--help'])
+    expect(output).toContain('test skills add')
+    expect(output).toContain('--depth')
+    expect(output).toContain('--no-global')
   })
 })
 
@@ -3922,6 +3992,83 @@ describe('fetch', () => {
     expect(body).toMatchInlineSnapshot(`
       {
         "path": "/api/users/list",
+      }
+    `)
+  })
+
+  test('group middleware runs for nested commands', async () => {
+    const sub = Cli.create('admin', {
+      vars: z.object({ role: z.string().default('none') }),
+    })
+    sub.use(async (c, next) => {
+      c.set('role', 'admin')
+      await next()
+    })
+    sub.command('status', {
+      run: (c) => ({ role: c.var.role }),
+    })
+    const cli = Cli.create('test', {
+      vars: z.object({ role: z.string().default('none') }),
+    })
+    cli.command(sub)
+    expect(await fetchJson(cli, new Request('http://localhost/admin/status')))
+      .toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "role": "admin",
+          },
+          "meta": {
+            "command": "admin status",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('cli-level env schema is parsed', async () => {
+    const cli = Cli.create('test', {
+      env: z.object({ APP_TOKEN: z.string().default('fallback') }),
+    })
+    cli.use(async (c, next) => {
+      // env should be parsed from envSchema
+      ;(globalThis as any).__testEnv = c.env
+      await next()
+    })
+    cli.command('check', { run: () => ({ ok: true }) })
+    await cli.fetch(new Request('http://localhost/check'))
+    expect((globalThis as any).__testEnv).toEqual({ APP_TOKEN: 'fallback' })
+    delete (globalThis as any).__testEnv
+  })
+
+  test('retryable error is propagated', async () => {
+    const cli = Cli.create('test')
+    cli.command('rate-limit', {
+      run: (c) => c.error({ code: 'RATE_LIMITED', message: 'slow down', retryable: true }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/rate-limit'))
+    expect(body.ok).toBe(false)
+    expect(body.error.retryable).toBe(true)
+  })
+
+  test('cta block is propagated', async () => {
+    const cli = Cli.create('test')
+    cli.command('done', {
+      run: (c) => c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Next steps:' } }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/done'))
+    expect(body.ok).toBe(true)
+    expect(body.meta.cta).toMatchInlineSnapshot(`
+      {
+        "commands": [
+          {
+            "command": "test list",
+          },
+        ],
+        "description": "Next steps:",
       }
     `)
   })

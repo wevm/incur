@@ -294,27 +294,24 @@ describe('completions built-in command', () => {
     expect(output).toMatchInlineSnapshot(`
       "mycli completions — Generate shell completion script
 
-      Usage: mycli completions <shell>
+      Usage: mycli completions <bash|fish|nushell|zsh>
 
-      Shells:
-        bash
-        fish
-        nushell
-        zsh
+      Arguments:
+        shell  Shell to generate completions for
 
       Setup:
         bash     eval "$(mycli completions bash)"  # add to ~/.bashrc
-        zsh      eval "$(mycli completions zsh)"   # add to ~/.zshrc
         fish     mycli completions fish | source   # add to ~/.config/fish/config.fish
         nushell  see \`mycli completions nushell\`   # add to config.nu
+        zsh      eval "$(mycli completions zsh)"   # add to ~/.zshrc
       "
     `)
   })
 
-  test('errors on missing shell argument', async () => {
+  test('shows help on missing shell argument', async () => {
     const cli = makeCli()
     const output = await serve(cli, ['completions'])
-    expect(output).toContain('Missing shell argument')
+    expect(output).toContain('Generate shell completion script')
   })
 
   test('errors on unknown shell', async () => {
@@ -389,6 +386,35 @@ describe('serve integration', () => {
     expect(output).toContain('build')
     expect(output).toContain('test')
     expect(output).toContain('db')
+  })
+
+  test('COMPLETE=bash includes built-in commands at root', async () => {
+    const cli = makeCli()
+    const output = await serve(cli, ['--', 'mycli', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '1',
+    })
+    expect(output).toContain('completions')
+    expect(output).toContain('mcp')
+    expect(output).toContain('skills')
+  })
+
+  test('COMPLETE=bash suggests add for skills subcommand', async () => {
+    const cli = makeCli()
+    const output = await serve(cli, ['--', 'mycli', 'skills', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '2',
+    })
+    expect(output).toContain('add')
+  })
+
+  test('COMPLETE=bash suggests add for mcp subcommand', async () => {
+    const cli = makeCli()
+    const output = await serve(cli, ['--', 'mycli', 'mcp', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '2',
+    })
+    expect(output).toContain('add')
   })
 
   test('COMPLETE=zsh with words outputs candidates in zsh format', async () => {
