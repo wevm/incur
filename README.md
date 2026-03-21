@@ -816,6 +816,67 @@ Every incur CLI includes these flags automatically:
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
 | `--verbose`              | Include full envelope (`ok`, `data`, `meta`)           |
 
+### Config file
+
+Load option defaults from a JSON config file. Opt in with `config` on `Cli.create()`:
+
+```ts
+const cli = Cli.create('my-cli', {
+  config: {
+    flag: 'config',
+    files: ['my-cli.json', '~/.config/my-cli/config.json'],
+  },
+})
+```
+
+- `flag` — registers `--config <path>` and `--no-config` as global flags. The flag name is configurable (`{ flag: 'settings' }` → `--settings`/`--no-settings`). Omit to auto-load only.
+- `files` — ordered search paths. First existing file wins. Supports resolving `~`. Defaults to `['<cli>.json']`.
+- `loader` — custom loader function for non-JSON formats. Receives the resolved path (or `undefined`) and returns the config tree:
+
+```ts
+const cli = Cli.create('my-cli', {
+  config: {
+    files: ['my-cli.toml'],
+    async loader(path) {
+      if (!path) return undefined
+      return TOML.parse(await readFile(path, 'utf8'))
+    },
+  },
+})
+```
+
+Config files use a structured format with `options` and `commands` keys, mirroring the `Cli.create()` / `.command()` hierarchy:
+
+```json
+{
+  "options": {
+    "verbose": true
+  },
+  "commands": {
+    "echo": {
+      "options": {
+        "upper": true,
+        "prefix": "cfg"
+      }
+    },
+    "project": {
+      "commands": {
+        "list": {
+          "options": {
+            "limit": 25,
+            "save-dev": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Precedence is `argv > config > zod defaults`. Only command `options` are loaded — `args`, `env`, and built-in commands are unaffected.
+
+Use `incur gen` to auto-generate a `config.schema.json` to distribute with your CLI for consumer autocomplete.
+
 ### Filtering output
 
 Use `--filter-output` to prune command output to specific keys. Supports dot-notation for nested keys, array slices, and comma-separated paths:

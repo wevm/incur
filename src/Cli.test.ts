@@ -1,4 +1,7 @@
 import { Cli, Errors, z } from 'incur'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -37,6 +40,42 @@ async function serve(
   }
 }
 
+function createConfigCli(flag?: string) {
+  const project = Cli.create('project').command('list', {
+    options: z.object({
+      label: z.array(z.string()).default([]),
+      limit: z.number().default(10),
+    }),
+    run(c) {
+      return c.options
+    },
+  })
+
+  const cli = Cli.create('test', {
+    config: flag !== undefined ? { flag } : {},
+    options: z.object({
+      rootValue: z.string().default('root-default'),
+    }),
+    run(c) {
+      return c.options
+    },
+  })
+
+  cli.command('echo', {
+    options: z.object({
+      prefix: z.string().default(''),
+      upper: z.boolean().default(false),
+    }),
+    run(c) {
+      return c.options
+    },
+  })
+
+  cli.command(project)
+
+  return cli
+}
+
 describe('create', () => {
   test('returns cli instance with name', () => {
     const cli = Cli.create('test')
@@ -59,6 +98,518 @@ describe('command', () => {
       },
     })
     expect(result).toBe(cli)
+  })
+})
+
+describe('config defaults', () => {
+  let cwd: string
+  let dir: string
+
+  beforeEach(async () => {
+    cwd = process.cwd()
+    dir = await mkdtemp(join(tmpdir(), 'incur-config-'))
+    process.chdir(dir)
+  })
+
+  afterEach(async () => {
+    process.chdir(cwd)
+    await rm(dir, { force: true, recursive: true })
+  })
+
+  test('auto-loads <cli>.json for leaf commands', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: {
+          echo: {
+            options: {
+              prefix: 'cfg',
+              upper: true,
+            },
+          },
+        },
+      }),
+    )
+
+    const { output } = await serve(createConfigCli(), ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'cfg', upper: true })
+  })
+
+  test('ignores a missing auto config file', async () => {
+    const { output } = await serve(createConfigCli(), ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '', upper: false })
+  })
+
+  test('root options coexist with subcommand keys', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        options: { rootValue: 'cfg-root' },
+        commands: {
+          echo: { options: { prefix: 'cfg' } },
+        },
+      }),
+    )
+
+    const rootResult = await serve(createConfigCli(), ['--json'])
+    expect(JSON.parse(rootResult.output)).toEqual({ rootValue: 'cfg-root' })
+
+    const echoResult = await serve(createConfigCli(), ['echo', '--json'])
+    expect(JSON.parse(echoResult.output)).toEqual({ prefix: 'cfg', upper: false })
+  })
+
+  test('walks nested command sections in config tree', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: {
+          project: {
+            commands: {
+              list: {
+                options: {
+                  label: ['cfg'],
+                  limit: 25,
+                },
+              },
+            },
+          },
+        },
+      }),
+    )
+
+    const { output } = await serve(createConfigCli(), ['project', 'list', '--json'])
+    expect(JSON.parse(output)).toEqual({ label: ['cfg'], limit: 25 })
+  })
+
+  test('uses an explicit --config path instead of the auto file', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: { echo: { options: { prefix: 'auto' } } },
+      }),
+    )
+    await writeFile(
+      join(dir, 'custom.json'),
+      JSON.stringify({
+        commands: { echo: { options: { prefix: 'custom', upper: true } } },
+      }),
+    )
+
+    const { output } = await serve(createConfigCli('config'), [
+      'echo',
+      '--config',
+      'custom.json',
+      '--json',
+    ])
+    expect(JSON.parse(output)).toEqual({ prefix: 'custom', upper: true })
+  })
+
+  test('--no-config disables earlier config flags, and a later --config wins again', async () => {
+    await writeFile(
+      join(dir, 'one.json'),
+      JSON.stringify({
+        commands: { echo: { options: { prefix: 'one' } } },
+      }),
+    )
+    await writeFile(
+      join(dir, 'two.json'),
+      JSON.stringify({
+        commands: { echo: { options: { prefix: 'two' } } },
+      }),
+    )
+
+    const first = await serve(createConfigCli('config'), [
+      'echo',
+      '--config',
+      'one.json',
+      '--no-config',
+      '--json',
+    ])
+    expect(JSON.parse(first.output)).toEqual({ prefix: '', upper: false })
+
+    const second = await serve(createConfigCli('config'), [
+      'echo',
+      '--config',
+      'one.json',
+      '--no-config',
+      '--config=two.json',
+      '--json',
+    ])
+    expect(JSON.parse(second.output)).toEqual({ prefix: 'two', upper: false })
+  })
+
+  test('fails when an explicit config file is missing', async () => {
+    const { exitCode, output } = await serve(createConfigCli('config'), [
+      'echo',
+      '--config',
+      'missing.json',
+    ])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Config file not found')
+  })
+
+  test('fails on invalid JSON config files', async () => {
+    await writeFile(join(dir, 'test.json'), '{ invalid')
+
+    const { exitCode, output } = await serve(createConfigCli(), ['echo'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Invalid JSON config file')
+  })
+
+  test('fails when the config file top level is not an object', async () => {
+    await writeFile(join(dir, 'test.json'), JSON.stringify(['bad']))
+
+    const { exitCode, output } = await serve(createConfigCli(), ['echo'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('expected a top-level object')
+  })
+
+  test('fails when the selected config section is not an object', async () => {
+    await writeFile(join(dir, 'test.json'), JSON.stringify({ commands: { echo: true } }))
+
+    const { exitCode, output } = await serve(createConfigCli(), ['echo'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("Invalid config section for 'echo'")
+  })
+
+  test('fails validation when config option values are invalid', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: { echo: { options: { upper: 'nope' } } },
+      }),
+    )
+
+    const { exitCode, output } = await serve(createConfigCli(), ['echo'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('VALIDATION_ERROR')
+  })
+
+  test('argv overrides invalid config values at the CLI layer', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: { echo: { options: { prefix: 123 } } },
+      }),
+    )
+
+    const { output } = await serve(createConfigCli(), ['echo', '--prefix', 'cli', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'cli', upper: false })
+  })
+
+  test('built-in commands ignore config loading', async () => {
+    await writeFile(join(dir, 'test.json'), '{ invalid')
+
+    const { output, exitCode } = await serve(createConfigCli(), ['--help'])
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('Global Options:')
+  })
+
+  test('config without flag does not reserve --config', async () => {
+    const cli = Cli.create('test', { config: {} })
+    cli.command('echo', {
+      options: z.object({ config: z.string().default('') }),
+      run(c) {
+        return c.options
+      },
+    })
+
+    const { output } = await serve(cli, ['echo', '--config', 'my-value', '--json'])
+    expect(JSON.parse(output)).toEqual({ config: 'my-value' })
+  })
+
+  test('--help shows config flags only when flag name is set', async () => {
+    const { output } = await serve(createConfigCli('config'), ['--help'])
+    expect(output).toContain('--config <path>')
+    expect(output).toContain('--no-config')
+
+    const { output: noFlagOutput } = await serve(createConfigCli(), ['--help'])
+    expect(noFlagOutput).not.toContain('--config')
+  })
+
+  test('custom flag name is used for config path override', async () => {
+    await writeFile(
+      join(dir, 'custom.json'),
+      JSON.stringify({
+        commands: { echo: { options: { prefix: 'custom' } } },
+      }),
+    )
+
+    const { output } = await serve(createConfigCli('settings'), [
+      'echo',
+      '--settings',
+      'custom.json',
+      '--json',
+    ])
+    expect(JSON.parse(output)).toEqual({ prefix: 'custom', upper: false })
+  })
+
+  test('searches files list in order, first match wins', async () => {
+    await writeFile(
+      join(dir, '.testrc.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'rc' } } } }),
+    )
+
+    const cli = Cli.create('test', {
+      config: { files: ['test.json', '.testrc.json'] },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'rc' })
+  })
+
+  test('files: [] disables auto-discovery', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'should-not-load' } } } }),
+    )
+
+    const cli = Cli.create('test', {
+      config: { files: [] },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '' })
+  })
+
+  test('files supports ~ for home directory', async () => {
+    const configDir = join(homedir(), '.config', 'test-incur-files-tilde')
+    await mkdir(configDir, { recursive: true })
+    try {
+      await writeFile(
+        join(configDir, 'config.json'),
+        JSON.stringify({ commands: { echo: { options: { prefix: 'home' } } } }),
+      )
+
+      const cli = Cli.create('test', {
+        config: { files: ['test.json', '~/.config/test-incur-files-tilde/config.json'] },
+      })
+      cli.command('echo', {
+        options: z.object({ prefix: z.string().default('') }),
+        run: (c) => c.options,
+      })
+
+      const { output } = await serve(cli, ['echo', '--json'])
+      expect(JSON.parse(output)).toEqual({ prefix: 'home' })
+    } finally {
+      await rm(configDir, { recursive: true, force: true })
+    }
+  })
+
+  test('explicit --flag overrides files list', async () => {
+    await writeFile(
+      join(dir, '.testrc.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'rc' } } } }),
+    )
+    await writeFile(
+      join(dir, 'override.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'override' } } } }),
+    )
+
+    const cli = Cli.create('test', {
+      config: { flag: 'config', files: ['.testrc.json'] },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--config', 'override.json', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'override' })
+  })
+
+  test('custom loader replaces JSON parsing', async () => {
+    await writeFile(join(dir, 'test.ini'), 'prefix=ini-value')
+
+    const cli = Cli.create('test', {
+      config: {
+        files: ['test.ini'],
+        async loader(path) {
+          if (!path) return undefined
+          const raw = await readFile(path, 'utf8')
+          const obj: Record<string, unknown> = {}
+          for (const line of raw.split('\n')) {
+            const eq = line.indexOf('=')
+            if (eq !== -1) obj[line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
+          }
+          return { commands: { echo: { options: obj } } }
+        },
+      },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'ini-value' })
+  })
+
+  test('loader with files: [] receives undefined path', async () => {
+    const cli = Cli.create('test', {
+      config: {
+        files: [],
+        loader: async (path) => {
+          expect(path).toBeUndefined()
+          return { commands: { echo: { options: { prefix: 'from-loader' } } } }
+        },
+      },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'from-loader' })
+  })
+
+  test('loader returning undefined applies no defaults', async () => {
+    const cli = Cli.create('test', {
+      config: { files: [], loader: async () => undefined },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '' })
+  })
+
+  test('--no-flag skips loader entirely', async () => {
+    let loaderCalled = false
+    const cli = Cli.create('test', {
+      config: {
+        flag: 'config',
+        files: [],
+        loader: async () => {
+          loaderCalled = true
+          return { commands: { echo: { options: { prefix: 'should-not-load' } } } }
+        },
+      },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--no-config', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '' })
+    expect(loaderCalled).toBe(false)
+  })
+
+  test('loader errors propagate', async () => {
+    const cli = Cli.create('test', {
+      config: {
+        files: [],
+        loader: async () => {
+          throw new Error('Remote config server unreachable')
+        },
+      },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { exitCode, output } = await serve(cli, ['echo'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Remote config server unreachable')
+  })
+
+  test('--no-flag disables auto-discovery without prior --flag', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'auto-loaded' } } } }),
+    )
+
+    const { output } = await serve(createConfigCli('config'), ['echo', '--no-config', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '', upper: false })
+  })
+
+  test('--config without a value produces an error', async () => {
+    const { exitCode, output } = await serve(createConfigCli('config'), ['echo', '--config'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Missing value for flag')
+  })
+
+  test('--config= (empty value) produces an error', async () => {
+    const { exitCode, output } = await serve(createConfigCli('config'), ['echo', '--config='])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Missing value for flag')
+  })
+
+  test('--no-settings works with custom flag name', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { prefix: 'auto' } } } }),
+    )
+
+    const { output } = await serve(createConfigCli('settings'), ['echo', '--no-settings', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: '', upper: false })
+  })
+
+  test('camelCase config keys are accepted at cli level', async () => {
+    const cli = Cli.create('test', { config: {} })
+    cli.command('echo', {
+      options: z.object({ saveDev: z.boolean().default(false) }),
+      run: (c) => c.options,
+    })
+
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({ commands: { echo: { options: { 'save-dev': true } } } }),
+    )
+
+    const { output } = await serve(cli, ['echo', '--json'])
+    expect(JSON.parse(output)).toEqual({ saveDev: true })
+  })
+
+  test('config defaults with only subcommand namespaces yields no option defaults', async () => {
+    await writeFile(
+      join(dir, 'test.json'),
+      JSON.stringify({
+        commands: {
+          echo: { options: { prefix: 'child' } },
+          project: { commands: { list: { options: { limit: 50 } } } },
+        },
+      }),
+    )
+
+    const rootResult = await serve(createConfigCli(), ['--json'])
+    expect(JSON.parse(rootResult.output)).toEqual({ rootValue: 'root-default' })
+  })
+
+  test('explicit --flag path is forwarded to custom loader', async () => {
+    await writeFile(join(dir, 'custom.dat'), 'prefix=custom-loader')
+
+    const cli = Cli.create('test', {
+      config: {
+        flag: 'config',
+        async loader(path) {
+          if (!path) return undefined
+          const raw = await readFile(path, 'utf8')
+          const [, value] = raw.split('=')
+          return { commands: { echo: { options: { prefix: value!.trim() } } } }
+        },
+      },
+    })
+    cli.command('echo', {
+      options: z.object({ prefix: z.string().default('') }),
+      run: (c) => c.options,
+    })
+
+    const { output } = await serve(cli, ['echo', '--config', 'custom.dat', '--json'])
+    expect(JSON.parse(output)).toEqual({ prefix: 'custom-loader' })
   })
 })
 

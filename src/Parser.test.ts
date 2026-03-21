@@ -252,4 +252,93 @@ describe('parse', () => {
     expect(result.args).toEqual({ repo: 'myrepo' })
     expect(result.options).toEqual({ limit: 5 })
   })
+
+  test('applies config defaults when argv omits an option', () => {
+    const result = Parser.parse([], {
+      defaults: { limit: 10 },
+      options: z.object({ limit: z.number().default(30) }),
+    })
+    expect(result.options).toEqual({ limit: 10 })
+  })
+
+  test('argv overrides config defaults', () => {
+    const result = Parser.parse(['--limit', '5'], {
+      defaults: { limit: 10 },
+      options: z.object({ limit: z.number().default(30) }),
+    })
+    expect(result.options).toEqual({ limit: 5 })
+  })
+
+  test('argv arrays replace config arrays', () => {
+    const result = Parser.parse(['--label', 'bug', '--label', 'feature'], {
+      defaults: { label: ['ops'] },
+      options: z.object({ label: z.array(z.string()).default([]) }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'feature'] })
+  })
+
+  test('kebab-case config keys map to camelCase schema names', () => {
+    const result = Parser.parse([], {
+      defaults: { 'save-dev': true } as any,
+      options: z.object({ saveDev: z.boolean().default(false) }),
+    })
+    expect(result.options).toEqual({ saveDev: true })
+  })
+
+  test('throws ParseError on unknown config option keys', () => {
+    expect(() =>
+      Parser.parse([], {
+        defaults: { missing: true } as any,
+        options: z.object({ saveDev: z.boolean().default(false) }),
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
+  })
+
+  test('throws ValidationError for invalid config defaults when argv does not override them', () => {
+    expect(() =>
+      Parser.parse([], {
+        defaults: { limit: 'oops' } as any,
+        options: z.object({ limit: z.number() }),
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ValidationError' }))
+  })
+
+  test('argv overrides invalid config defaults', () => {
+    const result = Parser.parse(['--limit', '5'], {
+      defaults: { limit: 'oops' } as any,
+      options: z.object({ limit: z.number() }),
+    })
+    expect(result.options).toEqual({ limit: 5 })
+  })
+
+  test('defaults with no options schema throws on non-empty defaults', () => {
+    expect(() =>
+      Parser.parse([], {
+        defaults: { limit: 10 } as any,
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError' }))
+  })
+
+  test('defaults with no options schema and empty defaults is a no-op', () => {
+    const result = Parser.parse([], { defaults: {} as any })
+    expect(result.options).toEqual({})
+  })
+
+  test('config array defaults are used when argv omits the option', () => {
+    const result = Parser.parse([], {
+      defaults: { label: ['bug', 'feature'] },
+      options: z.object({ label: z.array(z.string()).default([]) }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'feature'] })
+  })
+
+  test('refined option schemas validate only the merged winning values', () => {
+    const result = Parser.parse(['--min', '1', '--max', '3'], {
+      defaults: { min: 'oops' } as any,
+      options: z
+        .object({ min: z.number(), max: z.number() })
+        .refine((value) => value.min < value.max, { message: 'min must be less than max' }),
+    })
+    expect(result.options).toEqual({ min: 1, max: 3 })
+  })
 })

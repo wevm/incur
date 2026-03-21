@@ -1,15 +1,19 @@
+import * as fs from 'node:fs/promises'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import type { z } from 'zod'
 
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
-import { IncurError, ValidationError } from './Errors.js'
+import { IncurError, ParseError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
 import * as Command from './internal/command.js'
+import { isRecord } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -274,6 +278,7 @@ export function create(
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
+        config: def.config,
         description: def.description,
         envSchema: def.env,
         format: def.format,
@@ -295,6 +300,8 @@ export function create(
   }
 
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
+  if (def.options) toRootOptions.set(cli, def.options)
+  if (def.config !== undefined) toConfigEnabled.set(cli, true)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
@@ -318,6 +325,24 @@ export declare namespace create {
     aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
     args?: args | undefined
+    /** Enable config-file defaults for command options. */
+    config?:
+      | {
+          /** Global flag name for specifying a config file path (e.g. `'config'` → `--config <path>`). Omit to auto-load only, with no CLI flag. */
+          flag?: string | undefined
+          /** Ordered list of file paths to search. First existing file wins. Supports `~` for home dir. Defaults to `['<cli>.json']` relative to cwd. */
+          files?: string[] | undefined
+          /** Custom config loader. Receives the resolved file path (or `undefined` if no file was found). Returns the parsed config tree, or `undefined` for no defaults. When omitted, the framework reads and parses JSON. */
+          loader?:
+            | ((
+                path: string | undefined,
+              ) =>
+                | Record<string, unknown>
+                | undefined
+                | Promise<Record<string, unknown> | undefined>)
+            | undefined
+        }
+      | undefined
     /** A short description of what the CLI does. */
     description?: string | undefined
     /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
@@ -427,6 +452,24 @@ async function serveImpl(
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
+  const human = process.stdout.isTTY === true
+  const configEnabled = options.config !== undefined
+  const configFlag = options.config?.flag
+
+  function writeln(s: string) {
+    stdout(s.endsWith('\n') ? s : `${s}\n`)
+  }
+
+  let builtinFlags: ReturnType<typeof extractBuiltinFlags>
+  try {
+    builtinFlags = extractBuiltinFlags(argv, { configFlag })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
+    else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+    exit(1)
+    return
+  }
 
   const {
     verbose,
@@ -442,8 +485,10 @@ async function serveImpl(
     help,
     version,
     schema,
+    configPath,
+    configDisabled,
     rest: filtered,
-  } = extractBuiltinFlags(argv)
+  } = builtinFlags
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -493,13 +538,6 @@ async function serveImpl(
       if (out) stdout(out)
     }
     return
-  }
-
-  // Human mode: stdout is a TTY.
-  const human = process.stdout.isTTY === true
-
-  function writeln(s: string) {
-    stdout(s.endsWith('\n') ? s : `${s}\n`)
   }
 
   // Skills staleness check (skip for built-in commands)
@@ -759,6 +797,7 @@ async function serveImpl(
         Help.formatCommand(name, {
           alias: cmd.alias as Record<string, string> | undefined,
           aliases: options.aliases,
+          configFlag,
           description: cmd.description ?? options.description,
           version: options.version,
           args: cmd.args,
@@ -780,6 +819,7 @@ async function serveImpl(
       writeln(
         Help.formatRoot(name, {
           aliases: options.aliases,
+          configFlag,
           description: options.description,
           version: options.version,
           commands: collectHelpCommands(commands),
@@ -828,6 +868,7 @@ async function serveImpl(
           Help.formatCommand(name, {
             alias: cmd.alias as Record<string, string> | undefined,
             aliases: options.aliases,
+            configFlag,
             description: cmd.description ?? options.description,
             version: options.version,
             args: cmd.args,
@@ -845,6 +886,7 @@ async function serveImpl(
         writeln(
           Help.formatRoot(helpName, {
             aliases: isRoot ? options.aliases : undefined,
+            configFlag,
             description: helpDesc,
             version: isRoot ? options.version : undefined,
             commands: collectHelpCommands(helpCmds),
@@ -864,6 +906,7 @@ async function serveImpl(
         Help.formatCommand(commandName, {
           alias: cmd.alias as Record<string, string> | undefined,
           aliases: isRootCmd ? options.aliases : undefined,
+          configFlag,
           description: cmd.description,
           version: isRootCmd ? options.version : undefined,
           args: cmd.args,
@@ -886,6 +929,7 @@ async function serveImpl(
     if ('help' in resolved) {
       writeln(
         Help.formatRoot(`${name} ${resolved.path}`, {
+          configFlag,
           description: resolved.description,
           commands: collectHelpCommands(resolved.commands),
         }),
@@ -917,6 +961,7 @@ async function serveImpl(
   if ('help' in resolved) {
     writeln(
       Help.formatRoot(`${name} ${resolved.path}`, {
+        configFlag,
         description: resolved.description,
         commands: collectHelpCommands(resolved.commands),
       }),
@@ -1205,9 +1250,33 @@ async function serveImpl(
       command.alias as Record<string, string> | undefined,
     )
 
+  let defaults: Record<string, unknown> | undefined
+  if (configEnabled) {
+    try {
+      defaults = await loadCommandOptionDefaults(name, path, {
+        configDisabled,
+        configPath,
+        files: options.config?.files,
+        loader: options.config?.loader,
+      })
+    } catch (error) {
+      write({
+        ok: false,
+        error: {
+          code: error instanceof IncurError ? error.code : 'UNKNOWN',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
+      })
+      exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+      return
+    }
+  }
+
   const result = await Command.execute(command, {
     agent: !human,
     argv: rest,
+    defaults,
     env: options.envSchema,
     envSource: options.env,
     format,
@@ -1266,6 +1335,7 @@ async function serveImpl(
             fieldErrors: result.error.fieldErrors,
           }),
           options.env,
+          configFlag,
         ),
       )
       exit(1)
@@ -1636,6 +1706,7 @@ function formatHumanValidationError(
   command: CommandDefinition<any, any, any>,
   error: ValidationError,
   envSource?: Record<string, string | undefined>,
+  configFlag?: string,
 ): string {
   const lines: string[] = []
   for (const fe of error.fieldErrors) lines.push(`Error: missing required argument <${fe.path}>`)
@@ -1644,6 +1715,7 @@ function formatHumanValidationError(
   lines.push(
     Help.formatCommand(path === cli ? cli : `${cli} ${path}`, {
       alias: command.alias as Record<string, string> | undefined,
+      configFlag,
       description: command.description,
       args: command.args,
       env: command.env,
@@ -1753,6 +1825,20 @@ declare namespace serveImpl {
   type Options = serve.Options & {
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
+    config?:
+      | {
+          flag?: string | undefined
+          files?: string[] | undefined
+          loader?:
+            | ((
+                path: string | undefined,
+              ) =>
+                | Record<string, unknown>
+                | undefined
+                | Promise<Record<string, unknown> | undefined>)
+            | undefined
+        }
+      | undefined
     description?: string | undefined
     /** CLI-level env schema. Parsed before middleware runs. */
     envSchema?: z.ZodObject<any> | undefined
@@ -1787,7 +1873,7 @@ declare namespace serveImpl {
 }
 
 /** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
-function extractBuiltinFlags(argv: string[]) {
+function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
   let verbose = false
   let llms = false
   let llmsFull = false
@@ -1797,11 +1883,17 @@ function extractBuiltinFlags(argv: string[]) {
   let schema = false
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
+  let configPath: string | undefined
+  let configDisabled = false
   let filterOutput: string | undefined
   let tokenLimit: number | undefined
   let tokenOffset: number | undefined
   let tokenCount = false
   const rest: string[] = []
+
+  const cfgFlag = options.configFlag ? `--${options.configFlag}` : undefined
+  const cfgFlagEq = options.configFlag ? `--${options.configFlag}=` : undefined
+  const noCfgFlag = options.configFlag ? `--no-${options.configFlag}` : undefined
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
@@ -1819,6 +1911,22 @@ function extractBuiltinFlags(argv: string[]) {
       format = argv[i + 1] as Formatter.Format
       formatExplicit = true
       i++
+    } else if (cfgFlag && token === cfgFlag) {
+      const value = argv[i + 1]
+      if (value === undefined)
+        throw new ParseError({ message: `Missing value for flag: ${cfgFlag}` })
+      configPath = value
+      configDisabled = false
+      i++
+    } else if (cfgFlagEq && token.startsWith(cfgFlagEq)) {
+      const value = token.slice(cfgFlagEq.length)
+      if (value.length === 0)
+        throw new ParseError({ message: `Missing value for flag: ${cfgFlag}` })
+      configPath = value
+      configDisabled = false
+    } else if (noCfgFlag && token === noCfgFlag) {
+      configPath = undefined
+      configDisabled = true
     } else if (token === '--filter-output' && argv[i + 1]) {
       filterOutput = argv[i + 1]!
       i++
@@ -1836,6 +1944,8 @@ function extractBuiltinFlags(argv: string[]) {
     verbose,
     format,
     formatExplicit,
+    configPath,
+    configDisabled,
     filterOutput,
     tokenLimit,
     tokenOffset,
@@ -1848,6 +1958,145 @@ function extractBuiltinFlags(argv: string[]) {
     schema,
     rest,
   }
+}
+
+declare namespace extractBuiltinFlags {
+  type Options = {
+    configFlag?: string | undefined
+  }
+}
+
+/** @internal Loads config-backed option defaults for the active command. */
+async function loadCommandOptionDefaults(
+  cli: string,
+  path: string,
+  options: loadCommandOptionDefaults.Options = {},
+): Promise<Record<string, unknown> | undefined> {
+  if (options.configDisabled) return undefined
+
+  const { loader } = options
+
+  // Resolve the target file path
+  let targetPath: string | undefined
+  if (options.configPath) {
+    targetPath = resolveConfigPath(options.configPath)
+  } else {
+    const searchPaths = options.files ?? [`${cli}.json`]
+    targetPath = await findFirstExisting(searchPaths)
+  }
+
+  // Load and parse the config
+  let parsed: Record<string, unknown>
+  if (loader) {
+    const result = await loader(targetPath)
+    if (result === undefined) return undefined
+    if (!isRecord(result))
+      throw new ParseError({ message: 'Config loader must return a plain object or undefined' })
+    parsed = result
+  } else {
+    if (!targetPath) return undefined
+    const result = await readJsonConfig(targetPath, !!options.configPath)
+    if (!result) return undefined
+    parsed = result
+  }
+
+  // Extract the command section from the config tree
+  return extractCommandSection(parsed, cli, path)
+}
+
+declare namespace loadCommandOptionDefaults {
+  type Options = {
+    configDisabled?: boolean | undefined
+    configPath?: string | undefined
+    files?: string[] | undefined
+    loader?:
+      | ((
+          path: string | undefined,
+        ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>)
+      | undefined
+  }
+}
+
+/** @internal Resolves a config file path, expanding `~` to home dir. */
+function resolveConfigPath(filePath: string): string {
+  if (filePath.startsWith('~/') || filePath === '~') {
+    return path.join(os.homedir(), filePath.slice(1))
+  }
+  return path.resolve(process.cwd(), filePath)
+}
+
+/** @internal Returns the first readable file from a list of paths, or `undefined`. */
+async function findFirstExisting(paths: string[]): Promise<string | undefined> {
+  for (const p of paths) {
+    const resolved = resolveConfigPath(p)
+    try {
+      await fs.access(resolved, fs.constants.R_OK)
+      return resolved
+    } catch {}
+  }
+  return undefined
+}
+
+/** @internal Reads and parses a JSON config file. */
+async function readJsonConfig(
+  targetPath: string,
+  explicit: boolean,
+): Promise<Record<string, unknown> | undefined> {
+  let raw: string
+  try {
+    raw = await fs.readFile(targetPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (explicit) throw new ParseError({ message: `Config file not found: ${targetPath}` })
+      return undefined
+    }
+    throw error
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    throw new ParseError({
+      message: `Invalid JSON config file: ${targetPath}`,
+      cause: error instanceof Error ? error : undefined,
+    })
+  }
+
+  if (!isRecord(parsed))
+    throw new ParseError({
+      message: `Invalid config file: expected a top-level object in ${targetPath}`,
+    })
+  return parsed
+}
+
+/** @internal Walks the nested config tree to extract option defaults for a command path. */
+function extractCommandSection(
+  parsed: Record<string, unknown>,
+  cli: string,
+  path: string,
+): Record<string, unknown> | undefined {
+  const segments = path === cli ? [] : path.split(' ')
+  let node: unknown = parsed
+  for (const seg of segments) {
+    if (!isRecord(node)) return undefined
+    const commands = node.commands
+    if (!isRecord(commands)) return undefined
+    node = commands[seg]
+    if (node === undefined) return undefined
+  }
+  if (!isRecord(node))
+    throw new ParseError({
+      message: `Invalid config section for '${path}': expected an object`,
+    })
+
+  const options = node.options
+  if (options === undefined) return undefined
+  if (!isRecord(options))
+    throw new ParseError({
+      message: `Invalid config 'options' for '${path}': expected an object`,
+    })
+  return Object.keys(options).length > 0 ? options : undefined
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
@@ -1953,7 +2202,13 @@ export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
 
 /** @internal Maps root CLI instances to their command definitions. */
-const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
+export const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
+
+/** @internal Maps CLI instances to their root options schema. */
+export const toRootOptions = new WeakMap<Cli, z.ZodObject<any>>()
+
+/** @internal Maps CLI instances to whether config file loading is enabled. */
+export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()

@@ -141,6 +141,36 @@ describe('formatCommand', () => {
     expect(result).toContain('[deprecated] Availability zone')
     expect(result).not.toContain('[deprecated] Target region')
   })
+
+  test('shows config global options when flag name is set', () => {
+    const result = Help.formatCommand('tool deploy', {
+      configFlag: 'config',
+      options: z.object({
+        env: z.enum(['staging', 'production']).describe('Target environment'),
+      }),
+    })
+    expect(result).toMatchInlineSnapshot(`
+      "tool deploy
+
+      Usage: tool deploy [options]
+
+      Options:
+        --env <staging|production>  Target environment
+
+      Global Options:
+        --config <path>                     Load JSON option defaults from a file
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --help                              Show help
+        --llms, --llms-full                 Print LLM-readable manifest
+        --no-config                         Disable JSON option defaults for this run
+        --schema                            Show JSON Schema for command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
+        --verbose                           Show full output envelope"
+    `)
+  })
 })
 
 describe('formatRoot', () => {
@@ -256,6 +286,42 @@ describe('formatRoot', () => {
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
         --verbose                           Show full output envelope"
+    `)
+  })
+
+  test('formatRoot shows config global options when flag name is set', () => {
+    const result = Help.formatRoot('tool', {
+      configFlag: 'config',
+      root: true,
+      commands: [{ name: 'ping', description: 'Health check' }],
+    })
+    expect(result).toMatchInlineSnapshot(`
+      "tool
+
+      Usage: tool <command>
+
+      Commands:
+        ping  Health check
+
+      Integrations:
+        completions  Generate shell completion script
+        mcp add      Register as MCP server
+        skills add   Sync skill files to agents
+
+      Global Options:
+        --config <path>                     Load JSON option defaults from a file
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --help                              Show help
+        --llms, --llms-full                 Print LLM-readable manifest
+        --mcp                               Start as MCP stdio server
+        --no-config                         Disable JSON option defaults for this run
+        --schema                            Show JSON Schema for command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
+        --verbose                           Show full output envelope
+        --version                           Show version"
     `)
   })
 })

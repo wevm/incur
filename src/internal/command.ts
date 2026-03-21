@@ -71,6 +71,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       const parsed = Parser.parse(argv, {
         alias: command.alias as Record<string, string> | undefined,
         args: command.args,
+        defaults: options.defaults,
         options: command.options,
       })
       args = parsed.args
@@ -269,6 +270,8 @@ export declare namespace execute {
     agent: boolean
     /** Raw positional tokens (already separated from flags). For HTTP/MCP, pass `[]`. */
     argv: string[]
+    /** Default option values from config file. */
+    defaults?: Record<string, unknown> | undefined
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
     /** Source for environment variables. Defaults to `process.env`. */

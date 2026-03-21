@@ -80,23 +80,6 @@ export function apply(data: unknown, paths: FilterPath[]): unknown {
   return result
 }
 
-function resolve(data: unknown, segments: Segment[], index: number): unknown {
-  if (index >= segments.length) return data
-  const segment = segments[index]!
-
-  if ('key' in segment) {
-    if (typeof data !== 'object' || data === null) return undefined
-    const val = (data as Record<string, unknown>)[segment.key]
-    return resolve(val, segments, index + 1)
-  }
-
-  // slice segment
-  if (!Array.isArray(data)) return undefined
-  const sliced = data.slice(segment.start, segment.end)
-  if (index + 1 >= segments.length) return sliced
-  return sliced.map((item) => resolve(item, segments, index + 1))
-}
-
 function merge(
   target: Record<string, unknown>,
   data: unknown,
