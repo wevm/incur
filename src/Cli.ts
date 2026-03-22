@@ -648,7 +648,17 @@ async function serveImpl(
   const skillsIdx =
     filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
   if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
-    if (filtered[skillsIdx + 1] !== 'add') {
+    const skillsSub = filtered[skillsIdx + 1]
+    if (skillsSub && skillsSub !== 'add') {
+      const suggestion = suggest(skillsSub, ['add'])
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      const message = `'${skillsSub}' is not a command for '${name} skills'.${didYouMean}`
+      if (human) writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+      else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message }, 'toon'))
+      exit(1)
+      return
+    }
+    if (!skillsSub) {
       const b = builtinCommands.find((c) => c.name === 'skills')!
       writeln(formatBuiltinHelp(name, b))
       return
@@ -720,7 +730,17 @@ async function serveImpl(
   // mcp add: register CLI as MCP server via `npx add-mcp`
   const mcpIdx = filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
   if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp') {
-    if (filtered[mcpIdx + 1] !== 'add') {
+    const mcpSub = filtered[mcpIdx + 1]
+    if (mcpSub && mcpSub !== 'add') {
+      const suggestion = suggest(mcpSub, ['add'])
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      const message = `'${mcpSub}' is not a command for '${name} mcp'.${didYouMean}`
+      if (human) writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+      else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message }, 'toon'))
+      exit(1)
+      return
+    }
+    if (!mcpSub) {
       const b = builtinCommands.find((c) => c.name === 'mcp')!
       writeln(formatBuiltinHelp(name, b))
       return
