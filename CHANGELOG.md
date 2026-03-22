@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.8
+
+### Patch Changes
+
+- 69a48ce: Tweaked "Did you mean" output.
+
 ## 0.3.7
 
 ### Patch Changes
