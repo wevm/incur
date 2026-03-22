@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.7
+
+### Patch Changes
+
+- 2f8194b: Added "Did you mean?" suggestions for mistyped commands using Levenshtein distance. Includes builtin commands (`mcp`, `skills`, `completions`) in suggestion candidates. Suggestion CTA preserves original args/flags. Moved skills staleness warning from stderr into the CTA system.
+
 ## 0.3.6
 
 ### Patch Changes
