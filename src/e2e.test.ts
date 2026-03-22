@@ -70,7 +70,7 @@ describe('routing', () => {
       "code: COMMAND_NOT_FOUND
       message: 'nonexistent' is not a command for 'app'.
       cta:
-        description: "Next steps:"
+        description: "Suggested command:"
         commands[1]{command,description}:
           app --help,see all available commands
       "
@@ -85,7 +85,7 @@ describe('routing', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'nonexistent' is not a command for 'app'.
 
-      Next steps:
+      Suggested command:
         app --help  # see all available commands
       "
     `)
@@ -98,7 +98,7 @@ describe('routing', () => {
       "code: COMMAND_NOT_FOUND
       message: 'whoami' is not a command for 'app auth'.
       cta:
-        description: "Next steps:"
+        description: "Suggested command:"
         commands[1]{command,description}:
           app auth --help,see all available commands
       "
@@ -112,7 +112,7 @@ describe('routing', () => {
       "code: COMMAND_NOT_FOUND
       message: 'nope' is not a command for 'app project deploy'.
       cta:
-        description: "Next steps:"
+        description: "Suggested command:"
         commands[1]{command,description}:
           app project deploy --help,see all available commands
       "
@@ -595,7 +595,7 @@ describe('error handling', () => {
                 "command": "app auth login",
               },
             ],
-            "description": "Suggested commands:",
+            "description": "Suggested command:",
           },
           "duration": "<stripped>",
         },
@@ -653,7 +653,7 @@ describe('error handling', () => {
                 "description": "see all available commands",
               },
             ],
-            "description": "Next steps:",
+            "description": "Suggested command:",
           },
           "duration": "<stripped>",
         },
@@ -723,7 +723,7 @@ describe('cta', () => {
             "command": "app auth login",
           },
         ],
-        "description": "Suggested commands:",
+        "description": "Suggested command:",
       }
     `)
   })
@@ -869,7 +869,7 @@ describe('streaming', () => {
             "command": "app ping",
           },
         ],
-        "description": "Suggested commands:",
+        "description": "Suggested command:",
       }
     `)
   })
@@ -878,7 +878,7 @@ describe('streaming', () => {
     const { output } = await serve(createApp(), ['stream-ok'])
     expect(output).toContain('n: 1')
     expect(output).toContain('n: 2')
-    expect(output).toContain('Suggested commands:')
+    expect(output).toContain('Suggested command:')
     expect(output).toContain('app ping')
   })
 
@@ -1787,7 +1787,7 @@ describe('edge cases', () => {
               "description": "View "Alpha"",
             },
           ],
-          "description": "Suggested commands:",
+          "description": "Suggested command:",
         },
         "items": [
           {

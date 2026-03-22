@@ -51,4 +51,12 @@ describe('suggest', () => {
   test('picks the closest among multiple candidates', () => {
     expect(suggest('craete', ['list', 'create', 'delete'])).toBe('create')
   })
+
+  test('matches unambiguous prefix', () => {
+    expect(suggest('ski', ['mcp', 'skills', 'completions'])).toBe('skills')
+  })
+
+  test('falls back to levenshtein for ambiguous prefix', () => {
+    expect(suggest('ski', ['skills', 'skip'])).toBe('skip')
+  })
 })

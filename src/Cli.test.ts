@@ -691,7 +691,7 @@ describe('serve', () => {
       "code: COMMAND_NOT_FOUND
       message: 'nonexistent' is not a command for 'test'.
       cta:
-        description: "Next steps:"
+        description: "Suggested command:"
         commands[1]{command,description}:
           test --help,see all available commands
       "
@@ -708,7 +708,7 @@ describe('serve', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'nonexistent' is not a command for 'test'.
 
-      Next steps:
+      Suggested command:
         test --help  # see all available commands
       "
     `)
@@ -727,7 +727,7 @@ describe('serve', () => {
       meta:
         command: nonexistent
         cta:
-          description: "Next steps:"
+          description: "Suggested command:"
           commands[1]{command,description}:
             test --help,see all available commands
         duration: <stripped>
@@ -746,7 +746,7 @@ describe('serve', () => {
       "code: COMMAND_NOT_FOUND
       message: 'deplyo' is not a command for 'test'. Did you mean 'deploy'?
       cta:
-        description: "Next steps:"
+        description: "Suggested commands:"
         commands[2]:
           - command: test deploy
           - command: test --help
@@ -766,7 +766,7 @@ describe('serve', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'deplyo' is not a command for 'test'. Did you mean 'deploy'?
 
-      Next steps:
+      Suggested commands:
         test deploy
         test --help  # see all available commands
       "
@@ -812,7 +812,7 @@ describe('serve', () => {
       "code: COMMAND_NOT_FOUND
       message: 'craete' is not a command for 'test pr'. Did you mean 'create'?
       cta:
-        description: "Next steps:"
+        description: "Suggested commands:"
         commands[2]:
           - command: test pr create
           - command: test pr --help
@@ -1516,7 +1516,7 @@ describe('subcommands', () => {
       "code: COMMAND_NOT_FOUND
       message: 'unknown' is not a command for 'test pr'.
       cta:
-        description: "Next steps:"
+        description: "Suggested command:"
         commands[1]{command,description}:
           test pr --help,see all available commands
       "
@@ -1537,7 +1537,7 @@ describe('subcommands', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'unknown' is not a command for 'test pr'.
 
-      Next steps:
+      Suggested command:
         test pr --help  # see all available commands
       "
     `)
@@ -1840,7 +1840,7 @@ describe('cta', () => {
     const { output } = await serve(cli, ['pr', 'create', 'my-pr', '--verbose', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toEqual({
-      description: 'Suggested commands:',
+      description: 'Suggested command:',
       commands: [{ command: 'test pr get 42', description: 'View the PR' }],
     })
   })
@@ -4195,7 +4195,7 @@ describe('fetch', () => {
   test('cta block is propagated', async () => {
     const cli = Cli.create('test')
     cli.command('done', {
-      run: (c) => c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Next steps:' } }),
+      run: (c) => c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Suggested commands:' } }),
     })
     const { body } = await fetchJson(cli, new Request('http://localhost/done'))
     expect(body.ok).toBe(true)
@@ -4206,7 +4206,7 @@ describe('fetch', () => {
             "command": "test list",
           },
         ],
-        "description": "Next steps:",
+        "description": "Suggested commands:",
       }
     `)
   })

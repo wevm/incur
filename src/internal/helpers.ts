@@ -30,7 +30,11 @@ export function suggest(input: string, candidates: Iterable<string>): string | u
   const threshold = input.length <= 4 ? 2 : Math.floor(input.length / 2)
   let best: string | undefined
   let bestDist = threshold + 1
-  for (const c of candidates) {
+  const all = Array.isArray(candidates) ? candidates : [...candidates]
+  // unambiguous prefix match
+  const prefixMatches = all.filter((c) => c.startsWith(input) && c !== input)
+  if (prefixMatches.length === 1) return prefixMatches[0]
+  for (const c of all) {
     const d = levenshtein(input, c)
     if (d < bestDist) {
       bestDist = d

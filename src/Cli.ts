@@ -659,7 +659,7 @@ async function serveImpl(
         ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
       }
       ctaCommands.push({ command: `${name} skills --help`, description: 'see all available commands' })
-      const cta: FormattedCtaBlock = { description: 'Next steps:', commands: ctaCommands }
+      const cta: FormattedCtaBlock = { description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:', commands: ctaCommands }
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
@@ -750,7 +750,7 @@ async function serveImpl(
         ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
       }
       ctaCommands.push({ command: `${name} mcp --help`, description: 'see all available commands' })
-      const cta: FormattedCtaBlock = { description: 'Next steps:', commands: ctaCommands }
+      const cta: FormattedCtaBlock = { description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:', commands: ctaCommands }
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
@@ -1140,7 +1140,7 @@ async function serveImpl(
       ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
     }
     ctaCommands.push({ command: helpCmd, description: 'see all available commands' })
-    const cta: FormattedCtaBlock = { description: 'Next steps:', commands: ctaCommands }
+    const cta: FormattedCtaBlock = { description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:', commands: ctaCommands }
     if (human && !verbose) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
       const mergedCta = skillsCta
@@ -2308,7 +2308,7 @@ type ErrorResult = {
 type CtaBlock<commands extends CommandsMap = Commands> = {
   /** Commands to suggest. */
   commands: Cta<commands>[]
-  /** Human-readable label. Defaults to `"Suggested commands:"`. */
+  /** Human-readable label. Defaults to `"Suggested command:"` or `"Suggested commands:"` based on count. */
   description?: string | undefined
 }
 
@@ -2552,7 +2552,7 @@ async function handleStreaming(
 function formatCtaBlock(name: string, block: CtaBlock | undefined): FormattedCtaBlock | undefined {
   if (!block || block.commands.length === 0) return undefined
   return {
-    description: block.description ?? 'Suggested commands:',
+    description: block.description ?? (block.commands.length === 1 ? 'Suggested command:' : 'Suggested commands:'),
     commands: block.commands.map((c) => formatCta(name, c)),
   }
 }
