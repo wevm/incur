@@ -1,4 +1,9 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+
+vi.mock('./SyncSkills.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SyncSkills.js')>()
+  return { ...actual, readHash: () => undefined }
+})
 
 import { app as prefixedApp } from '../test/fixtures/hono-api-prefixed.js'
 import { app } from '../test/fixtures/hono-api.js'
