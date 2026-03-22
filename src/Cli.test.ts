@@ -691,9 +691,9 @@ describe('serve', () => {
       "code: COMMAND_NOT_FOUND
       message: 'nonexistent' is not a command for 'test'.
       cta:
-        description: "See available commands:"
-        commands[1]{command}:
-          test --help
+        description: "Next steps:"
+        commands[1]{command,description}:
+          test --help,see all available commands
       "
     `)
   })
@@ -708,8 +708,8 @@ describe('serve', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'nonexistent' is not a command for 'test'.
 
-      See available commands:
-        test --help
+      Next steps:
+        test --help  # see all available commands
       "
     `)
   })
@@ -727,10 +727,96 @@ describe('serve', () => {
       meta:
         command: nonexistent
         cta:
-          description: "See available commands:"
-          commands[1]{command}:
-            test --help
+          description: "Next steps:"
+          commands[1]{command,description}:
+            test --help,see all available commands
         duration: <stripped>
+      "
+    `)
+  })
+
+  test('suggests similar command for typos', async () => {
+    const cli = Cli.create('test')
+    cli.command('deploy', { run: () => ({}) })
+    cli.command('status', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['deplyo'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: COMMAND_NOT_FOUND
+      message: 'deplyo' is not a command for 'test'. Did you mean 'deploy'?
+      cta:
+        description: "Next steps:"
+        commands[2]:
+          - command: test deploy
+          - command: test --help
+            description: see all available commands
+      "
+    `)
+  })
+
+  test('suggests similar command for typos in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('deploy', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['deplyo'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "Error: 'deplyo' is not a command for 'test'. Did you mean 'deploy'?
+
+      Next steps:
+        test deploy
+        test --help  # see all available commands
+      "
+    `)
+  })
+
+  test('suggests builtin commands for typos', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['mpc'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("Did you mean 'mcp'?")
+    expect(output).toContain('test mcp')
+  })
+
+  test('preserves flags in suggestion CTA', async () => {
+    const cli = Cli.create('test')
+    cli.command('deploy', { run: () => ({}) })
+
+    const { output } = await serve(cli, ['deplyo', '--verbose'])
+    expect(output).toContain('test deploy --verbose')
+  })
+
+  test('no suggestion when input is too far from any command', async () => {
+    const cli = Cli.create('test')
+    cli.command('deploy', { run: () => ({}) })
+
+    const { output } = await serve(cli, ['xyz'])
+    expect(output).not.toContain('Did you mean')
+  })
+
+  test('suggests similar subcommand for typos', async () => {
+    const cli = Cli.create('test')
+    const pr = Cli.create('pr')
+      .command('list', { run: () => ({}) })
+      .command('create', { run: () => ({}) })
+    cli.command(pr)
+
+    const { output, exitCode } = await serve(cli, ['pr', 'craete'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: COMMAND_NOT_FOUND
+      message: 'craete' is not a command for 'test pr'. Did you mean 'create'?
+      cta:
+        description: "Next steps:"
+        commands[2]:
+          - command: test pr create
+          - command: test pr --help
+            description: see all available commands
       "
     `)
   })
@@ -1289,6 +1375,14 @@ describe('--schema', () => {
     expect(exitCode).toBe(1)
   })
 
+  test('on unknown command suggests similar', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', { run: () => ({}) })
+    const { output, exitCode } = await serve(cli, ['grete', '--schema'])
+    expect(output).toContain("Did you mean 'greet'?")
+    expect(exitCode).toBe(1)
+  })
+
   test('on group shows available commands', async () => {
     const cli = Cli.create('test')
     const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
@@ -1422,9 +1516,9 @@ describe('subcommands', () => {
       "code: COMMAND_NOT_FOUND
       message: 'unknown' is not a command for 'test pr'.
       cta:
-        description: "See available commands:"
-        commands[1]{command}:
-          test pr --help
+        description: "Next steps:"
+        commands[1]{command,description}:
+          test pr --help,see all available commands
       "
     `)
   })
@@ -1443,8 +1537,8 @@ describe('subcommands', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'unknown' is not a command for 'test pr'.
 
-      See available commands:
-        test pr --help
+      Next steps:
+        test pr --help  # see all available commands
       "
     `)
   })
@@ -2469,15 +2563,32 @@ describe('skills staleness', () => {
 
   afterEach(() => {
     stderrSpy.mockRestore()
+    __mockSkillsHash = undefined
   })
 
-  test('warns on stderr when skills are stale', async () => {
+  test('includes skills CTA when stale', async () => {
     __mockSkillsHash = '0000000000000000'
     const cli = Cli.create('test')
     cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
-    await serve(cli, ['ping'])
-    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("Skills are out of date. Run '"))
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toContain('Skills are out of date:')
+    expect(output).toContain('skills add')
+  })
+
+  test('merges skills CTA with command CTA', async () => {
+    __mockSkillsHash = '0000000000000000'
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('ping', {
+      description: 'Health check',
+      run: (c) => c.ok({ pong: true }, { cta: { commands: ['status'] } }),
+    })
+
+    const { output } = await serve(cli, ['ping'])
+    ;(process.stdout as any).isTTY = false
+    expect(output).toContain('status')
+    expect(output).toContain('skills add')
   })
 
   test('does not warn when hash matches', async () => {
@@ -2486,8 +2597,8 @@ describe('skills staleness', () => {
     const cli = Cli.create('test')
     cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
-    await serve(cli, ['ping'])
-    expect(stderrSpy).not.toHaveBeenCalled()
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('Skills are out of date')
   })
 
   test('does not warn when no hash stored', async () => {
@@ -2495,8 +2606,8 @@ describe('skills staleness', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
 
-    await serve(cli, ['ping'])
-    expect(stderrSpy).not.toHaveBeenCalled()
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('Skills are out of date')
   })
 
   test('does not warn for skills add', async () => {
@@ -2513,8 +2624,8 @@ describe('skills staleness', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
 
-    await serve(cli, ['--help'])
-    expect(stderrSpy).not.toHaveBeenCalled()
+    const { output } = await serve(cli, ['--help'])
+    expect(output).not.toContain('Skills are out of date')
   })
 })
 
@@ -3706,6 +3817,14 @@ describe('fetch', () => {
         "status": 404,
       }
     `)
+  })
+
+  test('GET /helath → 404 with suggestion', async () => {
+    const cli = Cli.create('test')
+    cli.command('health', { run: () => ({}) })
+    const res = await fetchJson(cli, new Request('http://localhost/helath'))
+    expect(res.status).toBe(404)
+    expect(res.body.error.message).toContain("Did you mean 'health'?")
   })
 
   test('GET / with root command → 200', async () => {

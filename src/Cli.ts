@@ -13,7 +13,7 @@ import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
 import * as Command from './internal/command.js'
-import { isRecord } from './internal/helpers.js'
+import { isRecord, suggest } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -541,6 +541,7 @@ async function serveImpl(
   }
 
   // Skills staleness check (skip for built-in commands)
+  let skillsCta: FormattedCtaBlock | undefined
   if (!llms && !llmsFull && !schema && !help && !version) {
     const isSkillsAdd =
       filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
@@ -553,9 +554,10 @@ async function serveImpl(
         if (Skill.hash(entries) !== stored) {
           const runner = detectRunner()
           const spec = SyncMcp.detectPackageSpecifier(name)
-          process.stderr.write(
-            `⚠ Skills are out of date. Run '${runner} ${spec} skills add' to update.\n\n`,
-          )
+          skillsCta = {
+            description: 'Skills are out of date:',
+            commands: [{ command: `${runner} ${spec} skills add`, description: 'sync outdated skills' }],
+          }
         }
       }
     }
@@ -938,7 +940,9 @@ async function serveImpl(
     }
     if ('error' in resolved) {
       const parent = resolved.path ? `${name} ${resolved.path}` : name
-      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.`)
+      const suggestion = suggest(resolved.error, resolved.commands.keys())
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`)
       exit(1)
       return
     }
@@ -1022,6 +1026,21 @@ async function serveImpl(
   function write(output: Output) {
     if (filterPaths && output.ok && output.data != null)
       output = { ...output, data: Filter.apply(output.data, filterPaths) }
+    if (skillsCta) {
+      const existing = output.meta.cta
+      output = {
+        ...output,
+        meta: {
+          ...output.meta,
+          cta: existing
+            ? {
+                description: existing.description,
+                commands: [...existing.commands, ...skillsCta.commands],
+              }
+            : skillsCta,
+        },
+      }
+    }
     if (tokenCount) {
       const base = output.ok ? output.data : output.error
       const formatted = base != null ? Formatter.format(base, format) : ''
@@ -1072,14 +1091,24 @@ async function serveImpl(
   if ('error' in effective) {
     const helpCmd = effective.path ? `${name} ${effective.path} --help` : `${name} --help`
     const parent = effective.path ? `${name} ${effective.path}` : name
-    const message = `'${effective.error}' is not a command for '${parent}'.`
-    const cta: FormattedCtaBlock = {
-      description: 'See available commands:',
-      commands: [{ command: helpCmd }],
+    const candidates = 'commands' in effective ? [...effective.commands.keys()] : []
+    if (!effective.path) for (const b of builtinCommands) candidates.push(b.name)
+    const suggestion = suggest(effective.error, candidates)
+    const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+    const message = `'${effective.error}' is not a command for '${parent}'.${didYouMean}`
+    const ctaCommands: FormattedCta[] = []
+    if (suggestion) {
+      const corrected = argv.map((t) => (t === effective.error ? suggestion : t))
+      ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
     }
+    ctaCommands.push({ command: helpCmd, description: 'see all available commands' })
+    const cta: FormattedCtaBlock = { description: 'Next steps:', commands: ctaCommands }
     if (human && !verbose) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-      writeln(formatHumanCta(cta))
+      const mergedCta = skillsCta
+        ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
+        : cta
+      writeln(formatHumanCta(mergedCta))
       exit(1)
       return
     }
@@ -1544,18 +1573,22 @@ async function fetchImpl(
 
   const resolved = resolveCommand(commands, segments)
 
-  if ('error' in resolved)
+  if ('error' in resolved) {
+    const parent = resolved.path ? `${name} ${resolved.path}` : name
+    const suggestion = suggest(resolved.error, resolved.commands.keys())
+    const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
     return jsonResponse(
       {
         ok: false,
         error: {
           code: 'COMMAND_NOT_FOUND',
-          message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.`,
+          message: `'${resolved.error}' is not a command for '${parent}'.${didYouMean}`,
         },
         meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` },
       },
       404,
     )
+  }
 
   if ('help' in resolved)
     return jsonResponse(
@@ -1754,10 +1787,10 @@ function resolveCommand(
       description?: string | undefined
       commands: Map<string, CommandEntry>
     }
-  | { error: string; path: string } {
+  | { error: string; path: string; commands: Map<string, CommandEntry>; rest: string[] } {
   const [first, ...rest] = tokens
 
-  if (!first || !commands.has(first)) return { error: first ?? '(none)', path: '' }
+  if (!first || !commands.has(first)) return { error: first ?? '(none)', path: '', commands, rest }
 
   let entry = commands.get(first)!
   const path = [first]
@@ -1791,7 +1824,7 @@ function resolveCommand(
 
     const child = entry.commands.get(next)
     if (!child) {
-      return { error: next, path: path.join(' ') }
+      return { error: next, path: path.join(' '), commands: entry.commands, rest: remaining.slice(1) }
     }
 
     path.push(next)
