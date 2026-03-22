@@ -2543,6 +2543,25 @@ describe('built-in commands', () => {
     expect(output).toContain('add')
   })
 
+  test('skills typo suggests add', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({}) })
+    const { output, exitCode } = await serve(cli, ['skills', 'addd'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("Did you mean 'add'?")
+    expect(output).toContain('test skills add')
+    expect(output).toContain('test skills --help')
+  })
+
+  test('mcp typo suggests add', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({}) })
+    const { output, exitCode } = await serve(cli, ['mcp', 'addd'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("Did you mean 'add'?")
+    expect(output).toContain('test mcp add')
+  })
+
   test('skills add --help shows options', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
