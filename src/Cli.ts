@@ -75,6 +75,7 @@ export type Cli<
         fetch: FetchHandler
         openapi?: Openapi.OpenAPISpec | undefined
         outputPolicy?: OutputPolicy | undefined
+        run?: never
       },
     ): Cli<commands, vars, env>
   }

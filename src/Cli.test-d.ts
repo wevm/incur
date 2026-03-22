@@ -328,3 +328,23 @@ test('create() accepts config-file defaults options', () => {
     config: { files: [42] },
   })
 })
+
+test('three commands without vars resolves overloads correctly', () => {
+  const cli = Cli.create('test')
+  cli.command('create', {
+    options: z.object({ content: z.string().optional() }),
+    run: () => ({ url: 'test' }),
+  })
+  cli.command('get', {
+    args: z.object({ id: z.string() }),
+    options: z.object({ meta: z.boolean().optional() }),
+    run: () => ({ content: 'test' }),
+  })
+  cli.command('list', {
+    options: z.object({
+      limit: z.coerce.number().default(20),
+      cursor: z.string().optional(),
+    }),
+    run: () => ({ items: [] }),
+  })
+})
