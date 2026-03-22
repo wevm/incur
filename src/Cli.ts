@@ -653,8 +653,17 @@ async function serveImpl(
       const suggestion = suggest(skillsSub, ['add'])
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
       const message = `'${skillsSub}' is not a command for '${name} skills'.${didYouMean}`
-      if (human) writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-      else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message }, 'toon'))
+      const ctaCommands: FormattedCta[] = []
+      if (suggestion) {
+        const corrected = argv.map((t) => (t === skillsSub ? suggestion : t))
+        ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
+      }
+      ctaCommands.push({ command: `${name} skills --help`, description: 'see all available commands' })
+      const cta: FormattedCtaBlock = { description: 'Next steps:', commands: ctaCommands }
+      if (human) {
+        writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+        writeln(formatHumanCta(cta))
+      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
       exit(1)
       return
     }
@@ -735,8 +744,17 @@ async function serveImpl(
       const suggestion = suggest(mcpSub, ['add'])
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
       const message = `'${mcpSub}' is not a command for '${name} mcp'.${didYouMean}`
-      if (human) writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-      else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message }, 'toon'))
+      const ctaCommands: FormattedCta[] = []
+      if (suggestion) {
+        const corrected = argv.map((t) => (t === mcpSub ? suggestion : t))
+        ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
+      }
+      ctaCommands.push({ command: `${name} mcp --help`, description: 'see all available commands' })
+      const cta: FormattedCtaBlock = { description: 'Next steps:', commands: ctaCommands }
+      if (human) {
+        writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+        writeln(formatHumanCta(cta))
+      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
       exit(1)
       return
     }
