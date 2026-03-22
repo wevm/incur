@@ -70,9 +70,9 @@ describe('routing', () => {
       "code: COMMAND_NOT_FOUND
       message: 'nonexistent' is not a command for 'app'.
       cta:
-        description: "See available commands:"
-        commands[1]{command}:
-          app --help
+        description: "Next steps:"
+        commands[1]{command,description}:
+          app --help,see all available commands
       "
     `)
   })
@@ -85,8 +85,8 @@ describe('routing', () => {
     expect(output).toMatchInlineSnapshot(`
       "Error: 'nonexistent' is not a command for 'app'.
 
-      See available commands:
-        app --help
+      Next steps:
+        app --help  # see all available commands
       "
     `)
   })
@@ -98,9 +98,9 @@ describe('routing', () => {
       "code: COMMAND_NOT_FOUND
       message: 'whoami' is not a command for 'app auth'.
       cta:
-        description: "See available commands:"
-        commands[1]{command}:
-          app auth --help
+        description: "Next steps:"
+        commands[1]{command,description}:
+          app auth --help,see all available commands
       "
     `)
   })
@@ -112,9 +112,9 @@ describe('routing', () => {
       "code: COMMAND_NOT_FOUND
       message: 'nope' is not a command for 'app project deploy'.
       cta:
-        description: "See available commands:"
-        commands[1]{command}:
-          app project deploy --help
+        description: "Next steps:"
+        commands[1]{command,description}:
+          app project deploy --help,see all available commands
       "
     `)
   })
@@ -650,9 +650,10 @@ describe('error handling', () => {
             "commands": [
               {
                 "command": "app --help",
+                "description": "see all available commands",
               },
             ],
-            "description": "See available commands:",
+            "description": "Next steps:",
           },
           "duration": "<stripped>",
         },
@@ -1974,13 +1975,15 @@ describe('skills staleness', () => {
 
   afterEach(() => {
     stderrSpy.mockRestore()
+    __mockSkillsHash = undefined
   })
 
-  test('warns when running a command with stale skills', async () => {
+  test('includes skills CTA when stale', async () => {
     __mockSkillsHash = '0000000000000000'
     const { output } = await serve(createApp(), ['ping'])
     expect(output).toContain('pong: true')
-    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('Skills are out of date.'))
+    expect(output).toContain('Skills are out of date:')
+    expect(output).toContain('skills add')
   })
 
   test('no warning when skills hash matches', async () => {
@@ -1991,20 +1994,20 @@ describe('skills staleness', () => {
 
     const { output } = await serve(cli, ['ping'])
     expect(output).toContain('pong: true')
-    expect(stderrSpy).not.toHaveBeenCalled()
+    expect(output).not.toContain('Skills are out of date')
   })
 
   test('no warning on first use (no hash stored)', async () => {
     __mockSkillsHash = undefined
     const { output } = await serve(createApp(), ['ping'])
     expect(output).toContain('pong: true')
-    expect(stderrSpy).not.toHaveBeenCalled()
+    expect(output).not.toContain('Skills are out of date')
   })
 
   test('no warning for --llms', async () => {
     __mockSkillsHash = '0000000000000000'
-    await serve(createApp(), ['--llms'])
-    expect(stderrSpy).not.toHaveBeenCalled()
+    const { output } = await serve(createApp(), ['--llms'])
+    expect(output).not.toContain('Skills are out of date')
   })
 
   test('no warning for --mcp', async () => {
