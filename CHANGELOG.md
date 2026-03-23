@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.9
+
+### Patch Changes
+
+- 8ee1af4: Fixed skill display names to use canonical slug from SKILL.md frontmatter instead of reconstructing from CLI name and subcommand.
+
 ## 0.3.8
 
 ### Patch Changes
