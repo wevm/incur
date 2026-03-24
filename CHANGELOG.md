@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.11
+
+### Patch Changes
+
+- 7833e33: Updated command suggestion ranking to use tiered scoring (prefix → contains → fuzzy) so match type outranks raw edit distance.
+
 ## 0.3.10
 
 ### Patch Changes
