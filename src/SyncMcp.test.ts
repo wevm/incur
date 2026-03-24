@@ -19,21 +19,19 @@ vi.mock('node:os', async (importOriginal) => {
   }
 })
 
-let savedArgv1: string | undefined
 let tmp: string
 
 beforeEach(() => {
-  savedArgv1 = process.argv[1]
+  const savedArgv1 = process.argv[1]
   tmp = join(tmpdir(), `clac-test-${Date.now()}`)
   mkdirSync(join(tmp, 'node_modules', '.bin'), { recursive: true })
   fakeHome = join(tmp, 'home')
   mkdirSync(fakeHome, { recursive: true })
-})
-
-afterEach(() => {
-  process.argv[1] = savedArgv1!
-  fakeHome = undefined
-  rmSync(tmp, { recursive: true, force: true })
+  return () => {
+    process.argv[1] = savedArgv1!
+    fakeHome = undefined
+    rmSync(tmp, { recursive: true, force: true })
+  }
 })
 
 function setupPkg(deps: Record<string, string>) {

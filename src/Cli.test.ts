@@ -4360,12 +4360,11 @@ describe('fetch', () => {
 })
 
 describe('displayName', () => {
-  let savedArgv1: string | undefined
   beforeEach(() => {
-    savedArgv1 = process.argv[1]
-  })
-  afterEach(() => {
-    process.argv[1] = savedArgv1!
+    const savedArgv1 = process.argv[1]
+    return () => {
+      process.argv[1] = savedArgv1!
+    }
   })
 
   test('defaults to name when argv[1] is not an alias', async () => {
@@ -4428,11 +4427,7 @@ describe('displayName', () => {
       name: 'my-cli',
       aliases: ['mc'],
     }).command('ping', {
-      run: (c) =>
-        c.ok(
-          { ok: true },
-          { cta: { commands: ['login'] } },
-        ),
+      run: (c) => c.ok({ ok: true }, { cta: { commands: ['login'] } }),
     })
     const { output } = await serve(cli, ['ping', '--json', '--verbose'])
     const parsed = JSON.parse(output)
