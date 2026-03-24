@@ -4358,3 +4358,84 @@ describe('fetch', () => {
     })
   })
 })
+
+describe('displayName', () => {
+  let savedArgv1: string | undefined
+  beforeEach(() => {
+    savedArgv1 = process.argv[1]
+  })
+  afterEach(() => {
+    process.argv[1] = savedArgv1!
+  })
+
+  test('defaults to name when argv[1] is not an alias', async () => {
+    process.argv[1] = '/usr/local/bin/my-cli'
+    const cli = Cli.create({
+      name: 'my-cli',
+      aliases: ['mc'],
+    }).command('ping', {
+      run: (c) => c.ok({ displayName: c.displayName }),
+    })
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output).displayName).toBe('my-cli')
+  })
+
+  test('resolves alias from argv[1]', async () => {
+    process.argv[1] = '/usr/local/bin/mc'
+    const cli = Cli.create({
+      name: 'my-cli',
+      aliases: ['mc'],
+    }).command('ping', {
+      run: (c) => c.ok({ displayName: c.displayName }),
+    })
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output).displayName).toBe('mc')
+  })
+
+  test('falls back to name when argv[1] is undefined', async () => {
+    process.argv[1] = undefined as any
+    const cli = Cli.create({
+      name: 'my-cli',
+      aliases: ['mc'],
+    }).command('ping', {
+      run: (c) => c.ok({ displayName: c.displayName }),
+    })
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output).displayName).toBe('my-cli')
+  })
+
+  test('available in middleware context', async () => {
+    process.argv[1] = '/usr/local/bin/mc'
+    let middlewareDisplayName: string | undefined
+    const cli = Cli.create({
+      name: 'my-cli',
+      aliases: ['mc'],
+    })
+      .use((c, next) => {
+        middlewareDisplayName = c.displayName
+        return next()
+      })
+      .command('ping', {
+        run: (c) => c.ok({ ok: true }),
+      })
+    await serve(cli, ['ping', '--json'])
+    expect(middlewareDisplayName).toBe('mc')
+  })
+
+  test('cta commands use displayName', async () => {
+    process.argv[1] = '/usr/local/bin/mc'
+    const cli = Cli.create({
+      name: 'my-cli',
+      aliases: ['mc'],
+    }).command('ping', {
+      run: (c) =>
+        c.ok(
+          { ok: true },
+          { cta: { commands: ['login'] } },
+        ),
+    })
+    const { output } = await serve(cli, ['ping', '--json', '--verbose'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta.commands[0].command).toBe('mc login')
+  })
+})

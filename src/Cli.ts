@@ -455,6 +455,7 @@ async function serveImpl(
   const human = process.stdout.isTTY === true
   const configEnabled = options.config !== undefined
   const configFlag = options.config?.flag
+  const displayName = resolveDisplayName(name, options.aliases)
 
   function writeln(s: string) {
     stdout(s.endsWith('\n') ? s : `${s}\n`)
@@ -1258,6 +1259,7 @@ async function serveImpl(
         const mwCtx: MiddlewareContext = {
           agent: !human,
           command: path,
+          displayName,
           env: cliEnv,
           error: errorFn,
           format,
@@ -1272,7 +1274,7 @@ async function serveImpl(
         const handleMwSentinel = (result: unknown) => {
           if (!isSentinel(result) || result[sentinel] !== 'error') return
           const err = result as ErrorResult
-          const cta = formatCtaBlock(name, err.cta)
+          const cta = formatCtaBlock(displayName, err.cta)
           write({
             ok: false,
             error: {
@@ -1357,6 +1359,7 @@ async function serveImpl(
     agent: !human,
     argv: rest,
     defaults,
+    displayName,
     env: options.envSchema,
     envSource: options.env,
     format,
@@ -1374,7 +1377,7 @@ async function serveImpl(
   // Streaming path — async generator
   if ('stream' in result) {
     await handleStreaming(result.stream, {
-      name,
+      name: displayName,
       path,
       start,
       format,
@@ -1391,7 +1394,7 @@ async function serveImpl(
   }
 
   if (result.ok) {
-    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
+    const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
     write({
       ok: true,
       data: result.data,
@@ -1402,12 +1405,12 @@ async function serveImpl(
       },
     })
   } else {
-    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
+    const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
 
     if (human && !formatExplicit && result.error.fieldErrors) {
       writeln(
         formatHumanValidationError(
-          name,
+          displayName,
           path,
           command,
           new ValidationError({
@@ -2883,6 +2886,8 @@ type CommandDefinition<
     agent: boolean
     /** Positional arguments. */
     args: InferOutput<args>
+    /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
+    displayName: string
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */
@@ -2959,4 +2964,14 @@ function emitDeprecationWarnings(
           process.stderr.write(`Warning: --${deprecatedShorts.get(ch)} is deprecated\n`)
     }
   }
+}
+
+/** @internal Resolves the display name from `process.argv[1]` basename. Returns the basename if it matches `name` or one of the `aliases`, otherwise falls back to `name`. */
+function resolveDisplayName(name: string, aliases?: string[]): string {
+  const bin = process.argv[1]
+  if (!bin) return name
+  const basename = path.basename(bin)
+  if (basename === name) return name
+  if (aliases?.includes(basename)) return basename
+  return name
 }

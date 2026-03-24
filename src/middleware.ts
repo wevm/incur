@@ -33,6 +33,8 @@ export type Context<
   agent: boolean
   /** The resolved command path. */
   command: string
+  /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
+  displayName: string
   /** Parsed environment variables from the CLI-level env schema. */
   env: InferEnv<env>
   /** Return an error result, short-circuiting the middleware chain. */

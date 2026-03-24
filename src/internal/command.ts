@@ -47,6 +47,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     vars: varsSchema,
     middlewares = [],
   } = options
+  const displayName = options.displayName ?? name
   const parseMode = options.parseMode ?? 'argv'
 
   const varsMap: Record<string, unknown> = varsSchema ? varsSchema.parse({}) : {}
@@ -105,6 +106,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     const raw = command.run({
       agent,
       args,
+      displayName,
       env: commandEnv,
       error: errorFn,
       format,
@@ -194,6 +196,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       const mwCtx: MiddlewareContext = {
         agent,
         command: path,
+        displayName,
         env: cliEnv,
         error: errorFn,
         format: format as any,
@@ -272,6 +275,8 @@ export declare namespace execute {
     argv: string[]
     /** Default option values from config file. */
     defaults?: Record<string, unknown> | undefined
+    /** The resolved binary name the user invoked (e.g. an alias). Falls back to `name`. */
+    displayName?: string | undefined
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
     /** Source for environment variables. Defaults to `process.env`. */
