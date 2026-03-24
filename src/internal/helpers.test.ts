@@ -57,7 +57,19 @@ describe('suggest', () => {
     expect(suggest('ski', ['mcp', 'skills', 'completions'])).toBe('skills')
   })
 
-  test('falls back to levenshtein for ambiguous prefix', () => {
+  test('prefers shorter prefix match among ambiguous prefixes', () => {
     expect(suggest('ski', ['skills', 'skip'])).toBe('skip')
+  })
+
+  test('prefix match beats fuzzy match', () => {
+    expect(suggest('iss', ['issue', 'is', 'miss'])).toBe('issue')
+  })
+
+  test('contains match beats fuzzy match', () => {
+    expect(suggest('sue', ['issue', 'use', 'sum'])).toBe('issue')
+  })
+
+  test('case-insensitive matching', () => {
+    expect(suggest('Deploy', ['deploy', 'list'])).toBe('deploy')
   })
 })

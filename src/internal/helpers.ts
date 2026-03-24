@@ -28,16 +28,30 @@ export function levenshtein(a: string, b: string): number {
 /** Suggests the closest command name from a set, returning it if within a reasonable edit distance. */
 export function suggest(input: string, candidates: Iterable<string>): string | undefined {
   const threshold = input.length <= 4 ? 2 : Math.floor(input.length / 2)
-  let best: string | undefined
-  let bestDist = threshold + 1
+  const lower = input.toLowerCase()
   const all = Array.isArray(candidates) ? candidates : [...candidates]
-  // unambiguous prefix match
-  const prefixMatches = all.filter((c) => c.startsWith(input) && c !== input)
-  if (prefixMatches.length === 1) return prefixMatches[0]
+
+  let best: string | undefined
+  let bestScore = Infinity
+
   for (const c of all) {
-    const d = levenshtein(input, c)
-    if (d < bestDist) {
-      bestDist = d
+    const lc = c.toLowerCase()
+    const dist = levenshtein(lower, lc)
+
+    let score: number
+    if (lc.startsWith(lower) && lc !== lower)
+      // prefix match — best tier
+      score = dist
+    else if (lc.includes(lower))
+      // contains match — middle tier
+      score = 100 + dist
+    else if (dist <= threshold)
+      // fuzzy match — last tier
+      score = 200 + dist
+    else continue
+
+    if (score < bestScore) {
+      bestScore = score
       best = c
     }
   }
