@@ -85,7 +85,11 @@ export async function callTool(
     env?: z.ZodObject<any> | undefined
     vars?: z.ZodObject<any> | undefined
   } = {},
-): Promise<{ content: { type: 'text'; text: string }[]; structuredContent?: Record<string, unknown>; isError?: boolean }> {
+): Promise<{
+  content: { type: 'text'; text: string }[]
+  structuredContent?: Record<string, unknown>
+  isError?: boolean
+}> {
   const allMiddleware = [
     ...(options.middlewares ?? []),
     ...((tool.middlewares as MiddlewareHandler[] | undefined) ?? []),
@@ -139,7 +143,9 @@ export async function callTool(
   const data = result.data ?? null
   return {
     content: [{ type: 'text', text: JSON.stringify(data) }],
-    ...(data !== null && tool.outputSchema ? { structuredContent: data as Record<string, unknown> } : undefined),
+    ...(data !== null && tool.outputSchema
+      ? { structuredContent: data as Record<string, unknown> }
+      : undefined),
   }
 }
 
@@ -173,7 +179,9 @@ export function collectTools(
         name: path.join('_'),
         description: entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
-        ...(entry.output ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> } : undefined),
+        ...(entry.output
+          ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> }
+          : undefined),
         command: entry,
         ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })
@@ -200,4 +208,3 @@ function buildToolSchema(
   if (required.length > 0) return { type: 'object', properties, required }
   return { type: 'object', properties }
 }
-

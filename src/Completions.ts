@@ -233,24 +233,24 @@ function bashRegister(name: string): string {
     local _completions
     _completions=( $(
         COMPLETE="bash"
-        _COMPLETE_INDEX="\$_COMPLETE_INDEX"
+        _COMPLETE_INDEX="$_COMPLETE_INDEX"
         "${name}" -- "\${COMP_WORDS[@]}"
     ) )
-    if [[ \$? != 0 ]]; then
+    if [[ $? != 0 ]]; then
         unset COMPREPLY
         return
     fi
     local _nospace=false
     COMPREPLY=()
     for _c in "\${_completions[@]}"; do
-        if [[ "\$_c" == *$'\\001' ]]; then
+        if [[ "$_c" == *$'\\001' ]]; then
             _nospace=true
             COMPREPLY+=("\${_c%$'\\001'}")
         else
-            COMPREPLY+=("\$_c")
+            COMPREPLY+=("$_c")
         fi
     done
-    if [[ \$_nospace == true ]]; then
+    if [[ $_nospace == true ]]; then
         compopt -o nospace
     fi
 }
@@ -266,7 +266,7 @@ _incur_complete_${id}() {
         COMPLETE="zsh"
         "${name}" -- "\${words[@]}" 2>/dev/null
     )}")
-    if [[ -n \$completions ]]; then
+    if [[ -n $completions ]]; then
         _describe 'values' completions -S ''
     fi
 }

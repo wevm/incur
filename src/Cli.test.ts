@@ -4195,7 +4195,8 @@ describe('fetch', () => {
   test('cta block is propagated', async () => {
     const cli = Cli.create('test')
     cli.command('done', {
-      run: (c) => c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Suggested commands:' } }),
+      run: (c) =>
+        c.ok({ id: 1 }, { cta: { commands: ['list'], description: 'Suggested commands:' } }),
     })
     const { body } = await fetchJson(cli, new Request('http://localhost/done'))
     expect(body.ok).toBe(true)

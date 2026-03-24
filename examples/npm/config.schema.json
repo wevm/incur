@@ -74,10 +74,7 @@
                   "default": "public",
                   "description": "Package access level",
                   "type": "string",
-                  "enum": [
-                    "public",
-                    "restricted"
-                  ]
+                  "enum": ["public", "restricted"]
                 },
                 "dryRun": {
                   "type": "boolean",

@@ -556,7 +556,9 @@ async function serveImpl(
           const spec = SyncMcp.detectPackageSpecifier(name)
           skillsCta = {
             description: 'Skills are out of date:',
-            commands: [{ command: `${runner} ${spec} skills add`, description: 'sync outdated skills' }],
+            commands: [
+              { command: `${runner} ${spec} skills add`, description: 'sync outdated skills' },
+            ],
           }
         }
       }
@@ -658,8 +660,14 @@ async function serveImpl(
         const corrected = argv.map((t) => (t === skillsSub ? suggestion : t))
         ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
       }
-      ctaCommands.push({ command: `${name} skills --help`, description: 'see all available commands' })
-      const cta: FormattedCtaBlock = { description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:', commands: ctaCommands }
+      ctaCommands.push({
+        command: `${name} skills --help`,
+        description: 'see all available commands',
+      })
+      const cta: FormattedCtaBlock = {
+        description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
+        commands: ctaCommands,
+      }
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
@@ -749,7 +757,10 @@ async function serveImpl(
         ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
       }
       ctaCommands.push({ command: `${name} mcp --help`, description: 'see all available commands' })
-      const cta: FormattedCtaBlock = { description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:', commands: ctaCommands }
+      const cta: FormattedCtaBlock = {
+        description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
+        commands: ctaCommands,
+      }
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
@@ -1139,7 +1150,10 @@ async function serveImpl(
       ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
     }
     ctaCommands.push({ command: helpCmd, description: 'see all available commands' })
-    const cta: FormattedCtaBlock = { description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:', commands: ctaCommands }
+    const cta: FormattedCtaBlock = {
+      description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
+      commands: ctaCommands,
+    }
     if (human && !verbose) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
       const mergedCta = skillsCta
@@ -1861,7 +1875,12 @@ function resolveCommand(
 
     const child = entry.commands.get(next)
     if (!child) {
-      return { error: next, path: path.join(' '), commands: entry.commands, rest: remaining.slice(1) }
+      return {
+        error: next,
+        path: path.join(' '),
+        commands: entry.commands,
+        rest: remaining.slice(1),
+      }
     }
 
     path.push(next)
@@ -2551,7 +2570,9 @@ async function handleStreaming(
 function formatCtaBlock(name: string, block: CtaBlock | undefined): FormattedCtaBlock | undefined {
   if (!block || block.commands.length === 0) return undefined
   return {
-    description: block.description ?? (block.commands.length === 1 ? 'Suggested command:' : 'Suggested commands:'),
+    description:
+      block.description ??
+      (block.commands.length === 1 ? 'Suggested command:' : 'Suggested commands:'),
     commands: block.commands.map((c) => formatCta(name, c)),
   }
 }

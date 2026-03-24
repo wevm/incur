@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+
 import { levenshtein, suggest } from './helpers.js'
 
 describe('levenshtein', () => {

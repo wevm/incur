@@ -419,7 +419,7 @@ describe('serve integration', () => {
 
   test('COMPLETE=zsh with words outputs candidates in zsh format', async () => {
     const cli = makeCli()
-    const output = await serve(cli, ['--', 'mycli', '--'], {
+    await serve(cli, ['--', 'mycli', '--'], {
       COMPLETE: 'zsh',
       _COMPLETE_INDEX: '1',
     })
