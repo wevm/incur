@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.10
+
+### Patch Changes
+
+- d1404b8: Fixed optional properties being typed as required in typegen output.
+
 ## 0.3.9
 
 ### Patch Changes
