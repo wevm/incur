@@ -49,8 +49,9 @@ function schemaToType(schema: z.ZodObject<any> | undefined): string {
   const defs = (json.$defs ?? {}) as Record<string, Record<string, unknown>>
   const properties = json.properties as Record<string, Record<string, unknown>> | undefined
   if (!properties || Object.keys(properties).length === 0) return '{}'
+  const required = new Set((json.required as string[] | undefined) ?? [])
   const entries = Object.entries(properties).map(
-    ([key, value]) => `${key}: ${resolveType(value, defs)}`,
+    ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
   )
   return `{ ${entries.join('; ')} }`
 }
@@ -96,8 +97,9 @@ function resolveType(
     case 'object': {
       const properties = schema.properties as Record<string, Record<string, unknown>> | undefined
       if (!properties || Object.keys(properties).length === 0) return '{}'
+      const required = new Set((schema.required as string[] | undefined) ?? [])
       const entries = Object.entries(properties).map(
-        ([key, value]) => `${key}: ${resolveType(value, defs)}`,
+        ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
       )
       return `{ ${entries.join('; ')} }`
     }

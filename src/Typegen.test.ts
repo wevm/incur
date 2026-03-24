@@ -169,6 +169,21 @@ describe('fromCli', () => {
     expect(output).toContain('config: { host: string; port: number }')
   })
 
+  test('optional properties use optional modifier', () => {
+    const cli = Cli.create('test').command('create', {
+      args: z.object({ name: z.string() }),
+      options: z.object({
+        verbose: z.boolean().optional(),
+        output: z.string(),
+      }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('verbose?: boolean')
+    expect(output).toContain('output: string')
+  })
+
   test('mixed top-level and grouped commands', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({}) })

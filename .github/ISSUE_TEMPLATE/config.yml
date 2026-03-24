@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Get Help
+    url: https://github.com/wevm/incur/discussions/new?category=q-a
+    about: Ask a question and discuss with other community members.
+
+  - name: Feature Request
+    url: https://github.com/wevm/incur/discussions/new?category=ideas
+    about: Request features or brainstorm ideas for new functionality.
