@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.12
+
+### Patch Changes
+
+- b8370ac: Added `displayName` to the run and middleware context. Resolves the actual binary name from `process.argv[1]` so user-facing messages reflect the alias used to invoke the CLI.
+
 ## 0.3.11
 
 ### Patch Changes
