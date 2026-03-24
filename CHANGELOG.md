@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.13
+
+### Patch Changes
+
+- 0e0549f: Added `displayName` to the root `Cli.create(..., { run })` context type.
+
 ## 0.3.12
 
 ### Patch Changes
