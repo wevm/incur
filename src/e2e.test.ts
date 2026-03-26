@@ -1248,9 +1248,9 @@ describe('--llms-full', () => {
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
-        "auth login",
-        "auth logout",
-        "auth status",
+        "login",
+        "logout",
+        "status",
       ]
     `)
   })
@@ -1266,9 +1266,9 @@ describe('--llms-full', () => {
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
-        "project deploy create",
-        "project deploy rollback",
-        "project deploy status",
+        "create",
+        "rollback",
+        "status",
       ]
     `)
   })
@@ -1300,15 +1300,15 @@ describe('--llms-full', () => {
       '--format',
       'json',
     ])
-    const deployCreate = json(output).commands.find((c: any) => c.name === 'project deploy create')
+    const deployCreate = json(output).commands.find((c: any) => c.name === 'create')
     expect(deployCreate.examples).toMatchInlineSnapshot(`
       [
         {
-          "command": "project deploy create staging",
+          "command": "create staging",
           "description": "Deploy staging from main",
         },
         {
-          "command": "project deploy create production --branch release --dryRun true",
+          "command": "create production --branch release --dryRun true",
           "description": "Dry run a production deploy",
         },
       ]
@@ -1495,9 +1495,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app auth auth login\` | Log in to the service |
-      | \`app auth auth logout\` | Log out of the service |
-      | \`app auth auth status\` | Show authentication status |
+      | \`app auth login\` | Log in to the service |
+      | \`app auth logout\` | Log out of the service |
+      | \`app auth status\` | Show authentication status |
 
       Run \`app auth --llms-full\` for full manifest. Run \`app auth <command> --schema\` for argument details.
       "
@@ -1513,9 +1513,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app project deploy project deploy create <env>\` | Create a deployment |
-      | \`app project deploy project deploy rollback <deployId>\` | Rollback a deployment |
-      | \`app project deploy project deploy status <deployId>\` | Check deployment status |
+      | \`app project deploy create <env>\` | Create a deployment |
+      | \`app project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy status <deployId>\` | Check deployment status |
 
       Run \`app project deploy --llms-full\` for full manifest. Run \`app project deploy <command> --schema\` for argument details.
       "
@@ -1941,7 +1941,7 @@ describe('env', () => {
 
   test('--llms-full json includes schema.env', async () => {
     const { output } = await serve(createApp(), ['auth', '--llms-full', '--format', 'json'])
-    const login = json(output).commands.find((c: any) => c.name === 'auth login')
+    const login = json(output).commands.find((c: any) => c.name === 'login')
     expect(login.schema.env.properties).toMatchInlineSnapshot(`
       {
         "AUTH_HOST": {
