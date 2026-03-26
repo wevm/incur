@@ -1566,9 +1566,10 @@ async function fetchImpl(
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
         const descMatch = f.content.match(/^description:\s*(.+)$/m)
+        const rawDesc = descMatch?.[1] ?? ''
         return {
           name: f.dir || name,
-          description: descMatch?.[1] ?? '',
+          description: rawDesc.replace(/^"(.*)"$/, '$1'),
           files: ['SKILL.md'],
         }
       })

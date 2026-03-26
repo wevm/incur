@@ -133,7 +133,7 @@ function renderGroup(
     .replace(/-{2,}/g, '-')
     .replace(/^-|-$/g, '')
   const fm = ['---', `name: ${slug}`]
-  fm.push(`description: ${description}`)
+  fm.push(`description: ${yamlQuote(description)}`)
   fm.push(`requires_bin: ${cli}`)
   fm.push(`command: ${title}`, '---')
 
@@ -232,6 +232,14 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
   if (cmd.hint) sections.push(`> ${cmd.hint}`)
 
   return sections.join('\n\n')
+}
+
+/** @internal YAML-quotes a string value if it contains characters that need escaping. */
+function yamlQuote(value: string): string {
+  if (/[:#\[\]{}&*!|>'"%@`]/.test(value) || value.startsWith('- ') || value.startsWith('? ')) {
+    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  }
+  return value
 }
 
 /** Computes a deterministic hash of command structure for staleness detection. */
