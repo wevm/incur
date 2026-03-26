@@ -2927,7 +2927,7 @@ describe('.well-known/skills', () => {
     expect(result.body).toMatchInlineSnapshot(`
       "---
       name: app-ping
-      description: "Health check. Run \`app ping --help\` for usage details."
+      description: Health check. Run \`app ping --help\` for usage details.
       requires_bin: app
       command: app ping
       ---

@@ -252,7 +252,7 @@ describe('split', () => {
     expect(files[0]!.content).toMatchInlineSnapshot(`
       "---
       name: gh-auth
-      description: "Authenticate with GitHub. Log in, Check status. Run \`gh auth --help\` for usage details."
+      description: Authenticate with GitHub. Log in, Check status. Run \`gh auth --help\` for usage details.
       requires_bin: gh
       command: gh auth
       ---
@@ -270,7 +270,7 @@ describe('split', () => {
     expect(files[1]!.content).toMatchInlineSnapshot(`
       "---
       name: gh-pr
-      description: "Manage pull requests. List PRs, Create PR. Run \`gh pr --help\` for usage details."
+      description: Manage pull requests. List PRs, Create PR. Run \`gh pr --help\` for usage details.
       requires_bin: gh
       command: gh pr
       ---
@@ -290,7 +290,7 @@ describe('split', () => {
   test('depth 1 without group descriptions uses child descriptions', () => {
     const files = Skill.split('gh', commands, 1)
     expect(files[0]!.content).toContain(
-      'description: "Log in, Check status. Run `gh auth --help` for usage details."',
+      'description: Log in, Check status. Run `gh auth --help` for usage details.',
     )
   })
 
@@ -333,12 +333,20 @@ describe('split', () => {
 
   test('emits fallback description when no explicit descriptions exist', () => {
     const files = Skill.split('test', [{ name: 'ping' }], 1)
-    expect(files[0]!.content).toContain('description: "Run `test ping --help` for usage details."')
+    expect(files[0]!.content).toContain('description: Run `test ping --help` for usage details.')
   })
 
   test('includes requires_bin in frontmatter', () => {
     const files = Skill.split('gh', [{ name: 'auth login', description: 'Log in' }], 1)
     expect(files[0]!.content).toContain('requires_bin: gh')
+  })
+
+  test('YAML-quotes description containing colon-space', () => {
+    const groups = new Map([['search', 'Search items. Use key: value for precision']])
+    const files = Skill.split('app', [{ name: 'search list', description: 'List results' }], 1, groups)
+    expect(files[0]!.content).toContain(
+      'description: "Search items. Use key: value for precision. List results. Run `app search --help` for usage details."',
+    )
   })
 
   test('no per-command frontmatter in split files', () => {

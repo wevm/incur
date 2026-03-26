@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
+import { parse as yamlParse } from 'yaml'
 import type { z } from 'zod'
 
 import * as Completions from './Completions.js'
@@ -1565,11 +1566,11 @@ async function fetchImpl(
     if (segments[2] === 'index.json' && segments.length === 3) {
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
-        const descMatch = f.content.match(/^description:\s*(.+)$/m)
-        const rawDesc = descMatch?.[1] ?? ''
+        const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
+        const meta = fmMatch ? (yamlParse(fmMatch[1]!) as Record<string, string>) : {}
         return {
           name: f.dir || name,
-          description: rawDesc.replace(/^"(.*)"$/, '$1'),
+          description: meta.description ?? '',
           files: ['SKILL.md'],
         }
       })
