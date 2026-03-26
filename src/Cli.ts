@@ -587,26 +587,32 @@ async function serveImpl(
       }
     }
 
+    // When scoped into a subtree, prefix has already been consumed to narrow
+    // scopedCommands and is captured in scopedName.  Passing it again to the
+    // collect helpers would double the group segment in command names
+    // (e.g. "cli auth auth login" instead of "cli auth login").
+    const collectPrefix = prefix.length > 0 ? [] as string[] : prefix
+
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+        const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
       }
-      writeln(Formatter.format(buildManifest(scopedCommands, prefix), formatFlag))
+      writeln(Formatter.format(buildManifest(scopedCommands, collectPrefix), formatFlag))
       return
     }
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+      const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
     }
-    writeln(Formatter.format(buildIndexManifest(scopedCommands, prefix), formatFlag))
+    writeln(Formatter.format(buildIndexManifest(scopedCommands, collectPrefix), formatFlag))
     return
   }
 

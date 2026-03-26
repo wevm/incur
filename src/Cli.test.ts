@@ -1274,8 +1274,9 @@ describe('--llms', () => {
     cli.command('ping', { description: 'Health check', run: () => ({}) })
 
     const { output } = await serve(cli, ['auth', '--llms'])
-    expect(output).toContain('test auth auth login')
-    expect(output).toContain('test auth auth logout')
+    expect(output).toContain('test auth login')
+    expect(output).toContain('test auth logout')
+    expect(output).not.toContain('test auth auth') // no doubled namespace
     expect(output).not.toContain('ping')
   })
 })
@@ -3326,7 +3327,9 @@ test('--llms scoped to group', async () => {
   const { output } = await serve(cli, ['--llms-full', '--format', 'json', 'pr'])
   const manifest = JSON.parse(output)
   expect(manifest.commands).toHaveLength(2)
-  expect(manifest.commands.every((c: any) => c.name.startsWith('pr '))).toBe(true)
+  // When scoped to a group, command names should NOT include the group prefix
+  // (the scope context already establishes it)
+  expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['create', 'list'])
 })
 
 test('--help on root with rootCommand shows command help with subcommands', async () => {
