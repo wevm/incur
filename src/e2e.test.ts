@@ -1768,6 +1768,86 @@ describe('root command with subcommands', () => {
   })
 })
 
+describe('mounted group with default command', () => {
+  function createApp() {
+    const cli = Cli.create('app', { description: 'My app' })
+
+    const lint = Cli.create('lint', {
+      description: 'Run linter',
+      args: z.object({ path: z.string().optional().describe('Path to lint') }),
+      run(c) {
+        return { linted: true, path: c.args.path ?? '.' }
+      },
+    })
+    lint.command('fix', {
+      description: 'Auto-fix lint issues',
+      run: () => ({ fixed: true }),
+    })
+    lint.command('rules', {
+      description: 'List lint rules',
+      run: () => ({ rules: ['no-unused-vars', 'semi'] }),
+    })
+
+    cli.command(lint)
+    cli.command('ping', { run: () => ({ pong: true }) })
+    return cli
+  }
+
+  test('bare group invocation dispatches to default command', async () => {
+    const { output } = await serve(createApp(), ['lint'])
+    expect(output).toMatchInlineSnapshot(`
+      "linted: true
+      path: .
+      "
+    `)
+  })
+
+  test('default command receives positional args', async () => {
+    const { output } = await serve(createApp(), ['lint', 'src/'])
+    expect(output).toMatchInlineSnapshot(`
+      "linted: true
+      path: src/
+      "
+    `)
+  })
+
+  test('subcommand takes precedence over default', async () => {
+    const { output } = await serve(createApp(), ['lint', 'fix'])
+    expect(output).toMatchInlineSnapshot(`
+      "fixed: true
+      "
+    `)
+  })
+
+  test('--help shows default command info and subcommands', async () => {
+    const { output } = await serve(createApp(), ['lint', '--help'])
+    expect(output).toContain('Run linter')
+    expect(output).toContain('fix')
+    expect(output).toContain('Auto-fix lint issues')
+    expect(output).toContain('rules')
+    expect(output).toContain('List lint rules')
+  })
+
+  test('sibling commands still work', async () => {
+    const { output } = await serve(createApp(), ['ping'])
+    expect(output).toMatchInlineSnapshot(`
+      "pong: true
+      "
+    `)
+  })
+
+  test('group without default still shows help', async () => {
+    const cli = Cli.create('app', { description: 'My app' })
+    const sub = Cli.create('db', { description: 'Database commands' })
+    sub.command('migrate', { run: () => ({ migrated: true }) })
+    cli.command(sub)
+
+    const { output, exitCode } = await serve(cli, ['db'])
+    expect(output).toContain('db')
+    expect(output).toContain('migrate')
+  })
+})
+
 describe('edge cases', () => {
   test('command with only options (no args)', async () => {
     const { output } = await serve(createApp(), [

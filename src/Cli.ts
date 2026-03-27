@@ -242,16 +242,19 @@ export function create(
         return cli
       }
       const mountedRootDef = toRootDefinition.get(nameOrCli)
-      if (mountedRootDef) {
+      const sub = nameOrCli as Cli
+      const subCommands = toCommands.get(sub)!
+      // Root-only CLI with no subcommands → mount as leaf command
+      if (mountedRootDef && subCommands.size === 0) {
         commands.set(nameOrCli.name, mountedRootDef)
         return cli
       }
-      const sub = nameOrCli as Cli
-      const subCommands = toCommands.get(sub)!
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
       commands.set(sub.name, {
         _group: true,
+        // Root + subcommands → mount as group with default handler
+        ...(mountedRootDef ? { default: mountedRootDef } : undefined),
         description: sub.description,
         commands: subCommands,
         ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
@@ -952,9 +955,12 @@ async function serveImpl(
       const isRootCmd = resolved.path === name
       const commandName = isRootCmd ? name : `${name} ${resolved.path}`
       const helpSubcommands =
-        isRootCmd && options.rootCommand && commands.size > 0
-          ? collectHelpCommands(commands)
-          : undefined
+        // Group with default command → show sibling subcommands
+        resolved.commands && resolved.commands.size > 0
+          ? collectHelpCommands(resolved.commands)
+          : isRootCmd && options.rootCommand && commands.size > 0
+            ? collectHelpCommands(commands)
+            : undefined
       writeln(
         Help.formatCommand(commandName, {
           alias: cmd.alias as Record<string, string> | undefined,
@@ -1825,6 +1831,7 @@ function resolveCommand(
 ):
   | {
       command: CommandDefinition<any, any, any>
+      commands?: Map<string, CommandEntry> | undefined
       middlewares: MiddlewareHandler[]
       outputPolicy?: OutputPolicy | undefined
       path: string
@@ -1870,16 +1877,41 @@ function resolveCommand(
     if (entry.outputPolicy) inheritedOutputPolicy = entry.outputPolicy
     if (entry.middlewares) collectedMiddlewares.push(...entry.middlewares)
     const next = remaining[0]
-    if (!next)
+    if (!next) {
+      // Group has a default command → dispatch to it
+      if (entry.default) {
+        const outputPolicy = entry.default.outputPolicy ?? inheritedOutputPolicy
+        return {
+          command: entry.default,
+          commands: entry.commands,
+          middlewares: collectedMiddlewares,
+          path: path.join(' '),
+          rest: remaining,
+          ...(outputPolicy ? { outputPolicy } : undefined),
+        }
+      }
       return {
         help: true,
         path: path.join(' '),
         description: entry.description,
         commands: entry.commands,
       }
+    }
 
     const child = entry.commands.get(next)
     if (!child) {
+      // Group has a default command → pass unknown tokens as rest args
+      if (entry.default) {
+        const outputPolicy = entry.default.outputPolicy ?? inheritedOutputPolicy
+        return {
+          command: entry.default,
+          commands: entry.commands,
+          middlewares: collectedMiddlewares,
+          path: path.join(' '),
+          rest: remaining,
+          ...(outputPolicy ? { outputPolicy } : undefined),
+        }
+      }
       return {
         error: next,
         path: path.join(' '),
@@ -2264,6 +2296,7 @@ type FetchHandler = (req: Request) => Response | Promise<Response>
 /** @internal A command group's internal storage. */
 type InternalGroup = {
   _group: true
+  default?: CommandDefinition<any, any, any> | undefined
   description?: string | undefined
   middlewares?: MiddlewareHandler[] | undefined
   outputPolicy?: OutputPolicy | undefined
@@ -2613,6 +2646,11 @@ function collectIndexCommands(
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
     if (isGroup(entry)) {
+      if (entry.default) {
+        const cmd: (typeof result)[number] = { name: path.join(' ') }
+        if (entry.default.description) cmd.description = entry.default.description
+        result.push(cmd)
+      }
       result.push(...collectIndexCommands(entry.commands, path))
     } else {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -2651,6 +2689,20 @@ function collectCommands(
       if (entry.description) cmd.description = entry.description
       result.push(cmd)
     } else if (isGroup(entry)) {
+      if (entry.default) {
+        const cmd: (typeof result)[number] = { name: path.join(' ') }
+        if (entry.default.description) cmd.description = entry.default.description
+        const inputSchema = buildInputSchema(entry.default.args, entry.default.env, entry.default.options)
+        const outputSchema = entry.default.output ? Schema.toJsonSchema(entry.default.output) : undefined
+        if (inputSchema || outputSchema) {
+          cmd.schema = {}
+          if (inputSchema?.args) cmd.schema.args = inputSchema.args
+          if (inputSchema?.env) cmd.schema.env = inputSchema.env
+          if (inputSchema?.options) cmd.schema.options = inputSchema.options
+          if (outputSchema) cmd.schema.output = outputSchema
+        }
+        result.push(cmd)
+      }
       result.push(...collectCommands(entry.commands, path))
     } else {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -2696,6 +2748,16 @@ function collectSkillCommands(
       result.push(cmd)
     } else if (isGroup(entry)) {
       if (entry.description) groups.set(path.join(' '), entry.description)
+      if (entry.default) {
+        const cmd: Skill.CommandInfo = { name: path.join(' ') }
+        if (entry.default.description) cmd.description = entry.default.description
+        if (entry.default.args) cmd.args = entry.default.args
+        if (entry.default.env) cmd.env = entry.default.env
+        if (entry.default.hint) cmd.hint = entry.default.hint
+        if (entry.default.options) cmd.options = entry.default.options
+        if (entry.default.output) cmd.output = entry.default.output
+        result.push(cmd)
+      }
       result.push(...collectSkillCommands(entry.commands, path, groups))
     } else {
       const cmd: Skill.CommandInfo = { name: path.join(' ') }
