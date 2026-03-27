@@ -324,4 +324,35 @@ describe('formatRoot', () => {
         --version                           Show version"
     `)
   })
+
+  test('formatCommand shows custom global options with deprecated flag', () => {
+    const result = Help.formatCommand('tool deploy', {
+      description: 'Deploy app',
+      globals: {
+        schema: z.object({
+          rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+          oldRpc: z.string().optional().describe('Old RPC endpoint').meta({ deprecated: true }),
+        }),
+        alias: { rpcUrl: 'r' },
+      },
+    })
+    expect(result).toContain('Custom Global Options:')
+    expect(result).toContain('--rpc-url, -r <string>')
+    expect(result).toContain('RPC endpoint URL')
+    expect(result).toContain('[deprecated] Old RPC endpoint')
+  })
+
+  test('formatRoot shows custom global options', () => {
+    const result = Help.formatRoot('tool', {
+      globals: {
+        schema: z.object({
+          chain: z.string().default('mainnet').describe('Target chain'),
+        }),
+      },
+      commands: [{ name: 'deploy', description: 'Deploy' }],
+    })
+    expect(result).toContain('Custom Global Options:')
+    expect(result).toContain('--chain <string>')
+    expect(result).toContain('Target chain (default: mainnet)')
+  })
 })

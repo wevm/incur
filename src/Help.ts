@@ -1,11 +1,20 @@
 import { z } from 'zod'
 
+import type { GlobalsDescriptor } from './Cli.js'
 import { builtinCommands } from './internal/command.js'
 import { toKebab } from './internal/helpers.js'
 
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
-  const { aliases, configFlag, description, version, commands = [], root = false } = options
+  const {
+    aliases,
+    configFlag,
+    description,
+    globals,
+    version,
+    commands = [],
+    root = false,
+  } = options
   const lines: string[] = []
 
   // Header
@@ -30,7 +39,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines(root, configFlag))
+  lines.push(...globalOptionsLines(root, configFlag, globals))
 
   return lines.join('\n')
 }
@@ -45,6 +54,8 @@ export declare namespace formatRoot {
     commands?: { name: string; description?: string | undefined }[] | undefined
     /** A short description of the CLI or group. */
     description?: string | undefined
+    /** Custom global options schema and alias map. */
+    globals?: GlobalsDescriptor | undefined
     /** Show root-level built-in commands and flags. */
     root?: boolean | undefined
     /** CLI version string. */
@@ -70,6 +81,8 @@ export declare namespace formatCommand {
     env?: z.ZodObject<any> | undefined
     /** Override environment variable source for "set:" display. Defaults to `process.env`. */
     envSource?: Record<string, string | undefined> | undefined
+    /** Custom global options schema and alias map. */
+    globals?: GlobalsDescriptor | undefined
     /** Formatted usage examples. */
     examples?: { command: string; description?: string }[] | undefined
     /** Plain text hint displayed after examples and before global options. */
@@ -101,6 +114,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     aliases,
     configFlag,
     description,
+    globals,
     version,
     args,
     env,
@@ -205,7 +219,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     }
   }
 
-  if (!options.hideGlobalOptions) lines.push(...globalOptionsLines(root, configFlag))
+  if (!options.hideGlobalOptions) lines.push(...globalOptionsLines(root, configFlag, globals))
 
   // Environment Variables
   if (env) {
@@ -334,7 +348,11 @@ function extractDeprecated(schema: unknown): boolean | undefined {
 }
 
 /** Renders the built-in commands and global options block. Root-only items are hidden for subcommands. */
-function globalOptionsLines(root = false, configFlag?: string): string[] {
+function globalOptionsLines(
+  root = false,
+  configFlag?: string,
+  globals?: GlobalsDescriptor,
+): string[] {
   const lines: string[] = []
 
   if (root) {
@@ -353,6 +371,26 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
       'Integrations:',
       ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
     )
+  }
+
+  if (globals) {
+    const entries = optionEntries(globals.schema, globals.alias)
+    if (entries.length > 0) {
+      const maxLen = Math.max(...entries.map((e) => e.flag.length))
+      lines.push(
+        '',
+        'Custom Global Options:',
+        ...entries.map((entry) => {
+          const padding = ' '.repeat(maxLen - entry.flag.length)
+          const prefix = entry.deprecated ? '[deprecated] ' : ''
+          const desc =
+            entry.defaultValue !== undefined
+              ? `${prefix}${entry.description} (default: ${entry.defaultValue})`
+              : `${prefix}${entry.description}`
+          return `  ${entry.flag}${padding}  ${desc}`
+        }),
+      )
+    }
   }
 
   const flags = [

@@ -183,6 +183,90 @@ describe('complete', () => {
   })
 })
 
+describe('complete with globals', () => {
+  const globalSchema = z.object({
+    rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+    chain: z.enum(['mainnet', 'sepolia', 'goerli']).default('mainnet').describe('Target chain'),
+    dryRun: z.boolean().default(false).describe('Dry run mode'),
+  })
+  const globalAlias = { rpcUrl: 'r', dryRun: 'd' }
+  const globals = { schema: globalSchema, alias: globalAlias }
+
+  test('global flags appear as completion candidates when typing --', () => {
+    const cli = makeCli()
+    const commands = Cli.toCommands.get(cli)!
+    const candidates = Completions.complete(commands, undefined, ['mycli', 'build', '--'], 2, globals)
+    const values = candidates.map((c) => c.value)
+    expect(values).toContain('--rpc-url')
+    expect(values).toContain('--chain')
+    expect(values).toContain('--dry-run')
+  })
+
+  test('global short aliases appear as candidates when typing -', () => {
+    const cli = makeCli()
+    const commands = Cli.toCommands.get(cli)!
+    const candidates = Completions.complete(commands, undefined, ['mycli', 'build', '-'], 2, globals)
+    const values = candidates.map((c) => c.value)
+    expect(values).toContain('-r')
+    expect(values).toContain('-d')
+  })
+
+  test('global flags do not duplicate command-specific flags', () => {
+    // Create a CLI where a command has --chain already
+    const cli = Cli.create('mycli', { version: '1.0.0' })
+    cli.command('deploy', {
+      description: 'Deploy',
+      options: z.object({
+        chain: z.string().optional().describe('Chain override'),
+      }),
+      run: () => ({}),
+    })
+    const commands = Cli.toCommands.get(cli)!
+    const rootCmd = { options: z.object({ chain: z.string().optional() }) }
+    const dupeGlobals = { schema: z.object({ chain: z.string().optional().describe('Global chain') }) }
+    const candidates = Completions.complete(
+      commands,
+      rootCmd,
+      ['mycli', 'deploy', '--'],
+      2,
+      dupeGlobals,
+    )
+    const chainCount = candidates.filter((c) => c.value === '--chain').length
+    expect(chainCount).toBe(1)
+  })
+
+  test('global option value completion for enum', () => {
+    const cli = makeCli()
+    const commands = Cli.toCommands.get(cli)!
+    const candidates = Completions.complete(
+      commands,
+      undefined,
+      ['mycli', 'build', '--chain', ''],
+      3,
+      globals,
+    )
+    const values = candidates.map((c) => c.value)
+    expect(values).toEqual(['mainnet', 'sepolia', 'goerli'])
+  })
+
+  test('global boolean flag does not consume next token as value in completions', () => {
+    const cli = makeCli()
+    const commands = Cli.toCommands.get(cli)!
+    // After --dry-run (boolean), the next token should suggest subcommands, not be consumed as value
+    const candidates = Completions.complete(
+      commands,
+      undefined,
+      ['mycli', '--dry-run', ''],
+      2,
+      globals,
+    )
+    const values = candidates.map((c) => c.value)
+    // Should suggest subcommands since --dry-run is boolean and doesn't consume next token
+    expect(values).toContain('build')
+    expect(values).toContain('test')
+  })
+})
+
 describe('format', () => {
   const candidates: Completions.Candidate[] = [
     { value: '--target', description: 'Build target' },

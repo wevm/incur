@@ -314,6 +314,127 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   return value
 }
 
+/** Parses known global options from argv, passing unknown flags and positionals through to `rest`. */
+export function parseGlobals<const globals extends z.ZodObject<any>>(
+  argv: string[],
+  schema: globals,
+  alias?: Record<string, string>,
+): { parsed: z.output<globals>; rest: string[] } {
+  const optionNames = createOptionNames(schema, alias)
+
+  const rest: string[] = []
+  const rawOptions: Record<string, unknown> = {}
+
+  let i = 0
+  while (i < argv.length) {
+    const token = argv[i]!
+
+    if (token === '--') {
+      for (let j = i; j < argv.length; j++) rest.push(argv[j]!)
+      break
+    }
+
+    if (token.startsWith('--no-') && token.length > 5) {
+      const name = normalizeOptionName(token.slice(5), optionNames)
+      if (!name) {
+        rest.push(token)
+      } else {
+        rawOptions[name] = false
+      }
+      i++
+    } else if (token.startsWith('--')) {
+      const eqIdx = token.indexOf('=')
+      if (eqIdx !== -1) {
+        // --flag=value
+        const raw = token.slice(2, eqIdx)
+        const name = normalizeOptionName(raw, optionNames)
+        if (!name) {
+          rest.push(token)
+        } else {
+          setOption(rawOptions, name, token.slice(eqIdx + 1), schema)
+        }
+        i++
+      } else {
+        // --flag [value]
+        const name = normalizeOptionName(token.slice(2), optionNames)
+        if (!name) {
+          // Unknown flag — pass through as-is
+          rest.push(token)
+          i++
+        } else if (isCountOption(name, schema)) {
+          rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
+          i++
+        } else if (isBooleanOption(name, schema)) {
+          rawOptions[name] = true
+          i++
+        } else {
+          const value = argv[i + 1]
+          if (value === undefined)
+            throw new ParseError({ message: `Missing value for flag: ${token}` })
+          setOption(rawOptions, name, value, schema)
+          i += 2
+        }
+      }
+    } else if (token.startsWith('-') && !token.startsWith('--') && token.length >= 2) {
+      // Short flag(s)
+      const chars = token.slice(1)
+      let allKnown = true
+      for (let j = 0; j < chars.length; j++) {
+        if (!optionNames.aliasToName.has(chars[j]!)) {
+          allKnown = false
+          break
+        }
+      }
+
+      if (!allKnown) {
+        // Unknown short flag — pass through as-is
+        rest.push(token)
+        i++
+      } else {
+        for (let j = 0; j < chars.length; j++) {
+          const short = chars[j]!
+          const name = optionNames.aliasToName.get(short)!
+          const isLast = j === chars.length - 1
+          if (!isLast) {
+            if (isCountOption(name, schema)) {
+              rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
+            } else if (isBooleanOption(name, schema)) {
+              rawOptions[name] = true
+            } else {
+              throw new ParseError({
+                message: `Non-boolean flag -${short} must be last in a stacked alias`,
+              })
+            }
+          } else if (isCountOption(name, schema)) {
+            rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
+          } else if (isBooleanOption(name, schema)) {
+            rawOptions[name] = true
+          } else {
+            const value = argv[i + 1]
+            if (value === undefined)
+              throw new ParseError({ message: `Missing value for flag: -${short}` })
+            setOption(rawOptions, name, value, schema)
+            i++
+          }
+        }
+        i++
+      }
+    } else {
+      // Positional — pass through
+      rest.push(token)
+      i++
+    }
+  }
+
+  // Coerce raw option values before zod validation
+  for (const [name, value] of Object.entries(rawOptions)) {
+    rawOptions[name] = coerce(value, name, schema)
+  }
+
+  const parsed = zodParse(schema, rawOptions) as z.output<globals>
+  return { parsed, rest }
+}
+
 /** Returns the best available env source for the current runtime. */
 function defaultEnvSource(): Record<string, string | undefined> {
   if (typeof globalThis !== 'undefined') {
