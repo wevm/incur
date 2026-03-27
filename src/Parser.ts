@@ -329,6 +329,11 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
   while (i < argv.length) {
     const token = argv[i]!
 
+    if (token === '--') {
+      for (let j = i; j < argv.length; j++) rest.push(argv[j]!)
+      break
+    }
+
     if (token.startsWith('--no-') && token.length > 5) {
       const name = normalizeOptionName(token.slice(5), optionNames)
       if (!name) {
@@ -353,13 +358,9 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
         // --flag [value]
         const name = normalizeOptionName(token.slice(2), optionNames)
         if (!name) {
-          // Unknown flag — pass through with its potential value
+          // Unknown flag — pass through as-is
           rest.push(token)
           i++
-          if (i < argv.length && !argv[i]!.startsWith('-')) {
-            rest.push(argv[i]!)
-            i++
-          }
         } else if (isCountOption(name, schema)) {
           rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
           i++
@@ -386,13 +387,9 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
       }
 
       if (!allKnown) {
-        // Unknown short flag — pass through with its potential value
+        // Unknown short flag — pass through as-is
         rest.push(token)
         i++
-        if (i < argv.length && !argv[i]!.startsWith('-')) {
-          rest.push(argv[i]!)
-          i++
-        }
       } else {
         for (let j = 0; j < chars.length; j++) {
           const short = chars[j]!

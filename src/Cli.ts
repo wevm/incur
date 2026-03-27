@@ -275,6 +275,15 @@ export function create(
               )
           }
         }
+        if (globalsDesc?.alias && def?.alias) {
+          const globalAliasValues = new Set(Object.values(globalsDesc.alias))
+          for (const [name, short] of Object.entries(def.alias as Record<string, string>)) {
+            if (globalAliasValues.has(short))
+              throw new Error(
+                `Command '${nameOrCli}' alias '-${short}' for '${name}' conflicts with a global alias. Choose a different alias.`,
+              )
+          }
+        }
         commands.set(nameOrCli, def)
         return cli
       }
@@ -360,7 +369,7 @@ export function create(
       'tokenLimit',
       'tokenOffset',
       'tokenCount',
-      ...(def.config?.flag ? [def.config.flag] : []),
+      ...(def.config?.flag ? [def.config.flag, `no${def.config.flag[0].toUpperCase()}${def.config.flag.slice(1)}`] : []),
     ]
     const globalKeys = Object.keys(def.globals.shape)
     for (const key of globalKeys) {
@@ -368,6 +377,16 @@ export function create(
         throw new Error(
           `Global option '${key}' conflicts with a built-in flag. Choose a different name.`,
         )
+    }
+    // Check globalAlias values against reserved short aliases
+    const reservedShorts = new Set(['h'])
+    if (def.globalAlias) {
+      for (const [name, short] of Object.entries(def.globalAlias as Record<string, string>)) {
+        if (reservedShorts.has(short))
+          throw new Error(
+            `Global alias '-${short}' for '${name}' conflicts with a built-in short flag. Choose a different alias.`,
+          )
+      }
     }
   }
   toMiddlewares.set(cli, middlewares)
@@ -571,9 +590,17 @@ async function serveImpl(
   let globals: Record<string, unknown> = {}
   let filtered = rest
   if (options.globals) {
-    const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias)
-    globals = result.parsed
-    filtered = result.rest
+    try {
+      const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias)
+      globals = result.parsed
+      filtered = result.rest
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
+      else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+      exit(1)
+      return
+    }
   }
 
   // --mcp: start as MCP stdio server
@@ -1375,6 +1402,7 @@ async function serveImpl(
           error: errorFn,
           format,
           formatExplicit,
+          globals,
           name,
           set(key: string, value: unknown) {
             varsMap[key] = value
