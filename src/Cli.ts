@@ -1425,7 +1425,7 @@ async function serveImpl(
     return
   }
 
-  const { command, path, rest } = effective
+  const { command, path, rest: commandRest } = effective
 
   // Collect middleware: root CLI + groups traversed + per-command
   const allMiddleware = [
@@ -1438,7 +1438,7 @@ async function serveImpl(
 
   if (human)
     emitDeprecationWarnings(
-      rest,
+      commandRest,
       command.options,
       command.alias as Record<string, string> | undefined,
     )
@@ -1468,7 +1468,7 @@ async function serveImpl(
 
   const result = await Command.execute(command, {
     agent: !human,
-    argv: rest,
+    argv: commandRest,
     defaults,
     displayName,
     env: options.envSchema,
