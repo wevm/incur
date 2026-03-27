@@ -4445,3 +4445,226 @@ describe('displayName', () => {
     expect(parsed.meta.cta.commands[0].command).toBe('mc login')
   })
 })
+
+describe('globals', () => {
+  test('globals are parsed and available in middleware', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, ['--rpc-url', 'http://example.com', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals aliases work', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      globalAlias: { rpcUrl: 'r' },
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, ['-r', 'http://example.com', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals with defaults work when not provided', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ chain: z.string().default('mainnet') }),
+      vars: z.object({ chain: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('chain', c.globals.chain)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { chain: c.var.chain }
+        },
+      })
+
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ chain: 'mainnet' })
+  })
+
+  test('globals are stripped from argv before command routing', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, [
+      '--rpc-url',
+      'http://example.com',
+      'ping',
+      '--json',
+    ])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals appear in --help output', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({
+        rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+      }),
+      globalAlias: { rpcUrl: 'r' },
+    }).command('ping', { run: () => ({}) })
+
+    const { output } = await serve(cli, ['--help'])
+    expect(output).toContain('Custom Global Options')
+    expect(output).toContain('--rpc-url')
+  })
+
+  test('globals appear in --llms manifest', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({
+        rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+      }),
+    }).command('ping', { description: 'Health check', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.globals).toBeDefined()
+    expect(manifest.globals.properties.rpcUrl).toBeDefined()
+  })
+
+  test('globals validation error throws', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ limit: z.number() }),
+    }).command('ping', { run: () => ({}) })
+
+    await expect(serve(cli, ['--limit', 'not-a-number', 'ping'])).rejects.toThrow(
+      expect.objectContaining({ name: 'Incur.ValidationError' }),
+    )
+  })
+
+  test('globals work with subcommands', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('deploy', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, [
+      '--rpc-url',
+      'http://x',
+      'deploy',
+      '--json',
+    ])
+    expect(JSON.parse(output)).toEqual({ url: 'http://x' })
+  })
+
+  test('globals position is flexible', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('deploy', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, [
+      'deploy',
+      '--rpc-url',
+      'http://x',
+      '--json',
+    ])
+    expect(JSON.parse(output)).toEqual({ url: 'http://x' })
+  })
+
+  test('globals conflict with builtins errors at create() time', () => {
+    expect(() =>
+      Cli.create('test', {
+        globals: z.object({ format: z.string() }),
+      }),
+    ).toThrow(/conflicts with a built-in flag/)
+  })
+
+  test('command option conflicting with global errors at command() time', () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    })
+    expect(() =>
+      cli.command('deploy', {
+        options: z.object({ rpcUrl: z.string() }),
+        run: () => ({}),
+      }),
+    ).toThrow(/conflicts with a global option/)
+  })
+
+  test('boolean globals handle --no- negation', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean().default(true) }),
+      vars: z.object({ dryRun: z.boolean().default(false) }),
+    })
+      .use(async (c, next) => {
+        c.set('dryRun', c.globals.dryRun)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { dryRun: c.var.dryRun }
+        },
+      })
+
+    const { output } = await serve(cli, ['--no-dry-run', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ dryRun: false })
+  })
+
+  test('globals appear in --schema output', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({
+        rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+      }),
+    }).command('ping', {
+      args: z.object({ target: z.string() }),
+      run: () => ({}),
+    })
+
+    const { output } = await serve(cli, ['ping', '--schema', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.globals).toBeDefined()
+    expect(parsed.globals.properties.rpcUrl).toBeDefined()
+  })
+})

@@ -342,3 +342,66 @@ describe('parse', () => {
     expect(result.options).toEqual({ min: 1, max: 3 })
   })
 })
+
+describe('parseGlobals', () => {
+  test('extracts known globals and returns rest', () => {
+    const schema = z.object({ rpcUrl: z.string() })
+    const result = Parser.parseGlobals(['--rpc-url', 'http://example.com', 'deploy'], schema)
+    expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
+    expect(result.rest).toEqual(['deploy'])
+  })
+
+  test('unknown flags pass through to rest', () => {
+    const schema = z.object({ rpcUrl: z.string() })
+    const result = Parser.parseGlobals(
+      ['--rpc-url', 'http://example.com', '--unknown', 'val', 'deploy'],
+      schema,
+    )
+    expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
+    expect(result.rest).toEqual(['--unknown', 'val', 'deploy'])
+  })
+
+  test('handles --flag=value syntax', () => {
+    const schema = z.object({ rpcUrl: z.string() })
+    const result = Parser.parseGlobals(['--rpc-url=http://example.com', 'deploy'], schema)
+    expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
+    expect(result.rest).toEqual(['deploy'])
+  })
+
+  test('handles short aliases', () => {
+    const schema = z.object({ rpcUrl: z.string() })
+    const result = Parser.parseGlobals(
+      ['-r', 'http://example.com', 'deploy'],
+      schema,
+      { rpcUrl: 'r' },
+    )
+    expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
+    expect(result.rest).toEqual(['deploy'])
+  })
+
+  test('handles boolean globals', () => {
+    const schema = z.object({ verbose: z.boolean().default(false) })
+    const result = Parser.parseGlobals(['--verbose', 'deploy'], schema)
+    expect(result.parsed).toEqual({ verbose: true })
+    expect(result.rest).toEqual(['deploy'])
+  })
+
+  test('validates against schema', () => {
+    const schema = z.object({ count: z.number() })
+    expect(() => Parser.parseGlobals(['--count', 'not-a-number'], schema)).toThrow()
+  })
+
+  test('coerces string to number', () => {
+    const schema = z.object({ limit: z.number() })
+    const result = Parser.parseGlobals(['--limit', '42', 'deploy'], schema)
+    expect(result.parsed).toEqual({ limit: 42 })
+    expect(result.rest).toEqual(['deploy'])
+  })
+
+  test('positionals pass through to rest', () => {
+    const schema = z.object({ verbose: z.boolean().default(false) })
+    const result = Parser.parseGlobals(['deploy', 'contract', '--verbose'], schema)
+    expect(result.parsed).toEqual({ verbose: true })
+    expect(result.rest).toEqual(['deploy', 'contract'])
+  })
+})

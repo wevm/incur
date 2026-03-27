@@ -337,3 +337,24 @@ test('create() accepts config-file defaults options', () => {
     config: { files: [42] },
   })
 })
+
+test('globals type flows to middleware context', () => {
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string().optional() }),
+  }).use(async (c, next) => {
+    expectTypeOf(c.globals.apiKey).toEqualTypeOf<string | undefined>()
+    await next()
+  })
+})
+
+test('globalAlias keys are constrained to globals schema keys', () => {
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string() }),
+    globalAlias: { apiKey: 'k' },
+  })
+  // @ts-expect-error — 'foo' is not a globals key
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string() }),
+    globalAlias: { foo: 'f' },
+  })
+})
