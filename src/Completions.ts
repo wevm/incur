@@ -39,6 +39,12 @@ export function register(shell: Shell, name: string): string {
   }
 }
 
+/** Global options descriptor for completion generation. */
+export type GlobalOptions = {
+  alias?: Record<string, string> | undefined
+  schema: z.ZodObject<any>
+}
+
 /**
  * Computes completion candidates for the given argv words and cursor index.
  * Walks the command tree to resolve the active command, then suggests
@@ -49,6 +55,7 @@ export function complete(
   rootCommand: CommandEntry | undefined,
   argv: string[],
   index: number,
+  globals?: GlobalOptions | undefined,
 ): Candidate[] {
   const current = argv[index] ?? ''
 
@@ -94,6 +101,25 @@ export function complete(
           }
         }
     }
+    // Global options
+    if (globals) {
+      const globalShape = globals.schema.shape as Record<string, any>
+      for (const key of Object.keys(globalShape)) {
+        const kebab = key.replace(/[A-Z]/g, (c: string) => `-${c.toLowerCase()}`)
+        const flag = `--${kebab}`
+        if (flag.startsWith(current) && !candidates.some((c) => c.value === flag))
+          candidates.push({ value: flag, description: descriptionOf(globalShape[key]) })
+      }
+      // Global short aliases
+      if (globals.alias)
+        for (const [name, short] of Object.entries(globals.alias)) {
+          const flag = `-${short}`
+          if (flag.startsWith(current) && !candidates.some((c) => c.value === flag)) {
+            const desc = descriptionOf(globalShape[name])
+            candidates.push({ value: flag, description: desc })
+          }
+        }
+    }
     return candidates
   }
 
@@ -101,15 +127,31 @@ export function complete(
   if (index > 0) {
     const prev = argv[index - 1]!
     const leaf = scope.leaf
-    if (leaf?.options && prev.startsWith('-')) {
-      const name = resolveOptionName(prev, leaf)
-      if (name) {
-        const values = possibleValues(name, leaf.options)
-        if (values) {
-          for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
-          return candidates
+    if (prev.startsWith('-')) {
+      // Try command-specific options first
+      if (leaf?.options) {
+        const name = resolveOptionName(prev, leaf)
+        if (name) {
+          const values = possibleValues(name, leaf.options)
+          if (values) {
+            for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
+            return candidates
+          }
+          if (!isBooleanOption(name, leaf.options)) return candidates
         }
-        if (!isBooleanOption(name, leaf.options)) return candidates
+      }
+      // Try global options
+      if (globals) {
+        const globalEntry: CommandEntry = { options: globals.schema, alias: globals.alias }
+        const name = resolveOptionName(prev, globalEntry)
+        if (name) {
+          const values = possibleValues(name, globals.schema)
+          if (values) {
+            for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
+            return candidates
+          }
+          if (!isBooleanOption(name, globals.schema)) return candidates
+        }
       }
     }
   }
