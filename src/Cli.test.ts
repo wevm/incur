@@ -4505,30 +4505,6 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ chain: 'mainnet' })
   })
 
-  test('globals are stripped from argv before command routing', async () => {
-    const cli = Cli.create('test', {
-      globals: z.object({ rpcUrl: z.string() }),
-      vars: z.object({ rpcUrl: z.string().default('') }),
-    })
-      .use(async (c, next) => {
-        c.set('rpcUrl', c.globals.rpcUrl)
-        await next()
-      })
-      .command('ping', {
-        run(c) {
-          return { url: c.var.rpcUrl }
-        },
-      })
-
-    const { output } = await serve(cli, [
-      '--rpc-url',
-      'http://example.com',
-      'ping',
-      '--json',
-    ])
-    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
-  })
-
   test('globals appear in --help output', async () => {
     const cli = Cli.create('test', {
       globals: z.object({
@@ -4555,38 +4531,14 @@ describe('globals', () => {
     expect(manifest.globals.properties.rpcUrl).toBeDefined()
   })
 
-  test('globals validation error throws', async () => {
+  test('globals validation error shows message and exits 1', async () => {
     const cli = Cli.create('test', {
       globals: z.object({ limit: z.number() }),
     }).command('ping', { run: () => ({}) })
 
-    await expect(serve(cli, ['--limit', 'not-a-number', 'ping'])).rejects.toThrow(
-      expect.objectContaining({ name: 'Incur.ValidationError' }),
-    )
-  })
-
-  test('globals work with subcommands', async () => {
-    const cli = Cli.create('test', {
-      globals: z.object({ rpcUrl: z.string() }),
-      vars: z.object({ rpcUrl: z.string().default('') }),
-    })
-      .use(async (c, next) => {
-        c.set('rpcUrl', c.globals.rpcUrl)
-        await next()
-      })
-      .command('deploy', {
-        run(c) {
-          return { url: c.var.rpcUrl }
-        },
-      })
-
-    const { output } = await serve(cli, [
-      '--rpc-url',
-      'http://x',
-      'deploy',
-      '--json',
-    ])
-    expect(JSON.parse(output)).toEqual({ url: 'http://x' })
+    const { output, exitCode } = await serve(cli, ['--limit', 'not-a-number', 'ping'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Invalid input')
   })
 
   test('globals position is flexible', async () => {

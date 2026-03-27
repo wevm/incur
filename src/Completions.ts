@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 
 import type { Shell } from './internal/command.js'
+import { toKebab } from './internal/helpers.js'
 
 /** A completion candidate with an optional description. */
 export type Candidate = {
@@ -86,7 +87,7 @@ export function complete(
     if (leaf?.options) {
       const shape = leaf.options.shape as Record<string, any>
       for (const key of Object.keys(shape)) {
-        const kebab = key.replace(/[A-Z]/g, (c: string) => `-${c.toLowerCase()}`)
+        const kebab = toKebab(key)
         const flag = `--${kebab}`
         if (flag.startsWith(current))
           candidates.push({ value: flag, description: descriptionOf(shape[key]) })
@@ -105,7 +106,7 @@ export function complete(
     if (globals) {
       const globalShape = globals.schema.shape as Record<string, any>
       for (const key of Object.keys(globalShape)) {
-        const kebab = key.replace(/[A-Z]/g, (c: string) => `-${c.toLowerCase()}`)
+        const kebab = toKebab(key)
         const flag = `--${kebab}`
         if (flag.startsWith(current) && !candidates.some((c) => c.value === flag))
           candidates.push({ value: flag, description: descriptionOf(globalShape[key]) })
