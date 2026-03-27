@@ -181,6 +181,34 @@ describe('complete', () => {
     const build = candidates.find((c) => c.value === 'build')
     expect(build?.noSpace).toBeUndefined()
   })
+
+  test('suggests subcommands for group with default', () => {
+    const lint = Cli.create('lint', {
+      description: 'Run linter',
+      options: z.object({ fix: z.boolean().default(false).describe('Auto-fix') }),
+      run: () => ({ linted: true }),
+    })
+    lint.command('rules', { description: 'List rules', run: () => ({}) })
+    const cli = Cli.create('app', { description: 'App' }).command(lint)
+    const commands = Cli.toCommands.get(cli)!
+
+    const candidates = Completions.complete(commands, undefined, ['app', 'lint', ''], 2)
+    expect(candidates.map((c) => c.value)).toContain('rules')
+  })
+
+  test('suggests options from group default command', () => {
+    const lint = Cli.create('lint', {
+      description: 'Run linter',
+      options: z.object({ fix: z.boolean().default(false).describe('Auto-fix') }),
+      run: () => ({ linted: true }),
+    })
+    lint.command('rules', { description: 'List rules', run: () => ({}) })
+    const cli = Cli.create('app', { description: 'App' }).command(lint)
+    const commands = Cli.toCommands.get(cli)!
+
+    const candidates = Completions.complete(commands, undefined, ['app', 'lint', '--'], 2)
+    expect(candidates.map((c) => c.value)).toContain('--fix')
+  })
 })
 
 describe('format', () => {

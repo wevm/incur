@@ -124,6 +124,16 @@ function collectEntries(
     const entryPath = [...prefix, name]
     if ('_group' in entry && entry._group) {
       if (entry.description) groups.set(entryPath.join(' '), entry.description)
+      if (entry.default) {
+        const cmd: Skill.CommandInfo = { name: entryPath.join(' ') }
+        if (entry.default.description) cmd.description = entry.default.description
+        if (entry.default.args) cmd.args = entry.default.args
+        if (entry.default.env) cmd.env = entry.default.env
+        if (entry.default.hint) cmd.hint = entry.default.hint
+        if (entry.default.options) cmd.options = entry.default.options
+        if (entry.default.output) cmd.output = entry.default.output
+        result.push(cmd)
+      }
       result.push(...collectEntries(entry.commands, entryPath, groups))
     } else {
       const cmd: Skill.CommandInfo = { name: entryPath.join(' ') }

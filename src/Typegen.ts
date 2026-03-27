@@ -36,7 +36,10 @@ function collectEntries(
   const result: ReturnType<typeof collectEntries> = []
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
-    if ('_group' in entry && entry._group) result.push(...collectEntries(entry.commands, path))
+    if ('_group' in entry && entry._group) {
+      if (entry.default) result.push({ name: path.join(' '), args: entry.default.args, options: entry.default.options })
+      result.push(...collectEntries(entry.commands, path))
+    }
     else result.push({ name: path.join(' '), args: entry.args, options: entry.options })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
