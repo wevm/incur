@@ -2054,6 +2054,113 @@ describe('help', () => {
     `)
   })
 
+  test('banner is printed before root help', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => '  status: all good',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('status: all good')
+    expect(output.indexOf('status: all good')).toBeLessThan(output.indexOf('mycli'))
+  })
+
+  test('async banner is supported', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: async () => '  async banner',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('async banner')
+  })
+
+  test('banner returning undefined shows only help', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => undefined,
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toMatch(/^mycli/)
+  })
+
+  test('banner errors are swallowed', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => {
+        throw new Error('boom')
+      },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toMatch(/^mycli/)
+    expect(output).not.toContain('boom')
+  })
+
+  test('banner is skipped for subcommands', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => 'BANNER',
+    })
+    cli.command('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+      output: z.object({ pong: z.boolean() }),
+    })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('BANNER')
+  })
+
+  test('banner with mode "agent" shows in non-TTY', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'AGENT BANNER', mode: 'agent' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('AGENT BANNER')
+  })
+
+  test('banner with mode "human" is skipped in non-TTY', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'HUMAN BANNER', mode: 'human' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).not.toContain('HUMAN BANNER')
+  })
+
+  test('banner object with default mode shows for all', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'ALL BANNER' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('ALL BANNER')
+  })
+
+  test('banner is skipped for --help flag', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => 'BANNER',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--help'])
+    expect(output).not.toContain('BANNER')
+  })
+
   test('--help on leaf shows command help', async () => {
     const cli = Cli.create('tool')
     cli.command('greet', {

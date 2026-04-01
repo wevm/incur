@@ -278,6 +278,7 @@ export function create(
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
+        banner: def.banner,
         config: def.config,
         description: def.description,
         envSchema: def.env,
@@ -323,6 +324,19 @@ export declare namespace create {
       : Record<string, string> | undefined
     /** Alternative binary names for this CLI (e.g. shorter aliases in package.json `bin`). Shell completions are registered for all names. */
     aliases?: string[] | undefined
+    /**
+     * Text to display above root help output (e.g. branding, live status). Only called when the CLI is invoked with no subcommand. Errors are silently swallowed.
+     *
+     * Pass a function for all consumers, or an object with `mode` to target `'human'`, `'agent'`, or `'all'` (default).
+     */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          /** @default 'all' */
+          mode?: 'all' | 'human' | 'agent' | undefined
+        }
+      | undefined
     /** Zod schema for positional arguments. */
     args?: args | undefined
     /** Enable config-file defaults for command options. */
@@ -869,6 +883,16 @@ async function serveImpl(
     if (options.rootCommand || options.rootFetch) {
       // Root command/fetch with no args — treat as root invocation
     } else {
+      if (options.banner && !help) {
+        const banner = typeof options.banner === 'function' ? { render: options.banner, mode: 'all' as const } : options.banner
+        const mode = banner.mode ?? 'all'
+        if (mode === 'all' || (mode === 'human' && human) || (mode === 'agent' && !human)) {
+          try {
+            const text = await banner.render()
+            if (text) writeln(text)
+          } catch {}
+        }
+      }
       writeln(
         Help.formatRoot(name, {
           aliases: options.aliases,
@@ -1946,6 +1970,14 @@ declare namespace serveImpl {
       | {
           agents?: string[] | undefined
           command?: string | undefined
+        }
+      | undefined
+    /** Banner config, called before root help. */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          mode?: 'all' | 'human' | 'agent' | undefined
         }
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
