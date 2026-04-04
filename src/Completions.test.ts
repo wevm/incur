@@ -231,7 +231,7 @@ describe('register', () => {
   test('bash: generates complete -F script with nospace support', () => {
     const script = Completions.register('bash', 'mycli')
     expect(script).toContain('_incur_complete_mycli()')
-    expect(script).toContain('COMPLETE="bash"')
+    expect(script).toContain('export COMPLETE="bash"')
     expect(script).toContain('complete -o default -o bashdefault -o nosort -F')
     expect(script).toContain('"mycli" -- "${COMP_WORDS[@]}"')
     expect(script).toContain('compopt -o nospace')
@@ -240,7 +240,7 @@ describe('register', () => {
   test('zsh: generates compdef script', () => {
     const script = Completions.register('zsh', 'mycli')
     expect(script).toContain('#compdef mycli')
-    expect(script).toContain('COMPLETE="zsh"')
+    expect(script).toContain('export COMPLETE="zsh"')
     expect(script).toContain('compdef _incur_complete_mycli mycli')
     expect(script).toContain('_describe')
   })

@@ -232,8 +232,8 @@ function bashRegister(name: string): string {
     local _COMPLETE_INDEX=\${COMP_CWORD}
     local _completions
     _completions=( $(
-        COMPLETE="bash"
-        _COMPLETE_INDEX="$_COMPLETE_INDEX"
+        export COMPLETE="bash"
+        export _COMPLETE_INDEX="$_COMPLETE_INDEX"
         "${name}" -- "\${COMP_WORDS[@]}"
     ) )
     if [[ $? != 0 ]]; then
@@ -262,8 +262,8 @@ function zshRegister(name: string): string {
   return `#compdef ${name}
 _incur_complete_${id}() {
     local completions=("\${(@f)$(
-        _COMPLETE_INDEX=$(( CURRENT - 1 ))
-        COMPLETE="zsh"
+        export _COMPLETE_INDEX=$(( CURRENT - 1 ))
+        export COMPLETE="zsh"
         "${name}" -- "\${words[@]}" 2>/dev/null
     )}")
     if [[ -n $completions ]]; then
