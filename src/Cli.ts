@@ -2002,6 +2002,11 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       format = 'json'
       formatExplicit = true
     } else if (token === '--format' && argv[i + 1]) {
+      const validFormats: Set<string> = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'])
+      if (!validFormats.has(argv[i + 1]!))
+        throw new ParseError({
+          message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
+        })
       format = argv[i + 1] as Formatter.Format
       formatExplicit = true
       i++
@@ -2025,10 +2030,16 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       filterOutput = argv[i + 1]!
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
-      tokenLimit = Number(argv[i + 1])
+      const n = Number(argv[i + 1])
+      if (!Number.isFinite(n))
+        throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
+      tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
-      tokenOffset = Number(argv[i + 1])
+      const n = Number(argv[i + 1])
+      if (!Number.isFinite(n))
+        throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
+      tokenOffset = n
       i++
     } else if (token === '--token-count') tokenCount = true
     else rest.push(token)

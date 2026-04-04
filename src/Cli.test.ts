@@ -4445,3 +4445,33 @@ describe('displayName', () => {
     expect(parsed.meta.cta.commands[0].command).toBe('mc login')
   })
 })
+
+test('--format rejects invalid format values', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => c.ok({ message: 'hi' }),
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', '--format', 'xml'])
+  expect(exitCode).toBe(1)
+  expect(output).toMatch(/invalid|unsupported|unknown.*format/i)
+})
+
+test('--token-limit with non-numeric value errors', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => c.ok({ message: 'hello world' }),
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', '--token-limit', 'foo', '--json'])
+  expect(exitCode).toBe(1)
+  expect(output).not.toContain('NaN')
+})
+
+test('--token-offset with non-numeric value errors', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => c.ok({ message: 'hello world' }),
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', '--token-offset', 'foo', '--json'])
+  expect(exitCode).toBe(1)
+  expect(output).not.toContain('NaN')
+})
