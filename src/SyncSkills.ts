@@ -18,7 +18,7 @@ export async function sync(
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
-  const entries = collectEntries(commands, [], groups)
+  const entries = collectEntries(commands, [], groups, options.rootCommand)
   const files = Skill.split(name, entries, depth, groups)
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `incur-skills-${name}-`))
@@ -70,7 +70,7 @@ export async function sync(
     }
 
     // Write skills hash + names for staleness detection
-    const hashEntries = collectEntries(commands, [])
+    const hashEntries = collectEntries(commands, [], undefined, options.rootCommand)
     writeMeta(name, Skill.hash(hashEntries), [...currentNames])
 
     return { skills, paths, agents }
@@ -92,6 +92,18 @@ export declare namespace sync {
     global?: boolean | undefined
     /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). Skill name is the parent directory name. */
     include?: string[] | undefined
+    /** Root command definition (when the CLI itself has a `run` handler). */
+    rootCommand?:
+      | {
+          description?: string | undefined
+          args?: any
+          env?: any
+          hint?: string | undefined
+          options?: any
+          output?: any
+          examples?: any[] | undefined
+        }
+      | undefined
   }
   /** Result of a sync operation. */
   type Result = {
@@ -118,8 +130,31 @@ function collectEntries(
   commands: Map<string, any>,
   prefix: string[],
   groups: Map<string, string> = new Map(),
+  rootCommand?:
+    | {
+        description?: string | undefined
+        args?: any
+        env?: any
+        hint?: string | undefined
+        options?: any
+        output?: any
+        examples?: any[] | undefined
+      }
+    | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
+  if (rootCommand) {
+    const cmd: Skill.CommandInfo = { root: true }
+    if (rootCommand.description) cmd.description = rootCommand.description
+    if (rootCommand.args) cmd.args = rootCommand.args
+    if (rootCommand.env) cmd.env = rootCommand.env
+    if (rootCommand.hint) cmd.hint = rootCommand.hint
+    if (rootCommand.options) cmd.options = rootCommand.options
+    if (rootCommand.output) cmd.output = rootCommand.output
+    const examples = formatExamples(rootCommand.examples)
+    if (examples) cmd.examples = examples
+    result.push(cmd)
+  }
   for (const [name, entry] of commands) {
     const entryPath = [...prefix, name]
     if ('_group' in entry && entry._group) {
@@ -144,7 +179,7 @@ function collectEntries(
       result.push(cmd)
     }
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+  return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
 /** Resolves the package root from the executing bin script (`process.argv[1]`). Walks up from the bin's directory looking for `package.json`. Falls back to `process.cwd()`. */

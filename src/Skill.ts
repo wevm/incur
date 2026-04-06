@@ -5,13 +5,16 @@ import * as Schema from './Schema.js'
 
 /** Information about a single command, passed to `generate()`. */
 export type CommandInfo = {
-  name: string
+  /** Command name (subcommand path). Omit for root commands. */
+  name?: string | undefined
   description?: string | undefined
   args?: z.ZodObject<any> | undefined
   env?: z.ZodObject<any> | undefined
   hint?: string | undefined
   options?: z.ZodObject<any> | undefined
   output?: z.ZodType | undefined
+  /** Whether this is the root command (defined on `Cli.create()` itself). */
+  root?: boolean | undefined
   examples?: { command: string; description?: string }[] | undefined
 }
 
@@ -48,7 +51,7 @@ export function index(
 
 /** @internal Builds a command signature with arg placeholders. */
 function buildSignature(cli: string, cmd: CommandInfo): string {
-  const base = `${cli} ${cmd.name}`
+  const base = cmd.root ? cli : `${cli} ${cmd.name}`
   if (!cmd.args) return base
   const shape = cmd.args.shape as Record<string, z.ZodType>
   const json = Schema.toJsonSchema(cmd.args)
@@ -70,14 +73,16 @@ export function generate(
   let lastGroup: string | undefined
 
   for (const cmd of commands) {
-    const segment = cmd.name.split(' ')[0]!
+    const segment = cmd.root ? '' : cmd.name!.split(' ')[0]!
     if (segment !== lastGroup) {
       lastGroup = segment
-      const desc = groups.get(segment)
-      const heading = desc ? `## ${name} ${segment}\n\n${desc}` : `## ${name} ${segment}`
-      sections.push(heading)
+      if (segment) {
+        const desc = groups.get(segment)
+        const heading = desc ? `## ${name} ${segment}\n\n${desc}` : `## ${name} ${segment}`
+        sections.push(heading)
+      }
     }
-    sections.push(renderCommandBody(name, cmd, 3))
+    sections.push(renderCommandBody(name, cmd, segment ? 3 : 2))
   }
 
   return sections.join('\n\n')
@@ -94,7 +99,19 @@ export function split(
 
   const buckets = new Map<string, CommandInfo[]>()
   for (const cmd of commands) {
-    const segments = cmd.name.split(' ')
+    if (cmd.root) {
+      // Root command — own bucket keyed by CLI name slug
+      const slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-|-$/g, '')
+      const bucket = buckets.get(slug) ?? []
+      bucket.push(cmd)
+      buckets.set(slug, bucket)
+      continue
+    }
+    const segments = cmd.name!.split(' ')
     const key = segments.slice(0, depth).join('-')
     const bucket = buckets.get(key) ?? []
     bucket.push(cmd)
@@ -104,8 +121,9 @@ export function split(
   return [...buckets.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dir, cmds]) => {
-      const prefix = cmds[0]!.name.split(' ').slice(0, depth).join(' ')
-      return { dir, content: renderGroup(name, `${name} ${prefix}`, cmds, groups, prefix) }
+      const prefix = cmds[0]!.root ? '' : cmds[0]!.name!.split(' ').slice(0, depth).join(' ')
+      const title = prefix ? `${name} ${prefix}` : name
+      return { dir, content: renderGroup(name, title, cmds, groups, prefix || undefined) }
     })
 }
 
@@ -143,7 +161,7 @@ function renderGroup(
 
 /** @internal Renders a command's heading and sections without frontmatter. */
 function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
-  const fullName = `${cli} ${cmd.name}`
+  const fullName = cmd.root ? cli : `${cli} ${cmd.name}`
   const sections: string[] = []
   const h = (n: number) => '#'.repeat(n)
 

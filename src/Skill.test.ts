@@ -216,6 +216,41 @@ describe('hash', () => {
   })
 })
 
+describe('root command (empty name)', () => {
+  test('generate renders root command without trailing space', () => {
+    const result = Skill.generate('my-cli', [
+      {
+        root: true,
+        description: 'Fetch a URL',
+        args: z.object({ url: z.string().describe('URL to fetch') }),
+      },
+      { name: 'auth', description: 'Auth commands' },
+    ])
+    expect(result).toContain('# my-cli\n\nFetch a URL')
+    expect(result).not.toContain('# my-cli \n')
+    expect(result).toContain('| `url` | `string` | yes | URL to fetch |')
+    expect(result).toContain('# my-cli auth')
+  })
+
+  test('index renders root command signature without trailing space', () => {
+    const result = Skill.index('my-cli', [
+      { root: true, description: 'Fetch a URL', args: z.object({ url: z.string() }) },
+      { name: 'auth', description: 'Auth commands' },
+    ])
+    expect(result).toContain('| `my-cli <url>` | Fetch a URL |')
+    expect(result).toContain('| `my-cli auth` | Auth commands |')
+  })
+
+  test('hash changes when root command is added', () => {
+    const a = Skill.hash([{ name: 'ping', description: 'Health check' }])
+    const b = Skill.hash([
+      { root: true, description: 'Root command' },
+      { name: 'ping', description: 'Health check' },
+    ])
+    expect(a).not.toBe(b)
+  })
+})
+
 describe('split', () => {
   const commands: Skill.CommandInfo[] = [
     { name: 'auth login', description: 'Log in' },
@@ -348,5 +383,36 @@ describe('split', () => {
     )
     expect(afterFrontmatter).not.toMatch(/^title:/m)
     expect(afterFrontmatter).not.toMatch(/^command:/m)
+  })
+
+  test('depth 1 creates separate file for root command', () => {
+    const cmds: Skill.CommandInfo[] = [
+      {
+        root: true,
+        description: 'Fetch a URL',
+        args: z.object({ url: z.string().describe('URL to fetch') }),
+      },
+      { name: 'auth login', description: 'Log in' },
+      { name: 'auth status', description: 'Check status' },
+    ]
+    const files = Skill.split('my-cli', cmds, 1)
+    expect(files.map((f) => f.dir)).toEqual(['auth', 'my-cli'])
+    const rootFile = files.find((f) => f.dir === 'my-cli')!
+    expect(rootFile.content).toContain('name: my-cli')
+    expect(rootFile.content).toContain('command: my-cli')
+    expect(rootFile.content).toContain('# my-cli')
+    expect(rootFile.content).toContain('| `url` | `string` | yes | URL to fetch |')
+    expect(rootFile.content).not.toContain('# my-cli ')
+  })
+
+  test('depth 0 includes root command in single file', () => {
+    const cmds: Skill.CommandInfo[] = [
+      { root: true, description: 'Fetch a URL' },
+      { name: 'ping', description: 'Health check' },
+    ]
+    const files = Skill.split('test', cmds, 0)
+    expect(files).toHaveLength(1)
+    expect(files[0]!.content).toContain('# test\n\nFetch a URL')
+    expect(files[0]!.content).toContain('# test ping')
   })
 })

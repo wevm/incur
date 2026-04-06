@@ -553,7 +553,7 @@ async function serveImpl(
       const stored = SyncSkills.readHash(name)
       if (stored) {
         const groups = new Map<string, string>()
-        const entries = collectSkillCommands(commands, [], groups)
+        const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
           const runner = detectRunner()
           const spec = SyncMcp.detectPackageSpecifier(name)
@@ -587,10 +587,12 @@ async function serveImpl(
       }
     }
 
+    const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+        const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
@@ -601,7 +603,7 @@ async function serveImpl(
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+      const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
@@ -706,6 +708,7 @@ async function serveImpl(
         description: options.description,
         global,
         include: options.sync?.include,
+        rootCommand: options.rootCommand,
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
@@ -1559,7 +1562,7 @@ async function fetchImpl(
     req.method === 'GET'
   ) {
     const groups = new Map<string, string>()
-    const cmds = collectSkillCommands(commands, [], groups)
+    const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
 
     // GET /.well-known/skills/index.json
     if (segments[2] === 'index.json' && segments.length === 3) {
@@ -2685,8 +2688,21 @@ function collectSkillCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
   groups: Map<string, string>,
+  rootCommand?: CommandDefinition<any, any, any> | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
+  if (rootCommand) {
+    const cmd: Skill.CommandInfo = { root: true }
+    if (rootCommand.description) cmd.description = rootCommand.description
+    if (rootCommand.args) cmd.args = rootCommand.args
+    if (rootCommand.env) cmd.env = rootCommand.env
+    if (rootCommand.hint) cmd.hint = rootCommand.hint
+    if (rootCommand.options) cmd.options = rootCommand.options
+    if (rootCommand.output) cmd.output = rootCommand.output
+    const examples = formatExamples(rootCommand.examples)
+    if (examples) cmd.examples = examples
+    result.push(cmd)
+  }
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
@@ -2716,7 +2732,7 @@ function collectSkillCommands(
       result.push(cmd)
     }
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+  return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */

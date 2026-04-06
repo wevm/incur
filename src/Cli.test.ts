@@ -1278,6 +1278,38 @@ describe('--llms', () => {
     expect(output).toContain('test auth auth logout')
     expect(output).not.toContain('ping')
   })
+
+  test('--llms includes root command', async () => {
+    const cli = Cli.create('my-cli', {
+      description: 'Fetch URLs',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      options: z.object({ objective: z.string().optional().describe('Narrow content') }),
+      run: ({ args }) => args.url,
+    })
+    cli.command('auth', { description: 'Auth commands', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--llms'])
+    expect(output).toContain('| `my-cli <url>` | Fetch URLs |')
+    expect(output).toContain('| `my-cli auth` | Auth commands |')
+  })
+
+  test('--llms-full includes root command with args/options', async () => {
+    const cli = Cli.create('my-cli', {
+      description: 'Fetch URLs',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      options: z.object({ objective: z.string().optional().describe('Narrow content') }),
+      output: z.string().describe('Page content'),
+      run: ({ args }) => args.url,
+    })
+    cli.command('auth', { description: 'Auth commands', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--llms-full'])
+    expect(output).toContain('# my-cli\n\nFetch URLs')
+    expect(output).toContain('| `url` | `string` | yes | URL to fetch |')
+    expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
+    expect(output).toContain('# my-cli auth')
+    expect(output).not.toContain('# my-cli \n')
+  })
 })
 
 describe('--schema', () => {
