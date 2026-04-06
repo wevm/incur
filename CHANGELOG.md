@@ -1,5 +1,12 @@
 # incur
 
+## 0.3.16
+
+### Patch Changes
+
+- de70444: Added `engines` field requiring Node.js >=22.
+- 3462433: Fixed `z.bigint()`, `z.coerce.bigint()`, `z.date()`, and `z.coerce.date()` schemas failing during skill sync by representing them as `{ type: "string" }` in JSON Schema output.
+
 ## 0.3.15
 
 ### Patch Changes
