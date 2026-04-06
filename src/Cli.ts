@@ -2691,21 +2691,18 @@ function collectSkillCommands(
   rootCommand?: CommandDefinition<any, any, any> | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
-  if (rootCommand)
-    result.push((() => {
-      const cmd: Skill.CommandInfo = {
-        root: true,
-        ...(rootCommand.description ? { description: rootCommand.description } : undefined),
-        ...(rootCommand.args ? { args: rootCommand.args } : undefined),
-        ...(rootCommand.env ? { env: rootCommand.env } : undefined),
-        ...(rootCommand.hint ? { hint: rootCommand.hint } : undefined),
-        ...(rootCommand.options ? { options: rootCommand.options } : undefined),
-        ...(rootCommand.output ? { output: rootCommand.output } : undefined),
-      }
-      const examples = formatExamples(rootCommand.examples)
-      if (examples) cmd.examples = examples
-      return cmd
-    })())
+  if (rootCommand) {
+    const cmd: Skill.CommandInfo = { root: true }
+    if (rootCommand.description) cmd.description = rootCommand.description
+    if (rootCommand.args) cmd.args = rootCommand.args
+    if (rootCommand.env) cmd.env = rootCommand.env
+    if (rootCommand.hint) cmd.hint = rootCommand.hint
+    if (rootCommand.options) cmd.options = rootCommand.options
+    if (rootCommand.output) cmd.output = rootCommand.output
+    const examples = formatExamples(rootCommand.examples)
+    if (examples) cmd.examples = examples
+    result.push(cmd)
+  }
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
