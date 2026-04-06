@@ -294,7 +294,7 @@ function schemaToTable(schema: Record<string, unknown>, prefix = ''): string | u
   return `| Field | Type | Required | Description |\n|-------|------|----------|-------------|\n${rows.join('\n')}`
 }
 
-/** @internal Converts a string to a lowercase slug (e.g. `"curl.md"` → `"curl-md"`). */
+/** @internal Converts a string to a lowercase slug (e.g. `"my-cli"` → `"my-cli"`, `"My Tool"` → `"my-tool"`). */
 function slugify(s: string): string {
   return s
     .toLowerCase()
