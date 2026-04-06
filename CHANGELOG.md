@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.14
+
+### Patch Changes
+
+- 71a787a: Fixed root commands defined on `Cli.create()` not being included in skill generation (`--llms`, `skills add`, `.well-known/skills/`).
+
 ## 0.3.13
 
 ### Patch Changes
