@@ -144,7 +144,7 @@ function collectEntries(
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
   if (rootCommand) {
-    const cmd: Skill.CommandInfo = { root: true }
+    const cmd: Skill.CommandInfo = {}
     if (rootCommand.description) cmd.description = rootCommand.description
     if (rootCommand.args) cmd.args = rootCommand.args
     if (rootCommand.env) cmd.env = rootCommand.env

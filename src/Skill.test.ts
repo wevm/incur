@@ -216,11 +216,10 @@ describe('hash', () => {
   })
 })
 
-describe('root command (empty name)', () => {
+describe('root command (no name)', () => {
   test('generate renders root command without trailing space', () => {
     const result = Skill.generate('my-cli', [
       {
-        root: true,
         description: 'Fetch a URL',
         args: z.object({ url: z.string().describe('URL to fetch') }),
       },
@@ -234,7 +233,7 @@ describe('root command (empty name)', () => {
 
   test('index renders root command signature without trailing space', () => {
     const result = Skill.index('my-cli', [
-      { root: true, description: 'Fetch a URL', args: z.object({ url: z.string() }) },
+      { description: 'Fetch a URL', args: z.object({ url: z.string() }) },
       { name: 'auth', description: 'Auth commands' },
     ])
     expect(result).toContain('| `my-cli <url>` | Fetch a URL |')
@@ -244,7 +243,7 @@ describe('root command (empty name)', () => {
   test('hash changes when root command is added', () => {
     const a = Skill.hash([{ name: 'ping', description: 'Health check' }])
     const b = Skill.hash([
-      { root: true, description: 'Root command' },
+      { description: 'Root command' },
       { name: 'ping', description: 'Health check' },
     ])
     expect(a).not.toBe(b)
@@ -388,7 +387,6 @@ describe('split', () => {
   test('depth 1 creates separate file for root command', () => {
     const cmds: Skill.CommandInfo[] = [
       {
-        root: true,
         description: 'Fetch a URL',
         args: z.object({ url: z.string().describe('URL to fetch') }),
       },
@@ -407,7 +405,7 @@ describe('split', () => {
 
   test('depth 0 includes root command in single file', () => {
     const cmds: Skill.CommandInfo[] = [
-      { root: true, description: 'Fetch a URL' },
+      { description: 'Fetch a URL' },
       { name: 'ping', description: 'Health check' },
     ]
     const files = Skill.split('test', cmds, 0)

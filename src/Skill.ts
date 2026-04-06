@@ -13,8 +13,6 @@ export type CommandInfo = {
   hint?: string | undefined
   options?: z.ZodObject<any> | undefined
   output?: z.ZodType | undefined
-  /** Whether this is the root command (defined on `Cli.create()` itself). */
-  root?: boolean | undefined
   examples?: { command: string; description?: string }[] | undefined
 }
 
@@ -51,7 +49,7 @@ export function index(
 
 /** @internal Builds a command signature with arg placeholders. */
 function buildSignature(cli: string, cmd: CommandInfo): string {
-  const base = cmd.root ? cli : `${cli} ${cmd.name}`
+  const base = !cmd.name ? cli : `${cli} ${cmd.name}`
   if (!cmd.args) return base
   const shape = cmd.args.shape as Record<string, z.ZodType>
   const json = Schema.toJsonSchema(cmd.args)
@@ -73,7 +71,7 @@ export function generate(
   let lastGroup: string | undefined
 
   for (const cmd of commands) {
-    const segment = cmd.root ? '' : cmd.name!.split(' ')[0]!
+    const segment = !cmd.name ? '' : cmd.name.split(' ')[0]!
     if (segment !== lastGroup) {
       lastGroup = segment
       if (segment) {
@@ -99,7 +97,7 @@ export function split(
 
   const buckets = new Map<string, CommandInfo[]>()
   for (const cmd of commands) {
-    if (cmd.root) {
+    if (!cmd.name) {
       const key = slugify(name)
       const bucket = buckets.get(key) ?? []
       bucket.push(cmd)
@@ -116,7 +114,7 @@ export function split(
   return [...buckets.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dir, cmds]) => {
-      const prefix = cmds[0]!.root ? '' : cmds[0]!.name!.split(' ').slice(0, depth).join(' ')
+      const prefix = !cmds[0]!.name ? '' : cmds[0]!.name.split(' ').slice(0, depth).join(' ')
       const title = prefix ? `${name} ${prefix}` : name
       return { dir, content: renderGroup(name, title, cmds, groups, prefix || undefined) }
     })
@@ -151,7 +149,7 @@ function renderGroup(
 
 /** @internal Renders a command's heading and sections without frontmatter. */
 function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
-  const fullName = cmd.root ? cli : `${cli} ${cmd.name}`
+  const fullName = !cmd.name ? cli : `${cli} ${cmd.name}`
   const sections: string[] = []
   const h = (n: number) => '#'.repeat(n)
 
