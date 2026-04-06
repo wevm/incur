@@ -1967,6 +1967,8 @@ declare namespace serveImpl {
 }
 
 /** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
+const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'] as const)
+
 function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
   let verbose = false
   let llms = false
@@ -2002,8 +2004,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       format = 'json'
       formatExplicit = true
     } else if (token === '--format' && argv[i + 1]) {
-      const validFormats: Set<string> = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'])
-      if (!validFormats.has(argv[i + 1]!))
+      if (!validFormats.has(argv[i + 1]! as any))
         throw new ParseError({
           message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
         })
@@ -2031,13 +2032,13 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n))
+      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
       tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n))
+      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
       tokenOffset = n
       i++

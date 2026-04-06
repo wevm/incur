@@ -187,7 +187,7 @@ function coerceIfNeeded(schema: z.ZodType): z.ZodType {
   const inner = isOptional ? schema.unwrap() : schema
   const desc = (schema as any).description ?? (inner as any).description
 
-  function withDesc(s: z.ZodType): z.ZodType {
+  function withDesc(s: z.ZodType) {
     return desc ? s.describe(desc) : s
   }
 

@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
-import { defaultEnvSource } from './Parser.js'
 import { builtinCommands } from './internal/command.js'
 import { toKebab } from './internal/helpers.js'
+import { defaultEnvSource } from './Parser.js'
 
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
