@@ -344,7 +344,7 @@ describe('formatRoot', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --config <path>                     Load JSON option defaults from a file

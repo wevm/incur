@@ -125,6 +125,84 @@ export declare namespace sync {
   }
 }
 
+/** Lists skills derived from a CLI's command map with install status. */
+export async function list(
+  name: string,
+  commands: Map<string, any>,
+  options: list.Options = {},
+): Promise<list.Skill[]> {
+  const { depth = 1, description } = options
+  const cwd = options.cwd ?? process.cwd()
+
+  const groups = new Map<string, string>()
+  if (description) groups.set(name, description)
+  const entries = collectEntries(commands, [], groups)
+  const files = Skill.split(name, entries, depth, groups)
+
+  const skills: list.Skill[] = []
+  const meta = readMeta(name)
+  const installed = new Set(meta?.skills)
+
+  for (const file of files) {
+    const nameMatch = file.content.match(/^name:\s*(.+)$/m)
+    const descMatch = file.content.match(/^description:\s*(.+)$/m)
+    const skillName = nameMatch?.[1] ?? (file.dir || name)
+    skills.push({
+      name: skillName,
+      description: descMatch?.[1],
+      installed: installed.has(skillName),
+    })
+  }
+
+  // Include additional SKILL.md files matched by glob patterns
+  if (options.include) {
+    for (const pattern of options.include) {
+      const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
+      for await (const match of fs.glob(globPattern, { cwd })) {
+        try {
+          const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
+          const nameMatch = content.match(/^name:\s*(.+)$/m)
+          const skillName =
+            pattern === '_root' ? (nameMatch?.[1] ?? name) : path.basename(path.dirname(match))
+          if (!skills.some((s) => s.name === skillName)) {
+            const descMatch = content.match(/^description:\s*(.+)$/m)
+            skills.push({
+              name: skillName,
+              description: descMatch?.[1],
+              installed: installed.has(skillName),
+            })
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return skills.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export declare namespace list {
+  /** Options for listing skills. */
+  type Options = {
+    /** Working directory for resolving `include` globs. Defaults to `process.cwd()`. */
+    cwd?: string | undefined
+    /** Grouping depth for skill files. Defaults to `1`. */
+    depth?: number | undefined
+    /** CLI description, used as the top-level group description. */
+    description?: string | undefined
+    /** Glob patterns for directories containing SKILL.md files to include. */
+    include?: string[] | undefined
+  }
+  /** A skill entry with install status. */
+  type Skill = {
+    /** Description extracted from the skill frontmatter. */
+    description?: string | undefined
+    /** Whether this skill is currently installed. */
+    installed: boolean
+    /** Skill name. */
+    name: string
+  }
+}
+
 /** Recursively collects leaf commands as `Skill.CommandInfo`. */
 function collectEntries(
   commands: Map<string, any>,

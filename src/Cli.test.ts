@@ -2030,7 +2030,7 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -2068,7 +2068,7 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -2231,7 +2231,7 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -2601,6 +2601,25 @@ describe('built-in commands', () => {
     expect(output).toContain('test skills add')
     expect(output).toContain('--depth')
     expect(output).toContain('--no-global')
+  })
+
+  test('skills list --help shows description', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills', 'list', '--help'])
+    expect(output).toContain('test skills list')
+    expect(output).toContain('List skills')
+  })
+
+  test('skills list shows skills with install status', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    cli.command('greet', { description: 'Say hello', run: () => ({ hi: true }) })
+    const { output } = await serve(cli, ['skills', 'list'])
+    expect(output).toContain('✗')
+    expect(output).toContain('test-ping')
+    expect(output).toContain('test-greet')
+    expect(output).toContain('installed')
   })
 })
 

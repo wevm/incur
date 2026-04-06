@@ -56,7 +56,7 @@ export declare namespace formatRoot {
 export declare namespace formatCommand {
   type Options = {
     /** Map of option names to single-char aliases. */
-    alias?: Record<string, string> | undefined
+    alias?: Partial<Record<string, string>> | undefined
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
@@ -261,7 +261,7 @@ function envEntries(schema: z.ZodObject<any>) {
 }
 
 /** Extracts option entries from a Zod object schema. */
-function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> | undefined) {
+function optionEntries(schema: z.ZodObject<any>, alias?: Partial<Record<string, string>> | undefined) {
   const entries: {
     flag: string
     description: string

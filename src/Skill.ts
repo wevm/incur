@@ -133,7 +133,8 @@ function renderGroup(
   const childDescs = cmds.map((c) => c.description).filter(Boolean) as string[]
   const descParts: string[] = []
   if (groupDesc) descParts.push(groupDesc.replace(/\.$/, ''))
-  if (childDescs.length > 0) descParts.push(childDescs.join(', '))
+  if (childDescs.length > 0)
+    descParts.push(childDescs.map((d) => d.replace(/\.$/, '')).join(', '))
   const description =
     descParts.length > 0
       ? `${descParts.join('. ')}. Run \`${title} --help\` for usage details.`

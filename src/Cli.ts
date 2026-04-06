@@ -656,8 +656,8 @@ async function serveImpl(
     filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
   if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
     const skillsSub = filtered[skillsIdx + 1]
-    if (skillsSub && skillsSub !== 'add') {
-      const suggestion = suggest(skillsSub, ['add'])
+    if (skillsSub && skillsSub !== 'add' && skillsSub !== 'list') {
+      const suggestion = suggest(skillsSub, ['add', 'list'])
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
       const message = `'${skillsSub}' is not a command for '${name} skills'.${didYouMean}`
       const ctaCommands: FormattedCta[] = []
@@ -683,6 +683,52 @@ async function serveImpl(
     if (!skillsSub) {
       const b = builtinCommands.find((c) => c.name === 'skills')!
       writeln(formatBuiltinHelp(name, b))
+      return
+    }
+    if (skillsSub === 'list') {
+      if (help) {
+        const b = builtinCommands.find((c) => c.name === 'skills')!
+        writeln(formatBuiltinSubcommandHelp(name, b, 'list'))
+        return
+      }
+      try {
+        const result = await SyncSkills.list(name, commands, {
+          cwd: options.sync?.cwd,
+          depth: options.sync?.depth ?? 1,
+          description: options.description,
+          include: options.sync?.include,
+        })
+        if (result.length === 0) {
+          writeln('No skills found.')
+          return
+        }
+        const lines: string[] = []
+        const maxLen = Math.max(...result.map((s) => s.name.length))
+        for (const s of result) {
+          const icon = s.installed ? '✓' : '✗'
+          const padding = s.description
+            ? `${' '.repeat(maxLen - s.name.length)}  ${s.description}`
+            : ''
+          lines.push(`  ${icon} ${s.name}${padding}`)
+        }
+        const installedCount = result.filter((s) => s.installed).length
+        lines.push('')
+        lines.push(
+          `${result.length} skill${result.length === 1 ? '' : 's'} (${installedCount} installed)`,
+        )
+        writeln(lines.join('\n'))
+      } catch (err) {
+        writeln(
+          Formatter.format(
+            {
+              code: 'LIST_SKILLS_FAILED',
+              message: err instanceof Error ? err.message : String(err),
+            },
+            formatExplicit ? formatFlag : 'toon',
+          ),
+        )
+        exit(1)
+      }
       return
     }
     if (help) {
