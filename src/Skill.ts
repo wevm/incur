@@ -100,15 +100,10 @@ export function split(
   const buckets = new Map<string, CommandInfo[]>()
   for (const cmd of commands) {
     if (cmd.root) {
-      // Root command — own bucket keyed by CLI name slug
-      const slug = name
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, '-')
-        .replace(/-{2,}/g, '-')
-        .replace(/^-|-$/g, '')
-      const bucket = buckets.get(slug) ?? []
+      const key = slugify(name)
+      const bucket = buckets.get(key) ?? []
       bucket.push(cmd)
-      buckets.set(slug, bucket)
+      buckets.set(key, bucket)
       continue
     }
     const segments = cmd.name!.split(' ')
@@ -145,12 +140,7 @@ function renderGroup(
       ? `${descParts.join('. ')}. Run \`${title} --help\` for usage details.`
       : `Run \`${title} --help\` for usage details.`
 
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-{2,}/g, '-')
-    .replace(/^-|-$/g, '')
-  const fm = ['---', `name: ${slug}`]
+  const fm = ['---', `name: ${slugify(title)}`]
   fm.push(`description: ${description}`)
   fm.push(`requires_bin: ${cli}`)
   fm.push(`command: ${title}`, '---')
@@ -303,6 +293,15 @@ function schemaToTable(schema: Record<string, unknown>, prefix = ''): string | u
   }
 
   return `| Field | Type | Required | Description |\n|-------|------|----------|-------------|\n${rows.join('\n')}`
+}
+
+/** @internal Converts a string to a lowercase slug (e.g. `"curl.md"` → `"curl-md"`). */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '')
 }
 
 /** @internal Resolves a simple type name from a JSON Schema property. */
