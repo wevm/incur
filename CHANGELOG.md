@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.17
+
+### Patch Changes
+
+- dad62c9: Fixed `skills list` not including root command skill.
+
 ## 0.3.16
 
 ### Patch Changes
