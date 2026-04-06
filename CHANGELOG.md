@@ -1,5 +1,12 @@
 # incur
 
+## 0.3.15
+
+### Patch Changes
+
+- abd80e7: Fixed missing value errors for flags in `Fetch.parseArgv`, short secret leaking in `redact()`, silent `jsonl` fallthrough in `Formatter.format`, invalid `--format`/`--token-limit`/`--token-offset` values, lost descriptions when coercing OpenAPI param schemas, and hardcoded `process.env` in `Help.ts` for Deno compatibility.
+- 7dd398b: Added `skills list` subcommand that shows all skills a CLI defines with install status.
+
 ## 0.3.14
 
 ### Patch Changes
