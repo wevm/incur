@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.18
+
+### Patch Changes
+
+- a65c865: Used command description as fallback in skill frontmatter for root commands and single-command groups.
+
 ## 0.3.17
 
 ### Patch Changes
