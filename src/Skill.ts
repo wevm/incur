@@ -104,7 +104,7 @@ export function split(
       buckets.set(key, bucket)
       continue
     }
-    const segments = cmd.name!.split(' ')
+    const segments = cmd.name.split(' ')
     const key = segments.slice(0, depth).join('-')
     const bucket = buckets.get(key) ?? []
     bucket.push(cmd)
@@ -114,7 +114,8 @@ export function split(
   return [...buckets.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dir, cmds]) => {
-      const prefix = !cmds[0]!.name ? '' : cmds[0]!.name.split(' ').slice(0, depth).join(' ')
+      const first = cmds[0]!
+      const prefix = !first.name ? '' : first.name.split(' ').slice(0, depth).join(' ')
       const title = prefix ? `${name} ${prefix}` : name
       return { dir, content: renderGroup(name, title, cmds, groups, prefix || undefined) }
     })
