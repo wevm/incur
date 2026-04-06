@@ -125,3 +125,66 @@ test('installed SKILL.md contains frontmatter', async () => {
 
   rmSync(tmp, { recursive: true, force: true })
 })
+
+test('list returns skills from command map', async () => {
+  const cli = Cli.create('test', { description: 'A test CLI' })
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  cli.command('greet', { description: 'Say hello', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const result = await SyncSkills.list('test', commands)
+
+  expect(result.length).toBeGreaterThan(0)
+  const names = result.map((s) => s.name)
+  expect(names).toContain('test-ping')
+  expect(names).toContain('test-greet')
+  for (const s of result) {
+    expect(s.installed).toBe(false)
+    expect(s.description).toBeDefined()
+  }
+})
+
+test('list shows installed status after sync', async () => {
+  const tmp = join(tmpdir(), `clac-list-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('test')
+  cli.command('ping', { description: 'Ping', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Sync first to install
+  await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  // Now list should show installed
+  const result = await SyncSkills.list('test', commands)
+  expect(result.length).toBeGreaterThan(0)
+  for (const s of result) expect(s.installed).toBe(true)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('list returns empty for CLI with no commands', async () => {
+  const cli = Cli.create('empty')
+  const commands = Cli.toCommands.get(cli)!
+  const result = await SyncSkills.list('empty', commands)
+  expect(result).toHaveLength(0)
+})
+
+test('list results are sorted alphabetically', async () => {
+  const cli = Cli.create('test')
+  cli.command('zebra', { description: 'Z command', run: () => ({}) })
+  cli.command('alpha', { description: 'A command', run: () => ({}) })
+  cli.command('middle', { description: 'M command', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const result = await SyncSkills.list('test', commands)
+  const names = result.map((s) => s.name)
+  expect(names).toEqual([...names].sort())
+})

@@ -967,7 +967,7 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -1742,7 +1742,7 @@ describe('root command with subcommands', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])

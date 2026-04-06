@@ -422,6 +422,10 @@ export const builtinCommands = [
           noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
         }),
       }),
+      subcommand({
+        name: 'list',
+        description: 'List skills',
+      }),
     ],
   },
 ] satisfies {
