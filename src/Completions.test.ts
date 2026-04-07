@@ -1,3 +1,7 @@
+import { execFile, spawnSync } from 'node:child_process'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Cli, Completions, z } from 'incur'
 
 const originalIsTTY = process.stdout.isTTY
@@ -14,6 +18,45 @@ vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
   return { ...actual, readHash: () => undefined }
 })
+
+function hasShell(shell: string): boolean {
+  return spawnSync(shell, ['-c', ':'], { stdio: 'ignore' }).status === 0
+}
+
+const bash = hasShell('bash')
+const zsh = hasShell('zsh')
+const fish = hasShell('fish')
+
+function exec(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { env, timeout: 30_000 }, (error, stdout, stderr) => {
+      if (error) reject(new Error(stderr?.trim() || stdout?.trim() || error.message))
+      else resolve(stdout)
+    })
+  })
+}
+
+async function withFakeCli(run: (dir: string) => Promise<void>) {
+  const dir = await mkdtemp(join(tmpdir(), 'incur-completions-'))
+  const bin = join(dir, 'fake-cli')
+
+  try {
+    await writeFile(
+      bin,
+      `#!/bin/sh
+if [ -n "$COMPLETE" ]; then
+  printf '%s' "$COMPLETE:\${_COMPLETE_INDEX:-missing}"
+else
+  printf 'missing'
+fi
+`,
+    )
+    await chmod(bin, 0o755)
+    await run(dir)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
 
 async function serve(
   cli: { serve: Cli.Cli['serve'] },
@@ -237,6 +280,25 @@ describe('register', () => {
     expect(script).toContain('compopt -o nospace')
   })
 
+  test.skipIf(!bash)('bash: exports completion env vars to the CLI subprocess', async () => {
+    await withFakeCli(async (dir) => {
+      const output = await exec(
+        'bash',
+        [
+          '-lc',
+          `${Completions.register('bash', 'fake-cli')}
+COMP_WORDS=('fake-cli' 'build' '')
+COMP_CWORD=2
+_incur_complete_fake_cli
+printf '%s' "\${COMPREPLY[*]}"`,
+        ],
+        { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
+      )
+
+      expect(output).toBe('bash:2')
+    })
+  })
+
   test('zsh: generates compdef script', () => {
     const script = Completions.register('zsh', 'mycli')
     expect(script).toContain('#compdef mycli')
@@ -245,11 +307,44 @@ describe('register', () => {
     expect(script).toContain('_describe')
   })
 
+  test.skipIf(!zsh)('zsh: exports completion env vars to the CLI subprocess', async () => {
+    await withFakeCli(async (dir) => {
+      const output = await exec(
+        'zsh',
+        [
+          '-lc',
+          `compdef() { : }
+_describe() { print -r -- "\${(j:|:)\${(@P)2}}" }
+${Completions.register('zsh', 'fake-cli')}
+words=('fake-cli' 'build' '')
+CURRENT=3
+_incur_complete_fake_cli`,
+        ],
+        { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
+      )
+
+      expect(output.trim()).toBe('zsh:2')
+    })
+  })
+
   test('fish: generates complete command', () => {
     const script = Completions.register('fish', 'mycli')
     expect(script).toContain('complete --keep-order --exclusive --command mycli')
     expect(script).toContain('COMPLETE=fish')
     expect(script).toContain('commandline --current-token')
+  })
+
+  test.skipIf(!fish)('fish: passes completion env vars to the CLI subprocess', async () => {
+    await withFakeCli(async (dir) => {
+      const output = await exec(
+        'fish',
+        ['-c', `${Completions.register('fish', 'fake-cli')}
+complete --do-complete 'fake-cli '`],
+        { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
+      )
+
+      expect(output.trim()).toBe('fish:missing')
+    })
   })
 
   test('nushell: generates external completer closure', () => {
