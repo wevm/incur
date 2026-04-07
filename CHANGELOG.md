@@ -1,5 +1,12 @@
 # incur
 
+## 0.3.20
+
+### Patch Changes
+
+- ede37be: Fixed help output for boolean options so flags no longer showed `<boolean>` placeholders or redundant `(default: false)` text, including aliased flags.
+- 96dfee4: Exported shell completion environment variables in bash and zsh hooks.
+
 ## 0.3.19
 
 ### Patch Changes
