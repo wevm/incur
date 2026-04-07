@@ -275,8 +275,10 @@ function optionEntries(
     const type = resolveTypeName(field)
     const short = alias?.[key]
     const kebab = toKebab(key)
-    const flag = short ? `--${kebab}, -${short} <${type}>` : `--${kebab} <${type}>`
-    const defaultValue = extractDefault(field)
+    const valueHint = type === 'boolean' ? '' : ` <${type}>`
+    const flag = short ? `--${kebab}, -${short}${valueHint}` : `--${kebab}${valueHint}`
+    let defaultValue = extractDefault(field)
+    if (type === 'boolean' && defaultValue === false) defaultValue = undefined
     const deprecated = extractDeprecated(field)
     entries.push({ flag, description: (field as any).description ?? '', defaultValue, deprecated })
   }

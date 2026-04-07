@@ -130,8 +130,7 @@ function renderGroup(
   prefix?: string | undefined,
 ): string {
   const groupDesc = prefix ? groups.get(prefix) : undefined
-  const fallbackDesc =
-    cmds.length === 1 && cmds[0]!.description ? cmds[0]!.description : undefined
+  const fallbackDesc = cmds.length === 1 && cmds[0]!.description ? cmds[0]!.description : undefined
   const desc = groupDesc ?? fallbackDesc
   const description = desc
     ? `${desc.replace(/\.$/, '')}. Run \`${title} --help\` for usage details.`

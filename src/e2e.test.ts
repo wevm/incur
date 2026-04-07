@@ -1054,7 +1054,7 @@ describe('help', () => {
       Options:
         --limit, -l <number>               Max results (default: 20)
         --sort, -s <name|created|updated>  Sort field (default: name)
-        --archived <boolean>               Include archived (default: false)
+        --archived                         Include archived
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
@@ -1082,7 +1082,7 @@ describe('help', () => {
 
       Options:
         --branch, -b <string>  Branch to deploy (default: main)
-        --dry-run <boolean>    Dry run mode (default: false)
+        --dry-run              Dry run mode
 
       Examples:
         app project deploy create staging                                    # Deploy staging from main
@@ -1918,7 +1918,7 @@ describe('env', () => {
 
       Options:
         --hostname, -h <string>  API hostname (default: api.example.com)
-        --web, -w <boolean>      Open browser (default: false)
+        --web, -w                Open browser
         --scopes <array>         OAuth scopes
 
       Global Options:

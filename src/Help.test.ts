@@ -148,6 +148,55 @@ describe('formatCommand', () => {
     expect(result).toContain('Verbosity level')
   })
 
+  test('omits value placeholders for boolean flag options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        dryRun: z.boolean().optional().describe('Preview without submitting.'),
+      }),
+    })
+
+    const line = result.split('\n').find((line) => line.includes('--dry-run'))
+
+    expect(line).toBe('  --dry-run  Preview without submitting.')
+  })
+
+  test('omits value placeholders for aliased boolean flag options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        dryRun: z.boolean().optional().describe('Preview without submitting.'),
+      }),
+      alias: { dryRun: 'd' },
+    })
+
+    const line = result.split('\n').find((line) => line.includes('--dry-run'))
+
+    expect(line).toBe('  --dry-run, -d  Preview without submitting.')
+  })
+
+  test('omits default false for boolean flag options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        dryRun: z.boolean().default(false).describe('Preview without submitting.'),
+      }),
+    })
+
+    const line = result.split('\n').find((line) => line.includes('--dry-run'))
+
+    expect(line).toBe('  --dry-run  Preview without submitting.')
+  })
+
+  test('shows default true for boolean flag options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        watch: z.boolean().default(true).describe('Watch for changes.'),
+      }),
+    })
+
+    const line = result.split('\n').find((line) => line.includes('--watch'))
+
+    expect(line).toBe('  --watch  Watch for changes. (default: true)')
+  })
+
   test('shows enum values for z.enum options', () => {
     const result = Help.formatCommand('tool deploy', {
       options: z.object({
