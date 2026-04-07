@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.19
+
+### Patch Changes
+
+- 5c76b51: Fixed `skills add` to list synced skills in alphabetical order.
+
 ## 0.3.18
 
 ### Patch Changes
