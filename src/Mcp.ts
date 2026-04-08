@@ -173,6 +173,7 @@ export function collectTools(
 ): ToolEntry[] {
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
+    if ('_alias' in entry) continue
     const path = [...prefix, name]
     if ('_group' in entry && entry._group) {
       const groupMw = [

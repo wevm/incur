@@ -412,6 +412,7 @@ export const builtinCommands = [
   },
   {
     name: 'skills',
+    aliases: ['skill'],
     description: 'Sync skill files to agents',
     subcommands: [
       subcommand({
@@ -430,8 +431,19 @@ export const builtinCommands = [
   },
 ] satisfies {
   name: string
+  aliases?: string[] | undefined
   args?: z.ZodObject<any> | undefined
   description: string
   hint?: ((name: string) => string) | undefined
   subcommands?: (CommandMeta<z.ZodObject<any>> & { name: string })[] | undefined
 }[]
+
+/** @internal Finds a builtin command by its name or alias. */
+export function findBuiltin(token: string) {
+  return builtinCommands.find((b) => b.name === token || b.aliases?.includes(token))
+}
+
+/** @internal Checks if a token matches a builtin command by name or alias. */
+export function isBuiltin(token: string) {
+  return builtinCommands.some((b) => b.name === token || b.aliases?.includes(token))
+}
