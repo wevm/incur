@@ -11,7 +11,13 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
-import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
+import {
+  builtinCommands,
+  type CommandMeta,
+  findBuiltin,
+  type Shell,
+  shells,
+} from './internal/command.js'
 import * as Command from './internal/command.js'
 import { isRecord, suggest } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
@@ -239,6 +245,8 @@ export function create(
           return cli
         }
         commands.set(nameOrCli, def)
+        if (def.aliases)
+          for (const a of def.aliases) commands.set(a, { _alias: true, target: nameOrCli })
         return cli
       }
       const mountedRootDef = toRootDefinition.get(nameOrCli)
@@ -530,8 +538,8 @@ async function serveImpl(
             })
         }
       } else if (nonFlags.length === 2) {
-        const parent = nonFlags[nonFlags.length - 1]
-        const builtin = builtinCommands.find((b) => b.name === parent && b.subcommands)
+        const parent = nonFlags[nonFlags.length - 1]!
+        const builtin = findBuiltin(parent)
         if (builtin?.subcommands)
           for (const sub of builtin.subcommands)
             if (sub.name.startsWith(current))
@@ -547,7 +555,8 @@ async function serveImpl(
   let skillsCta: FormattedCtaBlock | undefined
   if (!llms && !llmsFull && !schema && !help && !version) {
     const isSkillsAdd =
-      filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
+      findBuiltin(filtered[0]!)?.name === 'skills' ||
+      (filtered[0] === name && findBuiltin(filtered[1]!)?.name === 'skills')
     const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
@@ -574,8 +583,9 @@ async function serveImpl(
     const prefix: string[] = []
     let scopedDescription: string | undefined = options.description
     for (const token of filtered) {
-      const entry = scopedCommands.get(token)
-      if (!entry) break
+      const rawEntry = scopedCommands.get(token)
+      if (!rawEntry) break
+      const entry = resolveAlias(scopedCommands, rawEntry)
       if (isGroup(entry)) {
         scopedCommands = entry.commands
         scopedDescription = entry.description
@@ -653,8 +663,12 @@ async function serveImpl(
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
   const skillsIdx =
-    filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
-  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
+    findBuiltin(filtered[0]!)?.name === 'skills'
+      ? 0
+      : filtered[0] === name && findBuiltin(filtered[1]!)?.name === 'skills'
+        ? 1
+        : -1
+  if (skillsIdx !== -1) {
     const skillsSub = filtered[skillsIdx + 1]
     if (skillsSub && skillsSub !== 'add' && skillsSub !== 'list') {
       const suggestion = suggest(skillsSub, ['add', 'list'])
@@ -681,13 +695,13 @@ async function serveImpl(
       return
     }
     if (!skillsSub) {
-      const b = builtinCommands.find((c) => c.name === 'skills')!
+      const b = findBuiltin('skills')!
       writeln(formatBuiltinHelp(name, b))
       return
     }
     if (skillsSub === 'list') {
       if (help) {
-        const b = builtinCommands.find((c) => c.name === 'skills')!
+        const b = findBuiltin('skills')!
         writeln(formatBuiltinSubcommandHelp(name, b, 'list'))
         return
       }
@@ -733,7 +747,7 @@ async function serveImpl(
       return
     }
     if (help) {
-      const b = builtinCommands.find((c) => c.name === 'skills')!
+      const b = findBuiltin('skills')!
       writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
@@ -1008,7 +1022,7 @@ async function serveImpl(
       writeln(
         Help.formatCommand(commandName, {
           alias: cmd.alias as Record<string, string> | undefined,
-          aliases: isRootCmd ? options.aliases : undefined,
+          aliases: isRootCmd ? options.aliases : cmd.aliases,
           configFlag,
           description: cmd.description,
           version: isRootCmd ? options.version : undefined,
@@ -1897,7 +1911,7 @@ function resolveCommand(
 
   if (!first || !commands.has(first)) return { error: first ?? '(none)', path: '', commands, rest }
 
-  let entry = commands.get(first)!
+  let entry = resolveAlias(commands, commands.get(first)!)
   const path = [first]
   let remaining = rest
   let inheritedOutputPolicy: OutputPolicy | undefined
@@ -1927,8 +1941,8 @@ function resolveCommand(
         commands: entry.commands,
       }
 
-    const child = entry.commands.get(next)
-    if (!child) {
+    const rawChild = entry.commands.get(next)
+    if (!rawChild) {
       return {
         error: next,
         path: path.join(' '),
@@ -1936,6 +1950,7 @@ function resolveCommand(
         rest: remaining.slice(1),
       }
     }
+    let child = resolveAlias(entry.commands, rawChild)
 
     path.push(next)
     remaining = remaining.slice(1)
@@ -2260,6 +2275,7 @@ function collectHelpCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
@@ -2268,6 +2284,7 @@ function collectHelpCommands(
 /** @internal Formats group-level help for a built-in command (e.g. `cli skills`). */
 function formatBuiltinHelp(cli: string, builtin: (typeof builtinCommands)[number]): string {
   return Help.formatRoot(`${cli} ${builtin.name}`, {
+    aliases: builtin.aliases,
     description: builtin.description,
     commands: builtin.subcommands?.map((s) => ({ name: s.name, description: s.description })),
   })
@@ -2314,7 +2331,11 @@ export type CommandsMap = Record<
 >
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway
+type CommandEntry =
+  | CommandDefinition<any, any, any>
+  | InternalGroup
+  | InternalFetchGateway
+  | InternalAlias
 
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all'
@@ -2348,6 +2369,27 @@ function isGroup(entry: CommandEntry): entry is InternalGroup {
 /** @internal Type guard for fetch gateways. */
 function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
   return '_fetch' in entry
+}
+
+/** @internal An alias entry that points to another command by name. */
+type InternalAlias = {
+  _alias: true
+  /** The canonical command name this alias resolves to. */
+  target: string
+}
+
+/** @internal Type guard for alias entries. */
+function isAlias(entry: CommandEntry): entry is InternalAlias {
+  return '_alias' in entry
+}
+
+/** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
+function resolveAlias(
+  commands: Map<string, CommandEntry>,
+  entry: CommandEntry,
+): Exclude<CommandEntry, InternalAlias> {
+  if (isAlias(entry)) return commands.get(entry.target)! as Exclude<CommandEntry, InternalAlias>
+  return entry
 }
 
 /** @internal Maps CLI instances to their command maps. */
@@ -2672,6 +2714,7 @@ function collectIndexCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isGroup(entry)) {
       result.push(...collectIndexCommands(entry.commands, path))
@@ -2706,6 +2749,7 @@ function collectCommands(
 }[] {
   const result: ReturnType<typeof collectCommands> = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -2762,6 +2806,7 @@ function collectSkillCommands(
     result.push(cmd)
   }
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
       const cmd: Skill.CommandInfo = { name: path.join(' ') }
@@ -2931,6 +2976,8 @@ type CommandDefinition<
   vars extends z.ZodObject<any> | undefined = undefined,
   cliEnv extends z.ZodObject<any> | undefined = undefined,
 > = CommandMeta<options> & {
+  /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
+  aliases?: string[] | undefined
   /** Zod schema for positional arguments. */
   args?: args | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */

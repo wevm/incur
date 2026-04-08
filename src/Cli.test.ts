@@ -4551,3 +4551,61 @@ test('--token-offset with non-numeric value errors', async () => {
   expect(exitCode).toBe(1)
   expect(output).not.toContain('NaN')
 })
+
+describe('command aliases', () => {
+  function makeAliasedCli() {
+    return Cli.create('gh').command('extension', {
+      aliases: ['extensions', 'ext'],
+      description: 'Manage extensions',
+      run: () => ({ result: 'ok' }),
+    })
+  }
+
+  test('resolves canonical command name', async () => {
+    const { output } = await serve(makeAliasedCli(), ['extension'])
+    expect(output).toContain('ok')
+  })
+
+  test('resolves alias name', async () => {
+    const { output } = await serve(makeAliasedCli(), ['extensions'])
+    expect(output).toContain('ok')
+  })
+
+  test('resolves short alias name', async () => {
+    const { output } = await serve(makeAliasedCli(), ['ext'])
+    expect(output).toContain('ok')
+  })
+
+  test('root help does not show aliases', async () => {
+    const { output } = await serve(makeAliasedCli(), ['--help'])
+    const commandsSection = output.split('Commands:')[1]!.split('Integrations:')[0]!
+    const names = commandsSection
+      .trim()
+      .split('\n')
+      .map((l) => l.trim().split(/\s{2,}/)[0]!)
+    expect(names).toContain('extension')
+    expect(names).not.toContain('extensions')
+    expect(names).not.toContain('ext')
+  })
+
+  test('command help shows aliases line', async () => {
+    const { output } = await serve(makeAliasedCli(), ['extension', '--help'])
+    expect(output).toContain('Aliases: extensions, ext')
+  })
+
+  test('aliases work inside command groups', async () => {
+    const sub = Cli.create('repo', { description: 'Manage repos' }).command('list', {
+      aliases: ['ls'],
+      description: 'List repos',
+      run: () => ({ repos: [] }),
+    })
+    const cli = Cli.create('gh').command(sub)
+    const { output } = await serve(cli, ['repo', 'ls'])
+    expect(output).toContain('repos')
+  })
+
+  test('did-you-mean suggests aliases', async () => {
+    const { output } = await serve(makeAliasedCli(), ['exten'])
+    expect(output).toMatch(/did you mean.*extension/i)
+  })
+})

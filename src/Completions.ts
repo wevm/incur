@@ -12,14 +12,16 @@ export type Candidate = {
   value: string
 }
 
-/** @internal Entry stored in a command map — either a leaf definition or a group. */
+/** @internal Entry stored in a command map — either a leaf definition, a group, or an alias. */
 type CommandEntry = {
+  _alias?: true | undefined
   _group?: true | undefined
   alias?: Record<string, string | undefined> | undefined
   args?: z.ZodObject<any> | undefined
   commands?: Map<string, CommandEntry> | undefined
   description?: string | undefined
   options?: z.ZodObject<any> | undefined
+  target?: string | undefined
 }
 
 /**
@@ -61,7 +63,10 @@ export function complete(
   for (let i = 0; i < index; i++) {
     const token = argv[i]!
     if (token.startsWith('-')) continue
-    const entry = scope.commands.get(token)
+    let entry = scope.commands.get(token)
+    if (!entry) continue
+    // Follow alias to canonical entry
+    if (entry._alias && entry.target) entry = scope.commands.get(entry.target)
     if (!entry) continue
     if (entry._group && entry.commands) {
       scope = { commands: entry.commands }
@@ -116,6 +121,7 @@ export function complete(
 
   // Suggest subcommands (groups get noSpace so user can keep typing subcommand)
   for (const [name, entry] of scope.commands) {
+    if (entry._alias) continue
     if (name.startsWith(current))
       candidates.push({
         value: name,
