@@ -252,6 +252,9 @@ export function create(
       const mountedRootDef = toRootDefinition.get(nameOrCli)
       if (mountedRootDef) {
         commands.set(nameOrCli.name, mountedRootDef)
+        const rootAliases = toRootAliases.get(nameOrCli)
+        if (rootAliases)
+          for (const a of rootAliases) commands.set(a, { _alias: true, target: nameOrCli.name })
         return cli
       }
       const sub = nameOrCli as Cli
@@ -308,6 +311,7 @@ export function create(
   }
 
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
+  if (rootDef && def.aliases) toRootAliases.set(cli as unknown as Root, def.aliases)
   if (def.options) toRootOptions.set(cli, def.options)
   if (def.config !== undefined) toConfigEnabled.set(cli, true)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
@@ -2413,6 +2417,9 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
+
+/** @internal Maps root CLI instances to their command aliases. */
+const toRootAliases = new WeakMap<Root, string[]>()
 
 /** @internal Sentinel symbol for `ok()` and `error()` return values. */
 const sentinel = Symbol.for('incur.sentinel')

@@ -4617,4 +4617,15 @@ describe('command aliases', () => {
     const { output } = await serve(makeAliasedCli(), ['exten'])
     expect(output).toMatch(/did you mean.*extension/i)
   })
+
+  test('root CLI aliases register as command aliases', async () => {
+    const update = Cli.create('update', {
+      aliases: ['upgrade'],
+      description: 'Update packages',
+      run: () => ({ result: 'updated' }),
+    })
+    const cli = Cli.create('pkg').command(update)
+    const { output } = await serve(cli, ['upgrade'])
+    expect(output).toContain('updated')
+  })
 })
