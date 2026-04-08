@@ -57,6 +57,23 @@ test('collects group descriptions', async () => {
   expect(content).toContain('admin reset')
 })
 
+test('group with default command includes both default and subcommands', async () => {
+  const lint = Cli.create('lint', {
+    description: 'Run linter',
+    run: () => ({ linted: true }),
+  })
+  lint.command('fix', { description: 'Auto-fix', run: () => ({}) })
+  const cli = Cli.create('app', { description: 'My app' }).command(lint)
+  vi.mocked(importCli).mockResolvedValue(cli)
+
+  const files = await generate('fake-input', tmp, 1)
+  const content = files.map((f) => readFileSync(f, 'utf-8')).join('\n')
+  expect(content).toContain('lint')
+  expect(content).toContain('Run linter')
+  expect(content).toContain('lint fix')
+  expect(content).toContain('Auto-fix')
+})
+
 test('includes args, options, and examples in output', async () => {
   const cli = Cli.create('tool', {
     description: 'A tool',

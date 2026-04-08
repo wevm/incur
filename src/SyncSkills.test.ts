@@ -137,6 +137,33 @@ test('readHash returns undefined when no hash exists', () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('group with default command generates skills for both default and subcommands', async () => {
+  const tmp = join(tmpdir(), `clac-default-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const lint = Cli.create('lint', { description: 'Run linter', run: () => ({}) })
+  lint.command('fix', { description: 'Auto-fix', run: () => ({}) })
+  const cli = Cli.create('test', { description: 'Test CLI' }).command(lint)
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const result = await SyncSkills.sync('test', commands, {
+    description: 'Test CLI',
+    global: false,
+    cwd: installDir,
+  })
+
+  const allContent = result.paths
+    .map((p) => readFileSync(join(p, 'SKILL.md'), 'utf8'))
+    .join('\n')
+  expect(allContent).toContain('lint')
+  expect(allContent).toContain('lint fix')
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('installed SKILL.md contains frontmatter', async () => {
   const tmp = join(tmpdir(), `clac-content-test-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })

@@ -202,4 +202,30 @@ describe('fromCli', () => {
       "
     `)
   })
+
+  test('group with default command includes both default and subcommands', () => {
+    const cli = Cli.create('test')
+    const lint = Cli.create('lint', {
+      args: z.object({ path: z.string().optional() }),
+      options: z.object({ fix: z.boolean().optional() }),
+      run: () => ({}),
+    })
+    lint.command('rules', {
+      options: z.object({ enabled: z.boolean().optional() }),
+      run: () => ({}),
+    })
+    cli.command(lint)
+
+    expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
+      "declare module 'incur' {
+        interface Register {
+          commands: {
+            'lint': { args: { path?: string }; options: { fix?: boolean } }
+            'lint rules': { args: {}; options: { enabled?: boolean } }
+          }
+        }
+      }
+      "
+    `)
+  })
 })

@@ -18,6 +18,7 @@ type CommandEntry = {
   alias?: Record<string, string | undefined> | undefined
   args?: z.ZodObject<any> | undefined
   commands?: Map<string, CommandEntry> | undefined
+  default?: CommandEntry | undefined
   description?: string | undefined
   options?: z.ZodObject<any> | undefined
 }
@@ -64,7 +65,7 @@ export function complete(
     const entry = scope.commands.get(token)
     if (!entry) continue
     if (entry._group && entry.commands) {
-      scope = { commands: entry.commands }
+      scope = { commands: entry.commands, leaf: entry.default }
     } else {
       scope = { commands: new Map(), leaf: entry }
       break

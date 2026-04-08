@@ -135,6 +135,33 @@ describe('fromCli', () => {
     `)
   })
 
+  test('group with default command includes default options in schema', () => {
+    const lint = Cli.create('lint', {
+      options: z.object({ fix: z.boolean().default(false) }),
+      run: () => ({}),
+    })
+    lint.command('rules', {
+      options: z.object({ enabled: z.boolean().default(true) }),
+      run: () => ({}),
+    })
+
+    const cli = Cli.create('test')
+    cli.command(lint)
+
+    const schema = ConfigSchema.fromCli(cli)
+    const lintNode = (schema as any).properties.commands.properties.lint
+    // Group-level options from the default command
+    expect(lintNode.properties.options.properties.fix).toEqual({
+      default: false,
+      type: 'boolean',
+    })
+    // Subcommand options nested under commands
+    expect(lintNode.properties.commands.properties.rules.properties.options.properties.enabled).toEqual({
+      default: true,
+      type: 'boolean',
+    })
+  })
+
   test('returns schema with only $schema for cli with no commands', () => {
     const cli = Cli.create('test')
     const schema = ConfigSchema.fromCli(cli)

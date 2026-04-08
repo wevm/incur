@@ -48,7 +48,7 @@ function buildNode(
   const commandProps: Record<string, unknown> = {}
   for (const [name, entry] of commands) {
     if ('_group' in entry && entry._group) {
-      commandProps[name] = buildNode(entry.commands, undefined)
+      commandProps[name] = buildNode(entry.commands, entry.default?.options)
     } else if (!('_fetch' in entry)) {
       const cmd = entry as { options?: z.ZodObject<any> }
       commandProps[name] = buildNode(new Map(), cmd.options)

@@ -173,6 +173,18 @@ export function collectTools(
         ...parentMiddlewares,
         ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
       ]
+      if (entry.default) {
+        result.push({
+          name: path.join('_'),
+          description: entry.default.description,
+          inputSchema: buildToolSchema(entry.default.args, entry.default.options),
+          ...(entry.default.output
+            ? { outputSchema: Schema.toJsonSchema(entry.default.output) as Record<string, unknown> }
+            : undefined),
+          command: entry.default,
+          ...(groupMw.length > 0 ? { middlewares: groupMw } : undefined),
+        })
+      }
       result.push(...collectTools(entry.commands, path, groupMw))
     } else {
       result.push({

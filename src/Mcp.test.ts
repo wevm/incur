@@ -42,6 +42,29 @@ function createTestCommands() {
     ]),
   })
 
+  commands.set('lint', {
+    _group: true,
+    description: 'Lint commands',
+    default: {
+      description: 'Run linter',
+      args: z.object({ path: z.string().optional().describe('Path to lint') }),
+      run(c: any) {
+        return { linted: true, path: c.args.path ?? '.' }
+      },
+    },
+    commands: new Map([
+      [
+        'fix',
+        {
+          description: 'Auto-fix lint issues',
+          run() {
+            return { fixed: true }
+          },
+        },
+      ],
+    ]),
+  })
+
   commands.set('fail', {
     description: 'Always fails',
     run(c: any) {
@@ -109,7 +132,7 @@ describe('Mcp', () => {
       { id: 2, method: 'tools/list', params: {} },
     ])
     const names = res.result.tools.map((t: any) => t.name).sort()
-    expect(names).toEqual(['echo', 'fail', 'greet_hello', 'ping', 'stream'])
+    expect(names).toEqual(['echo', 'fail', 'greet_hello', 'lint', 'lint_fix', 'ping', 'stream'])
 
     const echoTool = res.result.tools.find((t: any) => t.name === 'echo')
     expect(echoTool.description).toBe('Echo a message')
@@ -159,6 +182,30 @@ describe('Mcp', () => {
       },
     ])
     expect(res.result.content).toEqual([{ type: 'text', text: '{"greeting":"hello world"}' }])
+  })
+
+  test('tools/call with group default command', async () => {
+    const [, res] = await mcpSession(createTestCommands(), [
+      { id: 1, method: 'initialize', params: initParams },
+      {
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'lint', arguments: { path: 'src/' } },
+      },
+    ])
+    expect(res.result.content).toEqual([{ type: 'text', text: '{"linted":true,"path":"src/"}' }])
+  })
+
+  test('tools/call with group default subcommand', async () => {
+    const [, res] = await mcpSession(createTestCommands(), [
+      { id: 1, method: 'initialize', params: initParams },
+      {
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'lint_fix', arguments: {} },
+      },
+    ])
+    expect(res.result.content).toEqual([{ type: 'text', text: '{"fixed":true}' }])
   })
 
   test('tools/call unknown tool returns error', async () => {
