@@ -35,7 +35,7 @@ export async function serve(
         const extra = hasInput ? callArgs[1] : callArgs[0]
         return callTool(tool, params, {
           extra,
-          server,
+          sendNotification: (n) => server.server.notification(n),
           name,
           version,
           middlewares: options.middlewares,
@@ -77,11 +77,8 @@ export async function callTool(
   options: {
     extra?: {
       mcpReq?: { _meta?: { progressToken?: string | number } }
-      // v1 compat
-      _meta?: { progressToken?: string | number }
-      sendNotification?: (n: any) => Promise<void>
     }
-    server?: { server: { notification: (n: any) => Promise<void> } }
+    sendNotification?: (n: ProgressNotification) => Promise<void>
     name?: string | undefined
     version?: string | undefined
     middlewares?: MiddlewareHandler[] | undefined
@@ -117,19 +114,13 @@ export async function callTool(
   if ('stream' in result) {
     // Streaming: send progress notifications per chunk, then return buffered result
     const chunks: unknown[] = []
-    const progressToken =
-      options.extra?.mcpReq?._meta?.progressToken ?? options.extra?._meta?.progressToken
+    const progressToken = options.extra?.mcpReq?._meta?.progressToken
     let i = 0
-    const sendNotification = options.extra?.sendNotification
-      ? (n: any) => options.extra!.sendNotification!(n)
-      : options.server
-        ? (n: any) => options.server!.server.notification(n)
-        : undefined
     try {
       for await (const chunk of result.stream) {
         chunks.push(chunk)
-        if (progressToken !== undefined && sendNotification)
-          await sendNotification({
+        if (progressToken !== undefined && options.sendNotification)
+          await options.sendNotification({
             method: 'notifications/progress' as const,
             params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
           })
@@ -156,6 +147,12 @@ export async function callTool(
       ? { structuredContent: data as Record<string, unknown> }
       : undefined),
   }
+}
+
+/** @internal A progress notification sent during streaming tool calls. */
+type ProgressNotification = {
+  method: 'notifications/progress'
+  params: { progressToken: string | number; progress: number; message: string }
 }
 
 /** @internal A resolved tool entry from the command tree. */
