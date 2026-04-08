@@ -555,13 +555,13 @@ async function serveImpl(
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
-          const runner = detectRunner()
-          const spec = SyncMcp.detectPackageSpecifier(name)
+          const command =
+            process.env.npm_config_user_agent || process.env.npm_execpath
+              ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(name)} skills add`
+              : `${displayName} skills add`
           skillsCta = {
             description: 'Skills are out of date:',
-            commands: [
-              { command: `${runner} ${spec} skills add`, description: 'sync outdated skills' },
-            ],
+            commands: [{ command, description: 'sync outdated skills' }],
           }
         }
       }

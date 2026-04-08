@@ -2646,6 +2646,31 @@ describe('skills staleness', () => {
     expect(output).toContain('skills add')
   })
 
+  test('uses displayName for stale skills CTA when invoked directly', async () => {
+    const savedArgv1 = process.argv[1]
+    const savedAgent = process.env.npm_config_user_agent
+    const savedExec = process.env.npm_execpath
+    try {
+      process.argv[1] = '/usr/local/bin/mc'
+      delete process.env.npm_config_user_agent
+      delete process.env.npm_execpath
+
+      __mockSkillsHash = '0000000000000000'
+      const cli = Cli.create({ name: 'my-cli', aliases: ['mc'] })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+      const { output } = await serve(cli, ['ping'])
+
+      expect(output).toContain('mc skills add')
+      expect(output).not.toContain('npx my-cli skills add')
+    } finally {
+      if (savedArgv1 === undefined) process.argv[1] = undefined as any
+      else process.argv[1] = savedArgv1
+      process.env.npm_config_user_agent = savedAgent
+      process.env.npm_execpath = savedExec
+    }
+  })
+
   test('merges skills CTA with command CTA', async () => {
     __mockSkillsHash = '0000000000000000'
     ;(process.stdout as any).isTTY = true

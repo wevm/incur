@@ -1,8 +1,8 @@
+import { Cli, Completions, z } from 'incur'
 import { execFile, spawnSync } from 'node:child_process'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Cli, Completions, z } from 'incur'
 
 const originalIsTTY = process.stdout.isTTY
 const originalEnv = { ...process.env }
@@ -338,8 +338,11 @@ _incur_complete_fake_cli`,
     await withFakeCli(async (dir) => {
       const output = await exec(
         'fish',
-        ['-c', `${Completions.register('fish', 'fake-cli')}
-complete --do-complete 'fake-cli '`],
+        [
+          '-c',
+          `${Completions.register('fish', 'fake-cli')}
+complete --do-complete 'fake-cli '`,
+        ],
         { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
       )
 
