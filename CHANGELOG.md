@@ -1,5 +1,12 @@
 # incur
 
+## 0.3.24
+
+### Patch Changes
+
+- 250e65f: Added command-level `aliases` option for subcommands (e.g. `aliases: ['extensions', 'ext']` on an `extension` command).
+- 26d7bf8: Fixed root fetch/command fallback bypassing "Did you mean?" suggestions when the input is a typo of a known command.
+
 ## 0.3.23
 
 ### Patch Changes
