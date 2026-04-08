@@ -2,11 +2,11 @@
  * Dereferences all local `$ref` pointers in a JSON object (e.g. `{"$ref": "#/components/schemas/User"}`),
  * replacing them inline with the resolved values. Only handles local (`#/...`) references.
  *
- * Handles circular references by reusing already-resolved objects.
+ * Handles circular references by caching a mutable placeholder before recursing.
  *
- * Based on the dereferencing behavior of `@apidevtools/json-schema-ref-parser`
- * (https://github.com/APIDevTools/json-schema-ref-parser), vendored here to avoid
- * pulling in the full dependency tree.
+ * Minimal reimplementation of the dereferencing behavior from `@apidevtools/json-schema-ref-parser`
+ * (https://github.com/APIDevTools/json-schema-ref-parser). Only supports in-memory, local-pointer
+ * resolution — no file/URL resolution, no `$id` scoping.
  */
 export function dereference<value>(root: value): value {
   const cache = new Map<string, unknown>()
@@ -26,11 +26,26 @@ function walk(node: unknown, root: unknown, cache: Map<string, unknown>): unknow
     if (cache.has(ref)) return cache.get(ref)
 
     const resolved = resolvePointer(root, ref)
-    // Cache before recursing to handle circular refs
-    cache.set(ref, resolved)
+
+    // Non-object targets (primitives, arrays) can't be circular — resolve directly
+    if (typeof resolved !== 'object' || resolved === null || Array.isArray(resolved)) {
+      const dereferenced = walk(resolved, root, cache)
+      cache.set(ref, dereferenced)
+      return dereferenced
+    }
+
+    // Use a mutable placeholder so circular refs resolve to the same object.
+    // If the walked result is not a plain object (e.g. chained ref to primitive/array),
+    // skip the placeholder and cache directly.
+    const placeholder: Record<string, unknown> = {}
+    cache.set(ref, placeholder)
     const dereferenced = walk(resolved, root, cache)
-    cache.set(ref, dereferenced)
-    return dereferenced
+    if (typeof dereferenced !== 'object' || dereferenced === null || Array.isArray(dereferenced)) {
+      cache.set(ref, dereferenced)
+      return dereferenced
+    }
+    Object.assign(placeholder, dereferenced)
+    return placeholder
   }
 
   const result: Record<string, unknown> = {}
