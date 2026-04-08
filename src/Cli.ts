@@ -662,12 +662,14 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx =
-    findBuiltin(filtered[0]!)?.name === 'skills'
-      ? 0
-      : filtered[0] === name && findBuiltin(filtered[1]!)?.name === 'skills'
-        ? 1
-        : -1
+  const skillsIdx = (() => {
+    // e.g. `skills add` or `skill add`
+    if (findBuiltin(filtered[0]!)?.name === 'skills') return 0
+    // e.g. `my-cli skills add`
+    if (filtered[0] === name && findBuiltin(filtered[1]!)?.name === 'skills') return 1
+    // not a skills invocation
+    return -1
+  })()
   if (skillsIdx !== -1) {
     const skillsSub = filtered[skillsIdx + 1]
     if (skillsSub && skillsSub !== 'add' && skillsSub !== 'list') {
