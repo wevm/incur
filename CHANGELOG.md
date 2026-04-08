@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.22
+
+### Patch Changes
+
+- bfc3337: Replaced `@modelcontextprotocol/sdk` with `@modelcontextprotocol/server` (v2), reducing dependency count by 74 packages.
+
 ## 0.3.21
 
 ### Patch Changes
