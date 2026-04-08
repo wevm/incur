@@ -10,8 +10,10 @@ export async function register(
   name: string,
   options: register.Options = {},
 ): Promise<register.Result> {
+  const isGlobalBinary = !process.argv[1]?.match(/node_modules[/\\]/)
   const runner = detectRunner()
-  const command = options.command ?? `${runner} ${detectPackageSpecifier(name)} --mcp`
+  const command = options.command
+    ?? (isGlobalBinary ? `${name} --mcp` : `${runner} ${detectPackageSpecifier(name)} --mcp`)
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
@@ -64,7 +66,7 @@ function registerAmp(name: string, command: string): boolean {
     }
   }
 
-  const [cmd, ...args] = command.split(' ')
+  const [cmd, ...args] = splitCommand(command)
   if (!cmd) return false
 
   const servers: Record<string, any> = config['amp.mcpServers'] ?? {}
@@ -117,6 +119,30 @@ export function detectPackageSpecifier(name: string): string {
   } catch {}
 
   return name
+}
+
+/** Splits a command string into tokens, respecting single and double quotes. */
+function splitCommand(input: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let quote: string | null = null
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === ' ') {
+      if (current) tokens.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  if (current) tokens.push(current)
+  return tokens
 }
 
 /** Promisified execFile with stderr in error message. */
