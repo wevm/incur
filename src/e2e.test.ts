@@ -2848,6 +2848,47 @@ describe('fetch api', () => {
       `)
     })
 
+    test('tools/call with no-args command', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 6,
+          method: 'tools/call',
+          params: { name: 'ping', arguments: {} },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(JSON.parse(body.result.content[0].text)).toMatchInlineSnapshot(`
+        {
+          "pong": true,
+        }
+      `)
+    })
+
+    test('tools/call with streaming command', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'tools/call',
+          params: { name: 'stream', arguments: {} },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const chunks = JSON.parse(body.result.content[0].text)
+      expect(chunks).toEqual([{ content: 'hello' }, { content: 'world' }])
+    })
+
     test('non-/mcp paths still work alongside MCP', async () => {
       const cli = createApp()
       // Initialize MCP first

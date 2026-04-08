@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
@@ -1539,9 +1539,8 @@ function createMcpHttpHandler(name: string, version: string) {
     },
   ): Promise<Response> => {
     if (!transport) {
-      const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
-      const { WebStandardStreamableHTTPServerTransport } =
-        await import('@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js')
+      const { McpServer, WebStandardStreamableHTTPServerTransport } =
+        await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
 
@@ -1556,7 +1555,7 @@ function createMcpHttpHandler(name: string, version: string) {
           tool.name,
           {
             ...(tool.description ? { description: tool.description } : undefined),
-            ...(hasInput ? { inputSchema: mergedShape } : undefined),
+            ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}

@@ -1,7 +1,6 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import * as Command from './internal/command.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
@@ -27,7 +26,7 @@ export async function serve(
       tool.name,
       {
         ...(tool.description ? { description: tool.description } : undefined),
-        ...(hasInput ? { inputSchema: mergedShape } : undefined),
+        ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
         ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
       } as never,
       async (...callArgs: any[]) => {
@@ -36,6 +35,7 @@ export async function serve(
         const extra = hasInput ? callArgs[1] : callArgs[0]
         return callTool(tool, params, {
           extra,
+          server,
           name,
           version,
           middlewares: options.middlewares,
@@ -76,9 +76,12 @@ export async function callTool(
   params: Record<string, unknown>,
   options: {
     extra?: {
+      mcpReq?: { _meta?: { progressToken?: string | number } }
+      // v1 compat
       _meta?: { progressToken?: string | number }
       sendNotification?: (n: any) => Promise<void>
     }
+    server?: { server: { notification: (n: any) => Promise<void> } }
     name?: string | undefined
     version?: string | undefined
     middlewares?: MiddlewareHandler[] | undefined
@@ -114,13 +117,19 @@ export async function callTool(
   if ('stream' in result) {
     // Streaming: send progress notifications per chunk, then return buffered result
     const chunks: unknown[] = []
-    const progressToken = options.extra?._meta?.progressToken
+    const progressToken =
+      options.extra?.mcpReq?._meta?.progressToken ?? options.extra?._meta?.progressToken
     let i = 0
+    const sendNotification = options.extra?.sendNotification
+      ? (n: any) => options.extra!.sendNotification!(n)
+      : options.server
+        ? (n: any) => options.server!.server.notification(n)
+        : undefined
     try {
       for await (const chunk of result.stream) {
         chunks.push(chunk)
-        if (progressToken !== undefined && options.extra?.sendNotification)
-          await options.extra.sendNotification({
+        if (progressToken !== undefined && sendNotification)
+          await sendNotification({
             method: 'notifications/progress' as const,
             params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
           })
