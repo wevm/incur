@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.21
+
+### Patch Changes
+
+- d091bf7: Fixed stale `skills add` CTA commands to use the invoked CLI name when running installed binaries directly, instead of falling back to `npx`.
+
 ## 0.3.20
 
 ### Patch Changes
