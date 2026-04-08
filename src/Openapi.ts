@@ -1,7 +1,7 @@
-import { dereference } from '@readme/openapi-parser'
 import { z } from 'zod'
 
 import * as Fetch from './Fetch.js'
+import { dereference } from './internal/dereference.js'
 
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
 export type OpenAPISpec = { paths?: {} | undefined }
@@ -46,7 +46,7 @@ export async function generateCommands(
   fetch: FetchHandler,
   options: { basePath?: string | undefined } = {},
 ): Promise<Map<string, GeneratedCommand>> {
-  const resolved = (await dereference(structuredClone(spec) as any)) as unknown as OpenAPISpec
+  const resolved = dereference(structuredClone(spec)) as OpenAPISpec
   const commands = new Map<string, GeneratedCommand>()
   const paths = (resolved.paths ?? {}) as Record<string, Record<string, unknown>>
 
