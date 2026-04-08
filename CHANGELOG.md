@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.23
+
+### Patch Changes
+
+- 572c172: Replaced `@readme/openapi-parser` with a vendored `dereference` implementation, removing a heavy dependency tree.
+
 ## 0.3.22
 
 ### Patch Changes
