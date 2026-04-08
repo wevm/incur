@@ -554,10 +554,8 @@ async function serveImpl(
   // Skills staleness check (skip for built-in commands)
   let skillsCta: FormattedCtaBlock | undefined
   if (!llms && !llmsFull && !schema && !help && !version) {
-    const isSkillsAdd =
-      findBuiltin(filtered[0]!)?.name === 'skills' ||
-      (filtered[0] === name && findBuiltin(filtered[1]!)?.name === 'skills')
-    const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
+    const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
+    const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
       if (stored) {
@@ -623,19 +621,11 @@ async function serveImpl(
   }
 
   // completions <shell>: print shell hook script to stdout
-  const completionsIdx = (() => {
-    // e.g. `completions bash`
-    if (filtered[0] === 'completions') return 0
-    // e.g. `my-cli completions bash`
-    if (filtered[0] === name && filtered[1] === 'completions') return 1
-    // not a completions invocation
-    return -1
-  })()
-  // TODO: refactor built-in command handlers (completions, skills, mcp) into a generic dispatch loop on `builtinCommands`
-  if (completionsIdx !== -1 && filtered[completionsIdx] === 'completions') {
+  const completionsIdx = builtinIdx(filtered, name, 'completions')
+  if (completionsIdx !== -1) {
     const shell = filtered[completionsIdx + 1]
     if (help || !shell) {
-      const b = builtinCommands.find((c) => c.name === 'completions')!
+      const b = findBuiltin('completions')!
       writeln(
         Help.formatCommand(`${name} completions`, {
           args: b.args,
@@ -662,14 +652,7 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx = (() => {
-    // e.g. `skills add` or `skill add`
-    if (findBuiltin(filtered[0]!)?.name === 'skills') return 0
-    // e.g. `my-cli skills add`
-    if (filtered[0] === name && findBuiltin(filtered[1]!)?.name === 'skills') return 1
-    // not a skills invocation
-    return -1
-  })()
+  const skillsIdx = builtinIdx(filtered, name, 'skills')
   if (skillsIdx !== -1) {
     const skillsSub = filtered[skillsIdx + 1]
     if (skillsSub && skillsSub !== 'add' && skillsSub !== 'list') {
@@ -813,8 +796,8 @@ async function serveImpl(
   }
 
   // mcp add: register CLI as MCP server via `npx add-mcp`
-  const mcpIdx = filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
-  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp') {
+  const mcpIdx = builtinIdx(filtered, name, 'mcp')
+  if (mcpIdx !== -1) {
     const mcpSub = filtered[mcpIdx + 1]
     if (mcpSub && mcpSub !== 'add') {
       const suggestion = suggest(mcpSub, ['add'])
@@ -838,12 +821,12 @@ async function serveImpl(
       return
     }
     if (!mcpSub) {
-      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      const b = findBuiltin('mcp')!
       writeln(formatBuiltinHelp(name, b))
       return
     }
     if (help) {
-      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      const b = findBuiltin('mcp')!
       writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
@@ -2281,6 +2264,16 @@ function collectHelpCommands(
     result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found. */
+function builtinIdx(filtered: string[], cliName: string, builtin: string): number {
+  // e.g. `skills add` or `skill add`
+  if (findBuiltin(filtered[0]!)?.name === builtin) return 0
+  // e.g. `my-cli skills add`
+  if (filtered[0] === cliName && findBuiltin(filtered[1]!)?.name === builtin) return 1
+  // not a match
+  return -1
 }
 
 /** @internal Formats group-level help for a built-in command (e.g. `cli skills`). */
