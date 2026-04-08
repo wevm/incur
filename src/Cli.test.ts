@@ -3732,6 +3732,15 @@ describe('fetch', async () => {
     `)
   })
 
+  test('root-level fetch with typo of known command → did you mean', async () => {
+    const cli = Cli.create('api', { description: 'API', fetch: app.fetch }).command('upgrade', {
+      run: () => ({ upgraded: true }),
+    })
+    const { output, exitCode } = await serve(cli, ['upgra'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("Did you mean 'upgrade'?")
+  })
+
   test('root-level fetch with no args → root path', async () => {
     const cli = Cli.create('api', { description: 'API', fetch: app.fetch })
     // Hono returns 404 for / since we don't have a root route

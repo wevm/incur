@@ -1079,9 +1079,18 @@ async function serveImpl(
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
 
-  // Fall back to root fetch when no subcommand matches
+  // Fall back to root fetch/command when no subcommand matches,
+  // but only if the token doesn't look like a typo of a known command.
+  const rootFallbackBlocked =
+    'error' in resolved &&
+    !resolved.path &&
+    (() => {
+      const candidates = [...resolved.commands.keys()]
+      for (const b of builtinCommands) candidates.push(b.name)
+      return suggest(resolved.error, candidates) !== undefined
+    })()
   const effective =
-    'error' in resolved && options.rootFetch && !resolved.path
+    'error' in resolved && options.rootFetch && !resolved.path && !rootFallbackBlocked
       ? {
           fetchGateway: {
             _fetch: true as const,
@@ -1092,7 +1101,7 @@ async function serveImpl(
           path: name,
           rest: filtered,
         }
-      : 'error' in resolved && options.rootCommand && !resolved.path
+      : 'error' in resolved && options.rootCommand && !resolved.path && !rootFallbackBlocked
         ? { command: options.rootCommand, path: name, rest: filtered }
         : resolved
 
