@@ -1,5 +1,11 @@
 # incur
 
+## 0.3.25
+
+### Patch Changes
+
+- abfa8c7: Fixed Root CLIs created with `Cli.create` and `aliases` not registering those aliases as command aliases when mounted via `cli.command()`.
+
 ## 0.3.24
 
 ### Patch Changes
