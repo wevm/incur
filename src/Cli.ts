@@ -21,7 +21,7 @@ import {
   shells,
 } from './internal/command.js'
 import * as Command from './internal/command.js'
-import { isRecord, suggest } from './internal/helpers.js'
+import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -1864,7 +1864,7 @@ function formatHumanValidationError(
   configFlag?: string,
 ): string {
   const lines: string[] = []
-  for (const fe of error.fieldErrors) lines.push(`Error: missing required argument <${fe.path}>`)
+  for (const fe of error.fieldErrors) lines.push(formatHumanValidationLine(command, fe))
   lines.push('See below for usage.')
   lines.push('')
   lines.push(
@@ -1882,6 +1882,32 @@ function formatHumanValidationError(
     }),
   )
   return lines.join('\n')
+}
+
+/** @internal Formats a single human-readable validation issue. */
+function formatHumanValidationLine(
+  command: CommandDefinition<any, any, any>,
+  error: FieldError,
+): string {
+  const target = formatValidationTarget(command, error.path)
+  if (error.missing) return `Error: missing required argument ${target}`
+  return `Error: invalid value for ${target}: ${error.message}`
+}
+
+/** @internal Formats a field path as an option flag or positional placeholder. */
+function formatValidationTarget(
+  command: CommandDefinition<any, any, any>,
+  path: string,
+): string {
+  const [head, ...tail] = path.split('.')
+  if (!head) return 'input'
+
+  if (command.options?.shape[head]) {
+    const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
+    return `--${toKebab(head)}${suffix}`
+  }
+
+  return `<${path}>`
 }
 
 /** @internal Resolves a command from the tree by walking tokens until a leaf is found. */

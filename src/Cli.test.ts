@@ -935,6 +935,85 @@ describe('serve', () => {
     expect(output).toContain('Error: missing required argument <name>')
   })
 
+  test('ValidationError preserves Zod messages in machine output', async () => {
+    const cli = Cli.create('test')
+    cli.command('send', {
+      options: z.object({ address: z.string().min(32) }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['send', '--address', 'abc', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      fieldErrors: [
+        {
+          code: 'too_small',
+          message: 'Too small: expected string to have >=32 characters',
+          missing: false,
+          path: 'address',
+        },
+      ],
+    })
+  })
+
+  test('ValidationError shows invalid option messages in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('send', {
+      options: z.object({ address: z.string().min(32) }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['send', '--address', 'abc'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain(
+      'Error: invalid value for --address: Too small: expected string to have >=32 characters',
+    )
+    expect(output).not.toContain('Error: missing required argument <address>')
+  })
+
+  test('ValidationError shows invalid enum messages in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('list', {
+      options: z.object({ state: z.enum(['open', 'closed']) }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['list', '--state', 'invalid'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain(
+      'Error: invalid value for --state: Invalid option: expected one of "open"|"closed"',
+    )
+  })
+
+  test('ValidationError shows positional refinement messages in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('get', {
+      args: z.object({
+        id: z.string().refine((value) => value.startsWith('x'), { message: 'must start with x' }),
+      }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['get', 'abc'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Error: invalid value for <id>: must start with x')
+  })
+
   test('agent is true when not TTY', async () => {
     let agent: boolean | undefined
     const cli = Cli.create('test')

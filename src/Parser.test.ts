@@ -107,6 +107,40 @@ describe('parse', () => {
     ).toThrow(expect.objectContaining({ name: 'Incur.ValidationError' }))
   })
 
+  test('captures missing metadata for missing positional args', () => {
+    try {
+      Parser.parse([], {
+        args: z.object({ name: z.string() }),
+      })
+      expect.unreachable()
+    } catch (error: any) {
+      expect(error.fieldErrors).toEqual([
+        expect.objectContaining({
+          code: 'invalid_type',
+          missing: true,
+          path: 'name',
+        }),
+      ])
+    }
+  })
+
+  test('captures metadata for invalid option values', () => {
+    try {
+      Parser.parse(['--state', 'invalid'], {
+        options: z.object({ state: z.enum(['open', 'closed']) }),
+      })
+      expect.unreachable()
+    } catch (error: any) {
+      expect(error.fieldErrors).toEqual([
+        expect.objectContaining({
+          code: 'invalid_value',
+          missing: false,
+          path: 'state',
+        }),
+      ])
+    }
+  })
+
   test('stacks boolean short aliases (-vD)', () => {
     const result = Parser.parse(['-vD'], {
       options: z.object({

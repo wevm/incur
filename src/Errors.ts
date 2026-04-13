@@ -73,6 +73,10 @@ export declare namespace IncurError {
 
 /** A field-level validation error detail. */
 export type FieldError = {
+  /** The Zod issue code. */
+  code?: string | undefined
+  /** Whether the input was missing entirely. */
+  missing?: boolean | undefined
   /** The field path that failed validation. */
   path: string
   /** The expected value or type. */
