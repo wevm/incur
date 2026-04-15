@@ -173,7 +173,7 @@ describe('args and options', () => {
       'read',
       '--scopes',
       'write',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -192,7 +192,7 @@ describe('args and options', () => {
       'list',
       '--limit',
       '5',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -327,8 +327,8 @@ describe('output formats', () => {
     `)
   })
 
-  test('--verbose full envelope', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose'])
+  test('--full-output full envelope', async () => {
+    const { output } = await serve(createApp(), ['ping', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -340,8 +340,8 @@ describe('output formats', () => {
     `)
   })
 
-  test('--verbose --format json full envelope', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json'])
+  test('--full-output --format json full envelope', async () => {
+    const { output } = await serve(createApp(), ['ping', '--full-output', '--format', 'json'])
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "data": {
@@ -356,13 +356,13 @@ describe('output formats', () => {
     `)
   })
 
-  test('nested command path in verbose meta', async () => {
+  test('nested command path in full-output meta', async () => {
     const { output } = await serve(createApp(), [
       'project',
       'deploy',
       'status',
       'd-1',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -400,8 +400,8 @@ describe('undefined output', () => {
     expect(output).toBe('')
   })
 
-  test('void command shows envelope with --verbose', async () => {
-    const { output } = await serve(createApp(), ['noop', '--verbose', '--format', 'json'])
+  test('void command shows envelope with --full-output', async () => {
+    const { output } = await serve(createApp(), ['noop', '--full-output', '--format', 'json'])
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "meta": {
@@ -455,10 +455,10 @@ describe('--token-limit and --token-offset', () => {
     `)
   })
 
-  test('works with --verbose', async () => {
+  test('works with --full-output', async () => {
     const { output } = await serve(createApp(), [
       'ping',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
       '--token-limit',
@@ -479,10 +479,10 @@ describe('--token-limit and --token-offset', () => {
     `)
   })
 
-  test('--verbose includes meta.nextOffset when truncated', async () => {
+  test('--full-output includes meta.nextOffset when truncated', async () => {
     const { output } = await serve(createApp(), [
       'ping',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
       '--token-limit',
@@ -492,10 +492,10 @@ describe('--token-limit and --token-offset', () => {
     expect(output).toContain('[truncated:')
   })
 
-  test('--verbose omits meta.nextOffset when not truncated', async () => {
+  test('--full-output omits meta.nextOffset when not truncated', async () => {
     const { output } = await serve(createApp(), [
       'ping',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
       '--token-limit',
@@ -575,7 +575,7 @@ describe('error handling', () => {
     const { output, exitCode } = await serve(createApp(), [
       'auth',
       'status',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -633,7 +633,7 @@ describe('error handling', () => {
   test('command not found returns error envelope', async () => {
     const { output, exitCode } = await serve(createApp(), [
       'nonexistent',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -676,7 +676,13 @@ describe('error handling', () => {
 
 describe('cta', () => {
   test('ok() with string CTAs', async () => {
-    const { output } = await serve(createApp(), ['auth', 'login', '--verbose', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'auth',
+      'login',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     expect(json(output).meta.cta).toMatchInlineSnapshot(`
       {
         "commands": [
@@ -694,7 +700,7 @@ describe('cta', () => {
       'project',
       'create',
       'MyProject',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -715,7 +721,13 @@ describe('cta', () => {
   })
 
   test('error() with CTA', async () => {
-    const { output } = await serve(createApp(), ['auth', 'status', '--verbose', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'auth',
+      'status',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     expect(json(output).meta.cta).toMatchInlineSnapshot(`
       {
         "commands": [
@@ -729,7 +741,7 @@ describe('cta', () => {
   })
 
   test('plain return omits CTA', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json'])
+    const { output } = await serve(createApp(), ['ping', '--full-output', '--format', 'json'])
     expect(json(output).meta.cta).toBeUndefined()
   })
 
@@ -738,7 +750,7 @@ describe('cta', () => {
       'project',
       'list',
       '--archived',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -780,8 +792,8 @@ describe('streaming', () => {
     `)
   })
 
-  test('default streams toon per chunk (--verbose)', async () => {
-    const { output } = await serve(createApp(), ['stream', '--verbose'])
+  test('default streams toon per chunk (--full-output)', async () => {
+    const { output } = await serve(createApp(), ['stream', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "content: hello
       content: world
@@ -803,8 +815,8 @@ describe('streaming', () => {
     `)
   })
 
-  test('--format json --verbose buffers with envelope', async () => {
-    const { output } = await serve(createApp(), ['stream', '--verbose', '--format', 'json'])
+  test('--format json --full-output buffers with envelope', async () => {
+    const { output } = await serve(createApp(), ['stream', '--full-output', '--format', 'json'])
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "data": [
@@ -972,6 +984,7 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -979,7 +992,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -1006,13 +1018,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1033,13 +1045,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1059,13 +1071,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1091,13 +1103,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1747,6 +1759,7 @@ describe('root command with subcommands', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -1754,7 +1767,6 @@ describe('root command with subcommands', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -1865,7 +1877,7 @@ describe('edge cases', () => {
       'prod',
       '--branch',
       'release',
-      '--verbose',
+      '--full-output',
     ])
     expect(json(output)).toMatchInlineSnapshot(`
       {
@@ -1894,7 +1906,7 @@ describe('env', () => {
   test('env vars passed to handler', async () => {
     const { output } = await serve(
       createApp(),
-      ['auth', 'login', '--verbose', '--format', 'json'],
+      ['auth', 'login', '--full-output', '--format', 'json'],
       { env: { AUTH_HOST: 'custom.example.com' } },
     )
     expect(json(output).data.hostname).toBe('custom.example.com')
@@ -1903,7 +1915,7 @@ describe('env', () => {
   test('env defaults applied when var is unset', async () => {
     const { output } = await serve(
       createApp(),
-      ['auth', 'login', '--verbose', '--format', 'json'],
+      ['auth', 'login', '--full-output', '--format', 'json'],
       { env: {} },
     )
     expect(json(output).data.hostname).toBe('api.example.com')
@@ -1924,13 +1936,13 @@ describe('env', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
 
       Environment Variables:
         AUTH_TOKEN  Pre-existing auth token
@@ -2037,9 +2049,9 @@ describe('middleware', () => {
     `)
   })
 
-  test('vars: verbose envelope includes var data', async () => {
+  test('vars: full-output envelope includes var data', async () => {
     const { cli } = createMiddlewareApp()
-    const { output } = await serve(cli, ['whoami', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['whoami', '--full-output', '--format', 'json'])
     const parsed = json(output)
     expect(parsed.data.user).toBe('alice')
     expect(parsed.data.requestId).toBe('req-default')
@@ -2276,8 +2288,14 @@ describe('fetch gateway', () => {
     expect(json(output)).toEqual({ ok: true })
   })
 
-  test('--verbose wraps in envelope', async () => {
-    const { output } = await serve(createApp(), ['api', 'health', '--verbose', '--format', 'json'])
+  test('--full-output wraps in envelope', async () => {
+    const { output } = await serve(createApp(), [
+      'api',
+      'health',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     const parsed = json(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ ok: true })

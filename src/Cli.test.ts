@@ -630,7 +630,7 @@ describe('serve', () => {
     `)
   })
 
-  test('--verbose outputs full envelope', async () => {
+  test('--full-output outputs full envelope', async () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
@@ -639,7 +639,7 @@ describe('serve', () => {
       },
     })
 
-    const { output } = await serve(cli, ['greet', 'world', '--verbose'])
+    const { output } = await serve(cli, ['greet', 'world', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -714,10 +714,10 @@ describe('serve', () => {
     `)
   })
 
-  test('--verbose outputs full error envelope for unknown command', async () => {
+  test('--full-output outputs full error envelope for unknown command', async () => {
     const cli = Cli.create('test')
 
-    const { output, exitCode } = await serve(cli, ['nonexistent', '--verbose'])
+    const { output, exitCode } = await serve(cli, ['nonexistent', '--full-output'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "ok: false
@@ -787,8 +787,8 @@ describe('serve', () => {
     const cli = Cli.create('test')
     cli.command('deploy', { run: () => ({}) })
 
-    const { output } = await serve(cli, ['deplyo', '--verbose'])
-    expect(output).toContain('test deploy --verbose')
+    const { output } = await serve(cli, ['deplyo', '--full-output'])
+    expect(output).toContain('test deploy --full-output')
   })
 
   test('no suggestion when input is too far from any command', async () => {
@@ -990,10 +990,10 @@ describe('serve', () => {
     expect(JSON.parse(output)).toEqual({ pong: true })
   })
 
-  test('--verbose --format json outputs full envelope as JSON', async () => {
+  test('--full-output --format json outputs full envelope as JSON', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
-    const { output } = await serve(cli, ['ping', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['ping', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ pong: true })
@@ -1479,14 +1479,14 @@ describe('subcommands', () => {
     `)
   })
 
-  test('--verbose shows full command path in meta', async () => {
+  test('--full-output shows full command path in meta', async () => {
     const cli = Cli.create('test')
     const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
       run: () => ({ count: 0 }),
     })
     cli.command(pr)
 
-    const { output } = await serve(cli, ['pr', 'list', '--verbose'])
+    const { output } = await serve(cli, ['pr', 'list', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -1514,7 +1514,7 @@ describe('subcommands', () => {
     `)
   })
 
-  test('nested group shows full path in verbose meta', async () => {
+  test('nested group shows full path in full-output meta', async () => {
     const cli = Cli.create('test')
     const review = Cli.create('review', { description: 'Reviews' }).command('approve', {
       run: () => ({ approved: true }),
@@ -1523,7 +1523,7 @@ describe('subcommands', () => {
     pr.command(review)
     cli.command(pr)
 
-    const { output } = await serve(cli, ['pr', 'review', 'approve', '--verbose'])
+    const { output } = await serve(cli, ['pr', 'review', 'approve', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -1596,13 +1596,13 @@ describe('subcommands', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1685,7 +1685,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['list', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toEqual({
       description: 'Suggested commands:',
@@ -1706,7 +1706,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['list', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([
       { command: 'test get 1', description: 'View item 1' },
@@ -1735,7 +1735,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['create', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['create', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([
       { command: 'test get 1 --limit 10', description: 'View the item' },
@@ -1755,7 +1755,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['list', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([{ command: 'test get <id> --format <format>' }])
   })
@@ -1773,7 +1773,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['create', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['create', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.description).toBe('View the created item:')
   })
@@ -1782,7 +1782,7 @@ describe('cta', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
 
-    const { output } = await serve(cli, ['ping', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['ping', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toBeUndefined()
   })
@@ -1795,7 +1795,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['noop', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['noop', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toBeUndefined()
   })
@@ -1815,7 +1815,7 @@ describe('cta', () => {
       },
     })
 
-    const { output, exitCode } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const { output, exitCode } = await serve(cli, ['fail', '--full-output', '--format', 'json'])
     expect(exitCode).toBe(1)
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(false)
@@ -1833,7 +1833,7 @@ describe('cta', () => {
       },
     })
 
-    const { output, exitCode } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const { output, exitCode } = await serve(cli, ['fail', '--full-output', '--format', 'json'])
     expect(exitCode).toBe(1)
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toBeUndefined()
@@ -1847,7 +1847,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['fail', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(false)
     expect(parsed.meta.cta).toBeUndefined()
@@ -1869,7 +1869,14 @@ describe('cta', () => {
     })
     cli.command(pr)
 
-    const { output } = await serve(cli, ['pr', 'create', 'my-pr', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, [
+      'pr',
+      'create',
+      'my-pr',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toEqual({
       description: 'Suggested command:',
@@ -1909,9 +1916,25 @@ describe('leaf cli', () => {
     `)
   })
 
-  test('--verbose outputs full envelope', async () => {
-    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+  test('command option named verbose is parsed by the command', async () => {
+    const cli = Cli.create('ping', {
+      options: z.object({ verbose: z.boolean().default(false) }),
+      run({ options }) {
+        return options
+      },
+    })
+
     const { output } = await serve(cli, ['--verbose'])
+
+    expect(output).toMatchInlineSnapshot(`
+      "verbose: true
+      "
+    `)
+  })
+
+  test('--full-output outputs full envelope', async () => {
+    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -2035,6 +2058,7 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -2042,7 +2066,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -2073,6 +2096,7 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -2080,7 +2104,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -2107,13 +2130,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -2141,13 +2164,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -2236,6 +2259,7 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -2243,7 +2267,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -2268,13 +2291,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -2363,13 +2386,13 @@ describe('env', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
 
       Environment Variables:
         API_TOKEN  Auth token
@@ -2401,13 +2424,13 @@ describe('env', () => {
         Global Options:
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
           --help                              Show help
           --llms, --llms-full                 Print LLM-readable manifest
           --schema                            Show JSON Schema for command
           --token-count                       Print token count of output (instead of output)
           --token-limit <n>                   Limit output to n tokens
           --token-offset <n>                  Skip first n tokens of output
-          --verbose                           Show full output envelope
 
         Environment Variables:
           API_TOKEN  Auth token (set: ****cret)
@@ -2941,10 +2964,10 @@ describe('outputPolicy', () => {
     expect(deploy.output).not.toContain('deploy-123')
     expect(deploy.output).toContain('Check status')
 
-    // deploy --verbose: agent mode shows everything
-    const deployVerbose = await serve(cli, ['deploy', 'staging', '--verbose'])
-    expect(deployVerbose.output).toContain('deploy-123')
-    expect(deployVerbose.output).toContain('staging.example.com')
+    // deploy --full-output: agent mode shows everything
+    const deployFullOutput = await serve(cli, ['deploy', 'staging', '--full-output'])
+    expect(deployFullOutput.output).toContain('deploy-123')
+    expect(deployFullOutput.output).toContain('staging.example.com')
 
     // deploy --json: agent mode shows data
     const deployJson = await serve(cli, ['deploy', 'staging', '--json'])
@@ -3700,11 +3723,11 @@ describe('fetch', async () => {
     expect(JSON.parse(output)).toEqual({ ok: true })
   })
 
-  test('--verbose includes request/response meta', async () => {
+  test('--full-output includes request/response meta', async () => {
     const cli = Cli.create('test', { description: 'test' }).command('api', {
       fetch: app.fetch,
     })
-    const { output } = await serve(cli, ['api', 'health', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['api', 'health', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ ok: true })
@@ -4525,7 +4548,7 @@ describe('displayName', () => {
     }).command('ping', {
       run: (c) => c.ok({ ok: true }, { cta: { commands: ['login'] } }),
     })
-    const { output } = await serve(cli, ['ping', '--json', '--verbose'])
+    const { output } = await serve(cli, ['ping', '--json', '--full-output'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands[0].command).toBe('mc login')
   })
