@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.0
+
+### Minor Changes
+
+- 1e58e47: **Breaking:** Renamed the global full-envelope flag from `--verbose` to `--full-output`, allowing `--verbose` to be used as a normal command option.
+
 ## 0.3.25
 
 ### Patch Changes
