@@ -142,11 +142,11 @@ describe('cli integration', () => {
     expect(json(output)).toEqual({ ok: true })
   })
 
-  test('--verbose wraps in envelope', async () => {
+  test('--full-output wraps in envelope', async () => {
     const { output } = await serve(createCli(), [
       'api',
       'healthCheck',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -254,11 +254,11 @@ describe('@hono/zod-openapi integration', () => {
     expect(json(output)).toEqual({ ok: true })
   })
 
-  test('--verbose wraps in envelope', async () => {
+  test('--full-output wraps in envelope', async () => {
     const { output } = await serve(createCli(), [
       'api',
       'healthCheck',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])

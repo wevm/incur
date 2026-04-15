@@ -65,13 +65,13 @@ describe('formatCommand', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -87,13 +87,13 @@ describe('formatCommand', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -116,13 +116,13 @@ describe('formatCommand', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -248,14 +248,14 @@ describe('formatCommand', () => {
         --config <path>                     Load JSON option defaults from a file
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --no-config                         Disable JSON option defaults for this run
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 })
@@ -283,13 +283,13 @@ describe('formatRoot', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -308,13 +308,13 @@ describe('formatRoot', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -337,13 +337,13 @@ describe('formatRoot', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -366,13 +366,13 @@ describe('formatRoot', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
-        --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope"
+        --token-offset <n>                  Skip first n tokens of output"
     `)
   })
 
@@ -399,6 +399,7 @@ describe('formatRoot', () => {
         --config <path>                     Load JSON option defaults from a file
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -407,7 +408,6 @@ describe('formatRoot', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version"
     `)
   })

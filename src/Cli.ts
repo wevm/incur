@@ -487,7 +487,7 @@ async function serveImpl(
   }
 
   const {
-    verbose,
+    fullOutput,
     format: formatFlag,
     formatExplicit,
     filterOutput,
@@ -782,9 +782,9 @@ async function serveImpl(
       lines.push('')
       lines.push(`Run \`${name} --help\` to see the full command reference.`)
       writeln(lines.join('\n'))
-      if (verbose || formatExplicit) {
+      if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
-        if (verbose && result.agents.length > 0) output.agents = result.agents
+        if (fullOutput && result.agents.length > 0) output.agents = result.agents
         writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
       }
     } catch (err) {
@@ -865,7 +865,7 @@ async function serveImpl(
         for (const s of suggestions) lines.push(`  "${s}"`)
       }
       writeln(lines.join('\n'))
-      if (verbose || formatExplicit)
+      if (fullOutput || formatExplicit)
         writeln(
           Formatter.format(
             { name, command: result.command, agents: result.agents },
@@ -1160,7 +1160,7 @@ async function serveImpl(
       return writeln(String(estimateTokenCount(formatted)))
     }
     const cta = output.meta.cta
-    if (human && !verbose) {
+    if (human && !fullOutput) {
       if (output.ok && output.data != null && renderOutput) {
         const t = truncate(Formatter.format(output.data, format))
         writeln(t.text)
@@ -1168,7 +1168,7 @@ async function serveImpl(
       if (cta) writeln(formatHumanCta(cta))
       return
     }
-    if (verbose) {
+    if (fullOutput) {
       if (tokenLimit != null || tokenOffset != null) {
         // Truncate data separately so meta (including nextOffset) is always visible
         const dataFormatted =
@@ -1219,7 +1219,7 @@ async function serveImpl(
       description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
       commands: ctaCommands,
     }
-    if (human && !verbose) {
+    if (human && !fullOutput) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
       const mergedCta = skillsCta
         ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
@@ -1266,7 +1266,7 @@ async function serveImpl(
           formatExplicit,
           human,
           renderOutput,
-          verbose,
+          fullOutput,
           truncate,
           write,
           writeln,
@@ -1448,7 +1448,7 @@ async function serveImpl(
       formatExplicit,
       human,
       renderOutput,
-      verbose,
+      fullOutput,
       truncate,
       write,
       writeln,
@@ -2028,11 +2028,11 @@ declare namespace serveImpl {
   }
 }
 
-/** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
 const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'] as const)
 
 function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
-  let verbose = false
+  let fullOutput = false
   let llms = false
   let llmsFull = false
   let mcp = false
@@ -2055,7 +2055,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
-    if (token === '--verbose') verbose = true
+    if (token === '--full-output') fullOutput = true
     else if (token === '--llms') llms = true
     else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
@@ -2109,7 +2109,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   }
 
   return {
-    verbose,
+    fullOutput,
     format,
     formatExplicit,
     configPath,
@@ -2495,7 +2495,7 @@ async function handleStreaming(
     formatExplicit: boolean
     human: boolean
     renderOutput: boolean
-    verbose: boolean
+    fullOutput: boolean
     truncate: (s: string) => { text: string; truncated: boolean; nextOffset?: number | undefined }
     write: (output: Output) => void
     writeln: (s: string) => void

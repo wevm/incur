@@ -380,7 +380,7 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
-    { flag: '--verbose', desc: 'Show full output envelope' },
+    { flag: '--full-output', desc: 'Show full output envelope' },
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ].sort((a, b) => a.flag.localeCompare(b.flag))
   const maxLen = Math.max(...flags.map((f) => f.flag.length))
