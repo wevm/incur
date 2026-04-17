@@ -410,4 +410,85 @@ describe('Mcp', () => {
     expect(progress[0].params.progress).toBe(1)
     expect(progress[1].params.progress).toBe(2)
   })
+
+  test('serve options.instructions appears in initialize response', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      instructions: 'Use this CLI to run test commands.',
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const [res] = chunks.map((c) => JSON.parse(c.trim()))
+    expect(res.result.instructions).toBe('Use this CLI to run test commands.')
+  })
+
+  test('command mcp.annotations appear in tools/list', async () => {
+    const commands = new Map<string, any>()
+    commands.set('read-data', {
+      description: 'Read some data',
+      mcp: { annotations: { readOnlyHint: true, idempotentHint: true } },
+      run: () => ({ data: 42 }),
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    const tool = res.result.tools.find((t: any) => t.name === 'read-data')
+    expect(tool.annotations).toEqual({ readOnlyHint: true, idempotentHint: true })
+  })
+
+  test('command mcp.instructions appear in tools/list as _meta.instructions', async () => {
+    const commands = new Map<string, any>()
+    commands.set('guided', {
+      description: 'A guided command',
+      mcp: { instructions: 'Pass a valid JSON payload.' },
+      run: () => ({ ok: true }),
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    const tool = res.result.tools.find((t: any) => t.name === 'guided')
+    expect(tool._meta?.instructions).toBe('Pass a valid JSON payload.')
+  })
+
+  test('collectTools extracts annotations and instructions from entry.mcp', () => {
+    const commands = new Map<string, any>()
+    commands.set('destroy', {
+      description: 'Destructive op',
+      mcp: {
+        annotations: { destructiveHint: true, openWorldHint: false },
+        instructions: 'Only call this in dry-run mode.',
+      },
+      run: () => null,
+    })
+
+    const tools = Mcp.collectTools(commands, [])
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.annotations).toEqual({ destructiveHint: true, openWorldHint: false })
+    expect(tools[0]?.instructions).toBe('Only call this in dry-run mode.')
+  })
+
+  test('collectTools omits annotations/instructions when not set', () => {
+    const commands = new Map<string, any>()
+    commands.set('plain', { description: 'No mcp opts', run: () => null })
+
+    const tools = Mcp.collectTools(commands, [])
+    expect(tools[0]?.annotations).toBeUndefined()
+    expect(tools[0]?.instructions).toBeUndefined()
+  })
 })

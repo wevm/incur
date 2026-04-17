@@ -1,4 +1,4 @@
-import { Cli, Errors, z } from 'incur'
+import { Cli, Errors, Mcp, z } from 'incur'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -4650,5 +4650,33 @@ describe('command aliases', () => {
     const cli = Cli.create('pkg').command(update)
     const { output } = await serve(cli, ['upgrade'])
     expect(output).toContain('updated')
+  })
+})
+
+describe('--mcp', () => {
+  test('mcp.instructions from create() is forwarded to Mcp.serve', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const cli = Cli.create('test', { mcp: { instructions: 'Always pass --dry-run first.' } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      await cli.serve(['--mcp'])
+      expect(spy).toHaveBeenCalledOnce()
+      expect(spy.mock.calls[0]![3]).toMatchObject({ instructions: 'Always pass --dry-run first.' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('instructions is omitted from Mcp.serve when not set in create()', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      await cli.serve(['--mcp'])
+      expect(spy).toHaveBeenCalledOnce()
+      expect(spy.mock.calls[0]![3]?.instructions).toBeUndefined()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

@@ -13,7 +13,10 @@ export async function serve(
   commands: Map<string, any>,
   options: serve.Options = {},
 ): Promise<void> {
-  const server = new McpServer({ name, version })
+  const server = new McpServer(
+    { name, version },
+    options.instructions ? { instructions: options.instructions } : undefined,
+  )
 
   for (const tool of collectTools(commands, [])) {
     const mergedShape: Record<string, any> = {
@@ -28,6 +31,8 @@ export async function serve(
         ...(tool.description ? { description: tool.description } : undefined),
         ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
         ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
+        ...(tool.annotations ? { annotations: tool.annotations } : undefined),
+        ...(tool.instructions ? { _meta: { instructions: tool.instructions } } : undefined),
       } as never,
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
@@ -67,6 +72,8 @@ export declare namespace serve {
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version?: string | undefined
+    /** Instructions describing how to use the server and its features. Only effective on the root CLI. */
+    instructions?: string | undefined
   }
 }
 
@@ -161,6 +168,16 @@ export type ToolEntry = {
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
   outputSchema?: Record<string, unknown> | undefined
+  annotations?:
+    | {
+        title?: string
+        readOnlyHint?: boolean
+        destructiveHint?: boolean
+        idempotentHint?: boolean
+        openWorldHint?: boolean
+      }
+    | undefined
+  instructions?: string | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
 }
@@ -189,6 +206,8 @@ export function collectTools(
         ...(entry.output
           ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> }
           : undefined),
+        ...(entry.mcp?.annotations ? { annotations: entry.mcp.annotations } : undefined),
+        ...(entry.mcp?.instructions ? { instructions: entry.mcp.instructions } : undefined),
         command: entry,
         ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })

@@ -424,6 +424,23 @@ export declare namespace create {
           agents?: string[] | undefined
           /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
           command?: string | undefined
+          /** Instructions describing how to use the server and its features. Only effective on the root CLI. */
+          instructions?: string | undefined
+          /** MCP tool annotations for this command. */
+          annotations?:
+            | {
+                /** A human-readable title for the tool. */
+                title?: string
+                /** If true, the tool does not modify its environment. Default: false. */
+                readOnlyHint?: boolean
+                /** If true, the tool may perform destructive updates to its environment. Meaningful only when readOnlyHint is false. Default: true. */
+                destructiveHint?: boolean
+                /** If true, calling the tool repeatedly with the same arguments has no additional effect. Meaningful only when readOnlyHint is false. Default: false. */
+                idempotentHint?: boolean
+                /** If true, the tool may interact with an open world of external entities. Default: true. */
+                openWorldHint?: boolean
+              }
+            | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -512,6 +529,7 @@ async function serveImpl(
       env: options.envSchema,
       vars: options.vars,
       version: options.version,
+      ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
     })
     return
   }
@@ -2008,6 +2026,16 @@ declare namespace serveImpl {
       | {
           agents?: string[] | undefined
           command?: string | undefined
+          instructions?: string | undefined
+          annotations?:
+            | {
+                title?: string
+                readOnlyHint?: boolean
+                destructiveHint?: boolean
+                idempotentHint?: boolean
+                openWorldHint?: boolean
+              }
+            | undefined
         }
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
