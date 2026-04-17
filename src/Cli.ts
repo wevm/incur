@@ -424,7 +424,7 @@ export declare namespace create {
           agents?: string[] | undefined
           /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
           command?: string | undefined
-          /** Instructions describing how to use the server and its features. Only effective on the root CLI. */
+          /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
           /** MCP tool annotations for this command. */
           annotations?:

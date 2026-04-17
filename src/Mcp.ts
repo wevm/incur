@@ -72,7 +72,7 @@ export declare namespace serve {
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version?: string | undefined
-    /** Instructions describing how to use the server and its features. Only effective on the root CLI. */
+    /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
   }
 }
