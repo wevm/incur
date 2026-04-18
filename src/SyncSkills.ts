@@ -71,7 +71,12 @@ export async function sync(
 
     // Write skills hash + names for staleness detection
     const hashEntries = collectEntries(commands, [], undefined, options.rootCommand)
-    writeMeta(name, Skill.hash(hashEntries), [...currentNames])
+    writeMeta(
+      name,
+      Skill.hash(hashEntries),
+      [...currentNames],
+      [...paths, ...agents.map((agent) => agent.path)],
+    )
 
     return { skills: skills.sort((a, b) => a.name.localeCompare(b.name)), paths, agents }
   } finally {
@@ -140,8 +145,7 @@ export async function list(
   const files = Skill.split(name, entries, depth, groups)
 
   const skills: list.Skill[] = []
-  const meta = readMeta(name)
-  const installed = new Set(meta?.skills)
+  const installed = readInstalledSkills(name, { cwd })
 
   for (const file of files) {
     const nameMatch = file.content.match(/^name:\s*(.+)$/m)
@@ -178,6 +182,14 @@ export async function list(
   }
 
   return skills.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Returns whether any previously synced skills are still installed on disk. */
+export function hasInstalledSkills(
+  name: string,
+  options: { cwd?: string | undefined } = {},
+): boolean {
+  return readInstalledSkills(name, options).size > 0
 }
 
 export declare namespace list {
@@ -305,20 +317,53 @@ function hashPath(name: string): string {
 }
 
 /** @internal Writes the skills metadata for staleness detection and cleanup. */
-function writeMeta(name: string, hash: string, skills: string[]) {
+function writeMeta(name: string, hash: string, skills: string[], paths: string[]) {
   const file = hashPath(name)
   const dir = path.dirname(file)
   if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true })
-  fsSync.writeFileSync(file, JSON.stringify({ hash, skills, at: new Date().toISOString() }) + '\n')
+  fsSync.writeFileSync(
+    file,
+    JSON.stringify({ hash, skills, paths, at: new Date().toISOString() }) + '\n',
+  )
 }
 
 /** @internal Reads the stored metadata for a CLI. */
-function readMeta(name: string): { hash: string; skills?: string[] } | undefined {
+function readMeta(
+  name: string,
+): { hash: string; paths?: string[] | undefined; skills?: string[] | undefined } | undefined {
   try {
     return JSON.parse(fsSync.readFileSync(hashPath(name), 'utf-8'))
   } catch {
     return undefined
   }
+}
+
+/** Reads the names of previously synced skills that are still installed on disk. */
+function readInstalledSkills(
+  name: string,
+  options: { cwd?: string | undefined } = {},
+): Set<string> {
+  const meta = readMeta(name)
+  if (!meta?.skills?.length) return new Set()
+
+  if (meta.paths?.length) {
+    const installed = meta.paths
+      .filter((skillPath) => isInstalledSkillPath(skillPath))
+      .map((skillPath) => path.basename(skillPath))
+    return new Set(installed)
+  }
+
+  const cwd = options.cwd ?? process.cwd()
+  const bases = [path.join(os.homedir(), '.agents', 'skills'), path.join(cwd, '.agents', 'skills')]
+  const installed = meta.skills.filter((skill) =>
+    bases.some((base) => isInstalledSkillPath(path.join(base, skill))),
+  )
+  return new Set(installed)
+}
+
+/** Returns whether a skill directory currently contains a skill file. */
+function isInstalledSkillPath(skillPath: string): boolean {
+  return fsSync.existsSync(path.join(skillPath, 'SKILL.md'))
 }
 
 /** Reads the stored skills hash for a CLI. Returns `undefined` if no hash exists. */
