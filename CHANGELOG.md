@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.2
+
+### Patch Changes
+
+- a6c584d: Fixed stale skills warnings to only appear when synced skill files were still installed on disk, and updated `skills list` to reflect actual install state instead of stale metadata.
+
 ## 0.4.1
 
 ### Minor Changes
