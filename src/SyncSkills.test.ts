@@ -205,6 +205,32 @@ test('list shows installed status after sync', async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('list shows not installed when synced skills are removed', async () => {
+  const tmp = join(tmpdir(), `clac-list-missing-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('test')
+  cli.command('ping', { description: 'Ping', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const sync = await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  rmSync(sync.paths[0]!, { recursive: true, force: true })
+
+  const result = await SyncSkills.list('test', commands)
+  expect(result).toHaveLength(1)
+  expect(result[0]!.installed).toBe(false)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('list returns empty for CLI with no commands', async () => {
   const cli = Cli.create('empty')
   const commands = Cli.toCommands.get(cli)!

@@ -562,7 +562,7 @@ async function serveImpl(
     const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
-      if (stored) {
+      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: options.sync?.cwd })) {
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {

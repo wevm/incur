@@ -3,6 +3,7 @@ import { Cli, Errors, Skill, Typegen, z } from 'incur'
 import { app as honoApp } from '../test/fixtures/hono-api.js'
 
 let __mockSkillsHash: string | undefined
+let __mockSkillsInstalled = true
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -14,7 +15,11 @@ afterAll(() => {
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => __mockSkillsHash }
+  return {
+    ...actual,
+    hasInstalledSkills: () => __mockSkillsInstalled,
+    readHash: () => __mockSkillsHash,
+  }
 })
 
 describe('routing', () => {
@@ -1983,11 +1988,13 @@ describe('skills staleness', () => {
   beforeEach(() => {
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   afterEach(() => {
     stderrSpy.mockRestore()
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   test('includes skills CTA when stale', async () => {
@@ -2011,6 +2018,14 @@ describe('skills staleness', () => {
 
   test('no warning on first use (no hash stored)', async () => {
     __mockSkillsHash = undefined
+    const { output } = await serve(createApp(), ['ping'])
+    expect(output).toContain('pong: true')
+    expect(output).not.toContain('Skills are out of date')
+  })
+
+  test('no warning when skills are not installed', async () => {
+    __mockSkillsHash = '0000000000000000'
+    __mockSkillsInstalled = false
     const { output } = await serve(createApp(), ['ping'])
     expect(output).toContain('pong: true')
     expect(output).not.toContain('Skills are out of date')
