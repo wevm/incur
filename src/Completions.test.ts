@@ -504,6 +504,8 @@ describe('serve integration', () => {
       _COMPLETE_INDEX: '2',
     })
     expect(output).toContain('add')
+    expect(output).toContain('list')
+    expect(output).toContain('ls')
   })
 
   test('COMPLETE=bash suggests add for mcp subcommand', async () => {

@@ -15,6 +15,7 @@ import {
   builtinCommands,
   type CommandMeta,
   findBuiltin,
+  findBuiltinSubcommand,
   type Shell,
   shells,
 } from './internal/command.js'
@@ -546,8 +547,9 @@ async function serveImpl(
         const builtin = findBuiltin(parent)
         if (builtin?.subcommands)
           for (const sub of builtin.subcommands)
-            if (sub.name.startsWith(current))
-              candidates.push({ value: sub.name, description: sub.description })
+            for (const value of [sub.name, ...(sub.aliases ?? [])])
+              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+                candidates.push({ value, description: sub.description })
       }
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
@@ -658,9 +660,13 @@ async function serveImpl(
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
   const skillsIdx = builtinIdx(filtered, name, 'skills')
   if (skillsIdx !== -1) {
+    const builtin = findBuiltin('skills')!
     const skillsSub = filtered[skillsIdx + 1]
-    if (skillsSub && skillsSub !== 'add' && skillsSub !== 'list') {
-      const suggestion = suggest(skillsSub, ['add', 'list'])
+    const sub = skillsSub ? findBuiltinSubcommand(builtin, skillsSub) : undefined
+    if (skillsSub && !sub) {
+      const candidates =
+        builtin.subcommands?.flatMap((sub) => [sub.name, ...(sub.aliases ?? [])]) ?? []
+      const suggestion = suggest(skillsSub, candidates)
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
       const message = `'${skillsSub}' is not a command for '${name} skills'.${didYouMean}`
       const ctaCommands: FormattedCta[] = []
@@ -684,14 +690,12 @@ async function serveImpl(
       return
     }
     if (!skillsSub) {
-      const b = findBuiltin('skills')!
-      writeln(formatBuiltinHelp(name, b))
+      writeln(formatBuiltinHelp(name, builtin))
       return
     }
-    if (skillsSub === 'list') {
+    if (sub?.name === 'list') {
       if (help) {
-        const b = findBuiltin('skills')!
-        writeln(formatBuiltinSubcommandHelp(name, b, 'list'))
+        writeln(formatBuiltinSubcommandHelp(name, builtin, 'list'))
         return
       }
       try {
@@ -736,8 +740,7 @@ async function serveImpl(
       return
     }
     if (help) {
-      const b = findBuiltin('skills')!
-      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
+      writeln(formatBuiltinSubcommandHelp(name, builtin, 'add'))
       return
     }
     const rest = filtered.slice(skillsIdx + 2)
@@ -2304,9 +2307,10 @@ function formatBuiltinSubcommandHelp(
   builtin: (typeof builtinCommands)[number],
   subName: string,
 ): string {
-  const sub = builtin.subcommands?.find((s) => s.name === subName)
+  const sub = findBuiltinSubcommand(builtin, subName)
   return Help.formatCommand(`${cli} ${builtin.name} ${subName}`, {
     alias: sub?.alias,
+    aliases: sub?.aliases,
     description: sub?.description,
     hideGlobalOptions: true,
     options: sub?.options,

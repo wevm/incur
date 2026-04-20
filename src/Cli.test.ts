@@ -2636,7 +2636,16 @@ describe('built-in commands', () => {
     cli.command('ping', { run: () => ({ pong: true }) })
     const { output } = await serve(cli, ['skills', 'list', '--help'])
     expect(output).toContain('test skills list')
+    expect(output).toContain('Aliases: ls')
     expect(output).toContain('List skills')
+  })
+
+  test('skills ls resolves to list', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    const { output: aliased } = await serve(cli, ['skills', 'ls'])
+    const { output: canonical } = await serve(cli, ['skills', 'list'])
+    expect(aliased).toBe(canonical)
   })
 
   test('skills list shows skills with install status', async () => {
