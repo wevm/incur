@@ -3,7 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { parse as yamlParse } from 'yaml'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
@@ -12,7 +12,14 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
-import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
+import {
+  builtinCommands,
+  type CommandMeta,
+  findBuiltin,
+  findBuiltinSubcommand,
+  type Shell,
+  shells,
+} from './internal/command.js'
 import * as Command from './internal/command.js'
 import { isRecord, suggest } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
@@ -240,11 +247,16 @@ export function create(
           return cli
         }
         commands.set(nameOrCli, def)
+        if (def.aliases)
+          for (const a of def.aliases) commands.set(a, { _alias: true, target: nameOrCli })
         return cli
       }
       const mountedRootDef = toRootDefinition.get(nameOrCli)
       if (mountedRootDef) {
         commands.set(nameOrCli.name, mountedRootDef)
+        const rootAliases = toRootAliases.get(nameOrCli)
+        if (rootAliases)
+          for (const a of rootAliases) commands.set(a, { _alias: true, target: nameOrCli.name })
         return cli
       }
       const sub = nameOrCli as Cli
@@ -301,6 +313,7 @@ export function create(
   }
 
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
+  if (rootDef && def.aliases) toRootAliases.set(cli as unknown as Root, def.aliases)
   if (def.options) toRootOptions.set(cli, def.options)
   if (def.config !== undefined) toConfigEnabled.set(cli, true)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
@@ -476,7 +489,7 @@ async function serveImpl(
   }
 
   const {
-    verbose,
+    fullOutput,
     format: formatFlag,
     formatExplicit,
     filterOutput,
@@ -531,12 +544,13 @@ async function serveImpl(
             })
         }
       } else if (nonFlags.length === 2) {
-        const parent = nonFlags[nonFlags.length - 1]
-        const builtin = builtinCommands.find((b) => b.name === parent && b.subcommands)
+        const parent = nonFlags[nonFlags.length - 1]!
+        const builtin = findBuiltin(parent)
         if (builtin?.subcommands)
           for (const sub of builtin.subcommands)
-            if (sub.name.startsWith(current))
-              candidates.push({ value: sub.name, description: sub.description })
+            for (const value of [sub.name, ...(sub.aliases ?? [])])
+              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+                candidates.push({ value, description: sub.description })
       }
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
@@ -547,22 +561,21 @@ async function serveImpl(
   // Skills staleness check (skip for built-in commands)
   let skillsCta: FormattedCtaBlock | undefined
   if (!llms && !llmsFull && !schema && !help && !version) {
-    const isSkillsAdd =
-      filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
-    const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
+    const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
+    const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
-      if (stored) {
+      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: options.sync?.cwd })) {
         const groups = new Map<string, string>()
-        const entries = collectSkillCommands(commands, [], groups)
+        const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
-          const runner = detectRunner()
-          const spec = SyncMcp.detectPackageSpecifier(name)
+          const command =
+            process.env.npm_config_user_agent || process.env.npm_execpath
+              ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(name)} skills add`
+              : `${displayName} skills add`
           skillsCta = {
             description: 'Skills are out of date:',
-            commands: [
-              { command: `${runner} ${spec} skills add`, description: 'sync outdated skills' },
-            ],
+            commands: [{ command, description: 'sync outdated skills' }],
           }
         }
       }
@@ -575,8 +588,9 @@ async function serveImpl(
     const prefix: string[] = []
     let scopedDescription: string | undefined = options.description
     for (const token of filtered) {
-      const entry = scopedCommands.get(token)
-      if (!entry) break
+      const rawEntry = scopedCommands.get(token)
+      if (!rawEntry) break
+      const entry = resolveAlias(scopedCommands, rawEntry)
       if (isGroup(entry)) {
         scopedCommands = entry.commands
         scopedDescription = entry.description
@@ -588,10 +602,12 @@ async function serveImpl(
       }
     }
 
+    const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+        const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
@@ -602,7 +618,7 @@ async function serveImpl(
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+      const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
@@ -612,19 +628,11 @@ async function serveImpl(
   }
 
   // completions <shell>: print shell hook script to stdout
-  const completionsIdx = (() => {
-    // e.g. `completions bash`
-    if (filtered[0] === 'completions') return 0
-    // e.g. `my-cli completions bash`
-    if (filtered[0] === name && filtered[1] === 'completions') return 1
-    // not a completions invocation
-    return -1
-  })()
-  // TODO: refactor built-in command handlers (completions, skills, mcp) into a generic dispatch loop on `builtinCommands`
-  if (completionsIdx !== -1 && filtered[completionsIdx] === 'completions') {
+  const completionsIdx = builtinIdx(filtered, name, 'completions')
+  if (completionsIdx !== -1) {
     const shell = filtered[completionsIdx + 1]
     if (help || !shell) {
-      const b = builtinCommands.find((c) => c.name === 'completions')!
+      const b = findBuiltin('completions')!
       writeln(
         Help.formatCommand(`${name} completions`, {
           args: b.args,
@@ -651,12 +659,15 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx =
-    filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
-  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
+  const skillsIdx = builtinIdx(filtered, name, 'skills')
+  if (skillsIdx !== -1) {
+    const builtin = findBuiltin('skills')!
     const skillsSub = filtered[skillsIdx + 1]
-    if (skillsSub && skillsSub !== 'add') {
-      const suggestion = suggest(skillsSub, ['add'])
+    const sub = skillsSub ? findBuiltinSubcommand(builtin, skillsSub) : undefined
+    if (skillsSub && !sub) {
+      const candidates =
+        builtin.subcommands?.flatMap((sub) => [sub.name, ...(sub.aliases ?? [])]) ?? []
+      const suggestion = suggest(skillsSub, candidates)
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
       const message = `'${skillsSub}' is not a command for '${name} skills'.${didYouMean}`
       const ctaCommands: FormattedCta[] = []
@@ -680,13 +691,57 @@ async function serveImpl(
       return
     }
     if (!skillsSub) {
-      const b = builtinCommands.find((c) => c.name === 'skills')!
-      writeln(formatBuiltinHelp(name, b))
+      writeln(formatBuiltinHelp(name, builtin))
+      return
+    }
+    if (sub?.name === 'list') {
+      if (help) {
+        writeln(formatBuiltinSubcommandHelp(name, builtin, 'list'))
+        return
+      }
+      try {
+        const result = await SyncSkills.list(name, commands, {
+          cwd: options.sync?.cwd,
+          depth: options.sync?.depth ?? 1,
+          description: options.description,
+          include: options.sync?.include,
+          rootCommand: options.rootCommand,
+        })
+        if (result.length === 0) {
+          writeln('No skills found.')
+          return
+        }
+        const lines: string[] = []
+        const maxLen = Math.max(...result.map((s) => s.name.length))
+        for (const s of result) {
+          const icon = s.installed ? '✓' : '✗'
+          const padding = s.description
+            ? `${' '.repeat(maxLen - s.name.length)}  ${s.description}`
+            : ''
+          lines.push(`  ${icon} ${s.name}${padding}`)
+        }
+        const installedCount = result.filter((s) => s.installed).length
+        lines.push('')
+        lines.push(
+          `${result.length} skill${result.length === 1 ? '' : 's'} (${installedCount} installed)`,
+        )
+        writeln(lines.join('\n'))
+      } catch (err) {
+        writeln(
+          Formatter.format(
+            {
+              code: 'LIST_SKILLS_FAILED',
+              message: err instanceof Error ? err.message : String(err),
+            },
+            formatExplicit ? formatFlag : 'toon',
+          ),
+        )
+        exit(1)
+      }
       return
     }
     if (help) {
-      const b = builtinCommands.find((c) => c.name === 'skills')!
-      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
+      writeln(formatBuiltinSubcommandHelp(name, builtin, 'add'))
       return
     }
     const rest = filtered.slice(skillsIdx + 2)
@@ -707,6 +762,7 @@ async function serveImpl(
         description: options.description,
         global,
         include: options.sync?.include,
+        rootCommand: options.rootCommand,
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
@@ -730,9 +786,9 @@ async function serveImpl(
       lines.push('')
       lines.push(`Run \`${name} --help\` to see the full command reference.`)
       writeln(lines.join('\n'))
-      if (verbose || formatExplicit) {
+      if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
-        if (verbose && result.agents.length > 0) output.agents = result.agents
+        if (fullOutput && result.agents.length > 0) output.agents = result.agents
         writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
       }
     } catch (err) {
@@ -748,8 +804,8 @@ async function serveImpl(
   }
 
   // mcp add: register CLI as MCP server via `npx add-mcp`
-  const mcpIdx = filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
-  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp') {
+  const mcpIdx = builtinIdx(filtered, name, 'mcp')
+  if (mcpIdx !== -1) {
     const mcpSub = filtered[mcpIdx + 1]
     if (mcpSub && mcpSub !== 'add') {
       const suggestion = suggest(mcpSub, ['add'])
@@ -773,12 +829,12 @@ async function serveImpl(
       return
     }
     if (!mcpSub) {
-      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      const b = findBuiltin('mcp')!
       writeln(formatBuiltinHelp(name, b))
       return
     }
     if (help) {
-      const b = builtinCommands.find((c) => c.name === 'mcp')!
+      const b = findBuiltin('mcp')!
       writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
       return
     }
@@ -813,7 +869,7 @@ async function serveImpl(
         for (const s of suggestions) lines.push(`  "${s}"`)
       }
       writeln(lines.join('\n'))
-      if (verbose || formatExplicit)
+      if (fullOutput || formatExplicit)
         writeln(
           Formatter.format(
             { name, command: result.command, agents: result.agents },
@@ -959,7 +1015,7 @@ async function serveImpl(
       writeln(
         Help.formatCommand(commandName, {
           alias: cmd.alias as Record<string, string> | undefined,
-          aliases: isRootCmd ? options.aliases : undefined,
+          aliases: isRootCmd ? options.aliases : cmd.aliases,
           configFlag,
           description: cmd.description,
           version: isRootCmd ? options.version : undefined,
@@ -1031,9 +1087,18 @@ async function serveImpl(
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
 
-  // Fall back to root fetch when no subcommand matches
+  // Fall back to root fetch/command when no subcommand matches,
+  // but only if the token doesn't look like a typo of a known command.
+  const rootFallbackBlocked =
+    'error' in resolved &&
+    !resolved.path &&
+    (() => {
+      const candidates = [...resolved.commands.keys()]
+      for (const b of builtinCommands) candidates.push(b.name)
+      return suggest(resolved.error, candidates) !== undefined
+    })()
   const effective =
-    'error' in resolved && options.rootFetch && !resolved.path
+    'error' in resolved && options.rootFetch && !resolved.path && !rootFallbackBlocked
       ? {
           fetchGateway: {
             _fetch: true as const,
@@ -1044,7 +1109,7 @@ async function serveImpl(
           path: name,
           rest: filtered,
         }
-      : 'error' in resolved && options.rootCommand && !resolved.path
+      : 'error' in resolved && options.rootCommand && !resolved.path && !rootFallbackBlocked
         ? { command: options.rootCommand, path: name, rest: filtered }
         : resolved
 
@@ -1099,7 +1164,7 @@ async function serveImpl(
       return writeln(String(estimateTokenCount(formatted)))
     }
     const cta = output.meta.cta
-    if (human && !verbose) {
+    if (human && !fullOutput) {
       if (output.ok && output.data != null && renderOutput) {
         const t = truncate(Formatter.format(output.data, format))
         writeln(t.text)
@@ -1107,7 +1172,7 @@ async function serveImpl(
       if (cta) writeln(formatHumanCta(cta))
       return
     }
-    if (verbose) {
+    if (fullOutput) {
       if (tokenLimit != null || tokenOffset != null) {
         // Truncate data separately so meta (including nextOffset) is always visible
         const dataFormatted =
@@ -1158,7 +1223,7 @@ async function serveImpl(
       description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
       commands: ctaCommands,
     }
-    if (human && !verbose) {
+    if (human && !fullOutput) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
       const mergedCta = skillsCta
         ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
@@ -1205,7 +1270,7 @@ async function serveImpl(
           formatExplicit,
           human,
           renderOutput,
-          verbose,
+          fullOutput,
           truncate,
           write,
           writeln,
@@ -1387,7 +1452,7 @@ async function serveImpl(
       formatExplicit,
       human,
       renderOutput,
-      verbose,
+      fullOutput,
       truncate,
       write,
       writeln,
@@ -1490,9 +1555,8 @@ function createMcpHttpHandler(name: string, version: string) {
     },
   ): Promise<Response> => {
     if (!transport) {
-      const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
-      const { WebStandardStreamableHTTPServerTransport } =
-        await import('@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js')
+      const { McpServer, WebStandardStreamableHTTPServerTransport } =
+        await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
 
@@ -1507,7 +1571,7 @@ function createMcpHttpHandler(name: string, version: string) {
           tool.name,
           {
             ...(tool.description ? { description: tool.description } : undefined),
-            ...(hasInput ? { inputSchema: mergedShape } : undefined),
+            ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
@@ -1560,7 +1624,7 @@ async function fetchImpl(
     req.method === 'GET'
   ) {
     const groups = new Map<string, string>()
-    const cmds = collectSkillCommands(commands, [], groups)
+    const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
 
     // GET /.well-known/skills/index.json
     if (segments[2] === 'index.json' && segments.length === 3) {
@@ -1850,7 +1914,7 @@ function resolveCommand(
 
   if (!first || !commands.has(first)) return { error: first ?? '(none)', path: '', commands, rest }
 
-  let entry = commands.get(first)!
+  let entry = resolveAlias(commands, commands.get(first)!)
   const path = [first]
   let remaining = rest
   let inheritedOutputPolicy: OutputPolicy | undefined
@@ -1880,8 +1944,8 @@ function resolveCommand(
         commands: entry.commands,
       }
 
-    const child = entry.commands.get(next)
-    if (!child) {
+    const rawChild = entry.commands.get(next)
+    if (!rawChild) {
       return {
         error: next,
         path: path.join(' '),
@@ -1889,6 +1953,7 @@ function resolveCommand(
         rest: remaining.slice(1),
       }
     }
+    let child = resolveAlias(entry.commands, rawChild)
 
     path.push(next)
     remaining = remaining.slice(1)
@@ -1968,9 +2033,11 @@ declare namespace serveImpl {
   }
 }
 
-/** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
+const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'] as const)
+
 function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
-  let verbose = false
+  let fullOutput = false
   let llms = false
   let llmsFull = false
   let mcp = false
@@ -1993,7 +2060,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
-    if (token === '--verbose') verbose = true
+    if (token === '--full-output') fullOutput = true
     else if (token === '--llms') llms = true
     else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
@@ -2004,6 +2071,10 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       format = 'json'
       formatExplicit = true
     } else if (token === '--format' && argv[i + 1]) {
+      if (!validFormats.has(argv[i + 1]! as any))
+        throw new ParseError({
+          message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
+        })
       format = argv[i + 1] as Formatter.Format
       formatExplicit = true
       i++
@@ -2027,17 +2098,23 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       filterOutput = argv[i + 1]!
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
-      tokenLimit = Number(argv[i + 1])
+      const n = Number(argv[i + 1])
+      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+        throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
+      tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
-      tokenOffset = Number(argv[i + 1])
+      const n = Number(argv[i + 1])
+      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+        throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
+      tokenOffset = n
       i++
     } else if (token === '--token-count') tokenCount = true
     else rest.push(token)
   }
 
   return {
-    verbose,
+    fullOutput,
     format,
     formatExplicit,
     configPath,
@@ -2201,14 +2278,26 @@ function collectHelpCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/** @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found. */
+function builtinIdx(filtered: string[], cliName: string, builtin: string): number {
+  // e.g. `skills add` or `skill add`
+  if (findBuiltin(filtered[0]!)?.name === builtin) return 0
+  // e.g. `my-cli skills add`
+  if (filtered[0] === cliName && findBuiltin(filtered[1]!)?.name === builtin) return 1
+  // not a match
+  return -1
+}
+
 /** @internal Formats group-level help for a built-in command (e.g. `cli skills`). */
 function formatBuiltinHelp(cli: string, builtin: (typeof builtinCommands)[number]): string {
   return Help.formatRoot(`${cli} ${builtin.name}`, {
+    aliases: builtin.aliases,
     description: builtin.description,
     commands: builtin.subcommands?.map((s) => ({ name: s.name, description: s.description })),
   })
@@ -2220,9 +2309,10 @@ function formatBuiltinSubcommandHelp(
   builtin: (typeof builtinCommands)[number],
   subName: string,
 ): string {
-  const sub = builtin.subcommands?.find((s) => s.name === subName)
+  const sub = findBuiltinSubcommand(builtin, subName)
   return Help.formatCommand(`${cli} ${builtin.name} ${subName}`, {
     alias: sub?.alias,
+    aliases: sub?.aliases,
     description: sub?.description,
     hideGlobalOptions: true,
     options: sub?.options,
@@ -2255,7 +2345,11 @@ export type CommandsMap = Record<
 >
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway
+type CommandEntry =
+  | CommandDefinition<any, any, any>
+  | InternalGroup
+  | InternalFetchGateway
+  | InternalAlias
 
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all'
@@ -2291,6 +2385,27 @@ function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
   return '_fetch' in entry
 }
 
+/** @internal An alias entry that points to another command by name. */
+type InternalAlias = {
+  _alias: true
+  /** The canonical command name this alias resolves to. */
+  target: string
+}
+
+/** @internal Type guard for alias entries. */
+function isAlias(entry: CommandEntry): entry is InternalAlias {
+  return '_alias' in entry
+}
+
+/** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
+function resolveAlias(
+  commands: Map<string, CommandEntry>,
+  entry: CommandEntry,
+): Exclude<CommandEntry, InternalAlias> {
+  if (isAlias(entry)) return commands.get(entry.target)! as Exclude<CommandEntry, InternalAlias>
+  return entry
+}
+
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
@@ -2308,6 +2423,9 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
+
+/** @internal Maps root CLI instances to their command aliases. */
+const toRootAliases = new WeakMap<Root, string[]>()
 
 /** @internal Sentinel symbol for `ok()` and `error()` return values. */
 const sentinel = Symbol.for('incur.sentinel')
@@ -2383,7 +2501,7 @@ async function handleStreaming(
     formatExplicit: boolean
     human: boolean
     renderOutput: boolean
-    verbose: boolean
+    fullOutput: boolean
     truncate: (s: string) => { text: string; truncated: boolean; nextOffset?: number | undefined }
     write: (output: Output) => void
     writeln: (s: string) => void
@@ -2613,6 +2731,7 @@ function collectIndexCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isGroup(entry)) {
       result.push(...collectIndexCommands(entry.commands, path))
@@ -2647,6 +2766,7 @@ function collectCommands(
 }[] {
   const result: ReturnType<typeof collectCommands> = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -2687,9 +2807,23 @@ function collectSkillCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
   groups: Map<string, string>,
+  rootCommand?: CommandDefinition<any, any, any> | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
+  if (rootCommand) {
+    const cmd: Skill.CommandInfo = {}
+    if (rootCommand.description) cmd.description = rootCommand.description
+    if (rootCommand.args) cmd.args = rootCommand.args
+    if (rootCommand.env) cmd.env = rootCommand.env
+    if (rootCommand.hint) cmd.hint = rootCommand.hint
+    if (rootCommand.options) cmd.options = rootCommand.options
+    if (rootCommand.output) cmd.output = rootCommand.output
+    const examples = formatExamples(rootCommand.examples)
+    if (examples) cmd.examples = examples
+    result.push(cmd)
+  }
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
       const cmd: Skill.CommandInfo = { name: path.join(' ') }
@@ -2718,7 +2852,7 @@ function collectSkillCommands(
       result.push(cmd)
     }
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+  return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
@@ -2859,6 +2993,8 @@ type CommandDefinition<
   vars extends z.ZodObject<any> | undefined = undefined,
   cliEnv extends z.ZodObject<any> | undefined = undefined,
 > = CommandMeta<options> & {
+  /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
+  aliases?: string[] | undefined
   /** Zod schema for positional arguments. */
   args?: args | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */

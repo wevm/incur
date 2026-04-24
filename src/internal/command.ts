@@ -350,9 +350,16 @@ export type CommandMeta<options extends z.ZodObject<any> | undefined = undefined
   options?: options | undefined
 }
 
+/** @internal Metadata for a built-in subcommand. */
+type BuiltinSubcommandMeta<options extends z.ZodObject<any> | undefined = undefined> =
+  CommandMeta<options> & {
+    /** Alternative names for this built-in subcommand. */
+    aliases?: string[] | undefined
+  }
+
 /** @internal Creates a builtin subcommand with typesafe alias inference. */
 function subcommand<const options extends z.ZodObject<any> | undefined = undefined>(
-  def: CommandMeta<options> & { name: string },
+  def: BuiltinSubcommandMeta<options> & { name: string },
 ) {
   return def
 }
@@ -412,6 +419,7 @@ export const builtinCommands = [
   },
   {
     name: 'skills',
+    aliases: ['skill'],
     description: 'Sync skill files to agents',
     subcommands: [
       subcommand({
@@ -422,12 +430,33 @@ export const builtinCommands = [
           noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
         }),
       }),
+      subcommand({
+        name: 'list',
+        aliases: ['ls'],
+        description: 'List skills',
+      }),
     ],
   },
 ] satisfies {
   name: string
+  aliases?: string[] | undefined
   args?: z.ZodObject<any> | undefined
   description: string
   hint?: ((name: string) => string) | undefined
-  subcommands?: (CommandMeta<z.ZodObject<any>> & { name: string })[] | undefined
+  subcommands?: (BuiltinSubcommandMeta<z.ZodObject<any>> & { name: string })[] | undefined
 }[]
+
+/** @internal Finds a builtin command by its name or alias. */
+export function findBuiltin(token: string) {
+  return builtinCommands.find((b) => b.name === token || b.aliases?.includes(token))
+}
+
+/** @internal Finds a builtin subcommand by its name or alias. */
+export function findBuiltinSubcommand(builtin: (typeof builtinCommands)[number], token: string) {
+  return builtin.subcommands?.find((sub) => sub.name === token || sub.aliases?.includes(token))
+}
+
+/** @internal Checks if a token matches a builtin command by name or alias. */
+export function isBuiltin(token: string) {
+  return builtinCommands.some((b) => b.name === token || b.aliases?.includes(token))
+}

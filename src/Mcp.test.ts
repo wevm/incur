@@ -103,6 +103,22 @@ describe('Mcp', () => {
     expect(res.result.capabilities.tools).toBeDefined()
   })
 
+  test('initialize with 2025-03-26 protocol version', async () => {
+    const [res] = await mcpSession(createTestCommands(), [
+      {
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      },
+    ])
+    expect(res.result.serverInfo).toEqual({ name: 'test-cli', version: '1.0.0' })
+    expect(res.result.capabilities.tools).toBeDefined()
+  })
+
   test('tools/list returns all leaf commands as tools', async () => {
     const [, res] = await mcpSession(createTestCommands(), [
       { id: 1, method: 'initialize', params: initParams },

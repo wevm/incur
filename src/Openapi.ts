@@ -1,7 +1,7 @@
-import { dereference } from '@readme/openapi-parser'
 import { z } from 'zod'
 
 import * as Fetch from './Fetch.js'
+import { dereference } from './internal/dereference.js'
 
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
 export type OpenAPISpec = { paths?: {} | undefined }
@@ -46,7 +46,7 @@ export async function generateCommands(
   fetch: FetchHandler,
   options: { basePath?: string | undefined } = {},
 ): Promise<Map<string, GeneratedCommand>> {
-  const resolved = (await dereference(structuredClone(spec) as any)) as unknown as OpenAPISpec
+  const resolved = dereference(structuredClone(spec)) as OpenAPISpec
   const commands = new Map<string, GeneratedCommand>()
   const paths = (resolved.paths ?? {}) as Record<string, Record<string, unknown>>
 
@@ -186,20 +186,26 @@ function coerceIfNeeded(schema: z.ZodType): z.ZodType {
   const isOptional = schema instanceof z.ZodOptional
   const inner = isOptional ? schema.unwrap() : schema
 
-  // Direct number/boolean
-  if (inner instanceof z.ZodNumber)
-    return isOptional ? z.coerce.number().optional() : z.coerce.number()
-  if (inner instanceof z.ZodBoolean)
-    return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
-
-  // Union containing number (e.g. type: ["number", "null"] from OpenAPI 3.1)
-  if (inner instanceof z.ZodUnion) {
-    const options = (inner as any)._zod?.def?.options as z.ZodType[] | undefined
-    if (options?.some((o: z.ZodType) => o instanceof z.ZodNumber))
+  const coerced = (() => {
+    // Direct number
+    if (inner instanceof z.ZodNumber)
       return isOptional ? z.coerce.number().optional() : z.coerce.number()
-    if (options?.some((o: z.ZodType) => o instanceof z.ZodBoolean))
+    // Direct boolean
+    if (inner instanceof z.ZodBoolean)
       return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
-  }
+    // Union containing number or boolean (e.g. type: ["number", "null"] from OpenAPI 3.1)
+    if (inner instanceof z.ZodUnion) {
+      const options = (inner as any)._zod?.def?.options as z.ZodType[] | undefined
+      if (options?.some((o: z.ZodType) => o instanceof z.ZodNumber))
+        return isOptional ? z.coerce.number().optional() : z.coerce.number()
+      if (options?.some((o: z.ZodType) => o instanceof z.ZodBoolean))
+        return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
+    }
+    // No coercion needed
+    return undefined
+  })()
 
-  return schema
+  if (!coerced) return schema
+  const desc = (schema as any).description ?? (inner as any).description
+  return desc ? coerced.describe(desc) : coerced
 }

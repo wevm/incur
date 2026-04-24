@@ -1,5 +1,5 @@
 import { Cli, SyncSkills } from 'incur'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -65,6 +65,41 @@ test('uses custom depth', async () => {
 
   // depth 0 = single skill
   expect(result.skills).toHaveLength(1)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('sync results are sorted alphabetically', async () => {
+  const tmp = join(tmpdir(), `clac-sync-sort-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('test')
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  mkdirSync(join(installDir, 'zeta'), { recursive: true })
+  writeFileSync(
+    join(installDir, 'zeta', 'SKILL.md'),
+    ['---', 'name: zeta', 'description: Z skill.', '---', '', '# zeta'].join('\n'),
+  )
+  writeFileSync(
+    join(installDir, 'SKILL.md'),
+    ['---', 'name: test', 'description: Root skill.', '---', '', '# test'].join('\n'),
+  )
+  mkdirSync(join(installDir, 'alpha'), { recursive: true })
+  writeFileSync(
+    join(installDir, 'alpha', 'SKILL.md'),
+    ['---', 'name: alpha', 'description: A skill.', '---', '', '# alpha'].join('\n'),
+  )
+
+  const result = await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+    include: ['zeta', '_root', 'alpha'],
+  })
+
+  expect(result.skills.map((s) => s.name)).toEqual(['alpha', 'test', 'zeta'])
 
   rmSync(tmp, { recursive: true, force: true })
 })
@@ -155,4 +190,112 @@ test('sync returns unquoted descriptions from YAML frontmatter', async () => {
   `)
 
   rmSync(tmp, { recursive: true, force: true })
+})
+
+test('list returns skills from command map', async () => {
+  const cli = Cli.create('test', { description: 'A test CLI' })
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  cli.command('greet', { description: 'Say hello', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const result = await SyncSkills.list('test', commands)
+
+  expect(result.length).toBeGreaterThan(0)
+  const names = result.map((s) => s.name)
+  expect(names).toContain('test-ping')
+  expect(names).toContain('test-greet')
+  for (const s of result) {
+    expect(s.installed).toBe(false)
+    expect(s.description).toBeDefined()
+  }
+})
+
+test('list shows installed status after sync', async () => {
+  const tmp = join(tmpdir(), `clac-list-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('test')
+  cli.command('ping', { description: 'Ping', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Sync first to install
+  await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  // Now list should show installed
+  const result = await SyncSkills.list('test', commands)
+  expect(result.length).toBeGreaterThan(0)
+  for (const s of result) expect(s.installed).toBe(true)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('list shows not installed when synced skills are removed', async () => {
+  const tmp = join(tmpdir(), `clac-list-missing-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('test')
+  cli.command('ping', { description: 'Ping', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const sync = await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  rmSync(sync.paths[0]!, { recursive: true, force: true })
+
+  const result = await SyncSkills.list('test', commands)
+  expect(result).toHaveLength(1)
+  expect(result[0]!.installed).toBe(false)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('list returns empty for CLI with no commands', async () => {
+  const cli = Cli.create('empty')
+  const commands = Cli.toCommands.get(cli)!
+  const result = await SyncSkills.list('empty', commands)
+  expect(result).toHaveLength(0)
+})
+
+test('list includes root command skill', async () => {
+  const cli = Cli.create('test', {
+    description: 'A test CLI',
+    run: () => ({ ok: true }),
+  })
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const rootCommand = Cli.toRootDefinition.get(cli as any)!
+  const result = await SyncSkills.list('test', commands, {
+    description: 'A test CLI',
+    rootCommand,
+  })
+
+  const names = result.map((s) => s.name)
+  expect(names).toContain('test')
+  expect(names).toContain('test-ping')
+})
+
+test('list results are sorted alphabetically', async () => {
+  const cli = Cli.create('test')
+  cli.command('zebra', { description: 'Z command', run: () => ({}) })
+  cli.command('alpha', { description: 'A command', run: () => ({}) })
+  cli.command('middle', { description: 'M command', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const result = await SyncSkills.list('test', commands)
+  const names = result.map((s) => s.name)
+  expect(names).toEqual([...names].sort())
 })

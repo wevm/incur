@@ -296,8 +296,21 @@ describe('format md', () => {
 })
 
 describe('format jsonl', () => {
-  test('falls through to toon', () => {
+  test('single object outputs one JSON line', () => {
     const result = Formatter.format({ message: 'hello' }, 'jsonl')
-    expect(result).toMatchInlineSnapshot(`"message: hello"`)
+    expect(result).toMatchInlineSnapshot(`"{"message":"hello"}"`)
+  })
+
+  test('array outputs one JSON line per element', () => {
+    const result = Formatter.format([{ id: 1 }, { id: 2 }], 'jsonl')
+    expect(result).toMatchInlineSnapshot(`
+      "{"id":1}
+      {"id":2}"
+    `)
+  })
+
+  test('scalar value outputs JSON', () => {
+    expect(Formatter.format(42, 'jsonl')).toMatchInlineSnapshot(`"42"`)
+    expect(Formatter.format('hi', 'jsonl')).toMatchInlineSnapshot(`""hi""`)
   })
 })

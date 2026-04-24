@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { builtinCommands } from './internal/command.js'
 import { toKebab } from './internal/helpers.js'
+import { defaultEnvSource } from './Parser.js'
 
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
@@ -55,7 +56,7 @@ export declare namespace formatRoot {
 export declare namespace formatCommand {
   type Options = {
     /** Map of option names to single-char aliases. */
-    alias?: Record<string, string> | undefined
+    alias?: Partial<Record<string, string>> | undefined
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
@@ -217,7 +218,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
       for (const entry of entries) {
         const padding = ' '.repeat(maxLen - entry.name.length)
         const parts: string[] = [entry.description]
-        const source = envSource ?? process.env
+        const source = envSource ?? defaultEnvSource()
         if (entry.name in source) parts.push(`set: ${redact(source[entry.name]!)}`)
         if (entry.defaultValue !== undefined) parts.push(`default: ${entry.defaultValue}`)
         const desc = parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0]
@@ -260,7 +261,10 @@ function envEntries(schema: z.ZodObject<any>) {
 }
 
 /** Extracts option entries from a Zod object schema. */
-function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> | undefined) {
+function optionEntries(
+  schema: z.ZodObject<any>,
+  alias?: Partial<Record<string, string>> | undefined,
+) {
   const entries: {
     flag: string
     description: string
@@ -271,8 +275,10 @@ function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> 
     const type = resolveTypeName(field)
     const short = alias?.[key]
     const kebab = toKebab(key)
-    const flag = short ? `--${kebab}, -${short} <${type}>` : `--${kebab} <${type}>`
-    const defaultValue = extractDefault(field)
+    const valueHint = type === 'boolean' ? '' : ` <${type}>`
+    const flag = short ? `--${kebab}, -${short}${valueHint}` : `--${kebab}${valueHint}`
+    let defaultValue = extractDefault(field)
+    if (type === 'boolean' && defaultValue === false) defaultValue = undefined
     const deprecated = extractDeprecated(field)
     entries.push({ flag, description: (field as any).description ?? '', defaultValue, deprecated })
   }
@@ -374,7 +380,7 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
-    { flag: '--verbose', desc: 'Show full output envelope' },
+    { flag: '--full-output', desc: 'Show full output envelope' },
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ].sort((a, b) => a.flag.localeCompare(b.flag))
   const maxLen = Math.max(...flags.map((f) => f.flag.length))
@@ -387,8 +393,8 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
   return lines
 }
 
-/** Redacts a value, showing only the last 4 characters. */
+/** Redacts a value, showing only the last 4 characters for long values. */
 function redact(value: string): string {
-  if (value.length <= 4) return `****${value.slice(-1)}`
+  if (value.length <= 4) return '****'
   return `****${value.slice(-4)}`
 }

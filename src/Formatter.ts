@@ -10,7 +10,11 @@ export function format(value: unknown, fmt: Format = 'toon'): string {
   if (fmt === 'json') return JSON.stringify(value, null, 2)
   if (fmt === 'yaml') return yamlStringify(value)
   if (fmt === 'md') return formatMarkdown(value)
-  // toon
+  if (fmt === 'jsonl') {
+    if (Array.isArray(value)) return value.map((v) => JSON.stringify(v)).join('\n')
+    return JSON.stringify(value)
+  }
+  // toon (default)
   if (isScalar(value)) return String(value)
   return encode(value as Record<string, unknown>)
 }

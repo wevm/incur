@@ -82,6 +82,27 @@ describe('parseArgv', () => {
     expect(input.query.get('limit')).toBe('5')
   })
 
+  test('--method as last token throws missing value error', () => {
+    expect(() => Fetch.parseArgv(['users', '--method'])).toThrow('Missing value for --method')
+  })
+
+  test('-X as last token throws missing value error', () => {
+    expect(() => Fetch.parseArgv(['users', '-X'])).toThrow('Missing value for -X')
+  })
+
+  test('--header as last token throws missing value error', () => {
+    expect(() => Fetch.parseArgv(['users', '--header'])).toThrow('Missing value for --header')
+  })
+
+  test('--limit as last token throws missing value error', () => {
+    expect(() => Fetch.parseArgv(['users', '--limit'])).toThrow('Missing value for --limit')
+  })
+
+  test('unknown short flag does not swallow the next token', () => {
+    const input = Fetch.parseArgv(['users', '-z', 'create'])
+    expect(input.path).toBe('/users/create')
+  })
+
   test('mixed tokens, flags, and query params', () => {
     const input = Fetch.parseArgv([
       'users',

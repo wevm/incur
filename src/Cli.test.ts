@@ -12,10 +12,15 @@ afterAll(() => {
 })
 
 let __mockSkillsHash: string | undefined
+let __mockSkillsInstalled = true
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => __mockSkillsHash }
+  return {
+    ...actual,
+    hasInstalledSkills: () => __mockSkillsInstalled,
+    readHash: () => __mockSkillsHash,
+  }
 })
 
 async function serve(
@@ -630,7 +635,7 @@ describe('serve', () => {
     `)
   })
 
-  test('--verbose outputs full envelope', async () => {
+  test('--full-output outputs full envelope', async () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
@@ -639,7 +644,7 @@ describe('serve', () => {
       },
     })
 
-    const { output } = await serve(cli, ['greet', 'world', '--verbose'])
+    const { output } = await serve(cli, ['greet', 'world', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -714,10 +719,10 @@ describe('serve', () => {
     `)
   })
 
-  test('--verbose outputs full error envelope for unknown command', async () => {
+  test('--full-output outputs full error envelope for unknown command', async () => {
     const cli = Cli.create('test')
 
-    const { output, exitCode } = await serve(cli, ['nonexistent', '--verbose'])
+    const { output, exitCode } = await serve(cli, ['nonexistent', '--full-output'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "ok: false
@@ -787,8 +792,8 @@ describe('serve', () => {
     const cli = Cli.create('test')
     cli.command('deploy', { run: () => ({}) })
 
-    const { output } = await serve(cli, ['deplyo', '--verbose'])
-    expect(output).toContain('test deploy --verbose')
+    const { output } = await serve(cli, ['deplyo', '--full-output'])
+    expect(output).toContain('test deploy --full-output')
   })
 
   test('no suggestion when input is too far from any command', async () => {
@@ -990,10 +995,10 @@ describe('serve', () => {
     expect(JSON.parse(output)).toEqual({ pong: true })
   })
 
-  test('--verbose --format json outputs full envelope as JSON', async () => {
+  test('--full-output --format json outputs full envelope as JSON', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
-    const { output } = await serve(cli, ['ping', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['ping', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ pong: true })
@@ -1278,6 +1283,38 @@ describe('--llms', () => {
     expect(output).toContain('test auth auth logout')
     expect(output).not.toContain('ping')
   })
+
+  test('--llms includes root command', async () => {
+    const cli = Cli.create('my-cli', {
+      description: 'Fetch URLs',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      options: z.object({ objective: z.string().optional().describe('Narrow content') }),
+      run: ({ args }) => args.url,
+    })
+    cli.command('auth', { description: 'Auth commands', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--llms'])
+    expect(output).toContain('| `my-cli <url>` | Fetch URLs |')
+    expect(output).toContain('| `my-cli auth` | Auth commands |')
+  })
+
+  test('--llms-full includes root command with args/options', async () => {
+    const cli = Cli.create('my-cli', {
+      description: 'Fetch URLs',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      options: z.object({ objective: z.string().optional().describe('Narrow content') }),
+      output: z.string().describe('Page content'),
+      run: ({ args }) => args.url,
+    })
+    cli.command('auth', { description: 'Auth commands', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--llms-full'])
+    expect(output).toContain('# my-cli\n\nFetch URLs')
+    expect(output).toContain('| `url` | `string` | yes | URL to fetch |')
+    expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
+    expect(output).toContain('# my-cli auth')
+    expect(output).not.toContain('# my-cli \n')
+  })
 })
 
 describe('--schema', () => {
@@ -1447,14 +1484,14 @@ describe('subcommands', () => {
     `)
   })
 
-  test('--verbose shows full command path in meta', async () => {
+  test('--full-output shows full command path in meta', async () => {
     const cli = Cli.create('test')
     const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
       run: () => ({ count: 0 }),
     })
     cli.command(pr)
 
-    const { output } = await serve(cli, ['pr', 'list', '--verbose'])
+    const { output } = await serve(cli, ['pr', 'list', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -1482,7 +1519,7 @@ describe('subcommands', () => {
     `)
   })
 
-  test('nested group shows full path in verbose meta', async () => {
+  test('nested group shows full path in full-output meta', async () => {
     const cli = Cli.create('test')
     const review = Cli.create('review', { description: 'Reviews' }).command('approve', {
       run: () => ({ approved: true }),
@@ -1491,7 +1528,7 @@ describe('subcommands', () => {
     pr.command(review)
     cli.command(pr)
 
-    const { output } = await serve(cli, ['pr', 'review', 'approve', '--verbose'])
+    const { output } = await serve(cli, ['pr', 'review', 'approve', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -1564,13 +1601,13 @@ describe('subcommands', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1653,7 +1690,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['list', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toEqual({
       description: 'Suggested commands:',
@@ -1674,7 +1711,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['list', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([
       { command: 'test get 1', description: 'View item 1' },
@@ -1703,7 +1740,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['create', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['create', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([
       { command: 'test get 1 --limit 10', description: 'View the item' },
@@ -1723,7 +1760,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['list', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([{ command: 'test get <id> --format <format>' }])
   })
@@ -1741,7 +1778,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['create', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['create', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.description).toBe('View the created item:')
   })
@@ -1750,7 +1787,7 @@ describe('cta', () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
 
-    const { output } = await serve(cli, ['ping', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['ping', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toBeUndefined()
   })
@@ -1763,7 +1800,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['noop', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['noop', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toBeUndefined()
   })
@@ -1783,7 +1820,7 @@ describe('cta', () => {
       },
     })
 
-    const { output, exitCode } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const { output, exitCode } = await serve(cli, ['fail', '--full-output', '--format', 'json'])
     expect(exitCode).toBe(1)
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(false)
@@ -1801,7 +1838,7 @@ describe('cta', () => {
       },
     })
 
-    const { output, exitCode } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const { output, exitCode } = await serve(cli, ['fail', '--full-output', '--format', 'json'])
     expect(exitCode).toBe(1)
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toBeUndefined()
@@ -1815,7 +1852,7 @@ describe('cta', () => {
       },
     })
 
-    const { output } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['fail', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(false)
     expect(parsed.meta.cta).toBeUndefined()
@@ -1837,7 +1874,14 @@ describe('cta', () => {
     })
     cli.command(pr)
 
-    const { output } = await serve(cli, ['pr', 'create', 'my-pr', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, [
+      'pr',
+      'create',
+      'my-pr',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toEqual({
       description: 'Suggested command:',
@@ -1877,9 +1921,25 @@ describe('leaf cli', () => {
     `)
   })
 
-  test('--verbose outputs full envelope', async () => {
-    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+  test('command option named verbose is parsed by the command', async () => {
+    const cli = Cli.create('ping', {
+      options: z.object({ verbose: z.boolean().default(false) }),
+      run({ options }) {
+        return options
+      },
+    })
+
     const { output } = await serve(cli, ['--verbose'])
+
+    expect(output).toMatchInlineSnapshot(`
+      "verbose: true
+      "
+    `)
+  })
+
+  test('--full-output outputs full envelope', async () => {
+    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -1998,11 +2058,12 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -2010,7 +2071,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -2036,11 +2096,12 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -2048,7 +2109,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -2075,13 +2135,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -2109,13 +2169,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -2199,11 +2259,12 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -2211,7 +2272,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -2236,13 +2296,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -2331,13 +2391,13 @@ describe('env', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
 
       Environment Variables:
         API_TOKEN  Auth token
@@ -2369,13 +2429,13 @@ describe('env', () => {
         Global Options:
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
           --help                              Show help
           --llms, --llms-full                 Print LLM-readable manifest
           --schema                            Show JSON Schema for command
           --token-count                       Print token count of output (instead of output)
           --token-limit <n>                   Limit output to n tokens
           --token-offset <n>                  Skip first n tokens of output
-          --verbose                           Show full output envelope
 
         Environment Variables:
           API_TOKEN  Auth token (set: ****cret)
@@ -2570,6 +2630,34 @@ describe('built-in commands', () => {
     expect(output).toContain('--depth')
     expect(output).toContain('--no-global')
   })
+
+  test('skills list --help shows description', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['skills', 'list', '--help'])
+    expect(output).toContain('test skills list')
+    expect(output).toContain('Aliases: ls')
+    expect(output).toContain('List skills')
+  })
+
+  test('skills ls resolves to list', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    const { output: aliased } = await serve(cli, ['skills', 'ls'])
+    const { output: canonical } = await serve(cli, ['skills', 'list'])
+    expect(aliased).toBe(canonical)
+  })
+
+  test('skills list shows skills with install status', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    cli.command('greet', { description: 'Say hello', run: () => ({ hi: true }) })
+    const { output } = await serve(cli, ['skills', 'list'])
+    expect(output).toContain('✗')
+    expect(output).toContain('test-ping')
+    expect(output).toContain('test-greet')
+    expect(output).toContain('installed')
+  })
 })
 
 describe('skills staleness', () => {
@@ -2578,11 +2666,13 @@ describe('skills staleness', () => {
   beforeEach(() => {
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   afterEach(() => {
     stderrSpy.mockRestore()
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   test('includes skills CTA when stale', async () => {
@@ -2593,6 +2683,31 @@ describe('skills staleness', () => {
     const { output } = await serve(cli, ['ping'])
     expect(output).toContain('Skills are out of date:')
     expect(output).toContain('skills add')
+  })
+
+  test('uses displayName for stale skills CTA when invoked directly', async () => {
+    const savedArgv1 = process.argv[1]
+    const savedAgent = process.env.npm_config_user_agent
+    const savedExec = process.env.npm_execpath
+    try {
+      process.argv[1] = '/usr/local/bin/mc'
+      delete process.env.npm_config_user_agent
+      delete process.env.npm_execpath
+
+      __mockSkillsHash = '0000000000000000'
+      const cli = Cli.create({ name: 'my-cli', aliases: ['mc'] })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+      const { output } = await serve(cli, ['ping'])
+
+      expect(output).toContain('mc skills add')
+      expect(output).not.toContain('npx my-cli skills add')
+    } finally {
+      if (savedArgv1 === undefined) process.argv[1] = undefined as any
+      else process.argv[1] = savedArgv1
+      process.env.npm_config_user_agent = savedAgent
+      process.env.npm_execpath = savedExec
+    }
   })
 
   test('merges skills CTA with command CTA', async () => {
@@ -2624,6 +2739,16 @@ describe('skills staleness', () => {
     __mockSkillsHash = undefined
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('Skills are out of date')
+  })
+
+  test('does not warn when skills are not installed', async () => {
+    __mockSkillsHash = '0000000000000000'
+    __mockSkillsInstalled = false
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
     const { output } = await serve(cli, ['ping'])
     expect(output).not.toContain('Skills are out of date')
@@ -2865,10 +2990,10 @@ describe('outputPolicy', () => {
     expect(deploy.output).not.toContain('deploy-123')
     expect(deploy.output).toContain('Check status')
 
-    // deploy --verbose: agent mode shows everything
-    const deployVerbose = await serve(cli, ['deploy', 'staging', '--verbose'])
-    expect(deployVerbose.output).toContain('deploy-123')
-    expect(deployVerbose.output).toContain('staging.example.com')
+    // deploy --full-output: agent mode shows everything
+    const deployFullOutput = await serve(cli, ['deploy', 'staging', '--full-output'])
+    expect(deployFullOutput.output).toContain('deploy-123')
+    expect(deployFullOutput.output).toContain('staging.example.com')
 
     // deploy --json: agent mode shows data
     const deployJson = await serve(cli, ['deploy', 'staging', '--json'])
@@ -3624,11 +3749,11 @@ describe('fetch', async () => {
     expect(JSON.parse(output)).toEqual({ ok: true })
   })
 
-  test('--verbose includes request/response meta', async () => {
+  test('--full-output includes request/response meta', async () => {
     const cli = Cli.create('test', { description: 'test' }).command('api', {
       fetch: app.fetch,
     })
-    const { output } = await serve(cli, ['api', 'health', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['api', 'health', '--full-output', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ ok: true })
@@ -3654,6 +3779,15 @@ describe('fetch', async () => {
       limit: 10
       "
     `)
+  })
+
+  test('root-level fetch with typo of known command → did you mean', async () => {
+    const cli = Cli.create('api', { description: 'API', fetch: app.fetch }).command('upgrade', {
+      run: () => ({ upgraded: true }),
+    })
+    const { output, exitCode } = await serve(cli, ['upgra'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("Did you mean 'upgrade'?")
   })
 
   test('root-level fetch with no args → root path', async () => {
@@ -4440,8 +4574,107 @@ describe('displayName', () => {
     }).command('ping', {
       run: (c) => c.ok({ ok: true }, { cta: { commands: ['login'] } }),
     })
-    const { output } = await serve(cli, ['ping', '--json', '--verbose'])
+    const { output } = await serve(cli, ['ping', '--json', '--full-output'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands[0].command).toBe('mc login')
+  })
+})
+
+test('--format rejects invalid format values', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => c.ok({ message: 'hi' }),
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', '--format', 'xml'])
+  expect(exitCode).toBe(1)
+  expect(output).toMatch(/invalid|unsupported|unknown.*format/i)
+})
+
+test('--token-limit with non-numeric value errors', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => c.ok({ message: 'hello world' }),
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', '--token-limit', 'foo', '--json'])
+  expect(exitCode).toBe(1)
+  expect(output).not.toContain('NaN')
+})
+
+test('--token-offset with non-numeric value errors', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => c.ok({ message: 'hello world' }),
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', '--token-offset', 'foo', '--json'])
+  expect(exitCode).toBe(1)
+  expect(output).not.toContain('NaN')
+})
+
+describe('command aliases', () => {
+  function makeAliasedCli() {
+    return Cli.create('gh').command('extension', {
+      aliases: ['extensions', 'ext'],
+      description: 'Manage extensions',
+      run: () => ({ result: 'ok' }),
+    })
+  }
+
+  test('resolves canonical command name', async () => {
+    const { output } = await serve(makeAliasedCli(), ['extension'])
+    expect(output).toContain('ok')
+  })
+
+  test('resolves alias name', async () => {
+    const { output } = await serve(makeAliasedCli(), ['extensions'])
+    expect(output).toContain('ok')
+  })
+
+  test('resolves short alias name', async () => {
+    const { output } = await serve(makeAliasedCli(), ['ext'])
+    expect(output).toContain('ok')
+  })
+
+  test('root help does not show aliases', async () => {
+    const { output } = await serve(makeAliasedCli(), ['--help'])
+    const commandsSection = output.split('Commands:')[1]!.split('Integrations:')[0]!
+    const names = commandsSection
+      .trim()
+      .split('\n')
+      .map((l) => l.trim().split(/\s{2,}/)[0]!)
+    expect(names).toContain('extension')
+    expect(names).not.toContain('extensions')
+    expect(names).not.toContain('ext')
+  })
+
+  test('command help shows aliases line', async () => {
+    const { output } = await serve(makeAliasedCli(), ['extension', '--help'])
+    expect(output).toContain('Aliases: extensions, ext')
+  })
+
+  test('aliases work inside command groups', async () => {
+    const sub = Cli.create('repo', { description: 'Manage repos' }).command('list', {
+      aliases: ['ls'],
+      description: 'List repos',
+      run: () => ({ repos: [] }),
+    })
+    const cli = Cli.create('gh').command(sub)
+    const { output } = await serve(cli, ['repo', 'ls'])
+    expect(output).toContain('repos')
+  })
+
+  test('did-you-mean suggests aliases', async () => {
+    const { output } = await serve(makeAliasedCli(), ['exten'])
+    expect(output).toMatch(/did you mean.*extension/i)
+  })
+
+  test('root CLI aliases register as command aliases', async () => {
+    const update = Cli.create('update', {
+      aliases: ['upgrade'],
+      description: 'Update packages',
+      run: () => ({ result: 'updated' }),
+    })
+    const cli = Cli.create('pkg').command(update)
+    const { output } = await serve(cli, ['upgrade'])
+    expect(output).toContain('updated')
   })
 })

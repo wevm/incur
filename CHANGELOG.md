@@ -1,5 +1,99 @@
 # incur
 
+## 0.4.3
+
+### Patch Changes
+
+- 01c675f: Added `ls` alias for `skills list`.
+
+## 0.4.2
+
+### Patch Changes
+
+- a6c584d: Fixed stale skills warnings to only appear when synced skill files were still installed on disk, and updated `skills list` to reflect actual install state instead of stale metadata.
+
+## 0.4.1
+
+### Minor Changes
+
+- 1e58e47: **Breaking:** Renamed the global full-envelope flag from `--verbose` to `--full-output`, allowing `--verbose` to be used as a normal command option.
+
+## 0.3.25
+
+### Patch Changes
+
+- abfa8c7: Fixed Root CLIs created with `Cli.create` and `aliases` not registering those aliases as command aliases when mounted via `cli.command()`.
+
+## 0.3.24
+
+### Patch Changes
+
+- 250e65f: Added command-level `aliases` option for subcommands (e.g. `aliases: ['extensions', 'ext']` on an `extension` command).
+- 26d7bf8: Fixed root fetch/command fallback bypassing "Did you mean?" suggestions when the input is a typo of a known command.
+
+## 0.3.23
+
+### Patch Changes
+
+- 572c172: Replaced `@readme/openapi-parser` with a vendored `dereference` implementation, removing a heavy dependency tree.
+
+## 0.3.22
+
+### Patch Changes
+
+- bfc3337: Replaced `@modelcontextprotocol/sdk` with `@modelcontextprotocol/server` (v2), reducing dependency count by 74 packages.
+
+## 0.3.21
+
+### Patch Changes
+
+- d091bf7: Fixed stale `skills add` CTA commands to use the invoked CLI name when running installed binaries directly, instead of falling back to `npx`.
+
+## 0.3.20
+
+### Patch Changes
+
+- ede37be: Fixed help output for boolean options so flags no longer showed `<boolean>` placeholders or redundant `(default: false)` text, including aliased flags.
+- 96dfee4: Exported shell completion environment variables in bash and zsh hooks.
+
+## 0.3.19
+
+### Patch Changes
+
+- 5c76b51: Fixed `skills add` to list synced skills in alphabetical order.
+
+## 0.3.18
+
+### Patch Changes
+
+- a65c865: Used command description as fallback in skill frontmatter for root commands and single-command groups.
+
+## 0.3.17
+
+### Patch Changes
+
+- dad62c9: Fixed `skills list` not including root command skill.
+
+## 0.3.16
+
+### Patch Changes
+
+- de70444: Added `engines` field requiring Node.js >=22.
+- 3462433: Fixed `z.bigint()`, `z.coerce.bigint()`, `z.date()`, and `z.coerce.date()` schemas failing during skill sync by representing them as `{ type: "string" }` in JSON Schema output.
+
+## 0.3.15
+
+### Patch Changes
+
+- abd80e7: Fixed missing value errors for flags in `Fetch.parseArgv`, short secret leaking in `redact()`, silent `jsonl` fallthrough in `Formatter.format`, invalid `--format`/`--token-limit`/`--token-offset` values, lost descriptions when coercing OpenAPI param schemas, and hardcoded `process.env` in `Help.ts` for Deno compatibility.
+- 7dd398b: Added `skills list` subcommand that shows all skills a CLI defines with install status.
+
+## 0.3.14
+
+### Patch Changes
+
+- 71a787a: Fixed root commands defined on `Cli.create()` not being included in skill generation (`--llms`, `skills add`, `.well-known/skills/`).
+
 ## 0.3.13
 
 ### Patch Changes

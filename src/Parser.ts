@@ -315,7 +315,7 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
 }
 
 /** Returns the best available env source for the current runtime. */
-function defaultEnvSource(): Record<string, string | undefined> {
+export function defaultEnvSource(): Record<string, string | undefined> {
   if (typeof globalThis !== 'undefined') {
     const g = globalThis as any
     if (g.process?.env) return g.process.env

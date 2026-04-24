@@ -43,24 +43,22 @@ export function parseArgv(argv: string[]): FetchInput {
       } else {
         const key = token.slice(2)
         const value = argv[i + 1]
-        if (reservedFlags.has(key)) {
-          handleReserved(key, value!)
-          i += 2
-        } else {
-          query.set(key, value!)
-          i += 2
-        }
+        if (value === undefined) throw new Error(`Missing value for --${key}`)
+        if (reservedFlags.has(key)) handleReserved(key, value)
+        else query.set(key, value)
+        i += 2
       }
     } else if (token.startsWith('-') && token.length === 2) {
       const short = token[1]!
       const mapped = reservedShort[short]
-      const value = argv[i + 1]!
       if (mapped) {
+        const value = argv[i + 1]
+        if (value === undefined) throw new Error(`Missing value for -${short}`)
         handleReserved(mapped, value)
         i += 2
       } else {
-        // Unknown short flag — skip (shouldn't happen in fetch context)
-        i += 2
+        // Unknown short flag — treat as single token, don't consume next
+        i++
       }
     } else {
       segments.push(token)
