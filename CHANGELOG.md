@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.4
+
+### Patch Changes
+
+- 9875d59: Fixed skill frontmatter generation and parsing so descriptions containing YAML-sensitive text like `key: value` were quoted and read correctly.
+
 ## 0.4.3
 
 ### Patch Changes
