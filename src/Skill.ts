@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { z } from 'zod'
+import { stringify as yamlStringify } from 'yaml'
 
 import * as Schema from './Schema.js'
 
@@ -136,13 +137,14 @@ function renderGroup(
     ? `${desc.replace(/\.$/, '')}. Run \`${title} --help\` for usage details.`
     : `Run \`${title} --help\` for usage details.`
 
-  const fm = ['---', `name: ${slugify(title)}`]
-  fm.push(`description: ${description}`)
-  fm.push(`requires_bin: ${cli}`)
-  fm.push(`command: ${title}`, '---')
+  const fm = yamlStringify(
+    { name: slugify(title), description, requires_bin: cli, command: title },
+    { lineWidth: 0 },
+  ).trimEnd()
+  const fmBlock = `---\n${fm}\n---`
 
   const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')
-  return `${fm.join('\n')}\n\n${body}`
+  return `${fmBlock}\n\n${body}`
 }
 
 /** @internal Renders a command's heading and sections without frontmatter. */

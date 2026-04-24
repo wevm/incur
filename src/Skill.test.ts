@@ -373,6 +373,14 @@ describe('split', () => {
     expect(files[0]!.content).toContain('requires_bin: gh')
   })
 
+  test('YAML-quotes description containing colon-space', () => {
+    const groups = new Map([['search', 'Search items. Use key: value for precision']])
+    const files = Skill.split('app', [{ name: 'search list', description: 'List results' }], 1, groups)
+    expect(files[0]!.content).toContain(
+      'description: "Search items. Use key: value for precision. Run `app search --help` for usage details."',
+    )
+  })
+
   test('no per-command frontmatter in split files', () => {
     const files = Skill.split('gh', commands, 1, groups)
     const afterFrontmatter = files[0]!.content.slice(
