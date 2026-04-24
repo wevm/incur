@@ -125,3 +125,34 @@ test('installed SKILL.md contains frontmatter', async () => {
 
   rmSync(tmp, { recursive: true, force: true })
 })
+
+test('sync returns unquoted descriptions from YAML frontmatter', async () => {
+  const tmp = join(tmpdir(), `clac-quoted-description-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const search = Cli.create('search', { description: 'Search items. Use key: value for precision' })
+  search.command('list', { description: 'List results', run: () => ({}) })
+
+  const cli = Cli.create('app')
+  cli.command('search', search)
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const result = await SyncSkills.sync('app', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  expect(result.skills).toMatchInlineSnapshot(`
+    [
+      {
+        "description": "Search items. Use key: value for precision. Run \`app search --help\` for usage details.",
+        "name": "app-search",
+      },
+    ]
+  `)
+
+  rmSync(tmp, { recursive: true, force: true })
+})

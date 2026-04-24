@@ -2,6 +2,7 @@ import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { parse as yamlParse } from 'yaml'
 
 import { formatExamples } from './Cli.js'
 import * as Agents from './internal/agents.js'
@@ -30,9 +31,8 @@ export async function sync(
         : path.join(tmpDir, 'SKILL.md')
       await fs.mkdir(path.dirname(filePath), { recursive: true })
       await fs.writeFile(filePath, `${file.content}\n`)
-      const nameMatch = file.content.match(/^name:\s*(.+)$/m)
-      const descMatch = file.content.match(/^description:\s*(.+)$/m)
-      skills.push({ name: nameMatch?.[1] ?? (file.dir || name), description: descMatch?.[1] })
+      const meta = parseFrontmatter(file.content)
+      skills.push({ name: meta.name ?? (file.dir || name), description: meta.description })
     }
 
     // Include additional SKILL.md files matched by glob patterns
@@ -42,16 +42,14 @@ export async function sync(
         for await (const match of fs.glob(globPattern, { cwd })) {
           try {
             const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
-            const nameMatch = content.match(/^name:\s*(.+)$/m)
+            const meta = parseFrontmatter(content)
             const skillName =
-              pattern === '_root' ? (nameMatch?.[1] ?? name) : path.basename(path.dirname(match))
+              pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
             const dest = path.join(tmpDir, skillName, 'SKILL.md')
             await fs.mkdir(path.dirname(dest), { recursive: true })
             await fs.writeFile(dest, content)
-            if (!skills.some((s) => s.name === skillName)) {
-              const descMatch = content.match(/^description:\s*(.+)$/m)
-              skills.push({ name: skillName, description: descMatch?.[1], external: true })
-            }
+            if (!skills.some((s) => s.name === skillName))
+              skills.push({ name: skillName, description: meta.description, external: true })
           } catch {}
         }
       }
@@ -145,6 +143,15 @@ function collectEntries(
     }
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function parseFrontmatter(content: string): { description?: string | undefined; name?: string | undefined } {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+
+  const meta = yamlParse(match[1]!)
+  if (!meta || typeof meta !== 'object') return {}
+  return meta as { description?: string | undefined; name?: string | undefined }
 }
 
 /** Resolves the package root from the executing bin script (`process.argv[1]`). Walks up from the bin's directory looking for `package.json`. Falls back to `process.cwd()`. */
