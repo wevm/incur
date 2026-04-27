@@ -978,6 +978,22 @@ describe('serve', () => {
     expect(output).not.toContain('Error: missing required argument <address>')
   })
 
+  test('ValidationError shows missing required options in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('send', {
+      options: z.object({ address: z.string() }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['send'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Error: missing required option --address')
+  })
+
   test('ValidationError shows invalid enum messages in TTY', async () => {
     ;(process.stdout as any).isTTY = true
     const cli = Cli.create('test')
@@ -2417,6 +2433,7 @@ describe('env', () => {
   })
 
   test('env validation error for missing required var', async () => {
+    ;(process.stdout as any).isTTY = true
     const cli = Cli.create('test')
     cli.command('deploy', {
       env: z.object({
@@ -2428,8 +2445,29 @@ describe('env', () => {
     })
 
     const { output, exitCode } = await serve(cli, ['deploy'], { env: {} })
+    ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
-    expect(output).toContain('Error')
+    expect(output).toContain('Error: missing required environment variable API_TOKEN')
+  })
+
+  test('env validation error for invalid var shows human message in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('deploy', {
+      env: z.object({
+        API_TOKEN: z.string().min(8).describe('Auth token'),
+      }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['deploy'], { env: { API_TOKEN: 'short' } })
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain(
+      'Error: invalid value for environment variable API_TOKEN: Too small: expected string to have >=8 characters',
+    )
   })
 
   test('env with defaults works when var is unset', async () => {

@@ -1890,24 +1890,36 @@ function formatHumanValidationLine(
   error: FieldError,
 ): string {
   const target = formatValidationTarget(command, error.path)
-  if (error.missing) return `Error: missing required argument ${target}`
-  return `Error: invalid value for ${target}: ${error.message}`
+  if (error.missing) return `Error: missing required ${target.kind} ${target.label}`
+  if (target.kind === 'environment variable')
+    return `Error: invalid value for environment variable ${target.label}: ${error.message}`
+  return `Error: invalid value for ${target.label}: ${error.message}`
 }
 
-/** @internal Formats a field path as an option flag or positional placeholder. */
+type ValidationTarget = {
+  kind: 'argument' | 'environment variable' | 'option'
+  label: string
+}
+
+/** @internal Formats a field path as an option flag, env name, or positional placeholder. */
 function formatValidationTarget(
   command: CommandDefinition<any, any, any>,
   path: string,
-): string {
+): ValidationTarget {
   const [head, ...tail] = path.split('.')
-  if (!head) return 'input'
+  if (!head) return { kind: 'argument', label: 'input' }
 
   if (command.options?.shape[head]) {
     const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
-    return `--${toKebab(head)}${suffix}`
+    return { kind: 'option', label: `--${toKebab(head)}${suffix}` }
   }
 
-  return `<${path}>`
+  if (command.env?.shape[head]) {
+    const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
+    return { kind: 'environment variable', label: `${head}${suffix}` }
+  }
+
+  return { kind: 'argument', label: `<${path}>` }
 }
 
 /** @internal Resolves a command from the tree by walking tokens until a leaf is found. */
