@@ -7,7 +7,17 @@ export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl'
 /** Serializes a value to the specified format. Defaults to TOON. */
 export function format(value: unknown, fmt: Format = 'toon'): string {
   if (value == null) return ''
-  if (fmt === 'json') return JSON.stringify(value, null, 2)
+  if (fmt === 'json') {
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return JSON.stringify(JSON.parse(value), null, 2)
+        } catch {}
+      }
+    }
+    return JSON.stringify(value, null, 2)
+  }
   if (fmt === 'yaml') return yamlStringify(value)
   if (fmt === 'md') return formatMarkdown(value)
   if (fmt === 'jsonl') {

@@ -995,6 +995,17 @@ describe('serve', () => {
     expect(JSON.parse(output)).toEqual({ pong: true })
   })
 
+  test('--json parses top-level JSON strings instead of quoting them again', async () => {
+    const cli = Cli.create('test')
+    cli.command('snapshot', {
+      output: z.string(),
+      run: () => JSON.stringify({ url: 'https://example.com/', title: '' }),
+    })
+
+    const { output } = await serve(cli, ['snapshot', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'https://example.com/', title: '' })
+  })
+
   test('--full-output --format json outputs full envelope as JSON', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })

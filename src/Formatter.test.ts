@@ -81,6 +81,16 @@ describe('format', () => {
     expect(Formatter.format('hello world', 'md')).toBe('hello world')
   })
 
+  test('formats JSON object strings as JSON', () => {
+    const result = Formatter.format('{"url":"https://example.com/","title":""}', 'json')
+    expect(result).toMatchInlineSnapshot(`
+      "{
+        "url": "https://example.com/",
+        "title": ""
+      }"
+    `)
+  })
+
   test('formats number value', () => {
     expect(Formatter.format(42)).toBe('42')
     expect(Formatter.format(42, 'json')).toBe('42')
