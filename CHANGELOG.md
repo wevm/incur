@@ -1,5 +1,12 @@
 # incur
 
+## 0.4.5
+
+### Patch Changes
+
+- 85e98bc: Fixed `--json` to emit parsed JSON objects and arrays instead of double-encoding top-level JSON strings.
+- 3124fe7: Clarified TTY validation output for missing options and environment variables.
+
 ## 0.4.4
 
 ### Patch Changes
