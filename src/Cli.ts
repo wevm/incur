@@ -1864,7 +1864,16 @@ function formatHumanValidationError(
   configFlag?: string,
 ): string {
   const lines: string[] = []
-  for (const fe of error.fieldErrors) lines.push(formatHumanValidationLine(command, fe))
+  for (const fe of error.fieldErrors) {
+    const line = (() => {
+      const target = formatValidationTarget(command, fe.path)
+      if (fe.missing) return `Error: missing required ${target.kind} ${target.label}`
+      if (target.kind === 'environment variable')
+        return `Error: invalid value for environment variable ${target.label}: ${fe.message}`
+      return `Error: invalid value for ${target.label}: ${fe.message}`
+    })()
+    lines.push(line)
+  }
   lines.push('See below for usage.')
   lines.push('')
   lines.push(
@@ -1884,42 +1893,19 @@ function formatHumanValidationError(
   return lines.join('\n')
 }
 
-/** @internal Formats a single human-readable validation issue. */
-function formatHumanValidationLine(
-  command: CommandDefinition<any, any, any>,
-  error: FieldError,
-): string {
-  const target = formatValidationTarget(command, error.path)
-  if (error.missing) return `Error: missing required ${target.kind} ${target.label}`
-  if (target.kind === 'environment variable')
-    return `Error: invalid value for environment variable ${target.label}: ${error.message}`
-  return `Error: invalid value for ${target.label}: ${error.message}`
-}
-
-type ValidationTarget = {
-  kind: 'argument' | 'environment variable' | 'option'
-  label: string
-}
-
 /** @internal Formats a field path as an option flag, env name, or positional placeholder. */
-function formatValidationTarget(
-  command: CommandDefinition<any, any, any>,
-  path: string,
-): ValidationTarget {
+function formatValidationTarget(command: CommandDefinition<any, any, any>, path: string) {
   const [head, ...tail] = path.split('.')
-  if (!head) return { kind: 'argument', label: 'input' }
-
+  if (!head) return { kind: 'argument', label: 'input' } as const
   if (command.options?.shape[head]) {
     const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
-    return { kind: 'option', label: `--${toKebab(head)}${suffix}` }
+    return { kind: 'option', label: `--${toKebab(head)}${suffix}` } as const
   }
-
   if (command.env?.shape[head]) {
     const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
-    return { kind: 'environment variable', label: `${head}${suffix}` }
+    return { kind: 'environment variable', label: `${head}${suffix}` } as const
   }
-
-  return { kind: 'argument', label: `<${path}>` }
+  return { kind: 'argument', label: `<${path}>` } as const
 }
 
 /** @internal Resolves a command from the tree by walking tokens until a leaf is found. */
