@@ -263,6 +263,8 @@ function zodParse(schema: z.ZodObject<any>, data: Record<string, unknown>) {
   } catch (err: any) {
     const issues: any[] = err?.issues ?? err?.error?.issues ?? []
     const fieldErrors: FieldError[] = issues.map((issue: any) => ({
+      code: issue.code,
+      missing: !hasPath(data, issue.path ?? []),
       path: (issue.path ?? []).join('.'),
       expected: issue.expected ?? '',
       received: issue.received ?? '',
@@ -274,6 +276,20 @@ function zodParse(schema: z.ZodObject<any>, data: Record<string, unknown>) {
       cause: err instanceof Error ? err : undefined,
     })
   }
+}
+
+/** Checks whether the raw input contains the full issue path. */
+function hasPath(data: Record<string, unknown>, path: PropertyKey[]): boolean {
+  if (path.length === 0) return true
+
+  let current: unknown = data
+  for (const part of path) {
+    if (!isRecord(current) && !Array.isArray(current)) return false
+    if (!(part in current)) return false
+    current = (current as any)[part]
+  }
+
+  return true
 }
 
 /** Parses environment variables against a Zod schema. Falls back to `process.env` → `Deno.env` when no source is provided. */
