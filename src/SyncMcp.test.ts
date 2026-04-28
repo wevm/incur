@@ -123,6 +123,57 @@ test('register with agents: ["amp"] skips add-mcp', async () => {
   expect(result.agents).toEqual(['Amp'])
 })
 
+test('register handles quoted command paths with spaces', async () => {
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', {
+    command: '"/path/to my/cli" --mcp',
+    agents: ['amp'],
+  })
+
+  expect(result.agents).toEqual(['Amp'])
+
+  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  expect(config['amp.mcpServers']['my-cli']).toEqual({
+    command: '/path/to my/cli',
+    args: ['--mcp'],
+  })
+})
+
+test('register uses bare name for global binary installs', async () => {
+  // Simulate global install: argv[1] is outside node_modules
+  process.argv[1] = '/usr/local/bin/my-cli'
+
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', { agents: ['amp'] })
+
+  expect(result.command).toBe('my-cli --mcp')
+
+  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  expect(config['amp.mcpServers']['my-cli']).toEqual({
+    command: 'my-cli',
+    args: ['--mcp'],
+  })
+})
+
+test('register uses runner for node_modules installs', async () => {
+  process.argv[1] = join(tmp, 'node_modules', '.bin', 'my-cli')
+
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', { agents: ['amp'] })
+
+  // Should include a runner prefix (npx, pnpx, or bunx)
+  expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
+  expect(result.command).toContain('--mcp')
+})
+
 test('register writes amp config to existing settings', async () => {
   const configDir = join(fakeHome!, '.config', 'amp')
   mkdirSync(configDir, { recursive: true })
