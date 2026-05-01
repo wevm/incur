@@ -1,4 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
+import { parse as yamlParse } from 'yaml'
+import { z } from 'zod'
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
@@ -31,6 +33,89 @@ function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
 function json(output: string) {
   return JSON.parse(output.replace(/"duration": "[^"]+"/g, '"duration": "<stripped>"'))
 }
+
+describe('fromCli', () => {
+  test('generates OpenAPI 3.2 paths with inferred methods', () => {
+    const cli = Cli.create('api', { description: 'API', version: '1.2.3' })
+      .command('users list', {
+        description: 'List users',
+        options: z.object({ limit: z.coerce.number().optional() }),
+        output: z.object({ users: z.array(z.object({ id: z.string() })) }),
+        run() {
+          return { users: [] }
+        },
+      })
+      .command('users update', {
+        description: 'Update a user',
+        args: z.object({ id: z.string() }),
+        options: z.object({ name: z.string() }),
+        run() {
+          return { ok: true }
+        },
+      })
+      .command('users delete', {
+        args: z.object({ id: z.string() }),
+        run() {
+          return { ok: true }
+        },
+      })
+
+    const spec = Openapi.fromCli(cli)
+    expect(spec.openapi).toBe('3.2.0')
+    expect(spec.info).toEqual({ title: 'api', version: '0.0.0', description: 'API' })
+    expect(spec.paths?.['/users/list']?.get).toMatchObject({
+      operationId: 'getUsersList',
+      summary: 'List users',
+      parameters: [{ name: 'limit', in: 'query', schema: { type: 'number' } }],
+    })
+    expect(spec.paths?.['/users/update/{id}']?.patch).toMatchObject({
+      operationId: 'patchUsersUpdateId',
+      summary: 'Update a user',
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['name'],
+              properties: { name: { type: 'string' } },
+            },
+          },
+        },
+      },
+    })
+    expect(spec.paths?.['/users/delete/{id}']?.delete).toMatchObject({
+      operationId: 'deleteUsersDeleteId',
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+    })
+  })
+
+  test('serves generated OpenAPI schema', async () => {
+    const cli = Cli.create('api', { description: 'API' }).command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+
+    const jsonResponse = await cli.fetch(new Request('http://localhost/openapi.json'))
+    const json = await jsonResponse.json()
+    expect(json.openapi).toBe('3.2.0')
+    expect(json.paths['/status'].get.operationId).toBe('getStatus')
+
+    const wellKnownResponse = await cli.fetch(
+      new Request('http://localhost/.well-known/openapi.json'),
+    )
+    expect(await wellKnownResponse.json()).toMatchObject(json)
+
+    const ymlResponse = await cli.fetch(new Request('http://localhost/openapi.yml'))
+    expect(ymlResponse.headers.get('content-type')).toBe('application/yaml')
+    expect(yamlParse(await ymlResponse.text()).paths['/status'].get.operationId).toBe('getStatus')
+
+    const yamlResponse = await cli.fetch(new Request('http://localhost/openapi.yaml'))
+    expect(yamlParse(await yamlResponse.text()).openapi).toBe('3.2.0')
+  })
+})
 
 describe('generateCommands', () => {
   test('generates command entries from spec', async () => {

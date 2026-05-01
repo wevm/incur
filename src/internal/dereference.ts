@@ -69,7 +69,8 @@ function resolvePointer(root: unknown, pointer: string): unknown {
     if (typeof current !== 'object' || current === null)
       throw new Error(`Cannot resolve $ref "${pointer}": path segment "${part}" not found`)
     current = (current as Record<string, unknown>)[part]
-    if (current === undefined) throw new Error(`Cannot resolve $ref "${pointer}": "${part}" not found`)
+    if (current === undefined)
+      throw new Error(`Cannot resolve $ref "${pointer}": "${part}" not found`)
   }
   return current
 }

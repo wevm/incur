@@ -337,6 +337,8 @@ $ my-cli api createUser --name Bob
 # → name: Bob
 ```
 
+When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
+
 ### Serve CLIs as APIs
 
 The inverse of mounting — expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.
