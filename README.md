@@ -337,21 +337,6 @@ $ my-cli api createUser --name Bob
 # → name: Bob
 ```
 
-Incur can also generate an OpenAPI 3.2 document from your CLI:
-
-```ts
-import { Cli, Openapi, z } from 'incur'
-
-const cli = Cli.create('my-cli', { description: 'My CLI' }).command('users list', {
-  options: z.object({ limit: z.coerce.number().optional() }),
-  run() {
-    return { users: [] }
-  },
-})
-
-const spec = Openapi.fromCli(cli)
-```
-
 When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
 
 ### Serve CLIs as APIs
