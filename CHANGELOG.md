@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.6
+
+### Patch Changes
+
+- ed18ddc: Added support for automatic OpenAPI v3.2.0 schema generation
+
 ## 0.4.5
 
 ### Patch Changes
