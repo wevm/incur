@@ -163,7 +163,8 @@ export async function list(
         try {
           const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
           const meta = parseFrontmatter(content)
-          const skillName = pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
+          const skillName =
+            pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
           if (!skills.some((s) => s.name === skillName)) {
             skills.push({
               name: skillName,
@@ -279,7 +280,10 @@ function collectEntries(
   return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
-function parseFrontmatter(content: string): { description?: string | undefined; name?: string | undefined } {
+function parseFrontmatter(content: string): {
+  description?: string | undefined
+  name?: string | undefined
+} {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
 

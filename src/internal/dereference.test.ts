@@ -434,10 +434,7 @@ describe('dereference', () => {
         },
       },
       root: {
-        allOf: [
-          { $ref: '#/components/schemas/Name' },
-          { $ref: '#/components/schemas/Age' },
-        ],
+        allOf: [{ $ref: '#/components/schemas/Name' }, { $ref: '#/components/schemas/Age' }],
       },
     }
     const result = dereference(spec) as any

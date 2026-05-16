@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import { parse as yamlParse } from 'yaml'
+import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Completions from './Completions.js'
@@ -276,6 +276,7 @@ export function create(
     async fetch(req: Request) {
       if (pending.length > 0) await Promise.all(pending)
       return fetchImpl(name, commands, req, {
+        description: def.description,
         envSchema: def.env,
         mcpHandler,
         middlewares,
@@ -1516,6 +1517,8 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    /** CLI description. */
+    description?: string | undefined
     /** CLI-level env schema. */
     envSchema?: z.ZodObject<any> | undefined
     /** Group-level middleware collected during command resolution. */
@@ -1596,6 +1599,31 @@ function createMcpHttpHandler(name: string, version: string) {
   }
 }
 
+function isOpenapiRoute(segments: string[]) {
+  if (segments.length === 1)
+    return (
+      segments[0] === 'openapi.json' ||
+      segments[0] === 'openapi.yml' ||
+      segments[0] === 'openapi.yaml'
+    )
+  return segments[0] === '.well-known' && segments[1] === 'openapi.json' && segments.length === 2
+}
+
+function generatedOpenapi(
+  name: string,
+  commands: Map<string, CommandEntry>,
+  options: fetchImpl.Options,
+) {
+  const openapiCli = { name, description: options.description } as Cli
+  toCommands.set(openapiCli, commands)
+  if (options.rootCommand) toRootDefinition.set(openapiCli as unknown as Root, options.rootCommand)
+  return Openapi.fromCli(openapiCli, {
+    title: name,
+    ...(options.version ? { version: options.version } : undefined),
+    ...(options.description ? { description: options.description } : undefined),
+  })
+}
+
 /** @internal Handles an HTTP request by resolving a command and returning a JSON Response. */
 async function fetchImpl(
   name: string,
@@ -1607,6 +1635,19 @@ async function fetchImpl(
 
   const url = new URL(req.url)
   const segments = url.pathname.split('/').filter(Boolean)
+
+  // OpenAPI discovery: route /openapi.json, /openapi.yml, /openapi.yaml, and /.well-known/openapi.json
+  if (req.method === 'GET' && isOpenapiRoute(segments)) {
+    const spec = generatedOpenapi(name, commands, options)
+    const yaml = segments[0] === 'openapi.yml' || segments[0] === 'openapi.yaml'
+    return new Response(yaml ? yamlStringify(spec) : JSON.stringify(spec), {
+      status: 200,
+      headers: {
+        'content-type': yaml ? 'application/yaml' : 'application/json',
+        'cache-control': 'public, max-age=300',
+      },
+    })
+  }
 
   // MCP over HTTP: route /mcp to the MCP transport
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)

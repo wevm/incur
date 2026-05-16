@@ -17,6 +17,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+      '@scalar/openapi-types':
+        specifier: ^0.8.0
+        version: 0.8.0
       '@toon-format/toon':
         specifier: ^2.1.0
         version: 2.1.0
@@ -829,6 +832,10 @@ packages:
     resolution: {integrity: sha512-2HRCml6OztYXyJXAvdDXPKcawukWY2GpR5/nxKp4iBgiO3wcoEGkAaqctIbZcNB6KlUQBIqt8VYkNSj2397EfA==}
     cpu: [x64]
     os: [win32]
+
+  '@scalar/openapi-types@0.8.0':
+    resolution: {integrity: sha512-WmaxVSfvY5K/TwcG2B2TU1WOe1As1uc2s7myswtP6dBlcjU3hM08SApxv/jmyGaCE8t4gO5BBhmHY4pDUfmr2g==}
+    engines: {node: '>=22'}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -2019,6 +2026,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.59.0':
     optional: true
+
+  '@scalar/openapi-types@0.8.0': {}
 
   '@standard-schema/spec@1.1.0': {}
 
