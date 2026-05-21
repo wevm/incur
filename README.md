@@ -879,6 +879,29 @@ Precedence is `argv > config > zod defaults`. Only command `options` are loaded 
 
 Use `incur gen` to auto-generate a `config.schema.json` to distribute with your CLI for consumer autocomplete.
 
+Use `incur gen --client` to also generate a typed TypeScript client module:
+
+```sh
+incur gen --entry ./src/cli.ts --client
+```
+
+The generated client calls the CLI over `POST /_incur/rpc` with structured `args` and `options`.
+Command and group names are preserved exactly as property keys. Identifier-safe names work with dot
+notation, and names with punctuation, spaces, reserved words, or other special keys use bracket
+notation:
+
+```ts
+import { Client } from 'incur'
+import { createMyCliClient } from './incur.client.js'
+
+const client = createMyCliClient({
+  transport: Client.http('https://example.com'),
+})
+
+await client.users.list({ limit: 10 })
+await client['user-profile'].get({ id: 'alice' })
+```
+
 ### Filtering output
 
 Use `--filter-output` to prune command output to specific keys. Supports dot-notation for nested keys, array slices, and comma-separated paths:

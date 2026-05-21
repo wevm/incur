@@ -118,6 +118,8 @@ describe('fromCli', () => {
 })
 
 describe('generateCommands', () => {
+  const fetch = () => new Response('{}')
+
   test('generates command entries from spec', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch)
     expect(commands.has('listUsers')).toBe(true)
@@ -138,6 +140,138 @@ describe('generateCommands', () => {
     const cmd = commands.get('listUsers')!
     const limitSchema = cmd.options!.shape.limit
     expect(limitSchema.description).toBe('Max results')
+  })
+
+  test('attaches output from 200 JSON response schema', async () => {
+    const commands = await Openapi.generateCommands(
+      {
+        paths: {
+          '/users': {
+            get: {
+              operationId: 'listUsers',
+              responses: {
+                '200': {
+                  description: 'OK',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        required: ['users'],
+                        properties: { users: { type: 'array', items: { type: 'string' } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      fetch,
+    )
+
+    const output = commands.get('listUsers')!.output
+    expect(output).toBeDefined()
+    expect(output!.safeParse({ users: ['Alice'] }).success).toBe(true)
+    expect(output!.safeParse({ users: [1] }).success).toBe(false)
+  })
+
+  test('prefers 200 over other 2xx JSON response schemas', async () => {
+    const commands = await Openapi.generateCommands(
+      {
+        paths: {
+          '/choice': {
+            get: {
+              operationId: 'choice',
+              responses: {
+                '201': {
+                  description: 'Created',
+                  content: { 'application/json': { schema: { type: 'number' } } },
+                },
+                '200': {
+                  description: 'OK',
+                  content: { 'application/json': { schema: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      fetch,
+    )
+
+    const output = commands.get('choice')!.output!
+    expect(output.safeParse('ok').success).toBe(true)
+    expect(output.safeParse(1).success).toBe(false)
+  })
+
+  test('falls back to first 2xx JSON response schema', async () => {
+    const commands = await Openapi.generateCommands(
+      {
+        paths: {
+          '/users': {
+            post: {
+              operationId: 'createUser',
+              responses: {
+                '201': {
+                  description: 'Created',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        required: ['created'],
+                        properties: { created: { type: 'boolean' } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      fetch,
+    )
+
+    const output = commands.get('createUser')!.output
+    expect(output).toBeDefined()
+    expect(output!.safeParse({ created: true }).success).toBe(true)
+    expect(output!.safeParse({ created: 'yes' }).success).toBe(false)
+  })
+
+  test('uses default response only when it has a JSON schema', async () => {
+    const commands = await Openapi.generateCommands(
+      {
+        paths: {
+          '/fallback': {
+            get: {
+              operationId: 'fallback',
+              responses: {
+                default: {
+                  description: 'Default',
+                  content: { 'application/json': { schema: { type: 'boolean' } } },
+                },
+              },
+            },
+          },
+          '/download': {
+            get: {
+              operationId: 'download',
+              responses: {
+                default: {
+                  description: 'Default',
+                  content: { 'text/plain': { schema: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      fetch,
+    )
+
+    expect(commands.get('fallback')!.output!.safeParse(true).success).toBe(true)
+    expect(commands.get('download')!.output).toBeUndefined()
   })
 })
 
@@ -395,6 +529,23 @@ describe('@hono/zod-openapi integration', () => {
       'json',
     ])
     expect(json(output).limit).toBe(3)
+  })
+
+  test('generated commands include output schemas from zod-openapi responses', async () => {
+    const commands = await Openapi.generateCommands(openapiSpec, openapiApp.fetch)
+
+    const listUsers = commands.get('listUsers')!.output
+    expect(listUsers).toBeDefined()
+    expect(listUsers!.safeParse({ users: [{ id: 1, name: 'Alice' }], limit: 10 }).success).toBe(
+      true,
+    )
+    expect(listUsers!.safeParse({ users: [{ id: '1', name: 'Alice' }], limit: 10 }).success).toBe(
+      false,
+    )
+
+    const createUser = commands.get('createUser')!.output
+    expect(createUser).toBeDefined()
+    expect(createUser!.safeParse({ created: true, name: 'Bob' }).success).toBe(true)
   })
 })
 

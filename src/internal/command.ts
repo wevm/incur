@@ -82,11 +82,15 @@ export async function execute(command: any, options: execute.Options): Promise<e
       const parsed = Parser.parse(argv, { args: command.args })
       args = parsed.args
       parsedOptions = command.options ? command.options.parse(inputOptions) : {}
-    } else {
+    } else if (parseMode === 'flat') {
       // MCP mode: all params come from inputOptions, split into args vs options
       const split = splitParams(inputOptions, command)
       args = command.args ? command.args.parse(split.args) : {}
       parsedOptions = command.options ? command.options.parse(split.options) : {}
+    } else {
+      // RPC mode: args and options are already separate structured objects
+      args = command.args ? command.args.parse(options.inputArgs ?? {}) : {}
+      parsedOptions = command.options ? command.options.parse(inputOptions) : {}
     }
 
     // Parse env
@@ -296,8 +300,11 @@ export declare namespace execute {
      * - `'argv'` (default): parse both args and options from argv tokens (CLI mode)
      * - `'split'`: args from argv, options from inputOptions (HTTP mode)
      * - `'flat'`: all params from inputOptions, split by schema shapes (MCP mode)
+     * - `'structured'`: args from inputArgs, options from inputOptions (RPC mode)
      */
-    parseMode?: 'argv' | 'split' | 'flat' | undefined
+    parseMode?: 'argv' | 'split' | 'flat' | 'structured' | undefined
+    /** Raw parsed args for structured transports. */
+    inputArgs?: Record<string, unknown> | undefined
     /** The resolved command path. */
     path: string
     /** Vars schema for middleware variables. */

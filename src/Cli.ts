@@ -320,7 +320,14 @@ export function create(
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
+  toPending.set(cli, pending)
   return cli
+}
+
+/** Waits for async CLI registration work, such as OpenAPI command generation, to finish. */
+export async function ready(cli: Cli): Promise<void> {
+  const pending = toPending.get(cli)
+  if (pending?.length) await Promise.all(pending)
 }
 
 export declare namespace create {
@@ -1523,6 +1530,7 @@ declare namespace fetchImpl {
     envSchema?: z.ZodObject<any> | undefined
     /** Group-level middleware collected during command resolution. */
     groupMiddlewares?: MiddlewareHandler[] | undefined
+    structuredArgs?: Record<string, unknown> | undefined
     mcpHandler?:
       | ((
           req: Request,
@@ -1657,6 +1665,15 @@ async function fetchImpl(
       vars: options.vars,
     })
 
+  // Generated client RPC: route POST /_incur/rpc with structured args/options.
+  if (
+    req.method === 'POST' &&
+    segments[0] === '_incur' &&
+    segments[1] === 'rpc' &&
+    segments.length === 2
+  )
+    return executeRpcCommand(name, commands, req, start, options)
+
   // .well-known/skills/ — Agent Skills Discovery (RFC)
   if (
     segments[0] === '.well-known' &&
@@ -1776,6 +1793,135 @@ async function fetchImpl(
   })
 }
 
+/** @internal Executes a generated-client RPC request. */
+async function executeRpcCommand(
+  name: string,
+  commands: Map<string, CommandEntry>,
+  req: Request,
+  start: number,
+  options: fetchImpl.Options,
+): Promise<Response> {
+  function jsonResponse(body: unknown, status: number) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse(
+      {
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Request body must be JSON.' },
+        meta: { command: '/_incur/rpc', duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      400,
+    )
+  }
+
+  if (!isRecord(body))
+    return jsonResponse(
+      {
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Request body must be an object.' },
+        meta: { command: '/_incur/rpc', duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      400,
+    )
+
+  const pathValue = body.path ?? []
+  if (!Array.isArray(pathValue) || pathValue.some((segment) => typeof segment !== 'string'))
+    return jsonResponse(
+      {
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '`path` must be an array of strings.' },
+        meta: { command: '/_incur/rpc', duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      400,
+    )
+
+  const args = body.args === undefined ? {} : body.args
+  const rpcOptions = body.options === undefined ? {} : body.options
+  if (!isRecord(args) || !isRecord(rpcOptions))
+    return jsonResponse(
+      {
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '`args` and `options` must be objects.' },
+        meta: { command: '/_incur/rpc', duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      400,
+    )
+
+  if (pathValue.length === 0) {
+    if (options.rootCommand)
+      return executeCommand(name, options.rootCommand, [], rpcOptions, start, {
+        ...options,
+        structuredArgs: args,
+      })
+    return jsonResponse(
+      {
+        ok: false,
+        error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' },
+        meta: { command: '/', duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      404,
+    )
+  }
+
+  const resolved = resolveExactCommand(commands, pathValue)
+  if ('error' in resolved) {
+    const parent = resolved.path ? `${name} ${resolved.path}` : name
+    const suggestion = suggest(resolved.error, resolved.commands.keys())
+    const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+    return jsonResponse(
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.error}' is not a command for '${parent}'.${didYouMean}`,
+        },
+        meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      404,
+    )
+  }
+
+  if ('help' in resolved)
+    return jsonResponse(
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.path}' is a command group. Specify a subcommand.`,
+        },
+        meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      404,
+    )
+
+  if ('fetchGateway' in resolved)
+    return jsonResponse(
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.path}' is a fetch command, not an RPC command.`,
+        },
+        meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` },
+      },
+      404,
+    )
+
+  return executeCommand(resolved.path, resolved.command, [], rpcOptions, start, {
+    ...options,
+    groupMiddlewares: resolved.middlewares,
+    structuredArgs: args,
+  })
+}
+
 /** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
 async function executeCommand(
   path: string,
@@ -1804,10 +1950,11 @@ async function executeCommand(
     env: options.envSchema,
     format: 'json',
     formatExplicit: true,
+    inputArgs: options.structuredArgs,
     inputOptions,
     middlewares: allMiddleware,
     name: options.name ?? path,
-    parseMode: 'split',
+    parseMode: options.structuredArgs !== undefined ? 'structured' : 'split',
     path,
     vars: options.vars,
     version: options.version,
@@ -2044,6 +2191,40 @@ function resolveCommand(
     rest: remaining,
     ...(outputPolicy ? { outputPolicy } : undefined),
   }
+}
+
+/** @internal Resolves a command from exact path segments for structured RPC. */
+function resolveExactCommand(
+  commands: Map<string, CommandEntry>,
+  tokens: string[],
+):
+  | {
+      command: CommandDefinition<any, any, any>
+      middlewares: MiddlewareHandler[]
+      outputPolicy?: OutputPolicy | undefined
+      path: string
+    }
+  | {
+      fetchGateway: InternalFetchGateway
+      middlewares: MiddlewareHandler[]
+      outputPolicy?: OutputPolicy | undefined
+      path: string
+    }
+  | {
+      help: true
+      path: string
+      description?: string | undefined
+      commands: Map<string, CommandEntry>
+    }
+  | { error: string; path: string; commands: Map<string, CommandEntry> } {
+  const resolved = resolveCommand(commands, tokens)
+  if (('command' in resolved || 'fetchGateway' in resolved) && resolved.rest.length > 0)
+    return {
+      error: resolved.rest[0]!,
+      path: resolved.path,
+      commands: new Map(),
+    }
+  return resolved
 }
 
 /** @internal Options for serveImpl, extending public serve.Options with internal metadata. */
@@ -2473,6 +2654,9 @@ function resolveAlias(
 
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
+
+/** @internal Maps CLI instances to pending async registration work. */
+const toPending = new WeakMap<Cli, Promise<void>[]>()
 
 /** @internal Maps CLI instances to their middleware arrays. */
 const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()

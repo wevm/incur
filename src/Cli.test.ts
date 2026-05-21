@@ -4201,6 +4201,173 @@ describe('fetch', () => {
     `)
   })
 
+  test('POST /_incur/rpc → executes command with structured args and options', async () => {
+    const sub = Cli.create('api')
+    sub.command('echo', {
+      args: z.object({ value: z.string() }),
+      options: z.object({ value: z.string() }),
+      run: (c) => ({ arg: c.args.value, option: c.options.value }),
+    })
+    const cli = Cli.create('test')
+    cli.command(sub)
+    const req = new Request('http://localhost/_incur/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        path: ['api', 'echo'],
+        args: { value: 'from args' },
+        options: { value: 'from options' },
+      }),
+    })
+    expect(await fetchJson(cli, req)).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "arg": "from args",
+            "option": "from options",
+          },
+          "meta": {
+            "command": "api echo",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('POST /_incur/rpc with omitted or empty path → root command', async () => {
+    const cli = Cli.create('test', {
+      args: z.object({ name: z.string().default('world') }),
+      options: z.object({ excited: z.boolean().default(false) }),
+      run: (c) => ({ message: `hello ${c.args.name}${c.options.excited ? '!' : ''}` }),
+    })
+    const req = new Request('http://localhost/_incur/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ args: { name: 'rpc' }, options: { excited: true } }),
+    })
+    expect(await fetchJson(cli, req)).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "message": "hello rpc!",
+          },
+          "meta": {
+            "command": "test",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+    const emptyPathReq = new Request('http://localhost/_incur/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: [], args: { name: 'root' } }),
+    })
+    const { body } = await fetchJson(cli, emptyPathReq)
+    expect(body.data).toEqual({ message: 'hello root' })
+  })
+
+  test('POST /_incur/rpc resolves exact command paths only', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      args: z.object({ id: z.coerce.number() }),
+      run: (c) => ({ id: c.args.id }),
+    })
+    const req = new Request('http://localhost/_incur/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: ['users', '42'] }),
+    })
+    const { status, body } = await fetchJson(cli, req)
+    expect(status).toBe(404)
+    expect(body.error).toMatchInlineSnapshot(`
+      {
+        "code": "COMMAND_NOT_FOUND",
+        "message": "'42' is not a command for 'test users'.",
+      }
+    `)
+  })
+
+  test('POST /_incur/rpc preserves alias path names exactly', async () => {
+    const cli = Cli.create('test')
+    cli.command('login', {
+      aliases: ['sign-in'],
+      run: () => ({ ok: true }),
+    })
+
+    expect(
+      await fetchJson(
+        cli,
+        new Request('http://localhost/_incur/rpc', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: ['sign-in'] }),
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "ok": true,
+          },
+          "meta": {
+            "command": "sign-in",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
+  test('POST /_incur/rpc validates structured body shape', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ ok: true }) })
+
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: ['ping'], args: [] }),
+      }),
+    )
+
+    expect(status).toBe(400)
+    expect(body.error).toEqual({
+      code: 'VALIDATION_ERROR',
+      message: '`args` and `options` must be objects.',
+    })
+  })
+
+  test('POST /_incur/rpc rejects fetch gateways', async () => {
+    const cli = Cli.create('test')
+    cli.command('api', {
+      fetch: () => new Response(JSON.stringify({ ok: true })),
+    })
+
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: ['api'] }),
+      }),
+    )
+
+    expect(status).toBe(404)
+    expect(body.error).toEqual({
+      code: 'COMMAND_NOT_FOUND',
+      message: "'api' is a fetch command, not an RPC command.",
+    })
+  })
+
   test('trailing path segments → positional args', async () => {
     const cli = Cli.create('test')
     cli.command('users', {
@@ -4311,6 +4478,53 @@ describe('fetch', () => {
         {
           "data": {
             "progress": 2,
+          },
+          "type": "chunk",
+        },
+        {
+          "meta": {
+            "command": "stream",
+          },
+          "ok": true,
+          "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('POST /_incur/rpc supports async generator streaming response', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      args: z.object({ prefix: z.string() }),
+      async *run(c) {
+        yield { value: `${c.args.prefix}-1` }
+        yield { value: `${c.args.prefix}-2` }
+      },
+    })
+    const res = await cli.fetch(
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: ['stream'], args: { prefix: 'rpc' } }),
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/x-ndjson')
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "value": "rpc-1",
+          },
+          "type": "chunk",
+        },
+        {
+          "data": {
+            "value": "rpc-2",
           },
           "type": "chunk",
         },

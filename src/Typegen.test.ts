@@ -16,8 +16,8 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'get': { args: { id: number }; options: {} }
-            'list': { args: {}; options: { limit: number } }
+            "get": { args: { "id": number }; options: {} }
+            "list": { args: {}; options: { "limit": number } }
           }
         }
       }
@@ -32,7 +32,7 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'ping': { args: {}; options: {} }
+            "ping": { args: {}; options: {} }
           }
         }
       }
@@ -57,8 +57,8 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'pr create': { args: { title: string }; options: {} }
-            'pr list': { args: {}; options: { state: string } }
+            "pr create": { args: { "title": string }; options: {} }
+            "pr list": { args: {}; options: { "state": string } }
           }
         }
       }
@@ -80,7 +80,7 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'pr review approve': { args: { id: number }; options: {} }
+            "pr review approve": { args: { "id": number }; options: {} }
           }
         }
       }
@@ -105,7 +105,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('verbose: boolean')
+    expect(output).toContain('"verbose": boolean')
   })
 
   test('array types', () => {
@@ -115,7 +115,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('tags: string[]')
+    expect(output).toContain('"tags": string[]')
   })
 
   test('commands are sorted alphabetically', () => {
@@ -125,7 +125,7 @@ describe('fromCli', () => {
       .command('middle', { run: () => ({}) })
 
     const output = Typegen.fromCli(cli)
-    const commandOrder = [...output.matchAll(/^ {6}'(\w+)':/gm)].map((m) => m[1])
+    const commandOrder = [...output.matchAll(/^ {6}"(\w+)":/gm)].map((m) => m[1])
     expect(commandOrder).toEqual(['alpha', 'middle', 'zebra'])
   })
 
@@ -136,7 +136,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('mode: "strict"')
+    expect(output).toContain('"mode": "strict"')
   })
 
   test('array of union items gets parens', () => {
@@ -146,7 +146,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('values: (string | number)[]')
+    expect(output).toContain('"values": (string | number)[]')
   })
 
   test('null type', () => {
@@ -156,7 +156,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('empty: null')
+    expect(output).toContain('"empty": null')
   })
 
   test('nested object with properties', () => {
@@ -166,7 +166,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('config: { host: string; port: number }')
+    expect(output).toContain('"config": { "host": string; "port": number }')
   })
 
   test('optional properties use optional modifier', () => {
@@ -180,8 +180,8 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('verbose?: boolean')
-    expect(output).toContain('output: string')
+    expect(output).toContain('"verbose"?: boolean | undefined')
+    expect(output).toContain('"output": string')
   })
 
   test('mixed top-level and grouped commands', () => {
@@ -194,8 +194,8 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'ping': { args: {}; options: {} }
-            'pr list': { args: {}; options: {} }
+            "ping": { args: {}; options: {} }
+            "pr list": { args: {}; options: {} }
           }
         }
       }

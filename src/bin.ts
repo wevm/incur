@@ -4,6 +4,7 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import * as Cli from './Cli.js'
+import * as Clientgen from './Clientgen.js'
 import * as ConfigSchema from './internal/configSchema.js'
 import { importCli } from './internal/utils.js'
 import * as Typegen from './Typegen.js'
@@ -18,6 +19,8 @@ const cli = Cli.create('incur', {
 }).command('gen', {
   description: 'Generate type definitions for development.',
   options: z.object({
+    client: z.boolean().optional().describe('Generate a typed client module'),
+    clientOutput: z.string().optional().describe('Typed client output path (absolute)'),
     configSchema: z
       .boolean()
       .optional()
@@ -32,9 +35,17 @@ const cli = Cli.create('incur', {
     const output = c.options.output ?? path.join(dir, 'incur.generated.ts')
 
     const cli = await importCli(entry)
+    await Cli.ready(cli)
     await fs.writeFile(output, Typegen.fromCli(cli))
 
     const result: Record<string, unknown> = { dir, entry, output }
+
+    if (c.options.client) {
+      const clientOutput =
+        c.options.clientOutput ?? path.join(path.dirname(output), 'incur.client.ts')
+      await fs.writeFile(clientOutput, Clientgen.fromCli(cli))
+      result.clientOutput = clientOutput
+    }
 
     const configSchema = c.options.configSchema ?? ConfigSchema.hasConfig(cli)
     if (configSchema) {

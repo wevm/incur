@@ -1603,30 +1603,30 @@ describe('typegen', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'api': { args: {}; options: {} }
-            'auth login': { args: {}; options: { hostname: string; web: boolean; scopes: string[] } }
-            'auth logout': { args: {}; options: {} }
-            'auth status': { args: {}; options: {} }
-            'config': { args: { key?: string }; options: {} }
-            'echo': { args: { message: string; repeat?: number }; options: { upper: boolean; prefix: string } }
-            'explode': { args: {}; options: {} }
-            'explode-clac': { args: {}; options: {} }
-            'noop': { args: {}; options: {} }
-            'ping': { args: {}; options: {} }
-            'project create': { args: { name: string }; options: { description: string; private: boolean } }
-            'project delete': { args: { id: string }; options: { force: boolean } }
-            'project deploy create': { args: { env: string }; options: { branch: string; dryRun: boolean } }
-            'project deploy rollback': { args: { deployId: string }; options: {} }
-            'project deploy status': { args: { deployId: string }; options: {} }
-            'project get': { args: { id: string }; options: {} }
-            'project list': { args: {}; options: { limit: number; sort: "name" | "created" | "updated"; archived: boolean } }
-            'slow': { args: {}; options: {} }
-            'stream': { args: {}; options: {} }
-            'stream-error': { args: {}; options: {} }
-            'stream-ok': { args: {}; options: {} }
-            'stream-text': { args: {}; options: {} }
-            'stream-throw': { args: {}; options: {} }
-            'validate-fail': { args: { email: string; age: number }; options: {} }
+            "api": { args: {}; options: {} }
+            "auth login": { args: {}; options: { "hostname": string; "web": boolean; "scopes": string[] } }
+            "auth logout": { args: {}; options: {} }
+            "auth status": { args: {}; options: {} }
+            "config": { args: { "key"?: string | undefined }; options: {} }
+            "echo": { args: { "message": string; "repeat"?: number | undefined }; options: { "upper": boolean; "prefix": string } }
+            "explode": { args: {}; options: {} }
+            "explode-clac": { args: {}; options: {} }
+            "noop": { args: {}; options: {} }
+            "ping": { args: {}; options: {} }
+            "project create": { args: { "name": string }; options: { "description": string; "private": boolean } }
+            "project delete": { args: { "id": string }; options: { "force": boolean } }
+            "project deploy create": { args: { "env": string }; options: { "branch": string; "dryRun": boolean } }
+            "project deploy rollback": { args: { "deployId": string }; options: {} }
+            "project deploy status": { args: { "deployId": string }; options: {} }
+            "project get": { args: { "id": string }; options: {} }
+            "project list": { args: {}; options: { "limit": number; "sort": "name" | "created" | "updated"; "archived": boolean } }
+            "slow": { args: {}; options: {} }
+            "stream": { args: {}; options: {} }
+            "stream-error": { args: {}; options: {} }
+            "stream-ok": { args: {}; options: {} }
+            "stream-text": { args: {}; options: {} }
+            "stream-throw": { args: {}; options: {} }
+            "validate-fail": { args: { "email": string; "age": number }; options: {} }
           }
         }
       }

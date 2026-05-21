@@ -59,7 +59,7 @@ type Operation = {
   operationId?: string | undefined
   parameters?: readonly Parameter[] | undefined
   requestBody?: RequestBody | undefined
-  responses?: Record<string, unknown> | undefined
+  responses?: Record<string, ResponseObject> | undefined
   summary?: string | undefined
 }
 
@@ -76,6 +76,10 @@ type RequestBody = {
   required?: boolean | undefined
 }
 
+type ResponseObject = {
+  content?: Record<string, { schema?: unknown }> | undefined
+}
+
 /** A fetch handler. */
 type FetchHandler = (req: Request) => Response | Promise<Response>
 
@@ -84,6 +88,7 @@ type GeneratedCommand = {
   args?: z.ZodObject<any> | undefined
   description?: string | undefined
   options?: z.ZodObject<any> | undefined
+  output?: z.ZodType | undefined
   run: (context: any) => any
 }
 
@@ -316,11 +321,13 @@ export async function generateCommands(
         optShape[key] = zodType
       }
       const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
+      const outputSchema = responseOutputSchema(op.responses)
 
       commands.set(name, {
         description: op.summary ?? op.description,
         args: argsSchema,
         options: optionsSchema,
+        ...(outputSchema ? { output: outputSchema } : undefined),
         run: createHandler({
           basePath: options.basePath,
           fetch,
@@ -335,6 +342,51 @@ export async function generateCommands(
   }
 
   return commands
+}
+
+function responseOutputSchema(responses: Operation['responses']) {
+  const schema = responseJsonSchema(responses)
+  if (!isJsonSchemaObject(schema)) return undefined
+  try {
+    return toZod(schema)
+  } catch {
+    return undefined
+  }
+}
+
+function responseJsonSchema(responses: Operation['responses']) {
+  if (!responses) return undefined
+
+  const ok200 = jsonContentSchema(responses['200'])
+  if (ok200 !== undefined) return ok200
+
+  for (const [status, response] of Object.entries(responses)) {
+    if (/^2\d\d$/.test(status)) {
+      const schema = jsonContentSchema(response)
+      if (schema !== undefined) return schema
+    }
+  }
+
+  return jsonContentSchema(responses.default)
+}
+
+function jsonContentSchema(response: ResponseObject | undefined) {
+  const content = response?.content
+  if (!content) return undefined
+
+  const exact = content['application/json']?.schema
+  if (exact !== undefined) return exact
+
+  for (const [mediaType, media] of Object.entries(content)) {
+    const type = mediaType.toLowerCase().split(';', 1)[0]?.trim()
+    if (type === 'application/json' || type?.endsWith('+json')) return media.schema
+  }
+
+  return undefined
+}
+
+function isJsonSchemaObject(schema: unknown): schema is Record<string, unknown> {
+  return typeof schema === 'object' && schema !== null && !Array.isArray(schema)
 }
 
 function createHandler(config: {
