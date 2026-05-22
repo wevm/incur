@@ -2,43 +2,53 @@ import { Cli, ClientError, createClient, isClientRpcError, isClientRpcErrorEnvel
 import type { ClientRpcError, ClientRpcErrorEnvelope } from 'incur'
 import { expectTypeOf, test } from 'vitest'
 
-type GeneratedCommands = {
-  ping: {
-    args: {}
-    options: {}
-    output: { ok: boolean }
+// BEGIN generated client round-trip fixture
+/** Command map generated from your incur CLI. */
+export type Commands = {
+  /** Generated command "admin users get". */
+  'admin users get': {
+    args: { id: number }
+    options: { verbose?: boolean | undefined }
+    output: { id: number }
   }
+  /** Generated command "api getUser". */
+  'api getUser': {
+    args: { id: number }
+    options: {}
+    output: { id: number; name: string; [key: string]: unknown }
+  }
+  /** Generated command "auth". */
+  auth: { args: {}; options: { token: string }; output: void }
+  /** Generated command "project deploy". */
   'project deploy': {
     args: { id: string }
     options: { dryRun: boolean }
     output: { deployId: string; status: 'queued' | 'done' }
   }
+  /** Generated command "project inspect". */
   'project inspect': {
     args: { id: string; includeLogs?: boolean | undefined }
     options: {}
     output: { id: string; logs?: string[] | undefined }
   }
+  /** Generated command "project list". */
   'project list': {
     args: {}
     options: { cursor?: string | undefined; limit?: number | undefined }
     output: { items: string[]; nextCursor?: string | undefined }
   }
-  'auth login': {
-    args: {}
-    options: { token: string }
-    output: void
-  }
-  'config set': {
-    args: { key: string; value: number | string }
-    options: { force: boolean; scope?: 'project' | 'user' | undefined }
-    output: { saved: true }
-  }
-  raw: {
-    args: unknown
-    options: unknown
-    output: unknown
+  /** Generated command "status". */
+  status: { args: {}; options: {}; output: { ok: boolean } }
+}
+
+declare module 'incur' {
+  interface Register {
+    commands: Commands
   }
 }
+// END generated client round-trip fixture
+
+type GeneratedCommands = Commands
 
 test('createClient selects args, options, and output by command string', () => {
   const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
@@ -77,12 +87,12 @@ test('createClient selects args, options, and output by command string', () => {
 
 test('createClient allows omitted input when args and options are empty', () => {
   const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
-  const ping = client('ping')
+  const status = client('status')
 
-  expectTypeOf<Awaited<ReturnType<typeof ping>>>().toEqualTypeOf<{ ok: boolean }>()
-  ping()
-  ping({})
-  ping({ args: {}, options: {} })
+  expectTypeOf<Awaited<ReturnType<typeof status>>>().toEqualTypeOf<{ ok: boolean }>()
+  status()
+  status({})
+  status({ args: {}, options: {} })
 })
 
 test('createClient requires input when args are required and options are empty', () => {
@@ -134,45 +144,47 @@ test('createClient allows optional input when args and options have no required 
 
 test('createClient requires input when only options are required', () => {
   const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
-  const login = client('auth login')
+  const auth = client('auth')
 
   type Input = {
     args?: {} | undefined
     options: { token: string }
   }
-  expectTypeOf<Parameters<typeof login>[0]>().toExtend<Input>()
-  expectTypeOf<Input>().toExtend<Parameters<typeof login>[0]>()
+  expectTypeOf<Parameters<typeof auth>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof auth>[0]>()
 
-  login({ options: { token: 'secret' } })
-  login({ args: {}, options: { token: 'secret' } })
+  auth({ options: { token: 'secret' } })
+  auth({ args: {}, options: { token: 'secret' } })
 
   // @ts-expect-error options are required
-  login()
+  auth()
 
   // @ts-expect-error required option key is missing
-  login({ options: {} })
+  auth({ options: {} })
 })
 
-test('createClient preserves mixed required and optional fields', () => {
+test('createClient preserves mounted sub-CLI groups', () => {
   const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
-  const set = client('config set')
+  const get = client('admin users get')
 
   type Input = {
-    args: { key: string; value: number | string }
-    options: { force: boolean; scope?: 'project' | 'user' | undefined }
+    args: { id: number }
+    options?: { verbose?: boolean | undefined } | undefined
   }
-  expectTypeOf<Parameters<typeof set>[0]>().toExtend<Input>()
-  expectTypeOf<Input>().toExtend<Parameters<typeof set>[0]>()
+  expectTypeOf<Parameters<typeof get>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof get>[0]>()
+  expectTypeOf<Awaited<ReturnType<typeof get>>>().toEqualTypeOf<{ id: number }>()
 
-  set({ args: { key: 'theme', value: 'dark' }, options: { force: false } })
-  set({ args: { key: 'retries', value: 3 }, options: { force: true, scope: 'user' } })
+  get({ args: { id: 1 } })
+  get({ args: { id: 1 }, options: { verbose: true } })
 
-  // @ts-expect-error optional option still narrows to known values
-  set({ args: { key: 'theme', value: 'dark' }, options: { force: true, scope: 'org' } })
+  // @ts-expect-error mounted sub-CLI args keep their generated types
+  get({ args: { id: '1' } })
 })
 
 test('createClient keeps unknown args, options, and output unknown', () => {
-  const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
+  type RuntimeCommands = Record<string, { args: unknown; options: unknown; output: unknown }>
+  const client = createClient<RuntimeCommands>({ baseUrl: 'https://api.example.com' })
   const raw = client('raw')
 
   type Input = { args?: unknown; options?: unknown } | undefined
@@ -184,8 +196,9 @@ test('createClient keeps unknown args, options, and output unknown', () => {
   raw({ args: 'anything', options: 123 })
 })
 
-test('createClient defaults to a permissive unknown command map without registration', () => {
-  const client = createClient({ baseUrl: 'https://api.example.com' })
+test('createClient can be made permissive with an explicit unknown command map', () => {
+  type RuntimeCommands = Record<string, { args: unknown; options: unknown; output: unknown }>
+  const client = createClient<RuntimeCommands>({ baseUrl: 'https://api.example.com' })
   const call = client('anything')
 
   type Input = { args?: unknown; options?: unknown } | undefined
@@ -268,6 +281,17 @@ test('generated command map allows optional input with explicit undefined values
   const list = client('project list')
 
   list({ options: { cursor: undefined, limit: undefined } })
+})
+
+test('generated command map includes mounted root CLIs and omits aliases', () => {
+  const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
+  const status = client('status')
+
+  expectTypeOf<Awaited<ReturnType<typeof status>>>().toEqualTypeOf<{ ok: boolean }>()
+  status()
+
+  // @ts-expect-error aliases are intentionally absent from generated command maps
+  client('ship')
 })
 
 test('createClient consumes OpenAPI mounted command maps inferred from Cli instances', () => {

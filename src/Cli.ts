@@ -159,10 +159,14 @@ export type Cta<commands extends CommandsMap = Commands> =
               }
             }[keyof commands & string]
           | {
+              /** Positional arguments appended as bare values. */
+              args?: Record<string, unknown> | undefined
               /** The command name to run. */
               command: string & {}
               /** A short description of what the command does. */
               description?: string | undefined
+              /** Named options formatted as `--key value` flags. */
+              options?: Record<string, unknown> | undefined
             })
 
 /** Creates a CLI with a root handler. Can still register subcommands which take precedence. */

@@ -1,4 +1,5 @@
 import { Cli, Typegen, z } from 'incur'
+import fs from 'node:fs/promises'
 
 import { app, spec } from '../test/fixtures/hono-openapi-app.js'
 
@@ -417,4 +418,149 @@ describe('fromCli', () => {
       "
     `)
   })
+
+  test('generated client type fixture matches fromCli output', async () => {
+    const output = await fs.readFile(new URL('./Client.test-d.ts', import.meta.url), 'utf8')
+    const fixture = extractGeneratedClientFixture(output)
+    expect(normalizeDeclaration(Typegen.fromCli(createClientRoundTripCli()))).toBe(
+      normalizeDeclaration(fixture),
+    )
+  })
 })
+
+function extractGeneratedClientFixture(value: string): string {
+  const start = '// BEGIN generated client round-trip fixture'
+  const end = '// END generated client round-trip fixture'
+  return value.slice(value.indexOf(start) + start.length, value.indexOf(end)).trimStart()
+}
+
+function normalizeDeclaration(value: string): string {
+  let output = ''
+  let quote = ''
+  let escaping = false
+
+  for (const char of value) {
+    if (quote) {
+      if (escaping) {
+        output += char
+        escaping = false
+        continue
+      }
+      if (char === '\\') {
+        output += char
+        escaping = true
+        continue
+      }
+      if (char === quote) {
+        output += '"'
+        quote = ''
+        continue
+      }
+      output += char
+      continue
+    }
+
+    if (char === "'" || char === '"') {
+      output += '"'
+      quote = char
+      continue
+    }
+    if (char === ';' || /\s/.test(char)) continue
+    output += char
+  }
+
+  return output.replace(/"([A-Za-z_$][\w$]*)":/g, '$1:')
+}
+
+function createClientRoundTripCli() {
+  const spec = {
+    openapi: '3.0.0',
+    info: { title: 'Test', version: '1.0.0' },
+    paths: {
+      '/users/{id}': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'number' },
+          },
+        ],
+        get: {
+          operationId: 'getUser',
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { id: { type: 'number' }, name: { type: 'string' } },
+                    required: ['id', 'name'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  } as const
+  const status = Cli.create('status', {
+    output: z.object({ ok: z.boolean() }),
+    run: () => ({ ok: true }),
+  })
+  const project = Cli.create('project')
+    .command('deploy', {
+      aliases: ['ship'],
+      args: z.object({ id: z.string() }),
+      options: z.object({ dryRun: z.boolean() }),
+      output: z.object({
+        deployId: z.string(),
+        status: z.enum(['queued', 'done']),
+      }),
+      run: () => ({ deployId: 'dep_123', status: 'queued' as const }),
+    })
+    .command('inspect', {
+      args: z.object({
+        id: z.string(),
+        includeLogs: z.boolean().optional(),
+      }),
+      output: z.object({
+        id: z.string(),
+        logs: z.array(z.string()).optional(),
+      }),
+      run: (c) => ({ id: c.args.id }),
+    })
+    .command('list', {
+      options: z.object({
+        cursor: z.string().optional(),
+        limit: z.number().optional(),
+      }),
+      output: z.object({
+        items: z.array(z.string()),
+        nextCursor: z.string().optional(),
+      }),
+      run: () => ({ items: [] }),
+    })
+  const users = Cli.create('users').command('get', {
+    args: z.object({ id: z.number() }),
+    options: z.object({ verbose: z.boolean().optional() }),
+    output: z.object({ id: z.number() }),
+    run: (c) => ({ id: c.args.id }),
+  })
+
+  return Cli.create('test')
+    .command(status)
+    .command(project)
+    .command(Cli.create('admin').command(users))
+    .command('auth', {
+      options: z.object({ token: z.string() }),
+      output: z.void(),
+      run: () => undefined,
+    })
+    .command('api', {
+      fetch: () => new Response(),
+      openapi: spec,
+    })
+}
