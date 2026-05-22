@@ -193,8 +193,30 @@ describe('generateCommands', () => {
       app.fetch,
     )
 
-    expect([...commands.keys()]).toEqual(['getUser'])
-    expect(commands.get('getUser')?.args?.shape.id).toBeDefined()
+    const cmd = commands.get('getUser')!
+    expect({
+      commands: [...commands.keys()],
+      args: z.toJSONSchema(cmd.args!),
+    }).toMatchInlineSnapshot(`
+      {
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "number",
+            },
+          },
+          "required": [
+            "id",
+          ],
+          "type": "object",
+        },
+        "commands": [
+          "getUser",
+        ],
+      }
+    `)
   })
 })
 
