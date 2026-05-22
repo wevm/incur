@@ -1,4 +1,4 @@
-import { createClient } from 'incur'
+import { ClientError, createClient, isClientRpcError, isClientRpcErrorEnvelope } from 'incur'
 
 type RuntimeCommands = Record<string, { args: unknown; options: unknown; output: unknown }>
 
@@ -104,6 +104,59 @@ describe('createClient', () => {
       error: { code: 'NOPE', message: 'Nope' },
       status: 500,
     })
+  })
+
+  test('throws exported ClientError with narrowable RPC fields', async () => {
+    const fieldErrors = [
+      {
+        code: 'invalid_type',
+        missing: false,
+        path: 'id',
+        expected: 'string',
+        received: 'number',
+        message: 'Expected string, received number',
+      },
+    ]
+    const client = createClient<RuntimeCommands>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        Response.json(
+          {
+            ok: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Invalid input',
+              retryable: false,
+              fieldErrors,
+            },
+            meta: { command: 'project deploy', duration: '2ms' },
+          },
+          { status: 400 },
+        ),
+    })
+
+    await expect(client('project deploy')()).rejects.toBeInstanceOf(ClientError)
+
+    try {
+      await client('project deploy')()
+      throw new Error('Expected client call to fail')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ClientError)
+      if (!(error instanceof ClientError)) throw error
+
+      expect(error.status).toBe(400)
+      expect(isClientRpcError(error.error)).toBe(true)
+      if (isClientRpcError(error.error)) {
+        expect(error.error.code).toBe('VALIDATION_ERROR')
+        expect(error.error.retryable).toBe(false)
+        expect(error.error.fieldErrors).toEqual(fieldErrors)
+      }
+      expect(isClientRpcErrorEnvelope(error.data)).toBe(true)
+      if (isClientRpcErrorEnvelope(error.data)) {
+        expect(error.data.error.code).toBe('VALIDATION_ERROR')
+        expect(error.data.meta?.command).toBe('project deploy')
+      }
+    }
   })
 
   test('uses a fallback message for failed RPC envelopes without error messages', async () => {

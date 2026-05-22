@@ -1,4 +1,5 @@
-import { Cli, createClient } from 'incur'
+import { Cli, ClientError, createClient, isClientRpcError, isClientRpcErrorEnvelope } from 'incur'
+import type { ClientRpcError, ClientRpcErrorEnvelope } from 'incur'
 import { expectTypeOf, test } from 'vitest'
 
 type GeneratedCommands = {
@@ -194,6 +195,45 @@ test('createClient defaults to a permissive unknown command map without registra
 
   call()
   call({ args: { any: 'value' }, options: ['also accepted'] })
+})
+
+test('ClientError can be imported and RPC payloads can be narrowed', () => {
+  const error = new ClientError('Invalid input', {
+    error: {
+      code: 'VALIDATION_ERROR',
+      message: 'Invalid input',
+      retryable: false,
+      fieldErrors: [
+        {
+          path: 'id',
+          expected: 'string',
+          received: 'number',
+          message: 'Expected string, received number',
+        },
+      ],
+    } satisfies ClientRpcError,
+    status: 400,
+  })
+  const caught: unknown = error
+
+  if (caught instanceof ClientError) {
+    expectTypeOf(caught.data).toEqualTypeOf<unknown>()
+    expectTypeOf(caught.error).toEqualTypeOf<unknown>()
+    expectTypeOf(caught.status).toEqualTypeOf<number | undefined>()
+
+    if (isClientRpcError(caught.error)) {
+      expectTypeOf(caught.error).toEqualTypeOf<ClientRpcError>()
+      expectTypeOf(caught.error.code).toEqualTypeOf<string>()
+      expectTypeOf(caught.error.retryable).toEqualTypeOf<boolean | undefined>()
+      expectTypeOf(caught.error.fieldErrors?.[0]?.path).toEqualTypeOf<string | undefined>()
+    }
+
+    if (isClientRpcErrorEnvelope(caught.data)) {
+      expectTypeOf(caught.data).toEqualTypeOf<ClientRpcErrorEnvelope>()
+      expectTypeOf(caught.data.error.code).toEqualTypeOf<string>()
+      expectTypeOf(caught.data.meta?.command).toEqualTypeOf<string | undefined>()
+    }
+  }
 })
 
 test('generated command map preserves exact optional properties', () => {

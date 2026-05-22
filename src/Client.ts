@@ -1,5 +1,6 @@
-import type { Register } from './Register.js'
+import { ClientError } from './Errors.js'
 import { isRecord } from './internal/helpers.js'
+import type { Register } from './Register.js'
 
 type DefaultCommand = {
   args: unknown
@@ -58,37 +59,6 @@ type ClientOptions = {
   baseUrl: string | URL
   /** Fetch implementation. Defaults to `globalThis.fetch`. */
   fetch?: typeof globalThis.fetch | undefined
-}
-
-/** Options for constructing a client error. */
-type ClientErrorOptions = {
-  /** The underlying cause. */
-  cause?: unknown | undefined
-  /** Malformed response payload or failed RPC envelope. */
-  data?: unknown | undefined
-  /** Failed RPC error payload. */
-  error?: unknown | undefined
-  /** HTTP status returned by the server. */
-  status?: number | undefined
-}
-
-/** Error thrown by incur RPC clients. */
-class ClientError extends Error {
-  /** Error class name. */
-  override name = 'Incur.ClientError'
-  /** Malformed response payload or failed RPC envelope. */
-  data: unknown
-  /** Failed RPC error payload. */
-  error: unknown
-  /** HTTP status returned by the server. */
-  status: number | undefined
-
-  constructor(message: string, options: ClientErrorOptions = {}) {
-    super(message, 'cause' in options ? { cause: options.cause } : undefined)
-    this.data = options.data
-    this.error = options.error
-    this.status = options.status
-  }
 }
 
 /** Creates a typed incur RPC client. */

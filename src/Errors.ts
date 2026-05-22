@@ -87,6 +87,106 @@ export type FieldError = {
   message: string
 }
 
+/** Metadata returned with structured RPC envelopes. */
+export type ClientRpcMeta = {
+  /** Command path that handled the RPC request. */
+  command?: string | undefined
+  /** Suggested next actions returned by the command. */
+  cta?: unknown | undefined
+  /** Server-side command duration. */
+  duration?: string | undefined
+}
+
+/** Error payload returned by structured RPC commands. */
+export type ClientRpcError = {
+  /** Machine-readable error code. */
+  code: string
+  /** Human-readable error message. */
+  message: string
+  /** Whether the operation can be retried. */
+  retryable?: boolean | undefined
+  /** Per-field validation errors. */
+  fieldErrors?: FieldError[] | undefined
+}
+
+/** Successful structured RPC response envelope. */
+export type ClientRpcSuccessEnvelope = {
+  /** Command output data. */
+  data?: unknown | undefined
+  /** Response metadata. */
+  meta?: ClientRpcMeta | undefined
+  /** Whether the command succeeded. */
+  ok: true
+}
+
+/** Failed structured RPC response envelope. */
+export type ClientRpcErrorEnvelope = {
+  /** Command error payload. */
+  error: ClientRpcError
+  /** Response metadata. */
+  meta?: ClientRpcMeta | undefined
+  /** Whether the command succeeded. */
+  ok: false
+}
+
+/** Structured RPC response envelope. */
+export type ClientRpcEnvelope = ClientRpcSuccessEnvelope | ClientRpcErrorEnvelope
+
+/** Error thrown by incur RPC clients. */
+export class ClientError extends Error {
+  /** Error class name. */
+  override name = 'Incur.ClientError'
+  /** Malformed response payload or failed RPC envelope. */
+  data: unknown
+  /** Failed RPC error payload. */
+  error: unknown
+  /** HTTP status returned by the server. */
+  status: number | undefined
+
+  constructor(message: string, options: ClientError.Options = {}) {
+    super(message, 'cause' in options ? { cause: options.cause } : undefined)
+    this.data = options.data
+    this.error = options.error
+    this.status = options.status
+  }
+}
+
+export declare namespace ClientError {
+  /** Options for constructing a ClientError. */
+  type Options = {
+    /** The underlying cause. */
+    cause?: unknown | undefined
+    /** Malformed response payload or failed RPC envelope. */
+    data?: unknown | undefined
+    /** Failed RPC error payload. */
+    error?: unknown | undefined
+    /** HTTP status returned by the server. */
+    status?: number | undefined
+  }
+}
+
+/** Narrows an unknown value to a structured RPC error payload. */
+export function isClientRpcError(value: unknown): value is ClientRpcError {
+  return (
+    isErrorRecord(value) &&
+    typeof value.code === 'string' &&
+    typeof value.message === 'string' &&
+    (value.retryable === undefined || typeof value.retryable === 'boolean') &&
+    (value.fieldErrors === undefined ||
+      (Array.isArray(value.fieldErrors) && value.fieldErrors.every(isFieldError)))
+  )
+}
+
+/** Narrows an unknown value to a failed structured RPC envelope. */
+export function isClientRpcErrorEnvelope(value: unknown): value is ClientRpcErrorEnvelope {
+  return (
+    isErrorRecord(value) &&
+    value.ok === false &&
+    isClientRpcError(value.error) &&
+    (value.meta === undefined || isErrorRecord(value.meta))
+  )
+}
+
 /** Validation error with per-field error details. */
 export class ValidationError extends BaseError {
   override name = 'Incur.ValidationError'
@@ -145,4 +245,20 @@ function walk(error: unknown, fn?: ((error: unknown) => boolean) | undefined): u
   let current = error
   while ((current as any)?.cause) current = (current as any).cause
   return current
+}
+
+function isErrorRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isFieldError(value: unknown): value is FieldError {
+  return (
+    isErrorRecord(value) &&
+    (value.code === undefined || typeof value.code === 'string') &&
+    (value.missing === undefined || typeof value.missing === 'boolean') &&
+    typeof value.path === 'string' &&
+    typeof value.expected === 'string' &&
+    typeof value.received === 'string' &&
+    typeof value.message === 'string'
+  )
 }
