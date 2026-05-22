@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import * as Command from './internal/command.js'
+
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
   ;(process.stdout as any).isTTY = false
@@ -4048,6 +4050,74 @@ describe('--filter-output', () => {
     const { output } = await serve(cli, ['user', '--filter-output', 'name,age', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed).toEqual({ name: 'alice', age: 30 })
+  })
+})
+
+describe('Command.execute', () => {
+  test.each([
+    {
+      name: 'split',
+      command: { options: z.object({ name: z.string() }), run: () => ({ ok: true }) },
+      inputOptions: { name: 123 },
+      path: 'name',
+      parseMode: 'split' as const,
+    },
+    {
+      name: 'flat',
+      command: { args: z.object({ id: z.string() }), run: () => ({ ok: true }) },
+      inputOptions: { id: 123 },
+      path: 'id',
+      parseMode: 'flat' as const,
+    },
+  ])('$name mode returns validation fieldErrors for invalid command input', async (c) => {
+    const result = await Command.execute(c.command, {
+      agent: true,
+      argv: [],
+      format: 'json',
+      formatExplicit: false,
+      inputOptions: c.inputOptions,
+      name: 'test',
+      parseMode: c.parseMode,
+      path: 'users',
+      version: undefined,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: [
+          {
+            code: 'invalid_type',
+            missing: false,
+            path: c.path,
+          },
+        ],
+      },
+    })
+  })
+
+  test('does not normalize handler-thrown Zod errors as command input', async () => {
+    const result = await Command.execute(
+      {
+        run() {
+          z.object({ name: z.string() }).parse({ name: 123 })
+        },
+      },
+      {
+        agent: true,
+        argv: [],
+        format: 'json',
+        formatExplicit: false,
+        inputOptions: {},
+        name: 'test',
+        path: 'users',
+        version: undefined,
+      },
+    )
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
+    expect(result).not.toHaveProperty('error.fieldErrors')
   })
 })
 
