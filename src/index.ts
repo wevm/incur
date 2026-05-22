@@ -1,4 +1,5 @@
 export { z } from 'zod'
+export { createClient } from './Client.js'
 export * as Cli from './Cli.js'
 export * as Completions from './Completions.js'
 export { default as middleware } from './middleware.js'

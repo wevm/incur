@@ -1,4 +1,5 @@
 import { Cli, Typegen, z } from 'incur'
+import { app, spec } from '../test/fixtures/hono-openapi-app.js'
 
 describe('fromCli', () => {
   test('simple commands with args and options', () => {
@@ -13,12 +14,17 @@ describe('fromCli', () => {
       })
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
-      "declare module 'incur' {
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "get". */
+        'get': { args: { id: number }; options: {} }
+        /** Generated command "list". */
+        'list': { args: {}; options: { limit: number } }
+      }
+
+      declare module 'incur' {
         interface Register {
-          commands: {
-            'get': { args: { id: number }; options: {} }
-            'list': { args: {}; options: { limit: number } }
-          }
+          commands: Commands
         }
       }
       "
@@ -29,11 +35,15 @@ describe('fromCli', () => {
     const cli = Cli.create('test').command('ping', { run: () => ({}) })
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
-      "declare module 'incur' {
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "ping". */
+        'ping': { args: {}; options: {} }
+      }
+
+      declare module 'incur' {
         interface Register {
-          commands: {
-            'ping': { args: {}; options: {} }
-          }
+          commands: Commands
         }
       }
       "
@@ -54,12 +64,17 @@ describe('fromCli', () => {
     cli.command(pr)
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
-      "declare module 'incur' {
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "pr create". */
+        'pr create': { args: { title: string }; options: {} }
+        /** Generated command "pr list". */
+        'pr list': { args: {}; options: { state: string } }
+      }
+
+      declare module 'incur' {
         interface Register {
-          commands: {
-            'pr create': { args: { title: string }; options: {} }
-            'pr list': { args: {}; options: { state: string } }
-          }
+          commands: Commands
         }
       }
       "
@@ -77,11 +92,15 @@ describe('fromCli', () => {
     cli.command(pr)
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
-      "declare module 'incur' {
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "pr review approve". */
+        'pr review approve': { args: { id: number }; options: {} }
+      }
+
+      declare module 'incur' {
         interface Register {
-          commands: {
-            'pr review approve': { args: { id: number }; options: {} }
-          }
+          commands: Commands
         }
       }
       "
@@ -125,7 +144,7 @@ describe('fromCli', () => {
       .command('middle', { run: () => ({}) })
 
     const output = Typegen.fromCli(cli)
-    const commandOrder = [...output.matchAll(/^ {6}'(\w+)':/gm)].map((m) => m[1])
+    const commandOrder = [...output.matchAll(/^  '(\w+)':/gm)].map((m) => m[1])
     expect(commandOrder).toEqual(['alpha', 'middle', 'zebra'])
   })
 
@@ -169,19 +188,188 @@ describe('fromCli', () => {
     expect(output).toContain('config: { host: string; port: number }')
   })
 
-  test('optional properties use optional modifier', () => {
+  test('optional properties include undefined for exactOptionalPropertyTypes', () => {
     const cli = Cli.create('test').command('create', {
       args: z.object({ name: z.string() }),
       options: z.object({
         verbose: z.boolean().optional(),
+        nullable: z.string().nullable().optional(),
         output: z.string(),
       }),
       run: () => ({}),
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('verbose?: boolean')
+    expect(output).toContain('verbose?: boolean | undefined')
+    expect(output).toContain('nullable?: string | null | undefined')
     expect(output).toContain('output: string')
+  })
+
+  test('dense object schema', () => {
+    const cli = Cli.create('test').command('build', {
+      options: z.object({
+        name: z.string(),
+        count: z.number(),
+        active: z.boolean(),
+        mode: z.literal('strict'),
+        state: z.enum(['open', 'closed']),
+        target: z.union([z.string(), z.number()]),
+        values: z.array(z.union([z.literal('a'), z.literal(1), z.boolean()])),
+        nested: z.object({
+          label: z.string().optional(),
+          flags: z.array(z.enum(['on', 'off'])),
+        }),
+      }),
+      run: () => ({}),
+    })
+
+    expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "build". */
+        'build': { args: {}; options: { name: string; count: number; active: boolean; mode: "strict"; state: "open" | "closed"; target: string | number; values: ("a" | 1 | boolean)[]; nested: { label?: string | undefined; flags: ("on" | "off")[] } } }
+      }
+
+      declare module 'incur' {
+        interface Register {
+          commands: Commands
+        }
+      }
+      "
+    `)
+  })
+
+  test('command output schema', () => {
+    const cli = Cli.create('test').command('cmd', {
+      output: z.object({ ok: z.boolean() }),
+      run: () => ({ ok: true }),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain("'cmd': { args: {}; options: {}; output: { ok: boolean } }")
+  })
+
+  test('output schemas for non-object top-level types', () => {
+    const cli = Cli.create('test')
+      .command('text', {
+        output: z.string(),
+        run: () => 'ok',
+      })
+      .command('values', {
+        output: z.array(z.union([z.string(), z.number()])),
+        run: () => ['ok', 1],
+      })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain("'text': { args: {}; options: {}; output: string }")
+    expect(output).toContain("'values': { args: {}; options: {}; output: (string | number)[] }")
+  })
+
+  test('output schemas for records and tuples', () => {
+    const cli = Cli.create('test')
+      .command('record', {
+        output: z.record(z.string(), z.number()),
+        run: () => ({ count: 1 }),
+      })
+      .command('enum-record', {
+        output: z.record(z.enum(['left', 'right']), z.number()),
+        run: () => ({ left: 1, right: 2 }),
+      })
+      .command('tuple', {
+        output: z.tuple([z.string(), z.number(), z.boolean()]),
+        run: () => ['ok', 1, true] as [string, number, boolean],
+      })
+      .command('rest-tuple', {
+        output: z.tuple([z.string()]).rest(z.number()),
+        run: () => ['ok', 1, 2] as [string, ...number[]],
+      })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain("'record': { args: {}; options: {}; output: Record<string, number> }")
+    expect(output).toContain(
+      '\'enum-record\': { args: {}; options: {}; output: Record<"left" | "right", number> }',
+    )
+    expect(output).toContain(
+      "'rest-tuple': { args: {}; options: {}; output: [string, ...number[]] }",
+    )
+    expect(output).toContain(
+      "'tuple': { args: {}; options: {}; output: [string, number, boolean] }",
+    )
+  })
+
+  test('unknown output schemas fall back to unknown', () => {
+    const cli = Cli.create('test').command('cmd', {
+      output: z.any(),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain("'cmd': { args: {}; options: {}; output: unknown }")
+  })
+
+  test('object keys that are not identifiers are quoted', () => {
+    const cli = Cli.create('test').command('cmd', {
+      options: z.object({
+        '1x': z.number(),
+        'foo-bar': z.string(),
+      }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('"1x": number')
+    expect(output).toContain('"foo-bar": string')
+  })
+
+  test('unsupported schemas throw a clear typegen error', () => {
+    const cli = Cli.create('test').command('cmd', {
+      output: z.string().transform((value) => value.length),
+      run: () => 1,
+    })
+
+    expect(() => Typegen.fromCli(cli)).toThrow(
+      'Cannot generate TypeScript type for schema unsupported by JSON Schema',
+    )
+  })
+
+  test('skips commands that cannot be called by RPC client', () => {
+    const cli = Cli.create('test')
+      .command('deploy', {
+        aliases: ['ship'],
+        run: () => ({}),
+      })
+      .command('api', { fetch: () => new Response('ok') })
+
+    expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "deploy". */
+        'deploy': { args: {}; options: {} }
+      }
+
+      declare module 'incur' {
+        interface Register {
+          commands: Commands
+        }
+      }
+      "
+    `)
+  })
+
+  test('includes OpenAPI mounted operations without serving first', () => {
+    const cli = Cli.create('test').command('api', {
+      fetch: app.fetch,
+      openapi: spec,
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain(
+      "'api getUser': { args: { id: number }; options: {}; output: { id: number; name: string; [key: string]: unknown } }",
+    )
+    expect(output).toContain(
+      "'api createUser': { args: {}; options: { name: string }; output: { created: boolean; name: string; [key: string]: unknown } }",
+    )
+    expect(output).not.toContain("'api': { args")
   })
 
   test('mixed top-level and grouped commands', () => {
@@ -191,12 +379,17 @@ describe('fromCli', () => {
     cli.command(pr)
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
-      "declare module 'incur' {
+      "/** Command map generated from your incur CLI. */
+      export type Commands = {
+        /** Generated command "ping". */
+        'ping': { args: {}; options: {} }
+        /** Generated command "pr list". */
+        'pr list': { args: {}; options: {} }
+      }
+
+      declare module 'incur' {
         interface Register {
-          commands: {
-            'ping': { args: {}; options: {} }
-            'pr list': { args: {}; options: {} }
-          }
+          commands: Commands
         }
       }
       "

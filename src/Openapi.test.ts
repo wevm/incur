@@ -139,6 +139,63 @@ describe('generateCommands', () => {
     const limitSchema = cmd.options!.shape.limit
     expect(limitSchema.description).toBe('Max results')
   })
+
+  test('command has output schema from success response', async () => {
+    const commands = await Openapi.generateCommands(openapiSpec, openapiApp.fetch)
+    const cmd = commands.get('getUser')!
+    expect(cmd.output).toBeDefined()
+    expect(z.toJSONSchema(cmd.output!)).toMatchObject({
+      type: 'object',
+      required: ['id', 'name'],
+      properties: {
+        id: { type: 'number' },
+        name: { type: 'string' },
+      },
+    })
+  })
+
+  test('ignores path item metadata and applies path-level parameters', async () => {
+    const commands = await Openapi.generateCommands(
+      {
+        openapi: '3.0.0',
+        info: { title: 'Test', version: '1.0.0' },
+        paths: {
+          '/users/{id}': {
+            summary: 'User routes',
+            parameters: [
+              {
+                name: 'id',
+                in: 'path',
+                required: true,
+                schema: { type: 'number' },
+              },
+            ],
+            get: {
+              operationId: 'getUser',
+              responses: {
+                200: {
+                  description: 'OK',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        properties: { id: { type: 'number' } },
+                        required: ['id'],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      app.fetch,
+    )
+
+    expect([...commands.keys()]).toEqual(['getUser'])
+    expect(commands.get('getUser')?.args?.shape.id).toBeDefined()
+  })
 })
 
 describe('cli integration', () => {

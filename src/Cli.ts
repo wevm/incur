@@ -54,7 +54,7 @@ export type Cli<
       name: name,
       definition: CommandDefinition<args, cmdEnv, options, output, vars, env>,
     ): Cli<
-      commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<options> } },
+      commands & { [key in name]: CommandMapEntry<args, options, output> },
       vars,
       env
     >
@@ -69,19 +69,26 @@ export type Cli<
       const opts extends z.ZodObject<any> | undefined,
     >(
       cli: Root<args, opts> & { name: name },
-    ): Cli<
-      commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<opts> } },
-      vars,
-      env
-    >
-    /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
+    ): Cli<commands & { [key in name]: CommandMapEntry<args, opts> }, vars, env>
+    /** Mounts a fetch handler with an OpenAPI spec as a typed command group. */
+    <const name extends string, const spec extends Openapi.OpenAPISpec>(
+      name: name,
+      definition: {
+        basePath?: string | undefined
+        description?: string | undefined
+        fetch: FetchHandler
+        openapi: spec
+        outputPolicy?: OutputPolicy | undefined
+      },
+    ): Cli<commands & Openapi.CommandMap<name, spec>, vars, env>
+    /** Mounts a raw fetch handler as an untyped command gateway. */
     <const name extends string>(
       name: name,
       definition: {
         basePath?: string | undefined
         description?: string | undefined
         fetch: FetchHandler
-        openapi?: Openapi.OpenAPISpec | undefined
+        openapi?: undefined
         outputPolicy?: OutputPolicy | undefined
       },
     ): Cli<commands, vars, env>
@@ -165,7 +172,7 @@ export function create<
 >(
   name: string,
   definition: create.Options<args, env, opts, output, vars> & { run: Function },
-): Cli<{ [key in typeof name]: { args: InferOutput<args>; options: InferOutput<opts> } }, vars, env>
+): Cli<{ [key in typeof name]: CommandMapEntry<args, opts, output> }, vars, env>
 /** Creates a router CLI that registers subcommands. */
 export function create<
   const args extends z.ZodObject<any> | undefined = undefined,
@@ -185,7 +192,7 @@ export function create<
   definition: create.Options<args, env, opts, output, vars> & { name: string; run: Function },
 ): Cli<
   {
-    [key in (typeof definition)['name']]: { args: InferOutput<args>; options: InferOutput<opts> }
+    [key in (typeof definition)['name']]: CommandMapEntry<args, opts, output>
   },
   vars,
   env
@@ -209,7 +216,6 @@ export function create(
 
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
-  const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0')
 
   const cli: Cli = {
@@ -221,20 +227,17 @@ export function create(
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
         if (def && 'fetch' in def && typeof def.fetch === 'function') {
-          // OpenAPI + fetch → generate typed command group (async, resolved before serve)
+          // OpenAPI + fetch → generate typed command group.
           if (def.openapi) {
-            pending.push(
-              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then(
-                (generated) => {
-                  commands.set(nameOrCli, {
-                    _group: true,
-                    description: def.description,
-                    commands: generated as Map<string, CommandEntry>,
-                    ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                  } as InternalGroup)
-                },
-              ),
-            )
+            const generated = Openapi.generateCommands(def.openapi, def.fetch, {
+              basePath: def.basePath,
+            })
+            commands.set(nameOrCli, {
+              _group: true,
+              description: def.description,
+              commands: generated as Map<string, CommandEntry>,
+              ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+            } as InternalGroup)
             return cli
           }
           commands.set(nameOrCli, {
@@ -274,7 +277,6 @@ export function create(
     },
 
     async fetch(req: Request) {
-      if (pending.length > 0) await Promise.all(pending)
       return fetchImpl(name, commands, req, {
         description: def.description,
         envSchema: def.env,
@@ -288,7 +290,6 @@ export function create(
     },
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
-      if (pending.length > 0) await Promise.all(pending)
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
@@ -2481,7 +2482,14 @@ function formatFetchHelp(name: string, description?: string): string {
 /** Shape of the commands map accumulated through `.command()` chains. */
 export type CommandsMap = Record<
   string,
-  { args: Record<string, unknown>; options: Record<string, unknown> }
+  {
+    /** Command positional argument shape. */
+    args: Record<string, unknown>
+    /** Command named option shape. */
+    options: Record<string, unknown>
+    /** Command output shape. */
+    output?: unknown | undefined
+  }
 >
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
@@ -3075,6 +3083,16 @@ type InferOutput<schema extends z.ZodObject<any> | undefined> =
 type InferReturn<output extends z.ZodType | undefined> = output extends z.ZodType
   ? z.output<output>
   : unknown
+
+/** @internal Shape of a command entry inferred from command schemas. */
+type CommandMapEntry<
+  args extends z.ZodObject<any> | undefined = undefined,
+  options extends z.ZodObject<any> | undefined = undefined,
+  output extends z.ZodType | undefined = undefined,
+> = {
+  args: InferOutput<args>
+  options: InferOutput<options>
+} & (output extends z.ZodType ? { output: InferReturn<output> } : {})
 
 /** @internal Inferred vars type from a Zod schema, or `{}` when no schema is provided. */
 type InferVars<vars extends z.ZodObject<any> | undefined> =

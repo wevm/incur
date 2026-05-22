@@ -167,6 +167,131 @@ test('command() accumulates command types through chaining', () => {
   expectTypeOf<Commands['list']>().toEqualTypeOf<{ args: {}; options: { limit: number } }>()
 })
 
+test('OpenAPI mounted fetch accumulates operation command types', () => {
+  const spec = {
+    openapi: '3.0.0',
+    info: { title: 'Test', version: '1.0.0' },
+    paths: {
+      '/users': {
+        get: {
+          operationId: 'listUsers',
+          parameters: [
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'number' },
+            },
+          ],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      users: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: { id: { type: 'number' }, name: { type: 'string' } },
+                          required: ['id', 'name'],
+                        },
+                      },
+                    },
+                    required: ['users'],
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'createUser',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { name: { type: 'string' }, active: { type: 'boolean' } },
+                  required: ['name'],
+                },
+              },
+            },
+          },
+          responses: {
+            201: {
+              description: 'Created',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { id: { type: 'number' }, name: { type: 'string' } },
+                    required: ['id', 'name'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/users/{id}': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'number' },
+          },
+        ],
+        get: {
+          operationId: 'getUser',
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { id: { type: 'number' }, name: { type: 'string' } },
+                    required: ['id', 'name'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  } as const
+
+  const cli = Cli.create('test').command('api', {
+    fetch: () => new Response(),
+    openapi: spec,
+  })
+
+  type Commands = typeof cli extends Cli.Cli<infer commands> ? commands : never
+  expectTypeOf<Commands['api listUsers']>().toExtend<{
+    args: {}
+    options: { limit?: number | undefined }
+    output: { users: { id: number; name: string }[] }
+  }>()
+  expectTypeOf<Commands['api createUser']>().toExtend<{
+    args: {}
+    options: { name: string; active?: boolean | undefined }
+    output: { id: number; name: string }
+  }>()
+  expectTypeOf<Commands['api getUser']>().toExtend<{
+    args: { id: number }
+    options: {}
+    output: { id: number; name: string }
+  }>()
+
+  // @ts-expect-error raw gateway name is not a generated command
+  type RawGateway = Commands['api']
+  void (undefined as unknown as RawGateway)
+})
+
 test('middleware<typeof cli.vars>() infers vars types', () => {
   const cli = Cli.create('test', {
     vars: z.object({ user: z.string(), count: z.number() }),

@@ -7,7 +7,7 @@
  * declare module 'incur' {
  *   interface Register {
  *     commands: {
- *       get: { args: { id: number }; options: {} }
+ *       get: { args: { id: number }; options: {}; output: { name: string } }
  *       list: { args: {}; options: { limit: number } }
  *     }
  *   }

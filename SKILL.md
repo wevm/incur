@@ -971,7 +971,14 @@ Generate type definitions for your CLI's command map to get typed CTAs:
 incur gen
 ```
 
-This creates a `incur.generated.ts` file that registers your commands on the `Cli.Commands` type, enabling autocomplete on CTA command names, args, and options.
+This creates a `incur.generated.ts` file that registers your commands on the `Cli.Commands` type, enabling autocomplete on CTA command names, args, and options. It also exports a `Commands` type you can import and pass to `createClient` when calling the CLI over RPC:
+
+```ts
+import { createClient } from 'incur'
+import type { Commands } from './incur.generated.js'
+
+const client = createClient<Commands>({ baseUrl: 'https://api.example.com' })
+```
 
 ## Full Example
 
