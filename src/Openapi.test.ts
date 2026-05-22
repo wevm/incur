@@ -218,6 +218,106 @@ describe('generateCommands', () => {
       }
     `)
   })
+
+  test('supports OpenAPI 3.2 query operations', () => {
+    const commands = Openapi.generateCommands(
+      {
+        openapi: '3.2.0',
+        info: { title: 'Test', version: '1.0.0' },
+        paths: {
+          '/search': {
+            query: {
+              operationId: 'searchUsers',
+              responses: { 200: { description: 'OK' } },
+            },
+          },
+        },
+      },
+      app.fetch,
+    )
+
+    expect(commands.has('searchUsers')).toBe(true)
+  })
+
+  test('encodes path params when building requests', async () => {
+    let url = ''
+    const commands = Openapi.generateCommands(
+      {
+        openapi: '3.0.0',
+        info: { title: 'Test', version: '1.0.0' },
+        paths: {
+          '/files/{id}': {
+            get: {
+              operationId: 'getFile',
+              parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+              responses: { 200: { description: 'OK' } },
+            },
+          },
+        },
+      },
+      (req) => {
+        url = req.url
+        return Response.json({ ok: true })
+      },
+    )
+
+    await commands.get('getFile')!.run({ args: { id: 'a/b c' } })
+    expect(url).toBe('http://localhost/files/a%2Fb%20c')
+  })
+
+  test('coerces string false to boolean false for OpenAPI params', () => {
+    const commands = Openapi.generateCommands(
+      {
+        openapi: '3.0.0',
+        info: { title: 'Test', version: '1.0.0' },
+        paths: {
+          '/users': {
+            get: {
+              operationId: 'listUsers',
+              parameters: [{ name: 'active', in: 'query', schema: { type: 'boolean' } }],
+              responses: { 200: { description: 'OK' } },
+            },
+          },
+        },
+      },
+      app.fetch,
+    )
+
+    expect(commands.get('listUsers')!.options!.parse({ active: 'false' })).toEqual({
+      active: false,
+    })
+  })
+
+  test('optional request bodies do not require flattened body fields', () => {
+    const commands = Openapi.generateCommands(
+      {
+        openapi: '3.0.0',
+        info: { title: 'Test', version: '1.0.0' },
+        paths: {
+          '/users': {
+            post: {
+              operationId: 'createUser',
+              requestBody: {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: { name: { type: 'string' } },
+                      required: ['name'],
+                    },
+                  },
+                },
+              },
+              responses: { 200: { description: 'OK' } },
+            },
+          },
+        },
+      },
+      app.fetch,
+    )
+
+    expect(commands.get('createUser')!.options!.parse({})).toEqual({})
+  })
 })
 
 describe('cli integration', () => {

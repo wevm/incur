@@ -278,7 +278,7 @@ test('OpenAPI mounted fetch accumulates operation command types', () => {
   }>()
   expectTypeOf<Commands['api createUser']>().toExtend<{
     args: {}
-    options: { name: string; active?: boolean | undefined }
+    options: { name?: string | undefined; active?: boolean | undefined }
     output: { id: number; name: string }
   }>()
   expectTypeOf<Commands['api getUser']>().toExtend<{
@@ -290,6 +290,22 @@ test('OpenAPI mounted fetch accumulates operation command types', () => {
   // @ts-expect-error raw gateway name is not a generated command
   type RawGateway = Commands['api']
   void (undefined as unknown as RawGateway)
+})
+
+test('mounted root CLI preserves output type in command map', () => {
+  const deploy = Cli.create('deploy', {
+    output: z.object({ id: z.string(), status: z.literal('queued') }),
+    run: () => ({ id: 'dep_123', status: 'queued' as const }),
+  })
+
+  const cli = Cli.create('test').command(deploy)
+
+  type Commands = typeof cli extends Cli.Cli<infer commands> ? commands : never
+  expectTypeOf<Commands['deploy']>().toExtend<{
+    args: {}
+    options: {}
+    output: { id: string; status: 'queued' }
+  }>()
 })
 
 test('middleware<typeof cli.vars>() infers vars types', () => {

@@ -22,12 +22,15 @@ export type OpenAPISpec = {
 }
 
 /** Command map generated from an OpenAPI spec mounted at `name`. */
-export type CommandMap<name extends string, spec extends OpenAPISpec> =
-  spec extends { paths: infer paths }
-    ? EntriesToMap<{
+export type CommandMap<name extends string, spec extends OpenAPISpec> = spec extends {
+  paths: infer paths
+}
+  ? EntriesToMap<
+      {
         [path in keyof paths & string]: OperationEntries<name, path, paths[path]>
-      }[keyof paths & string]>
-    : {}
+      }[keyof paths & string]
+    >
+  : {}
 
 /** Options for generating an OpenAPI document from an incur CLI. */
 export type GenerateOptions = {
@@ -91,44 +94,45 @@ type RequestBody = {
   required?: boolean | undefined
 }
 
-type HttpOperationMethod =
-  | 'delete'
-  | 'get'
-  | 'head'
-  | 'options'
-  | 'patch'
-  | 'post'
-  | 'put'
-  | 'trace'
+const openApiMethodNames = [
+  'delete',
+  'get',
+  'head',
+  'options',
+  'patch',
+  'post',
+  'put',
+  'query',
+  'trace',
+] as const
 
-type OperationEntries<
-  name extends string,
-  path extends string,
-  methods,
-> = methods extends Record<string, unknown>
-  ? {
-      [method in keyof methods & HttpOperationMethod]: methods[method] extends Record<
-        string,
-        unknown
-      >
-        ? {
-            name: `${name} ${OperationName<method, path, methods[method]>}`
-            entry: {
-              args: ParametersToObject<
-                PathItemParameters<methods> | OperationParameters<methods[method]>,
-                'path'
-              >
-              options: ParametersToObject<
-                PathItemParameters<methods> | OperationParameters<methods[method]>,
-                'query'
-              > &
-                RequestBodyToObject<OperationRequestBody<methods[method]>>
-              output: OperationOutput<methods[method]>
+type HttpOperationMethod = (typeof openApiMethodNames)[number]
+
+type OperationEntries<name extends string, path extends string, methods> =
+  methods extends Record<string, unknown>
+    ? {
+        [method in keyof methods & HttpOperationMethod]: methods[method] extends Record<
+          string,
+          unknown
+        >
+          ? {
+              name: `${name} ${OperationName<method, path, methods[method]>}`
+              entry: {
+                args: ParametersToObject<
+                  PathItemParameters<methods> | OperationParameters<methods[method]>,
+                  'path'
+                >
+                options: ParametersToObject<
+                  PathItemParameters<methods> | OperationParameters<methods[method]>,
+                  'query'
+                > &
+                  RequestBodyToObject<OperationRequestBody<methods[method]>>
+                output: OperationOutput<methods[method]>
+              }
             }
-          }
-        : never
-    }[keyof methods & HttpOperationMethod]
-  : never
+          : never
+      }[keyof methods & HttpOperationMethod]
+    : never
 
 type EntriesToMap<entries> = UnionToIntersection<
   entries extends { entry: unknown; name: string }
@@ -204,26 +208,30 @@ type RequestBodyToObject<body> = [body] extends [
     content: { 'application/json': { schema: infer schema } }
   },
 ]
-  ? SchemaObjectToType<schema>
+  ? body extends { required: true }
+    ? SchemaObjectToType<schema>
+    : OptionalSchemaObjectToType<schema>
   : {}
 
 type OperationOutput<operation> = operation extends { responses: infer responses }
   ? ResponseOutput<responses>
   : unknown
 
-type ResponseOutput<responses> = ResponseContent<PickSuccessResponse<responses>> extends infer schema
-  ? [schema] extends [never]
-    ? unknown
-    : JsonSchemaToType<schema>
-  : unknown
+type ResponseOutput<responses> =
+  ResponseContent<PickSuccessResponse<responses>> extends infer schema
+    ? [schema] extends [never]
+      ? unknown
+      : JsonSchemaToType<schema>
+    : unknown
 
-type PickSuccessResponse<responses> = responses extends Record<PropertyKey, unknown>
-  ? '200' extends keyof responses
-    ? responses['200']
-    : 200 extends keyof responses
-      ? responses[200]
-      : SuccessResponse<responses>
-  : never
+type PickSuccessResponse<responses> =
+  responses extends Record<PropertyKey, unknown>
+    ? '200' extends keyof responses
+      ? responses['200']
+      : 200 extends keyof responses
+        ? responses[200]
+        : SuccessResponse<responses>
+    : never
 
 type SuccessResponse<responses> = {
   [status in keyof responses]: `${status & (number | string)}` extends `2${string}`
@@ -255,10 +263,16 @@ type RequiredSchemaProps<properties extends Record<string, unknown>, required ex
 }
 
 type OptionalSchemaProps<properties extends Record<string, unknown>, required extends string> = {
-  [key in keyof properties & string as key extends required ? never : key]?: JsonSchemaToType<
-    properties[key]
-  > | undefined
+  [key in keyof properties & string as key extends required ? never : key]?:
+    | JsonSchemaToType<properties[key]>
+    | undefined
 }
+
+type OptionalSchemaObjectToType<schema> = schema extends {
+  properties: infer properties extends Record<string, unknown>
+}
+  ? { [key in keyof properties & string]?: JsonSchemaToType<properties[key]> | undefined }
+  : {}
 
 type JsonSchemaToType<schema> = schema extends { const: infer value }
   ? value
@@ -290,16 +304,7 @@ type JsonSchemaTypeToType<type, schema> = type extends 'string'
             ? SchemaObjectToType<schema>
             : unknown
 
-const openApiMethods = new Set([
-  'delete',
-  'get',
-  'head',
-  'options',
-  'patch',
-  'post',
-  'put',
-  'trace',
-])
+const openApiMethods = new Set<string>(openApiMethodNames)
 
 /** A fetch handler. */
 type FetchHandler = (req: Request) => Response | Promise<Response>
@@ -516,7 +521,9 @@ export function generateCommands(
 
       const bodySchema = op.requestBody?.content?.['application/json']?.schema
       const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
-      const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
+      const bodyRequired = new Set(
+        op.requestBody?.required ? ((bodySchema?.required as string[]) ?? []) : [],
+      )
       const outputSchema = successResponseSchema(op.responses)
 
       // Build args Zod schema from path params
@@ -571,9 +578,9 @@ export function generateCommands(
 function successResponseSchema(responses: Record<string, unknown> | undefined) {
   if (!responses) return undefined
   const entries = Object.entries(responses)
-  const match = entries.find(([status]) => status === '200') ?? entries.find(([status]) =>
-    status.startsWith('2'),
-  )
+  const match =
+    entries.find(([status]) => status === '200') ??
+    entries.find(([status]) => status.startsWith('2'))
   const response = match?.[1] as
     | { content?: Record<string, { schema?: Record<string, unknown> | undefined }> | undefined }
     | undefined
@@ -596,7 +603,8 @@ function createHandler(config: {
     let urlPath = (config.basePath ?? '') + config.path
     for (const p of config.pathParams) {
       const value = args[p.name]
-      if (value !== undefined) urlPath = urlPath.replace(`{${p.name}}`, String(value))
+      if (value !== undefined)
+        urlPath = urlPath.replace(`{${p.name}}`, encodeURIComponent(String(value)))
     }
 
     // Build query string from query params
@@ -660,14 +668,14 @@ function coerceIfNeeded(schema: z.ZodType): z.ZodType {
       return isOptional ? z.coerce.number().optional() : z.coerce.number()
     // Direct boolean
     if (inner instanceof z.ZodBoolean)
-      return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
+      return isOptional ? booleanParam(inner).optional() : booleanParam(inner)
     // Union containing number or boolean (e.g. type: ["number", "null"] from OpenAPI 3.1)
     if (inner instanceof z.ZodUnion) {
       const options = (inner as any)._zod?.def?.options as z.ZodType[] | undefined
       if (options?.some((o: z.ZodType) => o instanceof z.ZodNumber))
         return isOptional ? z.coerce.number().optional() : z.coerce.number()
       if (options?.some((o: z.ZodType) => o instanceof z.ZodBoolean))
-        return isOptional ? z.coerce.boolean().optional() : z.coerce.boolean()
+        return isOptional ? booleanParam(inner).optional() : booleanParam(inner)
     }
     // No coercion needed
     return undefined
@@ -676,4 +684,13 @@ function coerceIfNeeded(schema: z.ZodType): z.ZodType {
   if (!coerced) return schema
   const desc = (schema as any).description ?? (inner as any).description
   return desc ? coerced.describe(desc) : coerced
+}
+
+function booleanParam(schema: z.ZodType) {
+  return z.preprocess((value) => {
+    if (typeof value !== 'string') return value
+    if (value === 'true') return true
+    if (value === 'false') return false
+    return value
+  }, schema)
 }

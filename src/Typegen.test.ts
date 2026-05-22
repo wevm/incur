@@ -1,4 +1,5 @@
 import { Cli, Typegen, z } from 'incur'
+
 import { app, spec } from '../test/fixtures/hono-openapi-app.js'
 
 describe('fromCli', () => {
@@ -17,9 +18,9 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "get". */
-        'get': { args: { id: number }; options: {} }
+        "get": { args: { id: number }; options: {} }
         /** Generated command "list". */
-        'list': { args: {}; options: { limit: number } }
+        "list": { args: {}; options: { limit: number } }
       }
 
       declare module 'incur' {
@@ -38,7 +39,7 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "ping". */
-        'ping': { args: {}; options: {} }
+        "ping": { args: {}; options: {} }
       }
 
       declare module 'incur' {
@@ -67,9 +68,9 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "pr create". */
-        'pr create': { args: { title: string }; options: {} }
+        "pr create": { args: { title: string }; options: {} }
         /** Generated command "pr list". */
-        'pr list': { args: {}; options: { state: string } }
+        "pr list": { args: {}; options: { state: string } }
       }
 
       declare module 'incur' {
@@ -95,7 +96,7 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "pr review approve". */
-        'pr review approve': { args: { id: number }; options: {} }
+        "pr review approve": { args: { id: number }; options: {} }
       }
 
       declare module 'incur' {
@@ -144,7 +145,7 @@ describe('fromCli', () => {
       .command('middle', { run: () => ({}) })
 
     const output = Typegen.fromCli(cli)
-    const commandOrder = [...output.matchAll(/^  '(\w+)':/gm)].map((m) => m[1])
+    const commandOrder = [...output.matchAll(/^  "(\w+)":/gm)].map((m) => m[1])
     expect(commandOrder).toEqual(['alpha', 'middle', 'zebra'])
   })
 
@@ -227,7 +228,7 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "build". */
-        'build': { args: {}; options: { name: string; count: number; active: boolean; mode: "strict"; state: "open" | "closed"; target: string | number; values: ("a" | 1 | boolean)[]; nested: { label?: string | undefined; flags: ("on" | "off")[] } } }
+        "build": { args: {}; options: { name: string; count: number; active: boolean; mode: "strict"; state: "open" | "closed"; target: string | number; values: ("a" | 1 | boolean)[]; nested: { label?: string | undefined; flags: ("on" | "off")[] } } }
       }
 
       declare module 'incur' {
@@ -246,7 +247,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain("'cmd': { args: {}; options: {}; output: { ok: boolean } }")
+    expect(output).toContain('"cmd": { args: {}; options: {}; output: { ok: boolean } }')
   })
 
   test('output schemas for non-object top-level types', () => {
@@ -261,8 +262,8 @@ describe('fromCli', () => {
       })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain("'text': { args: {}; options: {}; output: string }")
-    expect(output).toContain("'values': { args: {}; options: {}; output: (string | number)[] }")
+    expect(output).toContain('"text": { args: {}; options: {}; output: string }')
+    expect(output).toContain('"values": { args: {}; options: {}; output: (string | number)[] }')
   })
 
   test('output schemas for records and tuples', () => {
@@ -285,15 +286,15 @@ describe('fromCli', () => {
       })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain("'record': { args: {}; options: {}; output: Record<string, number> }")
+    expect(output).toContain('"record": { args: {}; options: {}; output: Record<string, number> }')
     expect(output).toContain(
-      '\'enum-record\': { args: {}; options: {}; output: Record<"left" | "right", number> }',
+      '"enum-record": { args: {}; options: {}; output: Record<"left" | "right", number> }',
     )
     expect(output).toContain(
-      "'rest-tuple': { args: {}; options: {}; output: [string, ...number[]] }",
+      '"rest-tuple": { args: {}; options: {}; output: [string, ...number[]] }',
     )
     expect(output).toContain(
-      "'tuple': { args: {}; options: {}; output: [string, number, boolean] }",
+      '"tuple": { args: {}; options: {}; output: [string, number, boolean] }',
     )
   })
 
@@ -304,7 +305,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain("'cmd': { args: {}; options: {}; output: unknown }")
+    expect(output).toContain('"cmd": { args: {}; options: {}; output: unknown }')
   })
 
   test('object keys that are not identifiers are quoted', () => {
@@ -319,6 +320,27 @@ describe('fromCli', () => {
     const output = Typegen.fromCli(cli)
     expect(output).toContain('"1x": number')
     expect(output).toContain('"foo-bar": string')
+  })
+
+  test('command keys are escaped', () => {
+    const cli = Cli.create('test').command('quote\'s "cmd" \\ slash */ end', {
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('Generated command "quote\'s \\"cmd\\" \\\\ slash *\\/ end"')
+    expect(output).toContain('"quote\'s \\"cmd\\" \\\\ slash */ end": { args: {}; options: {} }')
+  })
+
+  test('catchall output widens the index signature for known properties', () => {
+    const cli = Cli.create('test').command('cmd', {
+      output: z.object({ name: z.string() }).catchall(z.number()),
+      run: () => ({ name: 'test' }) as never,
+    })
+
+    expect(Typegen.fromCli(cli)).toContain(
+      '"cmd": { args: {}; options: {}; output: { name: string; [key: string]: number | string } }',
+    )
   })
 
   test('unsupported schemas throw a clear typegen error', () => {
@@ -344,7 +366,7 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "deploy". */
-        'deploy': { args: {}; options: {} }
+        "deploy": { args: {}; options: {} }
       }
 
       declare module 'incur' {
@@ -364,12 +386,12 @@ describe('fromCli', () => {
 
     const output = Typegen.fromCli(cli)
     expect(output).toContain(
-      "'api getUser': { args: { id: number }; options: {}; output: { id: number; name: string; [key: string]: unknown } }",
+      '"api getUser": { args: { id: number }; options: {}; output: { id: number; name: string; [key: string]: unknown } }',
     )
     expect(output).toContain(
-      "'api createUser': { args: {}; options: { name: string }; output: { created: boolean; name: string; [key: string]: unknown } }",
+      '"api createUser": { args: {}; options: { name: string }; output: { created: boolean; name: string; [key: string]: unknown } }',
     )
-    expect(output).not.toContain("'api': { args")
+    expect(output).not.toContain('"api": { args')
   })
 
   test('mixed top-level and grouped commands', () => {
@@ -382,9 +404,9 @@ describe('fromCli', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "ping". */
-        'ping': { args: {}; options: {} }
+        "ping": { args: {}; options: {} }
         /** Generated command "pr list". */
-        'pr list': { args: {}; options: {} }
+        "pr list": { args: {}; options: {} }
       }
 
       declare module 'incur' {

@@ -35,6 +35,8 @@ import * as Skill from './Skill.js'
 import * as SyncMcp from './SyncMcp.js'
 import * as SyncSkills from './SyncSkills.js'
 
+declare const rootType: unique symbol
+
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<
   commands extends CommandsMap = {},
@@ -53,23 +55,20 @@ export type Cli<
     >(
       name: name,
       definition: CommandDefinition<args, cmdEnv, options, output, vars, env>,
-    ): Cli<
-      commands & { [key in name]: CommandMapEntry<args, options, output> },
-      vars,
-      env
-    >
-    /** Mounts a sub-CLI as a command group. */
-    <const name extends string, const sub extends CommandsMap>(
-      cli: Cli<sub, any, any> & { name: name },
-    ): Cli<commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] }, vars, env>
+    ): Cli<commands & { [key in name]: CommandMapEntry<args, options, output> }, vars, env>
     /** Mounts a root CLI as a single command. */
     <
       const name extends string,
       const args extends z.ZodObject<any> | undefined,
       const opts extends z.ZodObject<any> | undefined,
+      const output extends z.ZodType | undefined,
     >(
-      cli: Root<args, opts> & { name: name },
-    ): Cli<commands & { [key in name]: CommandMapEntry<args, opts> }, vars, env>
+      cli: Root<args, opts, output> & { name: name },
+    ): Cli<commands & { [key in name]: CommandMapEntry<args, opts, output> }, vars, env>
+    /** Mounts a sub-CLI as a command group. */
+    <const name extends string, const sub extends CommandsMap>(
+      cli: Cli<sub, any, any> & { name: name },
+    ): Cli<commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] }, vars, env>
     /** Mounts a fetch handler with an OpenAPI spec as a typed command group. */
     <const name extends string, const spec extends Openapi.OpenAPISpec>(
       name: name,
@@ -113,7 +112,11 @@ export type Cli<
 export type Root<
   _args extends z.ZodObject<any> | undefined = undefined,
   _options extends z.ZodObject<any> | undefined = undefined,
-> = Omit<Cli, 'command'>
+  _output extends z.ZodType | undefined = undefined,
+> = Omit<Cli, 'command'> & {
+  /** @internal Carries root command schemas for mount inference. */
+  [rootType]: { args: _args; options: _options; output: _output }
+}
 
 /** Extracts the commands map from the registered type. */
 export type Commands = Register extends { commands: infer commands extends CommandsMap }
@@ -172,7 +175,8 @@ export function create<
 >(
   name: string,
   definition: create.Options<args, env, opts, output, vars> & { run: Function },
-): Cli<{ [key in typeof name]: CommandMapEntry<args, opts, output> }, vars, env>
+): Cli<{ [key in typeof name]: CommandMapEntry<args, opts, output> }, vars, env> &
+  Root<args, opts, output>
 /** Creates a router CLI that registers subcommands. */
 export function create<
   const args extends z.ZodObject<any> | undefined = undefined,
@@ -196,7 +200,8 @@ export function create<
   },
   vars,
   env
->
+> &
+  Root<args, opts, output>
 /** Creates a router CLI from a single options object (e.g. package.json). */
 export function create<
   const args extends z.ZodObject<any> | undefined = undefined,

@@ -1603,51 +1603,51 @@ describe('typegen', () => {
       "/** Command map generated from your incur CLI. */
       export type Commands = {
         /** Generated command "auth login". */
-        'auth login': { args: {}; options: { hostname: string; web: boolean; scopes: string[] } }
+        "auth login": { args: {}; options: { hostname: string; web: boolean; scopes: string[] } }
         /** Generated command "auth logout". */
-        'auth logout': { args: {}; options: {} }
+        "auth logout": { args: {}; options: {} }
         /** Generated command "auth status". */
-        'auth status': { args: {}; options: {}; output: { loggedIn: boolean; hostname: string; user: string } }
+        "auth status": { args: {}; options: {}; output: { loggedIn: boolean; hostname: string; user: string } }
         /** Generated command "config". */
-        'config': { args: { key?: string | undefined }; options: {} }
+        "config": { args: { key?: string | undefined }; options: {} }
         /** Generated command "echo". */
-        'echo': { args: { message: string; repeat?: number | undefined }; options: { upper: boolean; prefix: string } }
+        "echo": { args: { message: string; repeat?: number | undefined }; options: { upper: boolean; prefix: string } }
         /** Generated command "explode". */
-        'explode': { args: {}; options: {} }
+        "explode": { args: {}; options: {} }
         /** Generated command "explode-clac". */
-        'explode-clac': { args: {}; options: {} }
+        "explode-clac": { args: {}; options: {} }
         /** Generated command "noop". */
-        'noop': { args: {}; options: {} }
+        "noop": { args: {}; options: {} }
         /** Generated command "ping". */
-        'ping': { args: {}; options: {} }
+        "ping": { args: {}; options: {} }
         /** Generated command "project create". */
-        'project create': { args: { name: string }; options: { description: string; private: boolean }; output: { id: string; url: string } }
+        "project create": { args: { name: string }; options: { description: string; private: boolean }; output: { id: string; url: string } }
         /** Generated command "project delete". */
-        'project delete': { args: { id: string }; options: { force: boolean } }
+        "project delete": { args: { id: string }; options: { force: boolean } }
         /** Generated command "project deploy create". */
-        'project deploy create': { args: { env: string }; options: { branch: string; dryRun: boolean }; output: { deployId: string; url: string; status: string } }
+        "project deploy create": { args: { env: string }; options: { branch: string; dryRun: boolean }; output: { deployId: string; url: string; status: string } }
         /** Generated command "project deploy rollback". */
-        'project deploy rollback': { args: { deployId: string }; options: {} }
+        "project deploy rollback": { args: { deployId: string }; options: {} }
         /** Generated command "project deploy status". */
-        'project deploy status': { args: { deployId: string }; options: {}; output: { deployId: string; status: string; progress: number } }
+        "project deploy status": { args: { deployId: string }; options: {}; output: { deployId: string; status: string; progress: number } }
         /** Generated command "project get". */
-        'project get': { args: { id: string }; options: {}; output: { id: string; name: string; description: string; members: { userId: string; role: string }[] } }
+        "project get": { args: { id: string }; options: {}; output: { id: string; name: string; description: string; members: { userId: string; role: string }[] } }
         /** Generated command "project list". */
-        'project list': { args: {}; options: { limit: number; sort: "name" | "created" | "updated"; archived: boolean }; output: { items: { id: string; name: string; archived: boolean }[]; total: number } }
+        "project list": { args: {}; options: { limit: number; sort: "name" | "created" | "updated"; archived: boolean }; output: { items: { id: string; name: string; archived: boolean }[]; total: number } }
         /** Generated command "slow". */
-        'slow': { args: {}; options: {} }
+        "slow": { args: {}; options: {} }
         /** Generated command "stream". */
-        'stream': { args: {}; options: {} }
+        "stream": { args: {}; options: {} }
         /** Generated command "stream-error". */
-        'stream-error': { args: {}; options: {} }
+        "stream-error": { args: {}; options: {} }
         /** Generated command "stream-ok". */
-        'stream-ok': { args: {}; options: {} }
+        "stream-ok": { args: {}; options: {} }
         /** Generated command "stream-text". */
-        'stream-text': { args: {}; options: {} }
+        "stream-text": { args: {}; options: {} }
         /** Generated command "stream-throw". */
-        'stream-throw': { args: {}; options: {} }
+        "stream-throw": { args: {}; options: {} }
         /** Generated command "validate-fail". */
-        'validate-fail': { args: { email: string; age: number }; options: {} }
+        "validate-fail": { args: { email: string; age: number }; options: {} }
       }
 
       declare module 'incur' {

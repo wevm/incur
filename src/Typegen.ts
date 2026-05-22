@@ -25,8 +25,8 @@ export function fromCli(cli: Cli.Cli): string {
   for (const { name, args, options, output } of entries) {
     const outputType = output ? `; output: ${schemaToType(output, 'unknown')}` : ''
     lines.push(
-      `  /** Generated command ${JSON.stringify(name)}. */`,
-      `  '${name}': { args: ${schemaToType(args)}; options: ${schemaToType(options)}${outputType} }`,
+      `  /** Generated command ${commentText(JSON.stringify(name))}. */`,
+      `  ${JSON.stringify(name)}: { args: ${schemaToType(args)}; options: ${schemaToType(options)}${outputType} }`,
     )
   }
 
@@ -157,15 +157,21 @@ function resolveType(
       }
 
       const required = new Set((schema.required as string[] | undefined) ?? [])
-      const entries = Object.entries(properties).map(
-        ([key, value]) =>
-          `${propertyKey(key)}${required.has(key) ? '' : '?'}: ${propertyType(
-            resolveType(value, defs),
-            required.has(key),
-          )}`,
+      const entries = Object.entries(properties).map(([key, value]) => ({
+        key,
+        type: propertyType(resolveType(value, defs), required.has(key)),
+      }))
+      const props = entries.map(
+        ({ key, type }) => `${propertyKey(key)}${required.has(key) ? '' : '?'}: ${type}`,
       )
-      if (isSchema(additional)) entries.push(`[key: string]: ${resolveType(additional, defs)}`)
-      return `{ ${entries.join('; ')} }`
+      if (isSchema(additional))
+        props.push(
+          `[key: string]: ${unionType([
+            resolveType(additional, defs),
+            ...entries.map((entry) => entry.type),
+          ])}`,
+        )
+      return `{ ${props.join('; ')} }`
     }
     default:
       if ('not' in schema) return 'never'
@@ -175,6 +181,10 @@ function resolveType(
 
 function isSchema(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function commentText(value: string): string {
+  return value.replaceAll('*/', '*\\/')
 }
 
 function propertyKey(key: string): string {
@@ -189,4 +199,9 @@ function propertyNamesType(value: unknown, defs: Record<string, Record<string, u
 function propertyType(type: string, required: boolean): string {
   if (required || type.split(' | ').includes('undefined')) return type
   return `${type} | undefined`
+}
+
+function unionType(values: string[]): string {
+  const parts = [...new Set(values.flatMap((value) => value.split(' | ')))]
+  return parts.includes('unknown') ? 'unknown' : parts.join(' | ')
 }
