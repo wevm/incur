@@ -1637,15 +1637,15 @@ describe('typegen', () => {
         /** Generated command "slow". */
         "slow": { args: {}; options: {} }
         /** Generated command "stream". */
-        "stream": { args: {}; options: {} }
+        "stream": { args: {}; options: {}; stream: true }
         /** Generated command "stream-error". */
-        "stream-error": { args: {}; options: {} }
+        "stream-error": { args: {}; options: {}; stream: true }
         /** Generated command "stream-ok". */
-        "stream-ok": { args: {}; options: {} }
+        "stream-ok": { args: {}; options: {}; stream: true }
         /** Generated command "stream-text". */
-        "stream-text": { args: {}; options: {} }
+        "stream-text": { args: {}; options: {}; stream: true }
         /** Generated command "stream-throw". */
-        "stream-throw": { args: {}; options: {} }
+        "stream-throw": { args: {}; options: {}; stream: true }
         /** Generated command "validate-fail". */
         "validate-fail": { args: { email: string; age: number }; options: {} }
       }

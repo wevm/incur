@@ -29,11 +29,14 @@ type Field<key extends string, value> = value extends object
   : { [field in key]?: value | undefined }
 
 type Input<command> = Field<'args', Args<command>> & Field<'options', Options<command>>
+type Result<command> = command extends { stream: true }
+  ? AsyncIterable<Output<command>>
+  : Output<command>
 
 type Caller<command> =
   RequiredKeys<Input<command>> extends never
-    ? (input?: Input<command>) => Promise<Output<command>>
-    : (input: Input<command>) => Promise<Output<command>>
+    ? (input?: Input<command>) => Promise<Result<command>>
+    : (input: Input<command>) => Promise<Result<command>>
 
 type RuntimeInput = {
   args?: unknown | undefined
@@ -77,7 +80,7 @@ export function createClient<const commands = Commands>(options: ClientOptions):
             options: input.options ?? {},
           }),
           headers: {
-            accept: 'application/json',
+            accept: 'application/json, application/x-ndjson',
             'content-type': 'application/json',
           },
           method: 'POST',
@@ -86,13 +89,12 @@ export function createClient<const commands = Commands>(options: ClientOptions):
         throw new ClientError('RPC request failed', { cause: error })
       }
 
+      if (isStreamingResponse(response)) return parseStreamingResponse(response)
+
       const envelope = await parseResponse(response)
       if (envelope.ok) return envelope.data
 
-      const message =
-        isRecord(envelope.error) && typeof envelope.error.message === 'string'
-          ? envelope.error.message
-          : 'RPC command failed'
+      const message = errorMessage(envelope.error, 'RPC command failed')
       throw new ClientError(message, {
         data: envelope,
         error: envelope.error,
@@ -105,6 +107,10 @@ function endpoint(base: string | URL): URL {
   const url = new URL(base)
   if (!url.pathname.endsWith('/')) url.pathname += '/'
   return new URL('_incur/rpc', url)
+}
+
+function isStreamingResponse(response: Response): boolean {
+  return response.headers.get('content-type')?.includes('application/x-ndjson') ?? false
 }
 
 async function parseResponse(response: Response): Promise<Envelope> {
@@ -126,4 +132,100 @@ async function parseResponse(response: Response): Promise<Envelope> {
       status: response.status,
     })
   return value as Envelope
+}
+
+async function* parseStreamingResponse(response: Response): AsyncGenerator<unknown, void, unknown> {
+  if (!response.body)
+    throw new ClientError('Expected an RPC stream body', {
+      status: response.status,
+    })
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completed = false
+  let eof = false
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) {
+        eof = true
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+
+      let newline: number
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newline).trim()
+        buffer = buffer.slice(newline + 1)
+        if (line) {
+          const result = readStreamRecord(line, response.status)
+          if (result.done) {
+            completed = true
+            return
+          }
+          yield result.data
+        }
+      }
+    }
+
+    const remaining = buffer.trim()
+    if (remaining) {
+      const result = readStreamRecord(remaining, response.status)
+      if (result.done) {
+        completed = true
+        return
+      }
+      yield result.data
+    }
+  } finally {
+    if (!completed && !eof) await reader.cancel()
+    reader.releaseLock()
+  }
+
+  throw new ClientError('RPC stream ended before done', {
+    status: response.status,
+  })
+}
+
+function readStreamRecord(
+  line: string,
+  status: number,
+): { data: unknown; done?: false | undefined } | { done: true } {
+  let value: unknown
+  try {
+    value = JSON.parse(line)
+  } catch (error) {
+    throw new ClientError('Expected a JSON RPC stream record', {
+      cause: error,
+      data: line,
+      status,
+    })
+  }
+
+  if (!isRecord(value) || typeof value.type !== 'string')
+    throw new ClientError('Malformed RPC stream record', {
+      data: value,
+      status,
+    })
+
+  if (value.type === 'chunk') return { data: value.data }
+  if (value.type === 'done' && value.ok === true) return { done: true }
+  if (value.type === 'error' && value.ok === false) {
+    throw new ClientError(errorMessage(value.error, 'RPC stream failed'), {
+      data: value,
+      error: value.error,
+      status,
+    })
+  }
+
+  throw new ClientError('Malformed RPC stream record', {
+    data: value,
+    status,
+  })
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return isRecord(error) && typeof error.message === 'string' ? error.message : fallback
 }

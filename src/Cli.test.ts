@@ -4372,6 +4372,147 @@ describe('fetch', () => {
     ])
   })
 
+  test('POST /_incur/rpc streams async generator output as NDJSON', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      args: z.object({ start: z.number() }),
+      options: z.object({ step: z.number() }),
+      async *run(c) {
+        yield { progress: c.args.start }
+        yield { progress: c.args.start + c.options.step }
+        return { done: c.args.start + c.options.step * 2 }
+      },
+    })
+    const res = await cli.fetch(
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          command: 'stream',
+          args: { start: 2 },
+          options: { step: 3 },
+        }),
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/x-ndjson')
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "progress": 2,
+          },
+          "type": "chunk",
+        },
+        {
+          "data": {
+            "progress": 5,
+          },
+          "type": "chunk",
+        },
+        {
+          "meta": {
+            "command": "stream",
+          },
+          "ok": true,
+          "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('POST /_incur/rpc stream preserves returned ok CTA', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        yield { progress: 1 }
+        return c.ok(undefined, { cta: { commands: ['status'] } })
+      },
+    })
+    const res = await cli.fetch(
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'stream', args: {}, options: {} }),
+      }),
+    )
+
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "progress": 1,
+          },
+          "type": "chunk",
+        },
+        {
+          "meta": {
+            "command": "stream",
+            "cta": {
+              "commands": [
+                {
+                  "command": "test status",
+                },
+              ],
+              "description": "Suggested command:",
+            },
+          },
+          "ok": true,
+          "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('POST /_incur/rpc stream preserves returned errors', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        yield { progress: 1 }
+        return c.error({ code: 'STREAM_FAIL', message: 'broke' })
+      },
+    })
+    const res = await cli.fetch(
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'stream', args: {}, options: {} }),
+      }),
+    )
+
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "progress": 1,
+          },
+          "type": "chunk",
+        },
+        {
+          "error": {
+            "code": "STREAM_FAIL",
+            "message": "broke",
+          },
+          "ok": false,
+          "type": "error",
+        },
+      ]
+    `)
+  })
+
   test('trailing path segments → positional args', async () => {
     const cli = Cli.create('test')
     cli.command('users', {
@@ -4491,6 +4632,79 @@ describe('fetch', () => {
           },
           "ok": true,
           "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('async generator RPC stream preserves returned ok CTA', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        yield { progress: 1 }
+        return c.ok(undefined, { cta: { commands: ['status'] } })
+      },
+    })
+    const res = await cli.fetch(new Request('http://localhost/stream'))
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "progress": 1,
+          },
+          "type": "chunk",
+        },
+        {
+          "meta": {
+            "command": "stream",
+            "cta": {
+              "commands": [
+                {
+                  "command": "test status",
+                },
+              ],
+              "description": "Suggested command:",
+            },
+          },
+          "ok": true,
+          "type": "done",
+        },
+      ]
+    `)
+  })
+
+  test('async generator RPC stream preserves returned errors', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        yield { progress: 1 }
+        return c.error({ code: 'STREAM_FAIL', message: 'broke' })
+      },
+    })
+    const res = await cli.fetch(new Request('http://localhost/stream'))
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toMatchInlineSnapshot(`
+      [
+        {
+          "data": {
+            "progress": 1,
+          },
+          "type": "chunk",
+        },
+        {
+          "error": {
+            "code": "STREAM_FAIL",
+            "message": "broke",
+          },
+          "ok": false,
+          "type": "error",
         },
       ]
     `)

@@ -19,6 +19,13 @@ export type Commands = {
   }
   /** Generated command "auth". */
   auth: { args: {}; options: { token: string }; output: void }
+  /** Generated command "logs". */
+  logs: {
+    args: {}
+    options: {}
+    output: { line: string }
+    stream: true
+  }
   /** Generated command "project deploy". */
   'project deploy': {
     args: { id: string }
@@ -208,6 +215,19 @@ test('createClient can be made permissive with an explicit unknown command map',
 
   call()
   call({ args: { any: 'value' }, options: ['also accepted'] })
+})
+
+test('createClient returns async iterables for streaming commands', () => {
+  const client = createClient<GeneratedCommands>({ baseUrl: 'https://api.example.com' })
+  const logs = client('logs')
+
+  expectTypeOf<Awaited<ReturnType<typeof logs>>>().toEqualTypeOf<AsyncIterable<{ line: string }>>()
+
+  async function read() {
+    const stream = await logs()
+    for await (const chunk of stream) expectTypeOf(chunk).toEqualTypeOf<{ line: string }>()
+  }
+  void read
 })
 
 test('ClientError can be imported and RPC payloads can be narrowed', () => {

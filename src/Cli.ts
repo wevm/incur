@@ -220,7 +220,8 @@ export function create(
 ): Cli | Root {
   const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name
   const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition
-  const rootDef = 'run' in def ? (def as CommandDefinition<any, any, any>) : undefined
+  const rootDef =
+    'run' in def ? annotateStreamingCommand(def as CommandDefinition<any, any, any>) : undefined
   const rootFetch = 'fetch' in def ? (def.fetch as FetchHandler) : undefined
 
   const commands = new Map<string, CommandEntry>()
@@ -258,7 +259,7 @@ export function create(
           } as InternalFetchGateway)
           return cli
         }
-        commands.set(nameOrCli, def)
+        commands.set(nameOrCli, annotateStreamingCommand(def))
         if (def.aliases)
           for (const a of def.aliases) commands.set(a, { _alias: true, target: nameOrCli })
         return cli
@@ -1904,34 +1905,68 @@ async function executeCommand(
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder()
+        const write = (value: unknown) => {
+          controller.enqueue(encoder.encode(JSON.stringify(value) + '\n'))
+        }
         try {
-          for await (const value of result.stream) {
-            controller.enqueue(
-              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
-            )
-          }
-          controller.enqueue(
-            encoder.encode(
-              JSON.stringify({
-                type: 'done',
-                ok: true,
-                meta: { command: path },
-              }) + '\n',
-            ),
-          )
-        } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              JSON.stringify({
+          let returnValue: unknown
+          while (true) {
+            const { value, done } = await result.stream.next()
+            if (done) {
+              returnValue = value
+              break
+            }
+            if (isSentinel(value) && value[sentinel] === 'error') {
+              const err = value as ErrorResult
+              write({
                 type: 'error',
                 ok: false,
                 error: {
-                  code: 'UNKNOWN',
-                  message: error instanceof Error ? error.message : String(error),
+                  code: err.code,
+                  message: err.message,
+                  ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
                 },
-              }) + '\n',
-            ),
-          )
+              })
+              controller.close()
+              return
+            }
+            write({ type: 'chunk', data: value })
+          }
+          if (isSentinel(returnValue) && returnValue[sentinel] === 'error') {
+            const err = returnValue as ErrorResult
+            write({
+              type: 'error',
+              ok: false,
+              error: {
+                code: err.code,
+                message: err.message,
+                ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+              },
+            })
+            controller.close()
+            return
+          }
+          const cta =
+            isSentinel(returnValue) && returnValue[sentinel] === 'ok'
+              ? formatCtaBlock(options.name ?? path, (returnValue as OkResult).cta)
+              : undefined
+          write({
+            type: 'done',
+            ok: true,
+            meta: { command: path, ...(cta ? { cta } : undefined) },
+          })
+        } catch (error) {
+          write({
+            type: 'error',
+            ok: false,
+            error: {
+              code: error instanceof IncurError ? error.code : 'UNKNOWN',
+              message: error instanceof Error ? error.message : String(error),
+              ...(error instanceof IncurError && error.retryable !== undefined
+                ? { retryable: error.retryable }
+                : undefined),
+            },
+          })
         }
         controller.close()
       },
@@ -2498,6 +2533,8 @@ export type CommandsMap = Record<
     options: Record<string, unknown>
     /** Command output shape. */
     output?: unknown | undefined
+    /** Whether the command streams output chunks. */
+    stream?: true | undefined
   }
 >
 
@@ -2552,6 +2589,19 @@ type InternalAlias = {
 /** @internal Type guard for alias entries. */
 function isAlias(entry: CommandEntry): entry is InternalAlias {
   return '_alias' in entry
+}
+
+const AsyncGeneratorFunction = async function* () {}.constructor
+
+function isAsyncGeneratorFunction(value: unknown): boolean {
+  return typeof value === 'function' && value.constructor === AsyncGeneratorFunction
+}
+
+function annotateStreamingCommand<const command extends CommandDefinition<any, any, any>>(
+  command: command,
+): command {
+  if (isAsyncGeneratorFunction(command.run)) return { ...command, _stream: true } as command
+  return command
 }
 
 /** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
@@ -3160,6 +3210,8 @@ type CommandDefinition<
   vars extends z.ZodObject<any> | undefined = undefined,
   cliEnv extends z.ZodObject<any> | undefined = undefined,
 > = CommandMeta<options> & {
+  /** @internal Whether this command's handler is an async generator function. */
+  _stream?: true | undefined
   /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
   aliases?: string[] | undefined
   /** Zod schema for positional arguments. */
@@ -3188,41 +3240,50 @@ type CommandDefinition<
   /** Alternative usage patterns shown in help output. */
   usage?: Usage<args, options>[] | undefined
   /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
-  run(context: {
-    /** Whether the consumer is an agent (stdout is not a TTY). */
-    agent: boolean
-    /** Positional arguments. */
-    args: InferOutput<args>
-    /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
-    displayName: string
-    /** Parsed environment variables. */
-    env: InferOutput<env>
-    /** Return an error result with optional CTAs. */
-    error: (options: {
-      code: string
-      cta?: CtaBlock | undefined
-      exitCode?: number | undefined
-      message: string
-      retryable?: boolean | undefined
-    }) => never
-    /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
-    format: Formatter.Format
-    /** Whether the user explicitly passed `--format` or `--json`. */
-    formatExplicit: boolean
-    /** The CLI name. */
-    name: string
-    /** Return a success result with optional metadata (e.g. CTAs). */
-    ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
-    options: InferOutput<options>
-    /** Variables set by middleware. */
-    var: InferVars<vars>
-    /** The CLI version string. */
-    version: string | undefined
-  }):
-    | InferReturn<output>
-    | Promise<InferReturn<output>>
-    | AsyncGenerator<InferReturn<output>, unknown, unknown>
+  run: CommandRun<args, env, options, output, vars>
 }
+
+type CommandRun<
+  args extends z.ZodObject<any> | undefined = undefined,
+  env extends z.ZodObject<any> | undefined = undefined,
+  options extends z.ZodObject<any> | undefined = undefined,
+  output extends z.ZodType | undefined = undefined,
+  vars extends z.ZodObject<any> | undefined = undefined,
+  cliEnv extends z.ZodObject<any> | undefined = undefined,
+> = (context: {
+  /** Whether the consumer is an agent (stdout is not a TTY). */
+  agent: boolean
+  /** Positional arguments. */
+  args: InferOutput<args>
+  /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
+  displayName: string
+  /** Parsed environment variables. */
+  env: InferOutput<env>
+  /** Return an error result with optional CTAs. */
+  error: (options: {
+    code: string
+    cta?: CtaBlock | undefined
+    exitCode?: number | undefined
+    message: string
+    retryable?: boolean | undefined
+  }) => never
+  /** The resolved output format (e.g. `'toon'`, `'jsonl'`). */
+  format: Formatter.Format
+  /** Whether the user explicitly passed `--format` or `--json`. */
+  formatExplicit: boolean
+  /** The CLI name. */
+  name: string
+  /** Return a success result with optional metadata (e.g. CTAs). */
+  ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
+  options: InferOutput<options>
+  /** Variables set by middleware. */
+  var: InferVars<vars>
+  /** The CLI version string. */
+  version: string | undefined
+}) =>
+  | InferReturn<output>
+  | Promise<InferReturn<output>>
+  | AsyncGenerator<InferReturn<output>, unknown, unknown>
 
 /** @internal A formatted CTA block as it appears in the output envelope. */
 type FormattedCtaBlock = {

@@ -931,7 +931,7 @@ Bun.serve(cli)
 
 ## Streaming
 
-Use `async *run` to stream chunks incrementally. Yield objects for structured data or plain strings for text:
+Use `async *run` to stream chunks incrementally. Yield objects for structured data or plain strings for text. Generated client types recognize streaming commands from this `async *run` shape:
 
 ```ts
 cli.command('logs', {

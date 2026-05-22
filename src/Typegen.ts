@@ -22,11 +22,12 @@ export function fromCli(cli: Cli.Cli): string {
     'export type Commands = {',
   ]
 
-  for (const { name, args, options, output } of entries) {
+  for (const { name, args, options, output, stream } of entries) {
     const outputType = output ? `; output: ${schemaToType(output, 'unknown')}` : ''
+    const streamType = stream ? '; stream: true' : ''
     lines.push(
       `  /** Generated command ${commentText(JSON.stringify(name))}. */`,
-      `  ${JSON.stringify(name)}: { args: ${schemaToType(args)}; options: ${schemaToType(options)}${outputType} }`,
+      `  ${JSON.stringify(name)}: { args: ${schemaToType(args)}; options: ${schemaToType(options)}${outputType}${streamType} }`,
     )
   }
 
@@ -56,6 +57,7 @@ function collectEntries(commands: Map<string, any>, prefix: string[]): Entry[] {
         args: entry.args,
         options: entry.options,
         output: entry.output,
+        stream: entry._stream,
       })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
@@ -66,6 +68,7 @@ type Entry = {
   name: string
   options?: z.ZodObject<any> | undefined
   output?: z.ZodType | undefined
+  stream?: true | undefined
 }
 
 /** Converts a Zod schema to a TypeScript type string. Returns `fallback` for undefined schemas. */

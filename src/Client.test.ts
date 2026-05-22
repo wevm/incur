@@ -1,4 +1,11 @@
-import { ClientError, createClient, isClientRpcError, isClientRpcErrorEnvelope } from 'incur'
+import {
+  Cli,
+  ClientError,
+  createClient,
+  isClientRpcError,
+  isClientRpcErrorEnvelope,
+  z,
+} from 'incur'
 
 type RuntimeCommands = Record<string, { args: unknown; options: unknown; output: unknown }>
 
@@ -28,7 +35,7 @@ describe('createClient', () => {
     expect(calls[0]?.url).toBe('https://api.example.com/_incur/rpc')
     expect(calls[0]?.init?.method).toBe('POST')
     expect(calls[0]?.init?.headers).toEqual({
-      accept: 'application/json',
+      accept: 'application/json, application/x-ndjson',
       'content-type': 'application/json',
     })
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
@@ -157,6 +164,278 @@ describe('createClient', () => {
         expect(error.data.meta?.command).toBe('project deploy')
       }
     }
+  })
+
+  test('returns async iterable for streaming RPC responses', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(
+          [
+            JSON.stringify({ type: 'chunk', data: { line: 'one' } }),
+            JSON.stringify({ type: 'chunk', data: { line: 'two' } }),
+            JSON.stringify({ type: 'done', ok: true, meta: { command: 'logs' } }),
+          ].join('\n') + '\n',
+          { headers: { 'content-type': 'application/x-ndjson' } },
+        ),
+    })
+
+    const stream = await client('logs')()
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+
+    expect(chunks).toEqual([{ line: 'one' }, { line: 'two' }])
+  })
+
+  test('calls a real CLI RPC server and unwraps non-streaming responses', async () => {
+    const cli = Cli.create('test').command('sum', {
+      args: z.object({ left: z.number() }),
+      options: z.object({ right: z.number() }),
+      run: (c) => ({ value: c.args.left + c.options.right }),
+    })
+    const client = createClient<{
+      sum: { args: { left: number }; options: { right: number }; output: { value: number } }
+    }>({
+      baseUrl: 'http://localhost',
+      fetch: (input, init) => cli.fetch(new Request(input, init)),
+    })
+
+    await expect(
+      client('sum')({
+        args: { left: 1 },
+        options: { right: 2 },
+      }),
+    ).resolves.toEqual({ value: 3 })
+  })
+
+  test('calls a real CLI RPC server and iterates streaming responses', async () => {
+    const cli = Cli.create('test').command('logs', {
+      args: z.object({ prefix: z.string() }),
+      options: z.object({ count: z.number() }),
+      output: z.object({ line: z.string() }),
+      async *run(c) {
+        yield { line: `${c.args.prefix}-1` }
+        yield { line: `${c.args.prefix}-${c.options.count}` }
+      },
+    })
+    const client = createClient<{
+      logs: {
+        args: { prefix: string }
+        options: { count: number }
+        output: { line: string }
+        stream: true
+      }
+    }>({
+      baseUrl: 'http://localhost',
+      fetch: (input, init) => cli.fetch(new Request(input, init)),
+    })
+
+    const stream = await client('logs')({
+      args: { prefix: 'line' },
+      options: { count: 2 },
+    })
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+
+    expect(chunks).toEqual([{ line: 'line-1' }, { line: 'line-2' }])
+  })
+
+  test('throws failed streaming RPC records', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            type: 'error',
+            ok: false,
+            error: { code: 'NOPE', message: 'Nope' },
+          }) + '\n',
+          { headers: { 'content-type': 'application/x-ndjson' }, status: 500 },
+        ),
+    })
+
+    const stream = await client('logs')()
+    await expect(async () => {
+      for await (const chunk of stream) void chunk
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Nope',
+      error: { code: 'NOPE', message: 'Nope' },
+      status: 500,
+    })
+  })
+
+  test('throws invalid JSON streaming RPC records', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response('{bad json}\n', {
+          headers: { 'content-type': 'application/x-ndjson' },
+          status: 502,
+        }),
+    })
+
+    const stream = await client('logs')()
+    await expect(async () => {
+      for await (const chunk of stream) void chunk
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Expected a JSON RPC stream record',
+      data: '{bad json}',
+      status: 502,
+    })
+  })
+
+  test('parses streaming RPC records split across chunks', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"type":"chunk","data":{"line":"'))
+        controller.enqueue(encoder.encode('one"}}\n{"type":"chunk","data":{"line":"two"}}\n'))
+        controller.enqueue(encoder.encode('{"type":"done","ok":true}\n'))
+        controller.close()
+      },
+    })
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(body, {
+          headers: { 'content-type': 'application/x-ndjson' },
+        }),
+    })
+
+    const stream = await client('logs')()
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+
+    expect(chunks).toEqual([{ line: 'one' }, { line: 'two' }])
+  })
+
+  test('ignores blank lines in streaming RPC responses', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(
+          [
+            '',
+            '  ',
+            JSON.stringify({ type: 'chunk', data: { line: 'one' } }),
+            '',
+            JSON.stringify({ type: 'done', ok: true }),
+          ].join('\n') + '\n',
+          { headers: { 'content-type': 'application/x-ndjson' } },
+        ),
+    })
+
+    const stream = await client('logs')()
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+
+    expect(chunks).toEqual([{ line: 'one' }])
+  })
+
+  test('throws when streaming RPC responses have no body', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(null, {
+          headers: { 'content-type': 'application/x-ndjson' },
+          status: 204,
+        }),
+    })
+
+    const stream = await client('logs')()
+    await expect(async () => {
+      for await (const chunk of stream) void chunk
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Expected an RPC stream body',
+      status: 204,
+    })
+  })
+
+  test('throws malformed streaming RPC records', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(JSON.stringify({ type: 'done', ok: false }) + '\n', {
+          headers: { 'content-type': 'application/x-ndjson' },
+        }),
+    })
+
+    const stream = await client('logs')()
+    await expect(async () => {
+      for await (const chunk of stream) void chunk
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Malformed RPC stream record',
+      data: { type: 'done', ok: false },
+    })
+  })
+
+  test('throws when streaming RPC responses end before done', async () => {
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(JSON.stringify({ type: 'chunk', data: { line: 'one' } }) + '\n', {
+          headers: { 'content-type': 'application/x-ndjson' },
+        }),
+    })
+
+    const stream = await client('logs')()
+    await expect(async () => {
+      for await (const chunk of stream) void chunk
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'RPC stream ended before done',
+    })
+  })
+
+  test('cancels streaming RPC responses when consumers stop early', async () => {
+    let cancelled = false
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(JSON.stringify({ type: 'chunk', data: { line: 'one' } }) + '\n'),
+        )
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const client = createClient<{
+      logs: { args: {}; options: {}; output: { line: string }; stream: true }
+    }>({
+      baseUrl: 'https://api.example.com',
+      fetch: async () =>
+        new Response(body, {
+          headers: { 'content-type': 'application/x-ndjson' },
+        }),
+    })
+
+    const stream = await client('logs')()
+    for await (const chunk of stream) {
+      void chunk
+      break
+    }
+
+    expect(cancelled).toBe(true)
   })
 
   test('uses a fallback message for failed RPC envelopes without error messages', async () => {

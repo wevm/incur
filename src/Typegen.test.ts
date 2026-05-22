@@ -355,6 +355,20 @@ describe('fromCli', () => {
     )
   })
 
+  test('streaming command', () => {
+    const cli = Cli.create('test').command('logs', {
+      output: z.object({ line: z.string() }),
+      async *run() {
+        yield { line: 'one' }
+      },
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain(
+      '"logs": { args: {}; options: {}; output: { line: string }; stream: true }',
+    )
+  })
+
   test('skips commands that cannot be called by RPC client', () => {
     const cli = Cli.create('test')
       .command('deploy', {
@@ -558,6 +572,12 @@ function createClientRoundTripCli() {
       options: z.object({ token: z.string() }),
       output: z.void(),
       run: () => undefined,
+    })
+    .command('logs', {
+      output: z.object({ line: z.string() }),
+      async *run() {
+        yield { line: 'one' }
+      },
     })
     .command('api', {
       fetch: () => new Response(),
