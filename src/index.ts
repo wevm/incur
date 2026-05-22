@@ -1,5 +1,5 @@
 export { z } from 'zod'
-export { createClient } from './Client.js'
+export { createClient, createMemoryClient } from './Client.js'
 export { ClientError, isClientRpcError, isClientRpcErrorEnvelope } from './Errors.js'
 export type {
   ClientRpcEnvelope,

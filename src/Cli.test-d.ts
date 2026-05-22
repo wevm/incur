@@ -163,8 +163,115 @@ test('command() accumulates command types through chaining', () => {
   expectTypeOf<Commands['get']>().toEqualTypeOf<{
     args: { id: number }
     options: { verbose: boolean }
+    output: unknown
   }>()
-  expectTypeOf<Commands['list']>().toEqualTypeOf<{ args: {}; options: { limit: number } }>()
+  expectTypeOf<Commands['list']>().toEqualTypeOf<{
+    args: {}
+    options: { limit: number }
+    output: unknown
+  }>()
+})
+
+test('command() accumulates output and structural stream metadata', () => {
+  const cli = Cli.create('test')
+    .command('inspect', {
+      output: z.object({ id: z.string(), ok: z.boolean() }),
+      run: () => ({ id: 'p1', ok: true }),
+    })
+    .command('logs', {
+      output: z.object({ line: z.string() }),
+      run: async function* () {
+        yield { line: 'one' }
+      },
+    })
+
+  type Commands = typeof cli extends Cli.Cli<infer C> ? C : never
+  expectTypeOf<Commands['inspect']>().toEqualTypeOf<{
+    args: {}
+    options: {}
+    output: { id: string; ok: boolean }
+  }>()
+  expectTypeOf<Commands['logs']>().toMatchTypeOf<{
+    args: {}
+    options: {}
+    output: { line: string }
+    stream: true
+  }>()
+})
+
+test('run() returning a generator keeps output metadata', () => {
+  async function* logs() {
+    yield { line: 'one' }
+  }
+  const cli = Cli.create('test').command('logs', {
+    output: z.object({ line: z.string() }),
+    run() {
+      return logs()
+    },
+  })
+
+  type Commands = typeof cli extends Cli.Cli<infer C> ? C : never
+  expectTypeOf<Commands['logs']>().toMatchTypeOf<{
+    args: {}
+    options: {}
+    output: { line: string }
+    stream: true
+  }>()
+})
+
+test('root CLIs preserve output and structural stream metadata when mounted', () => {
+  const status = Cli.create('status', {
+    output: z.object({ ok: z.boolean() }),
+    run: () => ({ ok: true }),
+  })
+  const logs = Cli.create('logs', {
+    output: z.object({ line: z.string() }),
+    run: async function* () {
+      yield { line: 'one' }
+    },
+  })
+  const cli = Cli.create('test').command(status).command(logs)
+
+  type Commands = typeof cli extends Cli.Cli<infer C> ? C : never
+  expectTypeOf<Commands['status']>().toEqualTypeOf<{
+    args: {}
+    options: {}
+    output: { ok: boolean }
+  }>()
+  expectTypeOf<Commands['logs']>().toMatchTypeOf<{
+    args: {}
+    options: {}
+    output: { line: string }
+    stream: true
+  }>()
+})
+
+test('mounted sub-CLIs preserve output and structural stream metadata', () => {
+  const project = Cli.create('project')
+    .command('inspect', {
+      output: z.object({ id: z.string() }),
+      run: () => ({ id: 'p1' }),
+    })
+    .command('logs', {
+      output: z.object({ line: z.string() }),
+      run: async function* () {
+        yield { line: 'one' }
+      },
+    })
+  const cli = Cli.create('test').command(project)
+
+  type Commands = typeof cli extends Cli.Cli<infer C> ? C : never
+  expectTypeOf<Commands['project inspect']>().toEqualTypeOf<{
+    args: {}
+    options: {}
+    output: { id: string }
+  }>()
+  expectTypeOf<Commands['project logs']>().toMatchTypeOf<{
+    args: {}
+    options: {}
+    output: { line: string }
+    stream: true
+  }>()
 })
 
 test('OpenAPI mounted fetch accumulates operation command types', () => {

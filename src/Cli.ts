@@ -23,6 +23,7 @@ import {
 import * as Command from './internal/command.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
+import * as Rpc from './internal/rpc.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
@@ -35,43 +36,57 @@ import * as Skill from './Skill.js'
 import * as SyncMcp from './SyncMcp.js'
 import * as SyncSkills from './SyncSkills.js'
 
-declare const rootType: unique symbol
-
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<
   commands extends CommandsMap = {},
   vars extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
+  name extends string = string,
 > = {
   /** Registers a root command or mounts a sub-CLI as a command group. */
   command: {
     /** Registers a command. Returns the CLI instance for chaining. */
     <
-      const name extends string,
+      const commandName extends string,
       const args extends z.ZodObject<any> | undefined = undefined,
       const cmdEnv extends z.ZodObject<any> | undefined = undefined,
       const options extends z.ZodObject<any> | undefined = undefined,
       const output extends z.ZodType | undefined = undefined,
+      const run extends CommandRun<args, cmdEnv, options, output, vars, env> = CommandRun<
+        args,
+        cmdEnv,
+        options,
+        output,
+        vars,
+        env
+      >,
     >(
-      name: name,
-      definition: CommandDefinition<args, cmdEnv, options, output, vars, env>,
-    ): Cli<commands & { [key in name]: CommandMapEntry<args, options, output> }, vars, env>
+      name: commandName,
+      definition: CommandDefinitionWithRun<args, cmdEnv, options, output, vars, env, run>,
+    ): Cli<
+      commands & {
+        [key in commandName]: CommandMapEntry<args, options, output, IsStreamingRun<run>>
+      },
+      vars,
+      env,
+      name
+    >
     /** Mounts a root CLI as a single command. */
-    <
-      const name extends string,
-      const args extends z.ZodObject<any> | undefined,
-      const opts extends z.ZodObject<any> | undefined,
-      const output extends z.ZodType | undefined,
-    >(
-      cli: Root<args, opts, output> & { name: name },
-    ): Cli<commands & { [key in name]: CommandMapEntry<args, opts, output> }, vars, env>
+    <const childName extends string, const entry extends CommandsMap[string]>(
+      cli: Root<entry, childName>,
+    ): Cli<commands & { [key in childName]: entry }, vars, env, name>
     /** Mounts a sub-CLI as a command group. */
-    <const name extends string, const sub extends CommandsMap>(
-      cli: Cli<sub, any, any> & { name: name },
-    ): Cli<commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] }, vars, env>
+    <const childName extends string, const sub extends CommandsMap>(
+      cli: Cli<sub, any, any, childName>,
+    ): Cli<
+      commands & { [key in keyof sub & string as `${childName} ${key}`]: sub[key] },
+      vars,
+      env,
+      name
+    >
     /** Mounts a fetch handler with an OpenAPI spec as a typed command group. */
-    <const name extends string, const spec extends Openapi.OpenAPISpec>(
-      name: name,
+    <const commandName extends string, const spec extends Openapi.OpenAPISpec>(
+      name: commandName,
       definition: {
         basePath?: string | undefined
         description?: string | undefined
@@ -79,10 +94,10 @@ export type Cli<
         openapi: spec
         outputPolicy?: OutputPolicy | undefined
       },
-    ): Cli<commands & Openapi.CommandMap<name, spec>, vars, env>
+    ): Cli<commands & Openapi.CommandMap<commandName, spec>, vars, env, name>
     /** Mounts a raw fetch handler as an untyped command gateway. */
-    <const name extends string>(
-      name: name,
+    <const commandName extends string>(
+      name: commandName,
       definition: {
         basePath?: string | undefined
         description?: string | undefined
@@ -90,32 +105,34 @@ export type Cli<
         openapi?: undefined
         outputPolicy?: OutputPolicy | undefined
       },
-    ): Cli<commands, vars, env>
+    ): Cli<commands, vars, env, name>
   }
   /** A short description of the CLI. */
   description?: string | undefined
   /** The env schema, if declared. Use `typeof cli.env` with `middleware<vars, env>()` for typed middleware. */
   env: env
   /** The name of the CLI application. */
-  name: string
+  name: name
   /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
   fetch(req: Request): Promise<Response>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
-  use(handler: MiddlewareHandler<vars, env>): Cli<commands, vars, env>
+  use(handler: MiddlewareHandler<vars, env>): Cli<commands, vars, env, name>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
   vars: vars
 }
 
-/** Root CLI — a single command with no subcommands. Carries phantom generics for mounting inference. */
+/** @internal Phantom key carrying a root CLI's single-command map entry. */
+declare const rootEntry: unique symbol
+
+/** Root CLI — a single command with no subcommands. Carries phantom command metadata for mounting inference. */
 export type Root<
-  _args extends z.ZodObject<any> | undefined = undefined,
-  _options extends z.ZodObject<any> | undefined = undefined,
-  _output extends z.ZodType | undefined = undefined,
-> = Omit<Cli, 'command'> & {
-  /** @internal Carries root command schemas for mount inference. */
-  [rootType]: { args: _args; options: _options; output: _output }
+  entry extends CommandsMap[string] = CommandMapEntry,
+  name extends string = string,
+> = Omit<Cli<{}, undefined, undefined, name>, 'command'> & {
+  /** @internal The root command map entry used when mounting this CLI on a parent. */
+  [rootEntry]: entry
 }
 
 /** Extracts the commands map from the registered type. */
@@ -171,49 +188,78 @@ export type Cta<commands extends CommandsMap = Commands> =
 
 /** Creates a CLI with a root handler. Can still register subcommands which take precedence. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
+  const run extends create.RootRun<args, env, opts, output, vars> = create.RootRun<
+    args,
+    env,
+    opts,
+    output,
+    vars
+  >,
 >(
-  name: string,
-  definition: create.Options<args, env, opts, output, vars> & { run: Function },
-): Cli<{ [key in typeof name]: CommandMapEntry<args, opts, output> }, vars, env> &
-  Root<args, opts, output>
+  name: name,
+  definition: Omit<create.Options<args, env, opts, output, vars>, 'run'> & { run: run },
+): Cli<
+  { [key in name]: CommandMapEntry<args, opts, output, IsStreamingRun<run>> },
+  vars,
+  env,
+  name
+> &
+  Root<CommandMapEntry<args, opts, output, IsStreamingRun<run>>, name>
 /** Creates a router CLI that registers subcommands. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
->(name: string, definition?: create.Options<args, env, opts, output, vars>): Cli<{}, vars, env>
+>(name: name, definition?: create.Options<args, env, opts, output, vars>): Cli<{}, vars, env, name>
 /** Creates a CLI with a root handler from a single options object. Can still register subcommands. */
 export function create<
+  const name extends string,
+  const args extends z.ZodObject<any> | undefined = undefined,
+  const env extends z.ZodObject<any> | undefined = undefined,
+  const opts extends z.ZodObject<any> | undefined = undefined,
+  const output extends z.ZodType | undefined = undefined,
+  const vars extends z.ZodObject<any> | undefined = undefined,
+  const run extends create.RootRun<args, env, opts, output, vars> = create.RootRun<
+    args,
+    env,
+    opts,
+    output,
+    vars
+  >,
+>(
+  definition: Omit<create.Options<args, env, opts, output, vars>, 'run'> & {
+    name: name
+    run: run
+  },
+): Cli<
+  {
+    [key in name]: CommandMapEntry<args, opts, output, IsStreamingRun<run>>
+  },
+  vars,
+  env,
+  name
+> &
+  Root<CommandMapEntry<args, opts, output, IsStreamingRun<run>>, name>
+/** Creates a router CLI from a single options object (e.g. package.json). */
+export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
 >(
-  definition: create.Options<args, env, opts, output, vars> & { name: string; run: Function },
-): Cli<
-  {
-    [key in (typeof definition)['name']]: CommandMapEntry<args, opts, output>
-  },
-  vars,
-  env
-> &
-  Root<args, opts, output>
-/** Creates a router CLI from a single options object (e.g. package.json). */
-export function create<
-  const args extends z.ZodObject<any> | undefined = undefined,
-  const env extends z.ZodObject<any> | undefined = undefined,
-  const opts extends z.ZodObject<any> | undefined = undefined,
-  const output extends z.ZodType | undefined = undefined,
-  const vars extends z.ZodObject<any> | undefined = undefined,
->(definition: create.Options<args, env, opts, output, vars> & { name: string }): Cli<{}, vars, env>
+  definition: create.Options<args, env, opts, output, vars> & { name: name },
+): Cli<{}, vars, env, name>
 export function create(
   nameOrDefinition: string | (any & { name: string }),
   definition?: any,
@@ -324,6 +370,17 @@ export function create(
     },
   }
 
+  Rpc.registerCliExecutor(cli, async (input, options = {}) => {
+    return Rpc.executeRpc(commands as Map<string, unknown>, input, {
+      env: def.env,
+      envSource: options.env,
+      middlewares,
+      name,
+      rootCommand: rootDef,
+      vars: def.vars,
+      version: def.version,
+    })
+  })
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
   if (rootDef && def.aliases) toRootAliases.set(cli as unknown as Root, def.aliases)
   if (def.options) toRootOptions.set(cli, def.options)
@@ -335,6 +392,15 @@ export function create(
 }
 
 export declare namespace create {
+  /** Root command handler used when creating a leaf CLI. */
+  type RootRun<
+    args extends z.ZodObject<any> | undefined = undefined,
+    env extends z.ZodObject<any> | undefined = undefined,
+    options extends z.ZodObject<any> | undefined = undefined,
+    output extends z.ZodType | undefined = undefined,
+    vars extends z.ZodObject<any> | undefined = undefined,
+  > = CommandRun<args, env, options, output, vars>
+
   /** Options for creating a CLI. Provide `run` for a leaf CLI, omit it for a router. */
   type Options<
     args extends z.ZodObject<any> | undefined = undefined,
@@ -397,40 +463,7 @@ export declare namespace create {
     /** Zod schema for middleware variables. Keys define variable names, schemas define types and defaults. */
     vars?: vars | undefined
     /** The root command handler. When provided, creates a leaf CLI with no subcommands. */
-    run?:
-      | ((context: {
-          /** Whether the consumer is an agent (stdout is not a TTY). */
-          agent: boolean
-          /** Positional arguments. */
-          args: InferOutput<args>
-          /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
-          displayName: string
-          /** Parsed environment variables. */
-          env: InferOutput<env>
-          /** Return an error result with optional CTAs. */
-          error: (options: {
-            code: string
-            cta?: CtaBlock | undefined
-            exitCode?: number | undefined
-            message: string
-            retryable?: boolean | undefined
-          }) => never
-          /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
-          format: Formatter.Format
-          /** Whether the user explicitly passed `--format` or `--json`. */
-          formatExplicit: boolean
-          /** The CLI name. */
-          name: string
-          /** Return a success result with optional metadata (e.g. CTAs). */
-          ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
-          options: InferOutput<options>
-          /** Variables set by middleware. */
-          var: InferVars<vars>
-        }) =>
-          | InferReturn<output>
-          | Promise<InferReturn<output>>
-          | AsyncGenerator<InferReturn<output>, unknown, unknown>)
-      | undefined
+    run?: RootRun<args, env, options, output, vars> | undefined
     /** Options for the built-in `mcp add` command. */
     mcp?:
       | {
@@ -1534,8 +1567,6 @@ declare namespace fetchImpl {
     envSchema?: z.ZodObject<any> | undefined
     /** Group-level middleware collected during command resolution. */
     groupMiddlewares?: MiddlewareHandler[] | undefined
-    /** Structured args received from the RPC route. */
-    structuredArgs?: Record<string, unknown> | undefined
     mcpHandler?:
       | ((
           req: Request,
@@ -1804,59 +1835,56 @@ async function executeRpcCommand(
   start: number,
   options: fetchImpl.Options,
 ): Promise<Response> {
-  function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
-      status,
-      headers: { 'content-type': 'application/json' },
-    })
-  }
-
-  function error(code: string, message: string, status: number, command = '/_incur/rpc') {
-    return jsonResponse(
-      {
-        ok: false,
-        error: { code, message },
-        meta: { command, duration: `${Math.round(performance.now() - start)}ms` },
-      },
-      status,
-    )
-  }
-
   let body: unknown
   try {
     body = await req.json()
   } catch {
-    return error('VALIDATION_ERROR', 'Request body must be JSON.', 400)
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Request body must be JSON.' },
+        meta: {
+          command: '/_incur/rpc',
+          duration: `${Math.round(performance.now() - start)}ms`,
+        },
+      }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    )
   }
 
-  if (!isRecord(body)) return error('VALIDATION_ERROR', 'Request body must be an object.', 400)
+  const result = await Rpc.executeRpc(commands as Map<string, unknown>, body, {
+    env: options.envSchema,
+    middlewares: options.middlewares,
+    name: options.name,
+    rootCommand: options.rootCommand,
+    start,
+    vars: options.vars,
+    version: options.version,
+  })
 
-  if (typeof body.command !== 'string')
-    return error('VALIDATION_ERROR', '`command` must be a string.', 400)
-  const command = body.command.trim()
-  if (!command) return error('VALIDATION_ERROR', '`command` must be a non-empty string.', 400)
+  if (result.kind === 'json')
+    return new Response(JSON.stringify(result.body), {
+      status: result.status,
+      headers: { 'content-type': 'application/json' },
+    })
 
-  const args = body.args ?? {}
-  const rpcOptions = body.options ?? {}
-  if (!isRecord(args) || !isRecord(rpcOptions))
-    return error('VALIDATION_ERROR', '`args` and `options` must be objects.', 400)
-
-  const tokens = command.split(/\s+/)
-  const resolved = resolveCommand(commands, tokens)
-  if ('fetchGateway' in resolved)
-    return error(
-      'FETCH_GATEWAY_UNSUPPORTED',
-      'Raw fetch gateways cannot be called through structured RPC. Mount the gateway with an OpenAPI spec to generate typed commands, or call the HTTP route directly.',
-      400,
-      command,
-    )
-  if (!('command' in resolved) || resolved.rest.length > 0)
-    return error('COMMAND_NOT_FOUND', 'Command not found.', 404, command)
-
-  return executeCommand(resolved.path, resolved.command, [], rpcOptions, start, {
-    ...options,
-    groupMiddlewares: resolved.middlewares,
-    structuredArgs: args,
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder()
+      try {
+        for await (const record of result.stream)
+          controller.enqueue(encoder.encode(JSON.stringify(record) + '\n'))
+      } finally {
+        controller.close()
+      }
+    },
+    async cancel() {
+      await result.stream.return(undefined)
+    },
+  })
+  return new Response(stream, {
+    status: result.status,
+    headers: { 'content-type': 'application/x-ndjson' },
   })
 }
 
@@ -1888,11 +1916,10 @@ async function executeCommand(
     env: options.envSchema,
     format: 'json',
     formatExplicit: true,
-    inputArgs: options.structuredArgs,
     inputOptions,
     middlewares: allMiddleware,
     name: options.name ?? path,
-    parseMode: options.structuredArgs === undefined ? 'split' : 'structured',
+    parseMode: 'split',
     path,
     vars: options.vars,
     version: options.version,
@@ -2538,6 +2565,41 @@ export type CommandsMap = Record<
   }
 >
 
+/** @internal Shape of a command entry inferred from command schemas. */
+type CommandMapEntry<
+  args extends z.ZodObject<any> | undefined = undefined,
+  options extends z.ZodObject<any> | undefined = undefined,
+  output extends z.ZodType | undefined = undefined,
+  stream extends boolean = false,
+> = {
+  args: InferOutput<args>
+  options: InferOutput<options>
+  output: InferReturn<output>
+} & (stream extends true ? { stream: true } : {})
+
+/** @internal A command definition with its concrete handler preserved for command map inference. */
+type CommandDefinitionWithRun<
+  args extends z.ZodObject<any> | undefined = undefined,
+  env extends z.ZodObject<any> | undefined = undefined,
+  options extends z.ZodObject<any> | undefined = undefined,
+  output extends z.ZodType | undefined = undefined,
+  vars extends z.ZodObject<any> | undefined = undefined,
+  cliEnv extends z.ZodObject<any> | undefined = undefined,
+  run extends CommandRun<args, env, options, output, vars, cliEnv> = CommandRun<
+    args,
+    env,
+    options,
+    output,
+    vars,
+    cliEnv
+  >,
+> = Omit<CommandDefinition<args, env, options, output, vars, cliEnv>, 'run'> & { run: run }
+
+/** @internal Whether a command handler is typed as returning async generator chunks. */
+type IsStreamingRun<run> = run extends (...args: any[]) => AsyncGenerator<unknown, unknown, unknown>
+  ? true
+  : false
+
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
 type CommandEntry =
   | CommandDefinition<any, any, any>
@@ -3139,19 +3201,11 @@ type InferOutput<schema extends z.ZodObject<any> | undefined> =
   schema extends z.ZodObject<any> ? z.output<schema> : {}
 
 /** @internal Inferred return type for a command handler. */
-type InferReturn<output extends z.ZodType | undefined> = output extends z.ZodType
-  ? z.output<output>
-  : unknown
-
-/** @internal Shape of a command entry inferred from command schemas. */
-type CommandMapEntry<
-  args extends z.ZodObject<any> | undefined = undefined,
-  options extends z.ZodObject<any> | undefined = undefined,
-  output extends z.ZodType | undefined = undefined,
-> = {
-  args: InferOutput<args>
-  options: InferOutput<options>
-} & (output extends z.ZodType ? { output: InferReturn<output> } : {})
+type InferReturn<output extends z.ZodType | undefined> = [output] extends [never]
+  ? unknown
+  : output extends z.ZodType
+    ? z.output<output>
+    : unknown
 
 /** @internal Inferred vars type from a Zod schema, or `{}` when no schema is provided. */
 type InferVars<vars extends z.ZodObject<any> | undefined> =

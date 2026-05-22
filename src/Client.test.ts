@@ -2,8 +2,10 @@ import {
   Cli,
   ClientError,
   createClient,
+  createMemoryClient,
   isClientRpcError,
   isClientRpcErrorEnvelope,
+  middleware,
   z,
 } from 'incur'
 
@@ -183,7 +185,7 @@ describe('createClient', () => {
     })
 
     const stream = await client('logs')()
-    const chunks = []
+    const chunks: { line: string }[] = []
     for await (const chunk of stream) chunks.push(chunk)
 
     expect(chunks).toEqual([{ line: 'one' }, { line: 'two' }])
@@ -208,6 +210,27 @@ describe('createClient', () => {
         options: { right: 2 },
       }),
     ).resolves.toEqual({ value: 3 })
+  })
+
+  test('calls command aliases and root aliases through a real CLI RPC server', async () => {
+    const update = Cli.create('update', {
+      aliases: ['upgrade'],
+      run: () => ({ result: 'updated' }),
+    })
+    const cli = Cli.create('pkg')
+      .command(update)
+      .command('extension', {
+        aliases: ['extensions', 'ext'],
+        run: () => ({ result: 'extended' }),
+      })
+    const client = createClient<RuntimeCommands>({
+      baseUrl: 'http://localhost',
+      fetch: (input, init) => cli.fetch(new Request(input, init)),
+    })
+
+    await expect(client('extensions')()).resolves.toEqual({ result: 'extended' })
+    await expect(client('ext')()).resolves.toEqual({ result: 'extended' })
+    await expect(client('upgrade')()).resolves.toEqual({ result: 'updated' })
   })
 
   test('calls a real CLI RPC server and iterates streaming responses', async () => {
@@ -236,7 +259,7 @@ describe('createClient', () => {
       args: { prefix: 'line' },
       options: { count: 2 },
     })
-    const chunks = []
+    const chunks: { line: string }[] = []
     for await (const chunk of stream) chunks.push(chunk)
 
     expect(chunks).toEqual([{ line: 'line-1' }, { line: 'line-2' }])
@@ -507,5 +530,401 @@ describe('createClient', () => {
     } finally {
       vi.stubGlobal('fetch', original)
     }
+  })
+})
+
+describe('createMemoryClient', () => {
+  test('unwraps non-streaming command data without fetch', async () => {
+    let fetched = false
+    const cli = Cli.create('test').command('sum', {
+      args: z.object({ left: z.number() }),
+      options: z.object({ right: z.number() }),
+      run: (c) => ({ value: c.args.left + c.options.right }),
+    })
+    cli.fetch = async () => {
+      fetched = true
+      return Response.json({ ok: false })
+    }
+    const client = createMemoryClient<RuntimeCommands>(cli)
+
+    await expect(
+      client('sum')({
+        args: { left: 1 },
+        options: { right: 2 },
+      }),
+    ).resolves.toEqual({ value: 3 })
+    expect(fetched).toBe(false)
+  })
+
+  test('throws validation errors', async () => {
+    const cli = Cli.create('test').command('sum', {
+      args: z.object({ left: z.number() }),
+      run: (c) => ({ value: c.args.left }),
+    })
+    const client = createMemoryClient<RuntimeCommands>(cli)
+
+    await expect(client('sum')({ args: {} })).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: expect.stringContaining('Invalid input'),
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: expect.any(Array),
+      },
+      status: 400,
+    })
+  })
+
+  test('executes root CLI commands', async () => {
+    const cli = Cli.create('test', {
+      args: z.object({ name: z.string() }),
+      output: z.object({ message: z.string() }),
+      run: (c) => ({ message: `hello ${c.args.name}` }),
+    })
+    const client = createMemoryClient(cli)
+
+    await expect(client('test')({ args: { name: 'Ada' } })).resolves.toEqual({
+      message: 'hello Ada',
+    })
+  })
+
+  test('throws unknown command errors', async () => {
+    const cli = Cli.create('test').command('ping', {
+      run: () => 'pong',
+    })
+    const client = createMemoryClient(cli)
+
+    await expect(client('pong' as 'ping')()).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Command not found.',
+      error: { code: 'COMMAND_NOT_FOUND', message: 'Command not found.' },
+      status: 404,
+    })
+  })
+
+  test('throws c.error and thrown command errors', async () => {
+    const cli = Cli.create('test')
+      .command('blocked', {
+        run: (c) => c.error({ code: 'BLOCKED', message: 'Blocked' }),
+      })
+      .command('explode', {
+        run: () => {
+          throw new Error('Boom')
+        },
+      })
+    const client = createMemoryClient(cli)
+
+    await expect(client('blocked')()).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Blocked',
+      error: { code: 'BLOCKED', message: 'Blocked' },
+      status: 500,
+    })
+    await expect(client('explode')()).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Boom',
+      error: { code: 'UNKNOWN', message: 'Boom' },
+      status: 500,
+    })
+  })
+
+  test('runs root, group, and command middleware in order', async () => {
+    const order: string[] = []
+    const root = middleware(async (_c, next) => {
+      order.push('root before')
+      await next()
+      order.push('root after')
+    })
+    const group = middleware(async (_c, next) => {
+      order.push('group before')
+      await next()
+      order.push('group after')
+    })
+    const command = middleware(async (_c, next) => {
+      order.push('command before')
+      await next()
+      order.push('command after')
+    })
+    const admin = Cli.create('admin')
+      .use(group)
+      .command('ping', {
+        middleware: [command],
+        run: () => {
+          order.push('run')
+          return 'pong'
+        },
+      })
+    const cli = Cli.create('test').use(root).command(admin)
+    const client = createMemoryClient(cli)
+
+    await expect(client('admin ping')()).resolves.toBe('pong')
+    expect(order).toEqual([
+      'root before',
+      'group before',
+      'command before',
+      'run',
+      'command after',
+      'group after',
+      'root after',
+    ])
+  })
+
+  test('passes env through CLI, command, and middleware contexts', async () => {
+    const seen: unknown[] = []
+    const env = z.object({
+      API_TOKEN: z.string(),
+      API_URL: z.string().default('https://api.example.com'),
+    })
+    const root = middleware<undefined, typeof env>(async (c, next) => {
+      seen.push({ root: c.env })
+      await next()
+    })
+    const command = middleware<undefined, typeof env>(async (c, next) => {
+      seen.push({ command: c.env })
+      await next()
+    })
+    const cli = Cli.create('test', { env })
+      .use(root)
+      .command('deploy', {
+        env: z.object({ DEPLOY_ENV: z.enum(['staging', 'production']) }),
+        middleware: [command],
+        run: (c) => ({ env: c.env.DEPLOY_ENV }),
+      })
+    const client = createMemoryClient(cli, {
+      env: {
+        API_TOKEN: 'secret-123',
+        DEPLOY_ENV: 'staging',
+      },
+    })
+
+    await expect(client('deploy')()).resolves.toEqual({ env: 'staging' })
+    expect(seen).toEqual([
+      { root: { API_TOKEN: 'secret-123', API_URL: 'https://api.example.com' } },
+      { command: { API_TOKEN: 'secret-123', API_URL: 'https://api.example.com' } },
+    ])
+  })
+
+  test('throws env validation errors', async () => {
+    let ran = false
+    const cli = Cli.create('test', {
+      env: z.object({ API_TOKEN: z.string() }),
+    })
+      .use(async (_c, next) => {
+        ran = true
+        await next()
+      })
+      .command('deploy', { run: () => ({ ok: true }) })
+    const client = createMemoryClient(cli, { env: {} })
+
+    await expect(client('deploy')()).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: expect.stringContaining('Invalid input'),
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: expect.any(Array),
+      },
+      status: 400,
+    })
+    expect(ran).toBe(false)
+  })
+
+  test('throws command env validation errors before running handler', async () => {
+    let ran = false
+    const cli = Cli.create('test').command('deploy', {
+      env: z.object({ DEPLOY_ENV: z.enum(['staging', 'production']) }),
+      run: () => {
+        ran = true
+        return { ok: true }
+      },
+    })
+    const client = createMemoryClient(cli, { env: { DEPLOY_ENV: 'preview' } })
+
+    await expect(client('deploy')()).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: expect.stringContaining('Invalid option'),
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: expect.any(Array),
+      },
+      status: 400,
+    })
+    expect(ran).toBe(false)
+  })
+
+  test('rejects non-object args and options', async () => {
+    const cli = Cli.create('test').command('ping', { run: () => ({ ok: true }) })
+    const client = createMemoryClient<RuntimeCommands>(cli)
+
+    await expect(client('ping')({ args: [] })).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: '`args` and `options` must be objects.',
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: '`args` and `options` must be objects.',
+      },
+      status: 400,
+    })
+    await expect(client('ping')({ options: [] })).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: '`args` and `options` must be objects.',
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: '`args` and `options` must be objects.',
+      },
+      status: 400,
+    })
+  })
+
+  test('resolves command aliases and root command aliases', async () => {
+    const update = Cli.create('update', {
+      aliases: ['upgrade'],
+      run: () => ({ result: 'updated' }),
+    })
+    const cli = Cli.create('pkg')
+      .command(update)
+      .command('extension', {
+        aliases: ['extensions', 'ext'],
+        run: () => ({ result: 'extended' }),
+      })
+    const client = createMemoryClient<RuntimeCommands>(cli)
+
+    await expect(client('extensions')()).resolves.toEqual({ result: 'extended' })
+    await expect(client('ext')()).resolves.toEqual({ result: 'extended' })
+    await expect(client('upgrade')()).resolves.toEqual({ result: 'updated' })
+  })
+
+  test('resolves command aliases inside mounted groups', async () => {
+    const admin = Cli.create('admin').command('list', {
+      aliases: ['ls'],
+      run: () => ({ items: ['one'] }),
+    })
+    const cli = Cli.create('app').command(admin)
+    const client = createMemoryClient<RuntimeCommands>(cli)
+
+    await expect(client('admin ls')()).resolves.toEqual({ items: ['one'] })
+  })
+
+  test('executes mounted leaf CLIs and grouped commands', async () => {
+    const greet = Cli.create('greet', {
+      args: z.object({ name: z.string() }),
+      options: z.object({ loud: z.boolean().default(false) }),
+      run: (c) => ({ message: c.options.loud ? `HELLO ${c.args.name}` : `hello ${c.args.name}` }),
+    })
+    const admin = Cli.create('admin').command('reset', { run: () => ({ reset: true }) })
+    const cli = Cli.create('app').command(greet).command(admin)
+    const client = createMemoryClient(cli)
+
+    await expect(
+      client('greet')({
+        args: { name: 'Ada' },
+        options: { loud: true },
+      }),
+    ).resolves.toEqual({ message: 'HELLO Ada' })
+    await expect(client('admin reset')()).resolves.toEqual({ reset: true })
+  })
+
+  test('trims command names and rejects blank commands', async () => {
+    const cli = Cli.create('test').command('ping', { run: () => 'pong' })
+    const client = createMemoryClient<RuntimeCommands>(cli)
+
+    await expect(client('  ping  ')()).resolves.toBe('pong')
+    await expect(client('   ')()).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: '`command` must be a non-empty string.',
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: '`command` must be a non-empty string.',
+      },
+      status: 400,
+    })
+  })
+
+  test('returns async iterable streaming chunks', async () => {
+    const cli = Cli.create('test').command('logs', {
+      args: z.object({ prefix: z.string() }),
+      output: z.object({ line: z.string() }),
+      async *run(c) {
+        yield { line: `${c.args.prefix}-1` }
+        yield { line: `${c.args.prefix}-2` }
+      },
+    })
+    const client = createMemoryClient(cli)
+
+    const stream = await client('logs')({ args: { prefix: 'line' } })
+    const chunks: { line: string }[] = []
+    for await (const chunk of stream) chunks.push(chunk)
+
+    expect(chunks).toEqual([{ line: 'line-1' }, { line: 'line-2' }])
+  })
+
+  test('throws streaming c.error records', async () => {
+    const cli = Cli.create('test').command('logs', {
+      output: z.object({ line: z.string() }),
+      async *run(c) {
+        yield { line: 'one' }
+        return c.error({ code: 'NOPE', message: 'Nope' })
+      },
+    })
+    const client = createMemoryClient(cli)
+
+    const stream = await client('logs')()
+    const chunks: { line: string }[] = []
+    await expect(async () => {
+      for await (const chunk of stream) chunks.push(chunk)
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Nope',
+      error: { code: 'NOPE', message: 'Nope' },
+      status: 200,
+    })
+    expect(chunks).toEqual([{ line: 'one' }])
+  })
+
+  test('throws streaming thrown errors', async () => {
+    const cli = Cli.create('test').command('logs', {
+      output: z.object({ line: z.string() }),
+      async *run() {
+        yield { line: 'one' }
+        throw new Error('Boom')
+      },
+    })
+    const client = createMemoryClient(cli)
+
+    const stream = await client('logs')()
+    const chunks: { line: string }[] = []
+    await expect(async () => {
+      for await (const chunk of stream) chunks.push(chunk)
+    }).rejects.toMatchObject({
+      name: 'Incur.ClientError',
+      message: 'Boom',
+      error: { code: 'UNKNOWN', message: 'Boom' },
+      status: 200,
+    })
+    expect(chunks).toEqual([{ line: 'one' }])
+  })
+
+  test('closes streaming commands when consumers stop early', async () => {
+    let closed = false
+    const cli = Cli.create('test').command('logs', {
+      output: z.object({ line: z.string() }),
+      async *run() {
+        try {
+          yield { line: 'one' }
+          yield { line: 'two' }
+        } finally {
+          closed = true
+        }
+      },
+    })
+    const client = createMemoryClient(cli)
+
+    const stream = await client('logs')()
+    const chunks = []
+    for await (const chunk of stream) {
+      chunks.push(chunk)
+      break
+    }
+
+    expect(chunks).toEqual([{ line: 'one' }])
+    expect(closed).toBe(true)
   })
 })

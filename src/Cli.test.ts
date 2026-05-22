@@ -4372,6 +4372,34 @@ describe('fetch', () => {
     ])
   })
 
+  test('POST /_incur/rpc executes root command', async () => {
+    const cli = Cli.create('test', {
+      args: z.object({ name: z.string() }),
+      run: (c) => ({ message: `hello ${c.args.name}` }),
+    })
+    const req = new Request('http://localhost/_incur/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: 'test', args: { name: 'Ada' } }),
+    })
+
+    expect(await fetchJson(cli, req)).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "message": "hello Ada",
+          },
+          "meta": {
+            "command": "test",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+
   test('POST /_incur/rpc streams async generator output as NDJSON', async () => {
     const cli = Cli.create('test')
     cli.command('stream', {
@@ -4424,6 +4452,40 @@ describe('fetch', () => {
         },
       ]
     `)
+  })
+
+  test('POST /_incur/rpc cancels command stream when response body is cancelled', async () => {
+    let closed = false
+    let resume: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const cli = Cli.create('test').command('stream', {
+      async *run() {
+        try {
+          yield { progress: 1 }
+          await gate
+          yield { progress: 2 }
+        } finally {
+          closed = true
+        }
+      },
+    })
+    const res = await cli.fetch(
+      new Request('http://localhost/_incur/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'stream', args: {}, options: {} }),
+      }),
+    )
+    const reader = res.body!.getReader()
+
+    await reader.read()
+    const cancelled = reader.cancel()
+    resume!()
+    await cancelled
+
+    expect(closed).toBe(true)
   })
 
   test('POST /_incur/rpc stream preserves returned ok CTA', async () => {

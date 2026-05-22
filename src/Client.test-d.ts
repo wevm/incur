@@ -1,4 +1,12 @@
-import { Cli, ClientError, createClient, isClientRpcError, isClientRpcErrorEnvelope } from 'incur'
+import {
+  Cli,
+  ClientError,
+  createClient,
+  createMemoryClient,
+  isClientRpcError,
+  isClientRpcErrorEnvelope,
+  z,
+} from 'incur'
 import type { ClientRpcError, ClientRpcErrorEnvelope } from 'incur'
 import { expectTypeOf, test } from 'vitest'
 
@@ -230,6 +238,29 @@ test('createClient returns async iterables for streaming commands', () => {
   void read
 })
 
+test('createClient consumes command maps inferred from Cli instances', () => {
+  const cli = Cli.create('test')
+    .command('sum', {
+      args: z.object({ left: z.number() }),
+      options: z.object({ right: z.number() }),
+      output: z.object({ value: z.number() }),
+      run: (c) => ({ value: c.args.left + c.options.right }),
+    })
+    .command('logs', {
+      output: z.object({ line: z.string() }),
+      run: async function* () {
+        yield { line: 'one' }
+      },
+    })
+  type Commands = typeof cli extends Cli.Cli<infer commands> ? commands : never
+  const client = createClient<Commands>({ baseUrl: 'https://api.example.com' })
+  const sum = client('sum')
+  const logs = client('logs')
+
+  expectTypeOf<Awaited<ReturnType<typeof sum>>>().toEqualTypeOf<{ value: number }>()
+  expectTypeOf<Awaited<ReturnType<typeof logs>>>().toEqualTypeOf<AsyncIterable<{ line: string }>>()
+})
+
 test('ClientError can be imported and RPC payloads can be narrowed', () => {
   const error = new ClientError('Invalid input', {
     error: {
@@ -372,4 +403,254 @@ test('createClient consumes OpenAPI mounted command maps inferred from Cli insta
 
   // @ts-expect-error raw fetch gateway is not generated as a command
   client('api')
+})
+
+test('createMemoryClient allows omitted input when args and options are empty', () => {
+  const cli = Cli.create('test').command('ping', {
+    output: z.object({ ok: z.boolean() }),
+    run: () => ({ ok: true }),
+  })
+  const client = createMemoryClient(cli)
+  const ping = client('ping')
+
+  expectTypeOf<Awaited<ReturnType<typeof ping>>>().toEqualTypeOf<{ ok: boolean }>()
+  ping()
+  ping({})
+  ping({ args: {}, options: {} })
+
+  // @ts-expect-error unknown command
+  client('missing')
+})
+
+test('createMemoryClient requires input when args are required and options are empty', () => {
+  const cli = Cli.create('test').command('inspect', {
+    args: z.object({ id: z.string(), includeLogs: z.boolean().optional() }),
+    output: z.object({ id: z.string(), logs: z.array(z.string()).optional() }),
+    run: (c) => ({
+      id: c.args.id,
+      logs: c.args.includeLogs ? ['one'] : undefined,
+    }),
+  })
+  const client = createMemoryClient(cli)
+  const inspect = client('inspect')
+
+  type Input = {
+    args: { id: string; includeLogs?: boolean | undefined }
+    options?: {} | undefined
+  }
+  expectTypeOf<Parameters<typeof inspect>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof inspect>[0]>()
+  expectTypeOf<Awaited<ReturnType<typeof inspect>>>().toEqualTypeOf<{
+    id: string
+    logs?: string[] | undefined
+  }>()
+
+  inspect({ args: { id: 'p1' } })
+  inspect({ args: { id: 'p1', includeLogs: true }, options: {} })
+
+  // @ts-expect-error input is required when args has a required key
+  inspect()
+
+  // @ts-expect-error required arg key is missing
+  inspect({ args: {} })
+})
+
+test('createMemoryClient requires input when only options are required', () => {
+  const cli = Cli.create('test').command('login', {
+    options: z.object({ token: z.string() }),
+    output: z.void(),
+    run: () => undefined,
+  })
+  const client = createMemoryClient(cli)
+  const login = client('login')
+
+  type Input = {
+    args?: {} | undefined
+    options: { token: string }
+  }
+  expectTypeOf<Parameters<typeof login>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof login>[0]>()
+  expectTypeOf<Awaited<ReturnType<typeof login>>>().toEqualTypeOf<void>()
+
+  login({ options: { token: 'secret' } })
+  login({ args: {}, options: { token: 'secret' } })
+
+  // @ts-expect-error options are required
+  login()
+
+  // @ts-expect-error required option key is missing
+  login({ options: {} })
+})
+
+test('createMemoryClient allows optional input when args and options have no required keys', () => {
+  const cli = Cli.create('test').command('list', {
+    args: z.object({ archived: z.boolean().optional() }),
+    options: z.object({ cursor: z.string().optional(), limit: z.number().optional() }),
+    output: z.object({ items: z.array(z.string()), nextCursor: z.string().optional() }),
+    run: () => ({ items: [] }),
+  })
+  const client = createMemoryClient(cli)
+  const list = client('list')
+
+  type Input =
+    | {
+        args?: { archived?: boolean | undefined } | undefined
+        options?: { cursor?: string | undefined; limit?: number | undefined } | undefined
+      }
+    | undefined
+  expectTypeOf<Parameters<typeof list>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof list>[0]>()
+  expectTypeOf<Awaited<ReturnType<typeof list>>>().toEqualTypeOf<{
+    items: string[]
+    nextCursor?: string | undefined
+  }>()
+
+  list()
+  list({})
+  list({ args: { archived: true } })
+  list({ options: { limit: 10 } })
+  list({ args: {}, options: { cursor: 'next' } })
+
+  // @ts-expect-error optional arg has the wrong type
+  list({ args: { archived: 'true' } })
+
+  // @ts-expect-error optional option has the wrong type
+  list({ options: { limit: '10' } })
+})
+
+test('createMemoryClient preserves mixed required and optional fields', () => {
+  const cli = Cli.create('test').command('config set', {
+    args: z.object({ key: z.string(), value: z.union([z.number(), z.string()]) }),
+    options: z.object({
+      force: z.boolean(),
+      scope: z.union([z.literal('project'), z.literal('user')]).optional(),
+    }),
+    output: z.object({ saved: z.literal(true) }),
+    run: () => ({ saved: true as const }),
+  })
+  const client = createMemoryClient(cli)
+  const set = client('config set')
+
+  type Input = {
+    args: { key: string; value: number | string }
+    options: { force: boolean; scope?: 'project' | 'user' | undefined }
+  }
+  expectTypeOf<Parameters<typeof set>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof set>[0]>()
+  expectTypeOf<Awaited<ReturnType<typeof set>>>().toEqualTypeOf<{ saved: true }>()
+
+  set({ args: { key: 'theme', value: 'dark' }, options: { force: false } })
+  set({ args: { key: 'retries', value: 3 }, options: { force: true, scope: 'user' } })
+
+  // @ts-expect-error optional option still narrows to known values
+  set({ args: { key: 'theme', value: 'dark' }, options: { force: true, scope: 'org' } })
+})
+
+test('createMemoryClient infers root CLI commands', () => {
+  const cli = Cli.create('status', {
+    output: z.object({ ok: z.boolean() }),
+    run: () => ({ ok: true }),
+  })
+  const client = createMemoryClient(cli)
+  const status = client('status')
+
+  expectTypeOf<Awaited<ReturnType<typeof status>>>().toEqualTypeOf<{ ok: boolean }>()
+  status()
+
+  // @ts-expect-error unknown command
+  client('ping')
+})
+
+test('createMemoryClient infers mounted root CLI commands', () => {
+  const status = Cli.create('status', {
+    args: z.object({ service: z.string() }),
+    options: z.object({ verbose: z.boolean().optional() }),
+    output: z.object({ service: z.string(), ok: z.boolean() }),
+    run: (c) => ({ service: c.args.service, ok: true }),
+  })
+  const cli = Cli.create('app').command(status)
+  const client = createMemoryClient(cli)
+  const call = client('status')
+
+  type Input = {
+    args: { service: string }
+    options?: { verbose?: boolean | undefined } | undefined
+  }
+  expectTypeOf<Parameters<typeof call>[0]>().toExtend<Input>()
+  expectTypeOf<Input>().toExtend<Parameters<typeof call>[0]>()
+  expectTypeOf<Awaited<ReturnType<typeof call>>>().toEqualTypeOf<{
+    service: string
+    ok: boolean
+  }>()
+
+  call({ args: { service: 'api' } })
+  call({ args: { service: 'api' }, options: { verbose: true } })
+
+  // @ts-expect-error required arg key is missing
+  call({ args: {} })
+
+  // @ts-expect-error unknown command
+  client('app status')
+})
+
+test('createMemoryClient infers mounted sub-CLI command groups', () => {
+  const project = Cli.create('project')
+    .command('inspect', {
+      args: z.object({ id: z.string() }),
+      output: z.object({ id: z.string() }),
+      run: (c) => ({ id: c.args.id }),
+    })
+    .command('list', {
+      options: z.object({ limit: z.number().optional() }),
+      output: z.object({ items: z.array(z.string()) }),
+      run: () => ({ items: [] }),
+    })
+  const cli = Cli.create('test').command(project)
+  const client = createMemoryClient(cli)
+  const inspect = client('project inspect')
+  const list = client('project list')
+
+  expectTypeOf<Parameters<typeof inspect>[0]>().toExtend<{
+    args: { id: string }
+    options?: {} | undefined
+  }>()
+  expectTypeOf<Awaited<ReturnType<typeof inspect>>>().toEqualTypeOf<{ id: string }>()
+  expectTypeOf<Parameters<typeof list>[0]>().toExtend<
+    | {
+        args?: {} | undefined
+        options?: { limit?: number | undefined } | undefined
+      }
+    | undefined
+  >()
+  expectTypeOf<Awaited<ReturnType<typeof list>>>().toEqualTypeOf<{ items: string[] }>()
+
+  inspect({ args: { id: 'p1' } })
+  list()
+  list({ options: { limit: 10 } })
+
+  // @ts-expect-error group name is required
+  client('inspect')
+})
+
+test('createMemoryClient returns async iterables for streaming CLI commands', () => {
+  const cli = Cli.create('test').command('logs', {
+    output: z.object({ line: z.string() }),
+    run: async function* () {
+      yield { line: 'one' }
+    },
+  })
+  const client = createMemoryClient(cli)
+  const logs = client('logs')
+
+  expectTypeOf<Awaited<ReturnType<typeof logs>>>().toEqualTypeOf<AsyncIterable<{ line: string }>>()
+})
+
+test('createMemoryClient supports explicit generated command maps', () => {
+  const cli = Cli.create('test').command('raw', {
+    run: () => ({ ok: true }),
+  })
+  const client = createMemoryClient<GeneratedCommands>(cli)
+  const status = client('status')
+
+  expectTypeOf<Awaited<ReturnType<typeof status>>>().toEqualTypeOf<{ ok: boolean }>()
 })
