@@ -76,9 +76,6 @@ export type {
   StreamRecord as RpcStreamRecord,
   StreamResponse as RpcStreamResponse,
 } from './Rpc.js'
-export type { HttpTransport, Options as HttpTransportOptions } from './transports/HttpTransport.js'
-export type {
-  MemoryTransport,
-  Options as MemoryTransportOptions,
-} from './transports/MemoryTransport.js'
+export type { Options as HttpTransportOptions } from './transports/HttpTransport.js'
+export type { Options as MemoryTransportOptions } from './transports/MemoryTransport.js'
 export type { Factory as TransportFactory } from './transports/Transport.js'

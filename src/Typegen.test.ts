@@ -286,7 +286,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('verbose?: boolean | undefined')
+    expect(output).toContain('verbose?: boolean')
     expect(output).toContain('output: string')
   })
 
@@ -330,7 +330,11 @@ describe('fromCli', () => {
     expect(output).toContain("declare module 'incur/client'")
   })
 
+<<<<<<< HEAD
   test('escapes command and property keys', () => {
+=======
+  test('escapes command keys', () => {
+>>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
     const cli = Cli.create('test').command('bad key "quoted"', {
       options: z.object({
         'bad-key': z.string().optional(),
@@ -342,6 +346,7 @@ describe('fromCli', () => {
 
     const output = Typegen.fromCli(cli)
     expect(output).toContain('"bad key \\"quoted\\""')
+<<<<<<< HEAD
     expect(output).toContain('"bad-key"?: string | undefined')
     expect(output).toContain('"quote\\"key": number')
     expect(output).toContain('nested: { "child-key"?: string | undefined }')
@@ -381,5 +386,7 @@ describe('fromCli', () => {
 
     expect(() => Typegen.fromCli(cli)).toThrow(Typegen.TypegenError)
     expect(() => Typegen.fromCli(cli)).toThrow('unsupported JSON Schema reference "#"')
+=======
+>>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
   })
 })

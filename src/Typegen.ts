@@ -2,19 +2,12 @@ import fs from 'node:fs/promises'
 import { z } from 'zod'
 
 import * as Cli from './Cli.js'
+<<<<<<< HEAD
 import * as RuntimeContext from './internal/runtime-context.js'
+=======
+import * as RuntimeContext from './internal/client-runtime-context.js'
+>>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
 import { importCli } from './internal/utils.js'
-
-/** Error thrown when command type generation cannot emit a stable TypeScript type. */
-export class TypegenError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options)
-  }
-
-  override name = 'Incur.TypegenError'
-}
-
-type JsonSchema = Record<string, unknown> | boolean
 
 /** Imports a CLI from `input` (must `export default` a `Cli`), generates the `.d.ts`, and writes it to `output`. */
 export async function generate(input: string, output: string): Promise<void> {
@@ -24,14 +17,17 @@ export async function generate(input: string, output: string): Promise<void> {
 
 /** Generates a `.d.ts` declaration string for the `incur` module augmentation. */
 export function fromCli(cli: Cli.Cli): string {
+<<<<<<< HEAD
   const entries = RuntimeContext.collectStructuredCommands(RuntimeContext.fromCli(cli))
+=======
+  const entries = RuntimeContext.collectClientCommands(RuntimeContext.fromCli(cli))
+>>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
 
   const lines: string[] = ['export type Commands = {']
 
   for (const { id, command } of entries) {
-    const context = `command ${JSON.stringify(id)}`
     lines.push(
-      `  ${propertyKey(id)}: { args: ${objectSchemaToType(command.args, `${context} args`)}; options: ${objectSchemaToType(command.options, `${context} options`)}${command.output ? `; output: ${schemaToType(command.output, `${context} output`)}` : ''}${isStream(command) ? '; stream: true' : ''} }`,
+      `  ${propertyKey(id)}: { args: ${objectSchemaToType(command.args)}; options: ${objectSchemaToType(command.options)}${command.output ? `; output: ${schemaToType(command.output)}` : ''}${isStream(command) ? '; stream: true' : ''} }`,
     )
   }
 
@@ -55,97 +51,42 @@ export function fromCli(cli: Cli.Cli): string {
 }
 
 /** Converts a Zod object schema to a TypeScript type string. Returns `{}` for undefined schemas. */
-function objectSchemaToType(schema: z.ZodType | undefined, context: string): string {
+function objectSchemaToType(schema: z.ZodObject<any> | undefined): string {
   if (!schema) return '{}'
-  return schemaToType(schema, context)
+  return schemaToType(schema)
 }
 
 /** Converts a Zod schema to a TypeScript type string. */
-function schemaToType(schema: z.ZodType, context: string): string {
-  const json = (() => {
-    try {
-      return z.toJSONSchema(schema)
-    } catch (error) {
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: Zod could not convert the schema to JSON Schema. ${errorMessage(error)}`,
-        { cause: error },
-      )
-    }
-  })()
-  if (!isRecord(json))
-    throw new TypegenError(
-      `Cannot generate TypeScript for ${context}: JSON Schema root is invalid.`,
-    )
-  const defs = json.$defs
-  if (defs !== undefined && !isSchemaMap(defs))
-    throw new TypegenError(
-      `Cannot generate TypeScript for ${context}: JSON Schema $defs is invalid.`,
-    )
-  return resolveType(json, defs ?? {}, context)
+function schemaToType(schema: z.ZodType): string {
+  const json = z.toJSONSchema(schema) as Record<string, unknown>
+  const defs = (json.$defs ?? {}) as Record<string, Record<string, unknown>>
+  return resolveType(json, defs)
 }
 
 /** Recursively resolves a JSON Schema node to a TypeScript type string. */
 function resolveType(
-  schema: JsonSchema,
-  defs: Record<string, JsonSchema>,
-  context: string,
-  seen: Set<string> = new Set(),
+  schema: Record<string, unknown>,
+  defs: Record<string, Record<string, unknown>>,
 ): string {
-  if (typeof schema === 'boolean') return schema ? 'unknown' : 'never'
-
   if (schema.$ref) {
-    if (typeof schema.$ref !== 'string')
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: JSON Schema $ref is invalid.`,
-      )
-    if (!schema.$ref.startsWith('#/$defs/'))
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: unsupported JSON Schema reference "${schema.$ref}".`,
-      )
-    const ref = schema.$ref.replace('#/$defs/', '')
-    if (seen.has(ref))
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: recursive JSON Schema reference "${schema.$ref}" is not supported.`,
-      )
+    const ref = (schema.$ref as string).replace('#/$defs/', '')
     const resolved = defs[ref]
-    if (resolved) return resolveType(resolved, defs, context, new Set([...seen, ref]))
-    throw new TypegenError(
-      `Cannot generate TypeScript for ${context}: unresolved JSON Schema reference "${schema.$ref}".`,
-    )
+    if (resolved) return resolveType(resolved, defs)
+    return 'unknown'
   }
 
-  if ('const' in schema) return literalType(schema.const, context)
-  if (schema.enum) {
-    if (!Array.isArray(schema.enum) || schema.enum.length === 0)
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: JSON Schema enum is invalid.`,
-      )
-    return schema.enum.map((v) => literalType(v, context)).join(' | ')
-  }
+  if ('const' in schema) return JSON.stringify(schema.const)
+  if (schema.enum) return (schema.enum as unknown[]).map((v) => JSON.stringify(v)).join(' | ')
   if (schema.anyOf)
-    return union(
-      schemaArray(schema.anyOf, context, 'anyOf').map((s) => resolveType(s, defs, context, seen)),
-    )
-  if (schema.not && semanticKeys(schema).length === 1) return 'never'
+    return (schema.anyOf as Record<string, unknown>[]).map((s) => resolveType(s, defs)).join(' | ')
 
   const type = schema.type as string | string[] | undefined
   if (Array.isArray(type))
     return type
-      .map((t) => {
-        if (typeof t !== 'string' || t.length === 0)
-          throw new TypegenError(
-            `Cannot generate TypeScript for ${context}: JSON Schema type array is invalid.`,
-          )
-        return t === 'null' ? 'null' : resolveType({ ...schema, type: t }, defs, context, seen)
-      })
+      .map((t) => (t === 'null' ? 'null' : resolveType({ ...schema, type: t }, defs)))
       .join(' | ')
 
   switch (type) {
-    case undefined:
-      if (semanticKeys(schema).length === 0) return 'unknown'
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: JSON Schema node is missing a supported type.`,
-      )
     case 'string':
       return 'string'
     case 'number':
@@ -156,30 +97,15 @@ function resolveType(
     case 'null':
       return 'null'
     case 'array': {
-      const items = schema.items as JsonSchema | undefined
-      const prefixItems = schema.prefixItems as JsonSchema[] | undefined
-      if (prefixItems) {
-        const values = schemaArray(prefixItems, context, 'prefixItems').map((item) =>
-          resolveType(item, defs, context, seen),
-        )
-        const rest =
-          items !== undefined ? `, ...${arrayType(resolveType(items, defs, context, seen))}` : ''
-        return `[${values.join(', ')}${rest}]`
-      }
-      const itemType = items !== undefined ? resolveType(items, defs, context, seen) : 'unknown'
-      return arrayType(itemType)
+      const items = schema.items as Record<string, unknown> | undefined
+      const itemType = items ? resolveType(items, defs) : 'unknown'
+      return itemType.includes(' | ') ? `(${itemType})[]` : `${itemType}[]`
     }
     case 'object': {
-      const properties = schema.properties
-      if (properties !== undefined && !isSchemaMap(properties))
-        throw new TypegenError(
-          `Cannot generate TypeScript for ${context}: JSON Schema object properties are invalid.`,
-        )
-      assertSupportedPropertyNames(schema, context)
-      const additional = schema.additionalProperties as JsonSchema | boolean | undefined
-      if ((!properties || Object.keys(properties).length === 0) && additional === undefined)
-        return '{}'
+      const properties = schema.properties as Record<string, Record<string, unknown>> | undefined
+      if (!properties || Object.keys(properties).length === 0) return '{}'
       const required = new Set((schema.required as string[] | undefined) ?? [])
+<<<<<<< HEAD
       const entries = Object.entries(properties ?? {}).map(([key, value]) => {
 <<<<<<< HEAD
         const type = resolveType(value, defs)
@@ -202,15 +128,19 @@ function resolveType(
         )
       }
       if (additional === true) entries.push('[key: string]: unknown')
+=======
+      const entries = Object.entries(properties).map(
+        ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
+      )
+>>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
       return `{ ${entries.join('; ')} }`
     }
     default:
-      throw new TypegenError(
-        `Cannot generate TypeScript for ${context}: unsupported JSON Schema type "${String(type)}".`,
-      )
+      return 'unknown'
   }
 }
 
+<<<<<<< HEAD
 function arrayType(type: string) {
   return type.includes(' | ') ? `(${type})[]` : `${type}[]`
 }
@@ -271,6 +201,9 @@ function errorMessage(error: unknown) {
 
 function isStream(command: CommandTree.CommandDefinition) {
 >>>>>>> 0a77e57 (fix: tighten typed client typegen surface)
+=======
+function isStream(command: Cli.CommandDefinition<any, any, any, any, any, any>) {
+>>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
   return command.run.constructor.name === 'AsyncGeneratorFunction'
 }
 

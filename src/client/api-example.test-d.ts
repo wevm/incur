@@ -94,8 +94,7 @@ test('docs api example client surface typechecks conceptually', async () => {
     })
   } catch (error) {
     if (error instanceof ClientError) {
-      const clientError = error as ClientError<Commands>
-      expectTypeOf(clientError.error?.code).toEqualTypeOf<string | undefined>()
+      expectTypeOf(error.error?.code).toEqualTypeOf<string | undefined>()
     }
   }
 

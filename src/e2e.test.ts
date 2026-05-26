@@ -1605,8 +1605,8 @@ describe('typegen', () => {
         "auth login": { args: {}; options: { hostname: string; web: boolean; scopes: string[] } }
         "auth logout": { args: {}; options: {} }
         "auth status": { args: {}; options: {}; output: { loggedIn: boolean; hostname: string; user: string } }
-        config: { args: { key?: string | undefined }; options: {} }
-        echo: { args: { message: string; repeat?: number | undefined }; options: { upper: boolean; prefix: string } }
+        config: { args: { key?: string }; options: {} }
+        echo: { args: { message: string; repeat?: number }; options: { upper: boolean; prefix: string } }
         explode: { args: {}; options: {} }
         "explode-clac": { args: {}; options: {} }
         noop: { args: {}; options: {} }

@@ -12,7 +12,6 @@ import type {
   ClientStreamResponse,
   HttpClient,
   MemoryClient,
-  Transport,
 } from 'incur/client'
 import { expectTypeOf, test } from 'vitest'
 
@@ -77,7 +76,10 @@ test('local actions are memory-only and unavailable on HTTP or broad transports'
   expectTypeOf(memory.skills.list).toBeFunction()
   expectTypeOf(memory.mcp.add).toBeFunction()
 
-  const broad = createClient<Commands, Transport>({
+  const broad = createClient<
+    Commands,
+    HttpTransport.HttpTransport | MemoryTransport.MemoryTransport
+  >({
     transport: MemoryTransport.create(cli),
   })
   // @ts-expect-error broad Transport clients do not expose local actions.
