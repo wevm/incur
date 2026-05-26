@@ -1,9 +1,3 @@
-/** Transport context supplied when resolving a transport factory. */
-export type TransportContext = {
-  /** Client uid. */
-  uid: string
-}
-
 /** Transport type names. */
 export type TransportType = 'http' | 'memory'
 
@@ -24,4 +18,4 @@ export type TransportCapabilities = Record<string, unknown>
 export type TransportFactory<
   type extends TransportType,
   capabilities extends TransportCapabilities,
-> = (context: TransportContext) => { config: TransportConfig<type> } & capabilities
+> = () => { config: TransportConfig<type> } & capabilities

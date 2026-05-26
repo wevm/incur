@@ -18,7 +18,7 @@ describe('memoryTransport', () => {
       throw new Error('fetch should not be called')
     }
 
-    const transport = memoryTransport(cli, { env: { TOKEN: 'secret' } })({ uid: 'u' })
+    const transport = memoryTransport(cli, { env: { TOKEN: 'secret' } })()
     await expect(transport.request({ command: 'status' })).resolves.toMatchObject({
       ok: true,
       data: { token: 'secret' },
@@ -32,7 +32,7 @@ describe('memoryTransport', () => {
         return c.options
       },
     })
-    const transport = memoryTransport(cli)({ uid: 'u' })
+    const transport = memoryTransport(cli)()
     await expect(transport.request({ command: 'status' })).resolves.toMatchObject({
       ok: true,
       data: { name: 'runtime' },
@@ -45,7 +45,7 @@ describe('memoryTransport', () => {
         return { version: c.version }
       },
     })
-    const transport = memoryTransport(cli)({ uid: 'u' })
+    const transport = memoryTransport(cli)()
     await expect(transport.request({ command: 'status' })).resolves.toMatchObject({
       ok: true,
       data: { version: '1.2.3' },
@@ -63,7 +63,7 @@ describe('memoryTransport', () => {
         return { ok: true }
       },
     })
-    const transport = memoryTransport(cli)({ uid: 'u' })
+    const transport = memoryTransport(cli)()
     await expect(
       transport.discover({ resource: 'help', command: 'status' }),
     ).resolves.toMatchObject({
@@ -86,7 +86,7 @@ describe('memoryTransport', () => {
 
   test('exposes memory-only local capability', () => {
     const cli = Cli.create('app')
-    const transport = memoryTransport(cli)({ uid: 'u' })
+    const transport = memoryTransport(cli)()
     expect(Object.keys(transport.local)).toEqual(['skills', 'mcp'])
     expect(typeof transport.local.skills.add).toBe('function')
     expect(typeof transport.local.skills.list).toBe('function')
