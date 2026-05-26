@@ -3,7 +3,9 @@ import type * as Formatter from '../Formatter.js'
 import type {
   McpAddOptions,
   McpRegistration,
+  Runtime as LocalRuntime,
   SkillsAddOptions,
+  SkillsList,
   SkillsListOptions,
   SyncedSkills,
 } from './Local.js'
@@ -504,6 +506,7 @@ export type ActionClient = {
   transport: {
     request(request: RpcRequest): Promise<RpcResponse | RpcStreamResponse>
     discover(request: ResourcesRequest): Promise<ResourcesResponse>
+    local?: LocalRuntime | undefined
   } & ResolvedTransport<Transport>
 }
 
@@ -518,6 +521,7 @@ export type {
   RpcStreamRecord,
   RpcStreamResponse,
   SkillsAddOptions,
+  SkillsList,
   SkillsListOptions,
   SyncedSkills,
 }
