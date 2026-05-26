@@ -167,11 +167,13 @@ function discoveryUrl(baseUrl: URL, request: DiscoveryRequest) {
     if (request.resource === 'mcpTools') return '_incur/mcp/tools'
     if (request.resource === 'skillsIndex') return '_incur/skills'
     if (request.resource === 'skill') return '_incur/skill'
+    if (request.resource === 'openapi' && request.format === 'yaml') return 'openapi.yaml'
     return 'openapi.json'
   })()
   const target = url(baseUrl, path)
   if ('command' in request && request.command) target.searchParams.set('command', request.command)
-  if ('format' in request && request.format) target.searchParams.set('format', request.format)
+  if ('format' in request && request.format && request.resource !== 'openapi')
+    target.searchParams.set('format', request.format)
   if (request.resource === 'skill') target.searchParams.set('name', request.name)
   return target
 }

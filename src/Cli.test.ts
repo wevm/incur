@@ -4175,7 +4175,7 @@ describe('Command.execute', () => {
 async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
   const res = await cli.fetch(req)
   const body = await res.json()
-  body.meta.duration = '<stripped>'
+  if (body.meta?.duration) body.meta.duration = '<stripped>'
   return { status: res.status, body }
 }
 
@@ -4241,6 +4241,179 @@ describe('fetch', () => {
     const res = await fetchJson(cli, new Request('http://localhost/helath'))
     expect(res.status).toBe(404)
     expect(res.body.error.message).toContain("Did you mean 'health'?")
+  })
+
+  test('RPC route maps protocol failures to HTTP statuses', async () => {
+    const cli = Cli.create('app').command(
+      Cli.create('group').command('leaf', {
+        run() {
+          return null
+        },
+      }),
+    )
+    cli.command('raw', { fetch: () => new Response('{}') })
+
+    expect(
+      await fetchJson(
+        cli,
+        new Request('http://localhost/_incur/rpc', {
+          method: 'POST',
+          body: JSON.stringify({ command: '' }),
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "INVALID_RPC_REQUEST",
+            "message": "RPC command is required.",
+          },
+          "meta": {
+            "command": "",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 400,
+      }
+    `)
+
+    expect(
+      await fetchJson(
+        cli,
+        new Request('http://localhost/_incur/rpc', {
+          method: 'POST',
+          body: JSON.stringify({ command: 'group' }),
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_GROUP",
+            "message": "'group' is a command group. Specify a subcommand.",
+          },
+          "meta": {
+            "command": "group",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 400,
+      }
+    `)
+
+    expect(
+      await fetchJson(
+        cli,
+        new Request('http://localhost/_incur/rpc', {
+          method: 'POST',
+          body: JSON.stringify({ command: 'raw' }),
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "FETCH_GATEWAY",
+            "message": "'raw' is a raw fetch gateway and cannot be called with structured RPC.",
+          },
+          "meta": {
+            "command": "raw",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 400,
+      }
+    `)
+
+    expect(
+      await fetchJson(
+        cli,
+        new Request('http://localhost/_incur/rpc', {
+          method: 'POST',
+          body: JSON.stringify({ command: 'missing' }),
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_NOT_FOUND",
+            "message": "'missing' is not a command for 'app'.",
+          },
+          "meta": {
+            "command": "missing",
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
+  })
+
+  test('discovery routes map failures to envelopes', async () => {
+    const cli = Cli.create('app').command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+
+    expect(await fetchJson(cli, new Request('http://localhost/_incur/help?command=missing')))
+      .toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "COMMAND_NOT_FOUND",
+            "message": "Unknown command 'missing'.",
+          },
+          "meta": {
+            "duration": "<stripped>",
+            "resource": "help",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
+
+    expect(await fetchJson(cli, new Request('http://localhost/_incur/skill?name=../x')))
+      .toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "INVALID_SKILL_NAME",
+            "message": "Unsafe skill name.",
+          },
+          "meta": {
+            "duration": "<stripped>",
+            "resource": "skill",
+          },
+          "ok": false,
+        },
+        "status": 400,
+      }
+    `)
+
+    expect(await fetchJson(cli, new Request('http://localhost/_incur/skill?name=missing')))
+      .toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "SKILL_NOT_FOUND",
+            "message": "Unknown skill 'missing'.",
+          },
+          "meta": {
+            "duration": "<stripped>",
+            "resource": "skill",
+          },
+          "ok": false,
+        },
+        "status": 404,
+      }
+    `)
   })
 
   test('GET / with root command → 200', async () => {

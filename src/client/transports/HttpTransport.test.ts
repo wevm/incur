@@ -1,10 +1,30 @@
 import { describe, expect, test, vi } from 'vitest'
+import { parse as yamlParse } from 'yaml'
+import { z } from 'zod'
 
+import * as Cli from '../../Cli.js'
+import type { DiscoveryRequest } from '../../internal/client-discovery.js'
 import { ClientError } from '../ClientError.js'
 import * as HttpTransport from './HttpTransport.js'
 
 function resolve(fetch: typeof globalThis.fetch) {
   return HttpTransport.create({ baseUrl: 'https://example.com/api/', fetch })()
+}
+
+function connect(cli: Cli.Cli<any, any, any>, options: Partial<HttpTransport.Options> = {}) {
+  const requests: { input: RequestInfo | URL; init: RequestInit | undefined }[] = []
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ input, init })
+    return cli.fetch(new Request(input, init))
+  }
+  return {
+    requests,
+    transport: HttpTransport.create({
+      baseUrl: 'https://example.com/',
+      ...options,
+      fetch,
+    })(),
+  }
 }
 
 function ndjson(lines: string[], options: { cancel?: () => void } = {}) {
@@ -22,30 +42,52 @@ function ndjson(lines: string[], options: { cancel?: () => void } = {}) {
 }
 
 describe('HttpTransport', () => {
-  test('normalizes base URL, serializes omitted args/options, and merges headers', async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('https://example.com/api/_incur/rpc')
-      expect(init?.method).toBe('POST')
-      const headers = new Headers(init?.headers)
-      expect(headers.get('content-type')).toBe('application/json')
-      expect(headers.get('accept')).toBe('application/json, application/x-ndjson')
-      expect(headers.get('x-custom')).toBe('yes')
-      expect(JSON.parse(String(init?.body))).toEqual({ command: 'status', args: {}, options: {} })
-      return new Response(
-        JSON.stringify({ ok: true, data: 1, meta: { command: 'status', duration: '1ms' } }),
-        {
-          headers: { 'content-type': 'application/json' },
-        },
-      )
-    }) as typeof globalThis.fetch
-    const transport = HttpTransport.create({
-      baseUrl: 'https://example.com/api',
-      fetch,
-      headers: { 'x-custom': 'yes' },
-    })()
+  test('requests commands through the CLI HTTP route', async () => {
+    const cli = Cli.create('app').command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+    const { requests, transport } = connect(cli, { headers: { 'x-custom': 'yes' } })
+
     await expect(transport.request({ command: 'status' })).resolves.toMatchObject({
       ok: true,
-      data: 1,
+      data: { ok: true },
+    })
+
+    const request = requests[0]!
+    expect(String(request.input)).toBe('https://example.com/_incur/rpc')
+    expect(request.init?.method).toBe('POST')
+    const headers = new Headers(request.init?.headers)
+    expect(headers.get('content-type')).toBe('application/json')
+    expect(headers.get('accept')).toBe('application/json, application/x-ndjson')
+    expect(headers.get('x-custom')).toBe('yes')
+    expect(JSON.parse(String(request.init?.body))).toEqual({
+      command: 'status',
+      args: {},
+      options: {},
+    })
+  })
+
+  test('sends args and options to the CLI HTTP route', async () => {
+    const cli = Cli.create('app').command('sum', {
+      args: z.object({ left: z.number(), right: z.number() }),
+      options: z.object({ label: z.string() }),
+      run(c) {
+        return { label: c.options.label, total: c.args.left + c.args.right }
+      },
+    })
+    const { transport } = connect(cli)
+
+    await expect(
+      transport.request({
+        command: 'sum',
+        args: { left: 2, right: 3 },
+        options: { label: 'result' },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { label: 'result', total: 5 },
     })
   })
 
@@ -73,7 +115,32 @@ describe('HttpTransport', () => {
     )
   })
 
-  test('parses NDJSON split records, blanks, final line without newline, and truncated streams', async () => {
+  test('streams records from the CLI HTTP route', async () => {
+    const cli = Cli.create('app').command('stream', {
+      async *run() {
+        yield { step: 1 }
+        yield { step: 2 }
+      },
+    })
+    const { transport } = connect(cli)
+
+    const response = await transport.request({ command: 'stream' })
+    if (!('stream' in response)) throw new Error('expected stream')
+    const records: unknown[] = []
+    for await (const record of response.records()) records.push(record)
+    expect(records).toEqual([
+      { type: 'chunk', data: { step: 1 } },
+      { type: 'chunk', data: { step: 2 } },
+      {
+        type: 'done',
+        ok: true,
+        data: undefined,
+        meta: expect.objectContaining({ command: 'stream' }),
+      },
+    ])
+  })
+
+  test('parses split NDJSON records and rejects truncated streams', async () => {
     const fetch = vi.fn(async () =>
       ndjson([
         '{"type":"chunk","data":{"a":',
@@ -120,29 +187,235 @@ describe('HttpTransport', () => {
     expect(cancel).toHaveBeenCalled()
   })
 
-  test('routes discovery requests', async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe('https://example.com/api/_incur/help?command=status')
-      return new Response('help', { headers: { 'content-type': 'text/plain' } })
-    }) as typeof globalThis.fetch
-    await expect(resolve(fetch).discover({ resource: 'help', command: 'status' })).resolves.toEqual(
-      {
-        contentType: 'text/plain',
-        body: 'help',
+  test('discovers every resource through the CLI HTTP route', async () => {
+    const cli = Cli.create('app', { description: 'App', version: '1.2.3' }).command('status', {
+      description: 'Show status',
+      args: z.object({ id: z.string() }),
+      options: z.object({ verbose: z.boolean().default(false) }),
+      run(c) {
+        return { id: c.args.id, verbose: c.options.verbose, version: c.version }
       },
-    )
-  })
-
-  test('routes OpenAPI discovery to the public OpenAPI route', async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe('https://example.com/api/openapi.json')
-      return new Response(JSON.stringify({ openapi: '3.2.0' }), {
-        headers: { 'content-type': 'application/json' },
-      })
-    }) as typeof globalThis.fetch
-    await expect(resolve(fetch).discover({ resource: 'openapi' })).resolves.toMatchObject({
-      contentType: 'application/json',
-      data: { openapi: '3.2.0' },
     })
+    const { requests, transport } = connect(cli)
+
+    const cases: {
+      request: DiscoveryRequest
+      url: string
+      assert(response: Awaited<ReturnType<typeof transport.discover>>): void
+    }[] = [
+      {
+        request: { resource: 'llms' },
+        url: 'https://example.com/_incur/llms',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'text/markdown',
+            body: expect.stringContaining('| `app status <id>` | Show status |'),
+          })
+        },
+      },
+      {
+        request: { resource: 'llms', command: 'status' },
+        url: 'https://example.com/_incur/llms?command=status',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'text/markdown',
+            body: expect.stringContaining('| `app status <id>` | Show status |'),
+          })
+        },
+      },
+      {
+        request: { resource: 'llms', format: 'yaml' },
+        url: 'https://example.com/_incur/llms?format=yaml',
+        assert(response) {
+          if (!('body' in response)) throw new Error('expected body')
+          expect(response.contentType).toBe('text/plain')
+          expect(yamlParse(response.body)).toMatchObject({
+            version: 'incur.v1',
+            commands: [{ name: 'status', description: 'Show status' }],
+          })
+        },
+      },
+      {
+        request: { resource: 'llmsFull' },
+        url: 'https://example.com/_incur/llms-full',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'text/markdown',
+            body: expect.stringContaining('## Arguments'),
+          })
+          expect(response).toMatchObject({ body: expect.stringContaining('`id`') })
+        },
+      },
+      {
+        request: { resource: 'llmsFull', command: 'status', format: 'json' },
+        url: 'https://example.com/_incur/llms-full?command=status&format=json',
+        assert(response) {
+          if (!('body' in response)) throw new Error('expected body')
+          expect(response.contentType).toBe('text/plain')
+          expect(JSON.parse(response.body)).toMatchObject({
+            version: 'incur.v1',
+            commands: [
+              {
+                name: 'status',
+                description: 'Show status',
+                schema: {
+                  args: { properties: { id: { type: 'string' } }, required: ['id'] },
+                  options: {
+                    properties: { verbose: { default: false, type: 'boolean' } },
+                    required: ['verbose'],
+                  },
+                },
+              },
+            ],
+          })
+        },
+      },
+      {
+        request: { resource: 'schema' },
+        url: 'https://example.com/_incur/schema',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'application/json',
+            data: {
+              version: 'incur.v1',
+              commands: [
+                {
+                  name: 'status',
+                  schema: {
+                    args: { properties: { id: { type: 'string' } } },
+                    options: { properties: { verbose: { default: false, type: 'boolean' } } },
+                  },
+                },
+              ],
+            },
+          })
+        },
+      },
+      {
+        request: { resource: 'schema', command: 'status' },
+        url: 'https://example.com/_incur/schema?command=status',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'application/json',
+            data: {
+              args: { properties: { id: { type: 'string' } }, required: ['id'] },
+              options: {
+                properties: { verbose: { default: false, type: 'boolean' } },
+                required: ['verbose'],
+              },
+            },
+          })
+        },
+      },
+      {
+        request: { resource: 'help' },
+        url: 'https://example.com/_incur/help',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'text/plain',
+            body: expect.stringContaining('Commands:'),
+          })
+          expect(response).toMatchObject({ body: expect.stringContaining('status') })
+        },
+      },
+      {
+        request: { resource: 'help', command: 'status' },
+        url: 'https://example.com/_incur/help?command=status',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'text/plain',
+            body: expect.stringContaining('Usage: status <id> [options]'),
+          })
+          expect(response).toMatchObject({ body: expect.stringContaining('--verbose') })
+        },
+      },
+      {
+        request: { resource: 'openapi' },
+        url: 'https://example.com/openapi.json',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'application/json',
+            data: {
+              openapi: '3.2.0',
+              info: { title: 'app', version: '1.2.3' },
+              paths: { '/status/{id}': { get: expect.any(Object) } },
+            },
+          })
+        },
+      },
+      {
+        request: { resource: 'openapi', format: 'yaml' },
+        url: 'https://example.com/openapi.yaml',
+        assert(response) {
+          if (!('body' in response)) throw new Error('expected body')
+          expect(response.contentType).toBe('application/yaml')
+          expect(yamlParse(response.body)).toMatchObject({
+            openapi: '3.2.0',
+            info: { title: 'app', version: '1.2.3' },
+            paths: { '/status/{id}': { get: expect.any(Object) } },
+          })
+        },
+      },
+      {
+        request: { resource: 'skillsIndex' },
+        url: 'https://example.com/_incur/skills',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'application/json',
+            data: {
+              skills: [
+                {
+                  name: 'status',
+                  description: 'Show status. Run `app status --help` for usage details.',
+                  files: ['SKILL.md'],
+                },
+              ],
+            },
+          })
+        },
+      },
+      {
+        request: { resource: 'skill', name: 'status' },
+        url: 'https://example.com/_incur/skill?name=status',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'text/markdown',
+            body: expect.stringContaining('# app status'),
+          })
+          expect(response).toMatchObject({ body: expect.stringContaining('## Arguments') })
+          expect(response).toMatchObject({ body: expect.stringContaining('## Options') })
+        },
+      },
+      {
+        request: { resource: 'mcpTools' },
+        url: 'https://example.com/_incur/mcp/tools',
+        assert(response) {
+          expect(response).toMatchObject({
+            contentType: 'application/json',
+            data: {
+              tools: [
+                {
+                  name: 'status',
+                  description: 'Show status',
+                  inputSchema: {
+                    properties: {
+                      id: expect.any(Object),
+                      verbose: expect.any(Object),
+                    },
+                  },
+                },
+              ],
+            },
+          })
+        },
+      },
+    ]
+
+    for (const item of cases) {
+      const response = await transport.discover(item.request)
+      item.assert(response)
+    }
+
+    expect(requests.map((request) => String(request.input))).toEqual(cases.map((item) => item.url))
   })
 })
