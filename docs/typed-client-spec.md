@@ -1262,7 +1262,6 @@ Rules:
 - missing `output` infers `unknown`;
 - streaming commands include `stream: true`;
 - streaming command `output` is the chunk type;
-- each generated command property has JSDoc that names the generated command;
 - object keys that are not valid TypeScript identifiers are quoted;
 - command keys are emitted with `JSON.stringify`-compatible escaping;
 - optional properties include `| undefined` for `exactOptionalPropertyTypes`;

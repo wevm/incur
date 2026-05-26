@@ -707,7 +707,6 @@ Rules:
 - streaming `output` is the chunk type;
 - generated files export `Commands`;
 - generated files augment both `incur` and `incur/client`;
-- generated command properties include JSDoc;
 - optional properties include `| undefined`;
 - invalid object keys and command keys are escaped;
 - unsupported schemas fail with a clear typegen error.
