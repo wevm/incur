@@ -17,13 +17,11 @@ export type TransportConfig<type extends TransportType> = {
   type: type
 }
 
-/** Transport value object. */
-export type TransportValue = Record<string, unknown>
+/** Transport capabilities exposed by a resolved transport. */
+export type TransportCapabilities = Record<string, unknown>
 
 /** Transport factory. */
-export type TransportFactory<type extends TransportType, value extends TransportValue> = (
-  context: TransportContext,
-) => {
-  config: TransportConfig<type>
-  value: value
-}
+export type TransportFactory<
+  type extends TransportType,
+  capabilities extends TransportCapabilities,
+> = (context: TransportContext) => { config: TransportConfig<type> } & capabilities

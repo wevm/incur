@@ -36,35 +36,33 @@ export function httpTransport(options: HttpTransportOptions): HttpTransport {
 
   return () => ({
     config: { key: 'http', name: 'HTTP', type: 'http' },
-    value: {
-      baseUrl,
-      async request(request) {
-        const response = await requestFetch(fetcher, url(baseUrl, '_incur/rpc'), {
-          method: 'POST',
-          headers: headers(options.headers, {
-            accept: 'application/json, application/x-ndjson',
-            'content-type': 'application/json',
-          }),
-          body: JSON.stringify({
-            ...request,
-            args: request.args ?? {},
-            options: request.options ?? {},
-          }),
-        })
-        return parseRpcResponse(response)
-      },
-      async discover(request) {
-        const response = await requestFetch(fetcher, discoveryUrl(baseUrl, request), {
-          method: 'GET',
-          headers: headers(options.headers, {
-            accept: 'application/json, text/plain, text/markdown',
-          }),
-        })
-        const contentType = response.headers.get('content-type') ?? ''
-        if (contentType.includes('application/json'))
-          return { contentType: essence(contentType), data: await parseJson(response) }
-        return { contentType: essence(contentType), body: await response.text() }
-      },
+    baseUrl,
+    async request(request) {
+      const response = await requestFetch(fetcher, url(baseUrl, '_incur/rpc'), {
+        method: 'POST',
+        headers: headers(options.headers, {
+          accept: 'application/json, application/x-ndjson',
+          'content-type': 'application/json',
+        }),
+        body: JSON.stringify({
+          ...request,
+          args: request.args ?? {},
+          options: request.options ?? {},
+        }),
+      })
+      return parseRpcResponse(response)
+    },
+    async discover(request) {
+      const response = await requestFetch(fetcher, discoveryUrl(baseUrl, request), {
+        method: 'GET',
+        headers: headers(options.headers, {
+          accept: 'application/json, text/plain, text/markdown',
+        }),
+      })
+      const contentType = response.headers.get('content-type') ?? ''
+      if (contentType.includes('application/json'))
+        return { contentType: essence(contentType), data: await parseJson(response) }
+      return { contentType: essence(contentType), body: await response.text() }
     },
   })
 }

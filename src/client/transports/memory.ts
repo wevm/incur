@@ -39,15 +39,13 @@ export function memoryTransport(
     const ctx = CommandTree.fromCli(cli)
     return {
       config: { key: 'memory', name: 'Memory', type: 'memory' },
-      value: {
-        request(request) {
-          return executeClientCommand(ctx, request, { env: options.env })
-        },
-        discover(request) {
-          return discoverClientResource(ctx, request)
-        },
-        local: createLocalRuntime(ctx),
+      request(request) {
+        return executeClientCommand(ctx, request, { env: options.env })
       },
+      discover(request) {
+        return discoverClientResource(ctx, request)
+      },
+      local: createLocalRuntime(ctx),
     }
   }
 }

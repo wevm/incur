@@ -4,7 +4,7 @@ import { ClientError } from '../errors.js'
 import { httpTransport } from './http.js'
 
 function resolve(fetch: typeof globalThis.fetch) {
-  return httpTransport({ baseUrl: 'https://example.com/api/', fetch })({ uid: 'u' }).value
+  return httpTransport({ baseUrl: 'https://example.com/api/', fetch })({ uid: 'u' })
 }
 
 function ndjson(lines: string[], options: { cancel?: () => void } = {}) {
@@ -42,7 +42,7 @@ describe('httpTransport', () => {
       baseUrl: 'https://example.com/api',
       fetch,
       headers: { 'x-custom': 'yes' },
-    })({ uid: 'u' }).value
+    })({ uid: 'u' })
     await expect(transport.request({ command: 'status' })).resolves.toMatchObject({
       ok: true,
       data: 1,
