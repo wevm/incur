@@ -1602,51 +1602,28 @@ describe('typegen', () => {
   test('generates correct .d.ts for entire CLI', () => {
     expect(Typegen.fromCli(createApp())).toMatchInlineSnapshot(`
       "export type Commands = {
-        /** Generated command: auth login */
         "auth login": { args: {}; options: { hostname: string; web: boolean; scopes: string[] } }
-        /** Generated command: auth logout */
         "auth logout": { args: {}; options: {} }
-        /** Generated command: auth status */
         "auth status": { args: {}; options: {}; output: { loggedIn: boolean; hostname: string; user: string } }
-        /** Generated command: config */
         config: { args: { key?: string | undefined }; options: {} }
-        /** Generated command: echo */
         echo: { args: { message: string; repeat?: number | undefined }; options: { upper: boolean; prefix: string } }
-        /** Generated command: explode */
         explode: { args: {}; options: {} }
-        /** Generated command: explode-clac */
         "explode-clac": { args: {}; options: {} }
-        /** Generated command: noop */
         noop: { args: {}; options: {} }
-        /** Generated command: ping */
         ping: { args: {}; options: {} }
-        /** Generated command: project create */
         "project create": { args: { name: string }; options: { description: string; private: boolean }; output: { id: string; url: string } }
-        /** Generated command: project delete */
         "project delete": { args: { id: string }; options: { force: boolean } }
-        /** Generated command: project deploy create */
         "project deploy create": { args: { env: string }; options: { branch: string; dryRun: boolean }; output: { deployId: string; url: string; status: string } }
-        /** Generated command: project deploy rollback */
         "project deploy rollback": { args: { deployId: string }; options: {} }
-        /** Generated command: project deploy status */
         "project deploy status": { args: { deployId: string }; options: {}; output: { deployId: string; status: string; progress: number } }
-        /** Generated command: project get */
         "project get": { args: { id: string }; options: {}; output: { id: string; name: string; description: string; members: { userId: string; role: string }[] } }
-        /** Generated command: project list */
         "project list": { args: {}; options: { limit: number; sort: "name" | "created" | "updated"; archived: boolean }; output: { items: { id: string; name: string; archived: boolean }[]; total: number } }
-        /** Generated command: slow */
         slow: { args: {}; options: {} }
-        /** Generated command: stream */
         stream: { args: {}; options: {}; stream: true }
-        /** Generated command: stream-error */
         "stream-error": { args: {}; options: {}; stream: true }
-        /** Generated command: stream-ok */
         "stream-ok": { args: {}; options: {}; stream: true }
-        /** Generated command: stream-text */
         "stream-text": { args: {}; options: {}; stream: true }
-        /** Generated command: stream-throw */
         "stream-throw": { args: {}; options: {}; stream: true }
-        /** Generated command: validate-fail */
         "validate-fail": { args: { email: string; age: number }; options: {} }
       }
 

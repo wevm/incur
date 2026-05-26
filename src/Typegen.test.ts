@@ -14,9 +14,7 @@ describe('fromCli', () => {
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
       "export type Commands = {
-        /** Generated command: get */
         get: { args: { id: number }; options: {} }
-        /** Generated command: list */
         list: { args: {}; options: { limit: number } }
       }
 
@@ -40,7 +38,6 @@ describe('fromCli', () => {
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
       "export type Commands = {
-        /** Generated command: ping */
         ping: { args: {}; options: {} }
       }
 
@@ -74,9 +71,7 @@ describe('fromCli', () => {
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
       "export type Commands = {
-        /** Generated command: pr create */
         "pr create": { args: { title: string }; options: {} }
-        /** Generated command: pr list */
         "pr list": { args: {}; options: { state: string } }
       }
 
@@ -107,7 +102,6 @@ describe('fromCli', () => {
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
       "export type Commands = {
-        /** Generated command: pr review approve */
         "pr review approve": { args: { id: number }; options: {} }
       }
 
@@ -167,11 +161,32 @@ describe('fromCli', () => {
         run: () => [{ id: 'one', active: true }],
       })
 
+<<<<<<< HEAD
     const output = Typegen.fromCli(cli)
     expect(output).toContain('read: { args: {}; options: {}; output: string }')
     expect(output).toContain(
       'list: { args: {}; options: {}; output: { id: string; active: boolean }[] }',
     )
+=======
+    expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
+      "export type Commands = {
+        read: { args: {}; options: {}; output: string }
+      }
+
+      declare module 'incur' {
+        interface Register {
+          commands: Commands
+        }
+      }
+
+      declare module 'incur/client' {
+        interface Register {
+          commands: Commands
+        }
+      }
+      "
+    `)
+>>>>>>> 0a77e57 (fix: tighten typed client typegen surface)
   })
 
   test('marks async generator commands as streams', () => {
@@ -182,10 +197,31 @@ describe('fromCli', () => {
       },
     })
 
+<<<<<<< HEAD
     const output = Typegen.fromCli(cli)
     expect(output).toContain(
       'tail: { args: {}; options: {}; output: { line: string }; stream: true }',
     )
+=======
+    expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
+      "export type Commands = {
+        list: { args: {}; options: {}; output: { id: string; active: boolean }[] }
+      }
+
+      declare module 'incur' {
+        interface Register {
+          commands: Commands
+        }
+      }
+
+      declare module 'incur/client' {
+        interface Register {
+          commands: Commands
+        }
+      }
+      "
+    `)
+>>>>>>> 0a77e57 (fix: tighten typed client typegen surface)
   })
 
   test('commands are sorted alphabetically', () => {
@@ -262,9 +298,7 @@ describe('fromCli', () => {
 
     expect(Typegen.fromCli(cli)).toMatchInlineSnapshot(`
       "export type Commands = {
-        /** Generated command: ping */
         ping: { args: {}; options: {} }
-        /** Generated command: pr list */
         "pr list": { args: {}; options: {} }
       }
 
@@ -311,5 +345,41 @@ describe('fromCli', () => {
     expect(output).toContain('"bad-key"?: string | undefined')
     expect(output).toContain('"quote\\"key": number')
     expect(output).toContain('nested: { "child-key"?: string | undefined }')
+  })
+
+  test('catchall index signatures include optional property undefined', () => {
+    const cli = Cli.create('test').command('shape', {
+      output: z.object({ maybe: z.string().optional() }).catchall(z.boolean()),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain(
+      'shape: { args: {}; options: {}; output: { maybe?: string | undefined; [key: string]: boolean | string | undefined } }',
+    )
+  })
+
+  test('wraps JSON Schema conversion failures in TypegenError', () => {
+    const cli = Cli.create('test').command('created', {
+      output: z.date(),
+      run: () => new Date(),
+    })
+
+    expect(() => Typegen.fromCli(cli)).toThrow(Typegen.TypegenError)
+    expect(() => Typegen.fromCli(cli)).toThrow(
+      'Cannot generate TypeScript for command "created" output',
+    )
+  })
+
+  test('throws TypegenError for unsupported JSON Schema refs', () => {
+    let node: z.ZodType
+    node = z.lazy(() => z.object({ next: node.optional() }))
+    const cli = Cli.create('test').command('broken', {
+      output: node,
+      run: () => ({ next: {} }),
+    })
+
+    expect(() => Typegen.fromCli(cli)).toThrow(Typegen.TypegenError)
+    expect(() => Typegen.fromCli(cli)).toThrow('unsupported JSON Schema reference "#"')
   })
 })

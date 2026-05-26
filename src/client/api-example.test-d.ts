@@ -1,4 +1,4 @@
-import { create } from 'incur'
+import { Cli } from 'incur'
 import {
   ClientError,
   HttpTransport,
@@ -60,7 +60,7 @@ test('docs api example client surface typechecks conceptually', async () => {
     outputFormat: 'toon',
   })
 
-  const cli = create({ name: 'acme' })
+  const cli = Cli.create({ name: 'acme' })
   const memoryClient = createMemoryClient<Commands>(cli, {
     env: { ACME_TOKEN: 'dev_secret_123' },
   })

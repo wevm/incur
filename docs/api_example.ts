@@ -1,4 +1,4 @@
-import { create } from 'incur'
+import { Cli } from 'incur'
 import {
   ClientError,
   createClient,
@@ -32,7 +32,7 @@ const _clientViaTransport = createClient<Commands>({
 })
 
 // Or create an in-process memory client.
-const cli = create({ name: 'acme' }) // ...
+const cli = Cli.create({ name: 'acme' }) // ...
 // Memory clients run in-process, so explicit env injection is allowed here.
 const memoryClient = createMemoryClient(cli, {
   env: { ACME_TOKEN: 'dev_secret_123' },

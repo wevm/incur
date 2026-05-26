@@ -1,6 +1,5 @@
 export { z } from 'zod'
 export * as Cli from './Cli.js'
-export { create } from './Cli.js'
 export * as Completions from './Completions.js'
 export { default as middleware } from './middleware.js'
 export type { Handler as MiddlewareHandler, Context as MiddlewareContext } from './middleware.js'
