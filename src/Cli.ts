@@ -2585,6 +2585,26 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
 
+/** @internal Maps CLI instances to MCP setup options. */
+export const toMcpOptions = new WeakMap<
+  Cli,
+  { agents?: string[] | undefined; command?: string | undefined }
+>()
+
+/** @internal Maps CLI instances to skill sync options. */
+export const toSyncOptions = new WeakMap<
+  Cli,
+  {
+    cwd?: string | undefined
+    depth?: number | undefined
+    include?: string[] | undefined
+    suggestions?: string[] | undefined
+  }
+>()
+
+/** @internal Maps CLI instances to their version strings. */
+export const toVersion = new WeakMap<Cli, string>()
+
 /** @internal Maps root CLI instances to their command aliases. */
 const toRootAliases = new WeakMap<Root, string[]>()
 
