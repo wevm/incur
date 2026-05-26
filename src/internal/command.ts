@@ -128,7 +128,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
         })
         async function* wrapped() {
           try {
-            yield* raw as AsyncGenerator<unknown, unknown, unknown>
+            return yield* raw as AsyncGenerator<unknown, unknown, unknown>
           } finally {
             resolveStreamConsumed!()
           }
