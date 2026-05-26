@@ -52,9 +52,9 @@ describe('command-tree', () => {
       openapi: {
         paths: {
           '/users/{id}': {
-            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
             get: {
               operationId: 'getUser',
+              parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
               responses: {
                 '200': {
                   content: {
