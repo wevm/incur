@@ -26,8 +26,71 @@ export function createClientRequest(
   options: createClientRequest.Options = {},
 ) {
   return {
-    request(request: unknown) {
-      return execute(ctx, request, options)
+    async request(
+      request: unknown,
+    ): Promise<ClientRequest.Response | ClientRequest.StreamResponse> {
+      const start = performance.now()
+      const parsed = requestSchema.safeParse(request)
+      if (!parsed.success)
+        return errorEnvelope('', start, {
+          code: 'INVALID_RPC_REQUEST',
+          message: 'Invalid RPC request.',
+          fieldErrors: parsed.error.issues.map((issue) => ({
+            code: issue.code,
+            expected: 'valid RPC request',
+            received: 'invalid',
+            message: issue.message,
+            path: issue.path.join('.'),
+          })),
+        })
+
+      const rpc = parsed.data
+      if (!rpc.command)
+        return errorEnvelope('', start, {
+          code: 'INVALID_RPC_REQUEST',
+          message: 'RPC command is required.',
+        })
+
+      const resolved = CommandTree.resolveCanonical(ctx, rpc.command)
+      if ('error' in resolved)
+        return errorEnvelope(rpc.command, start, {
+          code: resolved.error === 'empty' ? 'INVALID_RPC_REQUEST' : 'COMMAND_NOT_FOUND',
+          message:
+            resolved.error === 'empty'
+              ? 'RPC command is required.'
+              : `'${resolved.token}' is not a command for '${resolved.parent}'.`,
+        })
+      if ('commands' in resolved)
+        return errorEnvelope(rpc.command, start, {
+          code: 'COMMAND_GROUP',
+          message: `'${resolved.id}' is a command group. Specify a subcommand.`,
+        })
+      if ('gateway' in resolved)
+        return errorEnvelope(rpc.command, start, {
+          code: 'FETCH_GATEWAY',
+          message: `'${resolved.id}' is a raw fetch gateway and cannot be called with structured RPC.`,
+        })
+
+      const result = await Command.execute(resolved.command, {
+        agent: true,
+        argv: [],
+        env: ctx.env,
+        envSource: options.env,
+        format: rpc.outputFormat ?? 'json',
+        formatExplicit: true,
+        inputOptions: { args: rpc.args ?? {}, options: rpc.options ?? {} },
+        middlewares: resolved.middlewares,
+        name: ctx.name,
+        parseMode: 'structured',
+        path: resolved.id,
+        vars: ctx.vars,
+        version: ctx.version,
+      })
+
+      if ('stream' in result) return streamResponse(result.stream, resolved.id, start, rpc)
+      if (!result.ok)
+        return errorEnvelope(resolved.id, start, result.error, formatCta(ctx.name, result.cta), rpc)
+      return successEnvelope(resolved.id, start, result.data, formatCta(ctx.name, result.cta), rpc)
     },
   }
 }
@@ -38,75 +101,6 @@ export declare namespace createClientRequest {
     /** Explicit environment source. */
     env?: Record<string, string | undefined> | undefined
   }
-}
-
-async function execute(
-  ctx: CommandTree.RuntimeCliContext,
-  request: unknown,
-  options: createClientRequest.Options,
-): Promise<ClientRequest.Response | ClientRequest.StreamResponse> {
-  const start = performance.now()
-  const parsed = requestSchema.safeParse(request)
-  if (!parsed.success)
-    return errorEnvelope('', start, {
-      code: 'INVALID_RPC_REQUEST',
-      message: 'Invalid RPC request.',
-      fieldErrors: parsed.error.issues.map((issue) => ({
-        code: issue.code,
-        expected: 'valid RPC request',
-        received: 'invalid',
-        message: issue.message,
-        path: issue.path.join('.'),
-      })),
-    })
-
-  const rpc = parsed.data
-  if (!rpc.command)
-    return errorEnvelope('', start, {
-      code: 'INVALID_RPC_REQUEST',
-      message: 'RPC command is required.',
-    })
-
-  const resolved = CommandTree.resolveCanonical(ctx, rpc.command)
-  if ('error' in resolved)
-    return errorEnvelope(rpc.command, start, {
-      code: resolved.error === 'empty' ? 'INVALID_RPC_REQUEST' : 'COMMAND_NOT_FOUND',
-      message:
-        resolved.error === 'empty'
-          ? 'RPC command is required.'
-          : `'${resolved.token}' is not a command for '${resolved.parent}'.`,
-    })
-  if ('commands' in resolved)
-    return errorEnvelope(rpc.command, start, {
-      code: 'COMMAND_GROUP',
-      message: `'${resolved.id}' is a command group. Specify a subcommand.`,
-    })
-  if ('gateway' in resolved)
-    return errorEnvelope(rpc.command, start, {
-      code: 'FETCH_GATEWAY',
-      message: `'${resolved.id}' is a raw fetch gateway and cannot be called with structured RPC.`,
-    })
-
-  const result = await Command.execute(resolved.command, {
-    agent: true,
-    argv: [],
-    env: ctx.env,
-    envSource: options.env,
-    format: rpc.outputFormat ?? 'json',
-    formatExplicit: true,
-    inputOptions: { args: rpc.args ?? {}, options: rpc.options ?? {} },
-    middlewares: resolved.middlewares,
-    name: ctx.name,
-    parseMode: 'structured',
-    path: resolved.id,
-    vars: ctx.vars,
-    version: ctx.version,
-  })
-
-  if ('stream' in result) return streamResponse(result.stream, resolved.id, start, rpc)
-  if (!result.ok)
-    return errorEnvelope(resolved.id, start, result.error, formatCta(ctx.name, result.cta), rpc)
-  return successEnvelope(resolved.id, start, result.data, formatCta(ctx.name, result.cta), rpc)
 }
 
 function streamResponse(

@@ -48,103 +48,103 @@ const requestSchema = z.discriminatedUnion('resource', [
 /** Creates the shared client discovery executor. */
 export function createClientDiscover(ctx: CommandTree.RuntimeCliContext) {
   return {
-    discover(request: unknown) {
-      return discover(ctx, request)
-    },
-  }
-}
-
-async function discover(
-  ctx: CommandTree.RuntimeCliContext,
-  request: unknown,
-): Promise<ClientDiscover.Response> {
-  const parsedRequest = requestSchema.safeParse(request)
-  if (!parsedRequest.success)
-    throw new DiscoverError('VALIDATION_ERROR', 'Invalid discovery request.', 400)
-  const parsed = parsedRequest.data
-  if (parsed.resource === 'openapi') {
-    const spec = openapi(ctx)
-    if (parsed.format === 'yaml')
-      return { contentType: 'application/yaml', body: yamlStringify(spec) }
-    return { contentType: 'application/json', data: spec }
-  }
-  if (parsed.resource === 'mcpTools')
-    return { contentType: 'application/json', data: { tools: Mcp.collectTools(ctx.commands, []) } }
-
-  if (parsed.resource === 'skillsIndex' || parsed.resource === 'skill') {
-    const { files } = skills(ctx)
-    if (parsed.resource === 'skillsIndex') {
-      return {
-        contentType: 'application/json',
-        data: {
-          skills: files.map((file) => {
-            const meta = parseFrontmatter(file.content)
-            return {
-              name: file.dir || ctx.name,
-              description: meta.description ?? '',
-              files: ['SKILL.md'],
-            }
-          }),
-        },
+    async discover(request: unknown): Promise<ClientDiscover.Response> {
+      const parsedRequest = requestSchema.safeParse(request)
+      if (!parsedRequest.success)
+        throw new DiscoverError('VALIDATION_ERROR', 'Invalid discovery request.', 400)
+      const parsed = parsedRequest.data
+      if (parsed.resource === 'openapi') {
+        const spec = openapi(ctx)
+        if (parsed.format === 'yaml')
+          return { contentType: 'application/yaml', body: yamlStringify(spec) }
+        return { contentType: 'application/json', data: spec }
       }
-    }
-    if (!safeSkillName(parsed.name))
-      throw new DiscoverError('INVALID_SKILL_NAME', 'Unsafe skill name.', 400)
-    const file = files.find((value) => (value.dir || ctx.name) === parsed.name)
-    if (!file) throw new DiscoverError('SKILL_NOT_FOUND', `Unknown skill '${parsed.name}'.`, 404)
-    return { contentType: 'text/markdown', body: file.content }
-  }
+      if (parsed.resource === 'mcpTools')
+        return {
+          contentType: 'application/json',
+          data: { tools: Mcp.collectTools(ctx.commands, []) },
+        }
 
-  const scoped = scope(ctx, parsed.command)
-  if (parsed.resource === 'help') {
-    if (scoped.type === 'command')
+      if (parsed.resource === 'skillsIndex' || parsed.resource === 'skill') {
+        const { files } = skills(ctx)
+        if (parsed.resource === 'skillsIndex') {
+          return {
+            contentType: 'application/json',
+            data: {
+              skills: files.map((file) => {
+                const meta = parseFrontmatter(file.content)
+                return {
+                  name: file.dir || ctx.name,
+                  description: meta.description ?? '',
+                  files: ['SKILL.md'],
+                }
+              }),
+            },
+          }
+        }
+        if (!safeSkillName(parsed.name))
+          throw new DiscoverError('INVALID_SKILL_NAME', 'Unsafe skill name.', 400)
+        const file = files.find((value) => (value.dir || ctx.name) === parsed.name)
+        if (!file)
+          throw new DiscoverError('SKILL_NOT_FOUND', `Unknown skill '${parsed.name}'.`, 404)
+        return { contentType: 'text/markdown', body: file.content }
+      }
+
+      const scoped = scope(ctx, parsed.command)
+      if (parsed.resource === 'help') {
+        if (scoped.type === 'command')
+          return {
+            contentType: 'text/plain',
+            body: Help.formatCommand(scoped.id, {
+              alias: scoped.command.alias,
+              args: scoped.command.args,
+              description: scoped.command.description,
+              env: scoped.command.env,
+              examples: [],
+              hint: scoped.command.hint,
+              options: scoped.command.options,
+              usage: [],
+            }),
+          }
+        return {
+          contentType: 'text/plain',
+          body: Help.formatRoot(scoped.id, {
+            description: scoped.description,
+            commands: collect(scoped.commands, [], false).map(({ name, description }) => ({
+              name,
+              ...(description ? { description } : undefined),
+            })),
+          }),
+        }
+      }
+
+      if (parsed.resource === 'schema') {
+        if (scoped.type === 'command') {
+          const schema = CommandTree.buildInputSchema(scoped.command)
+          return { contentType: 'application/json', data: schema ?? {} }
+        }
+        return {
+          contentType: 'application/json',
+          data: manifest(scoped.commands, scoped.prefix, true),
+        }
+      }
+
+      const full = parsed.resource === 'llmsFull'
+      const format = parsed.format ?? 'md'
+      if (format === 'md') {
+        const groups = new Map<string, string>()
+        const entries = skillCommands(scoped.commands, scoped.prefix, groups, scoped.rootCommand)
+        const name = scoped.prefix.length > 0 ? `${ctx.name} ${scoped.prefix.join(' ')}` : ctx.name
+        const body = full
+          ? Skill.generate(name, entries, groups)
+          : Skill.index(name, entries, scoped.description)
+        return { contentType: 'text/markdown', body }
+      }
       return {
         contentType: 'text/plain',
-        body: Help.formatCommand(scoped.id, {
-          alias: scoped.command.alias,
-          args: scoped.command.args,
-          description: scoped.command.description,
-          env: scoped.command.env,
-          examples: [],
-          hint: scoped.command.hint,
-          options: scoped.command.options,
-          usage: [],
-        }),
+        body: Formatter.format(manifest(scoped.commands, scoped.prefix, full), format),
       }
-    return {
-      contentType: 'text/plain',
-      body: Help.formatRoot(scoped.id, {
-        description: scoped.description,
-        commands: collect(scoped.commands, [], false).map(({ name, description }) => ({
-          name,
-          ...(description ? { description } : undefined),
-        })),
-      }),
-    }
-  }
-
-  if (parsed.resource === 'schema') {
-    if (scoped.type === 'command') {
-      const schema = CommandTree.buildInputSchema(scoped.command)
-      return { contentType: 'application/json', data: schema ?? {} }
-    }
-    return { contentType: 'application/json', data: manifest(scoped.commands, scoped.prefix, true) }
-  }
-
-  const full = parsed.resource === 'llmsFull'
-  const format = parsed.format ?? 'md'
-  if (format === 'md') {
-    const groups = new Map<string, string>()
-    const entries = skillCommands(scoped.commands, scoped.prefix, groups, scoped.rootCommand)
-    const name = scoped.prefix.length > 0 ? `${ctx.name} ${scoped.prefix.join(' ')}` : ctx.name
-    const body = full
-      ? Skill.generate(name, entries, groups)
-      : Skill.index(name, entries, scoped.description)
-    return { contentType: 'text/markdown', body }
-  }
-  return {
-    contentType: 'text/plain',
-    body: Formatter.format(manifest(scoped.commands, scoped.prefix, full), format),
+    },
   }
 }
 
