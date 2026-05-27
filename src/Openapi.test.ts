@@ -150,12 +150,14 @@ describe('generateCommands', () => {
   test('command has description from summary', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch)
     const cmd = commands.get('listUsers')!
+    if ('_group' in cmd) throw new Error('expected listUsers command')
     expect(cmd.description).toBe('List users')
   })
 
   test('coerced number params preserve description', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch)
     const cmd = commands.get('listUsers')!
+    if ('_group' in cmd) throw new Error('expected listUsers command')
     const limitSchema = cmd.options!.shape.limit
     expect(limitSchema.description).toBe('Max results')
   })

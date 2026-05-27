@@ -452,7 +452,7 @@ function getNamespaceInfo(operations: OperationEntry[]) {
   return { parentPaths, pathOperations }
 }
 
-function commandSegments(options: commandSegments.Options) {
+function commandSegments(options: commandSegments.Options): CommandSegment[] {
   const { method, mode, namespaceInfo, operation, path } = options
   if (mode === 'operation')
     return [{ name: operation.operationId ?? `${method}_${path.replace(/[/{}]/g, '_')}` }]
@@ -485,11 +485,11 @@ declare namespace commandSegments {
   }
 }
 
-function namespaceSegments(path: string, operation?: Operation | undefined) {
+function namespaceSegments(path: string, operation?: Operation | undefined): CommandSegment[] {
   return path
     .split('/')
     .map((segment) => namespaceSegment(segment, operation))
-    .filter((segment): segment is CommandSegment => segment !== undefined)
+    .filter(isCommandSegment)
 }
 
 function namespaceNames(path: string) {
@@ -500,7 +500,10 @@ function namespacePath(path: string) {
   return `/${namespaceNames(path).join('/')}`
 }
 
-function namespaceSegment(segment: string, operation?: Operation | undefined) {
+function namespaceSegment(
+  segment: string,
+  operation?: Operation | undefined,
+): CommandSegment | undefined {
   if (!segment) return undefined
   const name = segment.startsWith('{') && segment.endsWith('}') ? segment.slice(1, -1) : segment
   const description = operation?.parameters?.find(
@@ -512,7 +515,14 @@ function namespaceSegment(segment: string, operation?: Operation | undefined) {
   }
 }
 
-function describeNamespaceLeaf(segments: CommandSegment[], description: string | undefined) {
+function isCommandSegment(segment: CommandSegment | undefined): segment is CommandSegment {
+  return segment !== undefined
+}
+
+function describeNamespaceLeaf(
+  segments: CommandSegment[],
+  description: string | undefined,
+): CommandSegment[] {
   if (!description || segments.length === 0) return segments
   return segments.map((segment, index) =>
     index === segments.length - 1 && !segment.description ? { ...segment, description } : segment,
