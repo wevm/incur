@@ -1,12 +1,12 @@
 import { describe, expect, test, vi } from 'vitest'
 
+import { ClientError } from '../ClientError.js'
+import { createClient } from '../createClient.js'
 import type {
   Request as RpcRequest,
   Response as RpcResponse,
   StreamResponse as RpcStreamResponse,
 } from '../Rpc.js'
-import { createClient } from '../createClient.js'
-import { ClientError } from '../ClientError.js'
 import type * as HttpTransport from '../transports/HttpTransport.js'
 
 function clientWith(request: (request: RpcRequest) => Promise<RpcResponse | RpcStreamResponse>) {
@@ -82,6 +82,7 @@ describe('run action', () => {
           retryable: false,
         },
         meta: { command: 'deploy', duration: '2ms' },
+        status: 401,
       }),
     )
     const client = clientWith(request)
@@ -92,6 +93,7 @@ describe('run action', () => {
       fieldErrors: [expect.objectContaining({ path: 'token' })],
       meta: { command: 'deploy' },
       retryable: false,
+      status: 401,
     })
     try {
       await client.run('deploy')
@@ -161,13 +163,37 @@ describe('run action', () => {
     expect(cta).toMatchObject({
       command: 'unblock',
       cliCommand: 'unblock t1 --dry-run <dryRun>',
-      runnable: true,
       raw: expect.any(Object),
     })
-    if (!cta?.runnable) throw new Error('expected runnable CTA')
+    if (!cta) throw new Error('expected CTA')
     await expect(cta.run()).resolves.toMatchObject({ data: { unblocked: true } })
     expect(request).toHaveBeenLastCalledWith(
       expect.objectContaining({ command: 'unblock', outputFormat: 'toon' }),
     )
+  })
+
+  test('CTA suggestions fail like normal runs when the command is invalid', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {},
+        meta: {
+          command: 'report',
+          duration: '1ms',
+          cta: { commands: ['missing'] },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'COMMAND_NOT_FOUND', message: 'Missing command.' },
+        meta: { command: 'missing', duration: '1ms' },
+      })
+    const client = clientWith(request)
+    const result = await client.run('report')
+    const cta = result.meta.cta?.commands[0]
+
+    expect(cta).toMatchObject({ command: 'missing', cliCommand: 'missing' })
+    await expect(cta?.run()).rejects.toMatchObject({ code: 'COMMAND_NOT_FOUND' })
   })
 })

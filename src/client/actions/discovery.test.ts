@@ -21,14 +21,24 @@ describe('discovery actions', () => {
     const discover = vi.fn(async (request) => {
       if (request.resource === 'help') return { contentType: 'text/plain', body: 'help' }
       if (request.resource === 'skill') return { contentType: 'text/markdown', body: '# Skill' }
+      if (
+        (request.resource === 'llms' || request.resource === 'llmsFull') &&
+        request.format === 'md'
+      )
+        return { contentType: 'text/markdown', body: '# Manifest' }
+      if (
+        (request.resource === 'llms' || request.resource === 'llmsFull') &&
+        request.format === 'json'
+      )
+        return { contentType: 'text/plain', body: JSON.stringify({ resource: request.resource }) }
       return { contentType: 'application/json', data: { resource: request.resource } }
     })
     const client = clientWith(discover)
 
     await expect(client.llms()).resolves.toEqual({ resource: 'llms' })
-    await expect(client.llms({ command: 'project' as never, format: 'md' })).resolves.toEqual({
-      resource: 'llms',
-    })
+    await expect(client.llms({ command: 'project' as never, format: 'md' })).resolves.toBe(
+      '# Manifest',
+    )
     await expect(client.llmsFull({ command: 'project' as never })).resolves.toEqual({
       resource: 'llmsFull',
     })
@@ -40,9 +50,9 @@ describe('discovery actions', () => {
     await expect(client.mcp.tools()).resolves.toEqual({ resource: 'mcpTools' })
 
     expect(discover.mock.calls.map(([request]) => request)).toEqual([
-      { resource: 'llms' },
+      { resource: 'llms', format: 'json' },
       { resource: 'llms', command: 'project', format: 'md' },
-      { resource: 'llmsFull', command: 'project' },
+      { resource: 'llmsFull', command: 'project', format: 'json' },
       { resource: 'schema', command: 'project report' },
       { resource: 'help', command: 'project report' },
       { resource: 'openapi' },

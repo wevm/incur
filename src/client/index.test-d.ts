@@ -138,7 +138,13 @@ test('selection defaults and clearing affect data inference', async () => {
 test('discovery overloads and permissive command maps', async () => {
   const client = createHttpClient<Commands>({ baseUrl: 'https://example.com' })
   expectTypeOf(await client.llms()).toMatchTypeOf<{ commands: unknown[] }>()
+  expectTypeOf(await client.llms({ format: undefined })).toMatchTypeOf<{ commands: unknown[] }>()
+  expectTypeOf(await client.llms({ format: 'json' })).toMatchTypeOf<{ commands: unknown[] }>()
   expectTypeOf(await client.llms({ format: 'md' })).toEqualTypeOf<string>()
+  expectTypeOf(await client.llmsFull()).toMatchTypeOf<{ commands: unknown[] }>()
+  expectTypeOf(await client.llmsFull({ format: undefined })).toMatchTypeOf<{
+    commands: unknown[]
+  }>()
   const format = undefined as 'md' | undefined
   expectTypeOf(await client.llms({ format })).toMatchTypeOf<string | { commands: unknown[] }>()
   await client.llmsFull({ command: 'project' })

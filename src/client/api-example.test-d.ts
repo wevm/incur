@@ -83,8 +83,8 @@ test('docs api example client surface typechecks conceptually', async () => {
   expectTypeOf(status.data.status).toEqualTypeOf<'open' | 'blocked' | 'done'>()
 
   const cta = report.meta.cta?.commands[0]
-  if (cta?.runnable) {
-    expectTypeOf(cta.command).toMatchTypeOf<keyof Commands>()
+  if (cta) {
+    expectTypeOf(cta.command).toEqualTypeOf<string>()
     await cta.run({ outputFormat: 'toon' })
   }
 

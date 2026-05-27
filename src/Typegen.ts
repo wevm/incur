@@ -106,6 +106,7 @@ function resolveType(
       if (!properties || Object.keys(properties).length === 0) return '{}'
       const required = new Set((schema.required as string[] | undefined) ?? [])
 <<<<<<< HEAD
+<<<<<<< HEAD
       const entries = Object.entries(properties ?? {}).map(([key, value]) => {
 <<<<<<< HEAD
         const type = resolveType(value, defs)
@@ -133,6 +134,13 @@ function resolveType(
         ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
       )
 >>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
+=======
+      const entries = Object.entries(properties).map(([key, value]) => {
+        const type = resolveType(value, defs)
+        if (required.has(key)) return `${propertyKey(key)}: ${type}`
+        return `${propertyKey(key)}?: ${type} | undefined`
+      })
+>>>>>>> dbb43b1 (fix: align typed client contracts)
       return `{ ${entries.join('; ')} }`
     }
     default:

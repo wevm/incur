@@ -1,3 +1,4 @@
+import { ClientError } from '../ClientError.js'
 import type {
   Envelope as RpcFullEnvelope,
   Meta as RpcMeta,
@@ -6,7 +7,6 @@ import type {
   StreamRecord as RpcStreamRecord,
   StreamResponse as RpcStreamResponse,
 } from '../Rpc.js'
-import { ClientError } from '../ClientError.js'
 import type {
   ActionClient,
   ClientCta,
@@ -289,15 +289,18 @@ function ctaBlock(client: ActionClient | undefined, value: unknown): ClientCtaBl
   const commands = Array.isArray(block.commands) ? block.commands : []
   return {
     ...(typeof block.description === 'string' ? { description: block.description } : undefined),
-    commands: commands.map((command) => cta(client, command)),
+    commands: commands.flatMap((command) => {
+      const suggestion = cta(client, command)
+      return suggestion ? [suggestion] : []
+    }),
   }
 }
 
-function cta(client: ActionClient | undefined, value: unknown): ClientCta<any> {
+function cta(client: ActionClient | undefined, value: unknown): ClientCta<any> | undefined {
   const raw = value
   if (typeof value === 'string') return runnableCta(client, { command: value }, raw)
   if (isRecord(value) && typeof value.command === 'string') return runnableCta(client, value, raw)
-  return { raw, runnable: false, unresolvedReason: 'unstructured' }
+  return undefined
 }
 
 function runnableCta(
@@ -315,10 +318,11 @@ function runnableCta(
     args,
     options,
     raw,
-    runnable: true,
     run(optionsOverride?: OutputOptions) {
       if (!client) throw new ClientError('CTA is not attached to a client.')
-      return run(client, command, { args, options, ...optionsOverride }) as Promise<never>
+      return run(client, command, { args, options, ...optionsOverride }) as Promise<
+        ClientRunResult<unknown, any>
+      >
     },
   } satisfies ClientCta<any>
   return result

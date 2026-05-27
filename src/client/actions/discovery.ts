@@ -14,10 +14,11 @@ export async function llms(
   client: ActionClient,
   options: { command?: string | undefined; format?: DiscoveryFormat | undefined } = {},
 ): Promise<unknown> {
+  const { command, format = 'json' } = options
   return discover(client, {
     resource: 'llms',
-    ...(options.command ? { command: options.command } : undefined),
-    ...(options.format ? { format: options.format } : undefined),
+    ...(command ? { command } : undefined),
+    format,
   })
 }
 
@@ -26,10 +27,11 @@ export async function llmsFull(
   client: ActionClient,
   options: { command?: string | undefined; format?: DiscoveryFormat | undefined } = {},
 ): Promise<unknown> {
+  const { command, format = 'json' } = options
   return discover(client, {
     resource: 'llmsFull',
-    ...(options.command ? { command: options.command } : undefined),
-    ...(options.format ? { format: options.format } : undefined),
+    ...(command ? { command } : undefined),
+    format,
   })
 }
 
@@ -78,6 +80,12 @@ export async function mcpTools(client: ActionClient): Promise<McpToolsResponse> 
 async function discover(client: ActionClient, request: ResourcesRequest): Promise<unknown> {
   try {
     const response = await client.transport.discover(request)
+    if (
+      'body' in response &&
+      (request.resource === 'llms' || request.resource === 'llmsFull') &&
+      request.format === 'json'
+    )
+      return JSON.parse(response.body)
     if ('body' in response) return response.body
     return response.data
   } catch (error) {

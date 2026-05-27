@@ -286,7 +286,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('verbose?: boolean')
+    expect(output).toContain('verbose?: boolean | undefined')
     expect(output).toContain('output: string')
   })
 
@@ -347,6 +347,7 @@ describe('fromCli', () => {
     const output = Typegen.fromCli(cli)
     expect(output).toContain('"bad key \\"quoted\\""')
 <<<<<<< HEAD
+<<<<<<< HEAD
     expect(output).toContain('"bad-key"?: string | undefined')
     expect(output).toContain('"quote\\"key": number')
     expect(output).toContain('nested: { "child-key"?: string | undefined }')
@@ -388,5 +389,10 @@ describe('fromCli', () => {
     expect(() => Typegen.fromCli(cli)).toThrow('unsupported JSON Schema reference "#"')
 =======
 >>>>>>> 3df4c76 (refactor: keep public surface typegen scoped)
+=======
+    expect(output).toContain('"bad-key"?: string | undefined')
+    expect(output).toContain('"quote\\"key": number')
+    expect(output).toContain('nested: { "child-key"?: string | undefined }')
+>>>>>>> dbb43b1 (fix: align typed client contracts)
   })
 })

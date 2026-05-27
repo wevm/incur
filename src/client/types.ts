@@ -271,54 +271,35 @@ export type ClientCtaBlock<commands = Commands> = {
 }
 
 /** CTA command. */
-export type ClientCta<commands = Commands> =
-  | ClientRunnableCta<commands, CommandId<commands>>
-  | ClientUnresolvedCta
-
-/** Runnable CTA command. */
-export type ClientRunnableCta<commands, command extends CommandId<commands>> = {
-  /** Canonical command id. */
-  command: command
+export type ClientCta<commands = Commands> = {
+  /** Suggested command id. */
+  command: string
   /** CLI-ready command text. */
   cliCommand: string
   /** CTA description. */
   description?: string | undefined
-  /** Structured args. */
-  args?: CommandArgs<commands, command> | undefined
-  /** Structured options. */
-  options?: CommandOptions<commands, command> | undefined
+  /** Structured args when provided by the server. */
+  args?: Record<string, unknown> | undefined
+  /** Structured options when provided by the server. */
+  options?: Record<string, unknown> | undefined
   /** Raw source CTA. */
   raw: unknown
-  /** Runnable discriminator. */
-  runnable: true
+  /** Runs the suggested command. Invalid suggestions fail like normal client runs. */
   run<const options extends ClientCtaRunOptions | undefined = undefined>(
     options?: options,
-  ): Promise<CtaRunReturn<commands, command, options>>
-}
-
-/** Unresolved CTA command. */
-export type ClientUnresolvedCta = {
-  /** CLI-ready command text when one could be derived. */
-  cliCommand?: string | undefined
-  /** CTA description. */
-  description?: string | undefined
-  /** Raw source CTA. */
-  raw: unknown
-  /** Runnable discriminator. */
-  runnable: false
-  /** Reason the CTA could not be converted into a typed run action. */
-  unresolvedReason: 'unknown-command' | 'invalid-input' | 'unstructured'
+  ): Promise<
+    ClientRunResult<
+      EffectiveOutput<
+        unknown,
+        options extends { selection: infer selection } ? selection : undefined
+      >,
+      commands
+    >
+  >
 }
 
 /** CTA run output controls. */
 export type ClientCtaRunOptions = OutputOptions
-
-/** CTA run return type. */
-export type CtaRunReturn<
-  commands,
-  command extends CommandId<commands>,
-  options extends ClientCtaRunOptions | undefined,
-> = RunReturn<commands, command, options & RunInput<commands, command>, {}>
 
 /** Stream response wrapper. */
 export type ClientStreamResponse<
@@ -362,9 +343,11 @@ export type DiscoveryFormat = 'md' | 'json' | 'yaml' | 'toon'
 /** Discovery result for a structured type and format option. */
 export type DiscoveryResult<structured, format> = [format] extends [undefined]
   ? structured
-  : undefined extends format
-    ? structured | string
-    : string
+  : [format] extends ['json']
+    ? structured
+    : undefined extends format
+      ? structured | string
+      : string
 
 /** LLM manifest. */
 export type LlmsManifest<
