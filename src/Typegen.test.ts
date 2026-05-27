@@ -202,4 +202,16 @@ describe('fromCli', () => {
       "
     `)
   })
+
+  test('includes root commands and excludes raw fetch gateways', () => {
+    const cli = Cli.create('status', {
+      run: () => ({ ok: true }),
+    }).command('raw', {
+      fetch: () => new Response('{}'),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain("'status': { args: {}; options: {} }")
+    expect(output).not.toContain("'raw'")
+  })
 })

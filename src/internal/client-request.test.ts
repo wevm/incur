@@ -4,7 +4,7 @@ import { z } from 'zod'
 import * as Cli from '../Cli.js'
 import * as Formatter from '../Formatter.js'
 import { createClientRequest } from './client-request.js'
-import * as RuntimeContext from './client-runtime-context.js'
+import * as RuntimeContext from './runtime-context.js'
 
 function createFixture() {
   const order: string[] = []

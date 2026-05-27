@@ -10,7 +10,7 @@ import * as Help from '../Help.js'
 import * as Mcp from '../Mcp.js'
 import * as Openapi from '../Openapi.js'
 import * as Skill from '../Skill.js'
-import * as RuntimeContext from './client-runtime-context.js'
+import * as RuntimeContext from './runtime-context.js'
 
 type CommandDefinition = CliCommandDefinition<any, any, any, any, any, any>
 

@@ -2,7 +2,7 @@ import type * as Local from '../client/Local.js'
 import { BaseError } from '../Errors.js'
 import * as SyncMcp from '../SyncMcp.js'
 import * as SyncSkills from '../SyncSkills.js'
-import type * as RuntimeContext from './client-runtime-context.js'
+import type * as RuntimeContext from './runtime-context.js'
 
 /** Local setup/admin failure. */
 export class LocalError extends BaseError {

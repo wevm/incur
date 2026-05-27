@@ -157,8 +157,8 @@ export function resolveCanonical(
   return { id, command: entry, middlewares: [...middlewares, ...(entry.middleware ?? [])] }
 }
 
-/** Traverses callable client command entries. Aliases and raw fetch gateways are excluded. */
-export function collectClientCommands(ctx: RuntimeCliContext): ResolvedCommand[] {
+/** Traverses structured command entries. Aliases and raw fetch gateways are excluded. */
+export function collectStructuredCommands(ctx: RuntimeCliContext): ResolvedCommand[] {
   const result: ResolvedCommand[] = []
   if (ctx.rootCommand)
     result.push({ id: ctx.name, command: ctx.rootCommand, middlewares: ctx.middlewares ?? [] })

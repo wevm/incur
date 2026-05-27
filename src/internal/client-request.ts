@@ -5,7 +5,7 @@ import type * as ClientRequest from '../client/Request.js'
 import type { FieldError } from '../Errors.js'
 import * as Filter from '../Filter.js'
 import * as Formatter from '../Formatter.js'
-import * as RuntimeContext from './client-runtime-context.js'
+import * as RuntimeContext from './runtime-context.js'
 import * as Command from './command.js'
 
 const requestSchema = z.object({

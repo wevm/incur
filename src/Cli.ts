@@ -14,7 +14,7 @@ import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { createClientDiscover, DiscoverError } from './internal/client-discover.js'
 import { createClientRequest, getClientRequestStatus } from './internal/client-request.js'
-import * as RuntimeContext from './internal/client-runtime-context.js'
+import * as RuntimeContext from './internal/runtime-context.js'
 import {
   builtinCommands,
   type CommandMeta,

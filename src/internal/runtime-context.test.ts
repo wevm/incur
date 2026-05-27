@@ -2,10 +2,10 @@ import { describe, expect, test } from 'vitest'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
-import * as RuntimeContext from './client-runtime-context.js'
+import * as RuntimeContext from './runtime-context.js'
 
-describe('client-runtime-context', () => {
-  test('collects canonical client command IDs and excludes aliases/raw gateways', () => {
+describe('runtime-context', () => {
+  test('collects canonical structured command IDs and excludes aliases/raw gateways', () => {
     const root = Cli.create('root', {
       run() {
         return null
@@ -33,7 +33,7 @@ describe('client-runtime-context', () => {
     root.command(router)
 
     const ctx = RuntimeContext.fromCli(root)
-    expect(RuntimeContext.collectClientCommands(ctx).map((entry) => entry.id)).toEqual([
+    expect(RuntimeContext.collectStructuredCommands(ctx).map((entry) => entry.id)).toEqual([
       'mounted',
       'project nested leaf',
       'root',
@@ -76,7 +76,7 @@ describe('client-runtime-context', () => {
       },
     })
 
-    const command = RuntimeContext.collectClientCommands(RuntimeContext.fromCli(cli))[0]!
+    const command = RuntimeContext.collectStructuredCommands(RuntimeContext.fromCli(cli))[0]!
     expect(command.id).toBe('api getUser')
     expect(command.command.args?.shape.id).toBeDefined()
     expect(command.command.output).toBeDefined()

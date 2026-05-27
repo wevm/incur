@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import { z } from 'zod'
 
 import * as Cli from './Cli.js'
+import * as RuntimeContext from './internal/runtime-context.js'
 import { importCli } from './internal/utils.js'
 
 /** Imports a CLI from `input` (must `export default` a `Cli`), generates the `.d.ts`, and writes it to `output`. */
@@ -12,34 +13,17 @@ export async function generate(input: string, output: string): Promise<void> {
 
 /** Generates a `.d.ts` declaration string for the `incur` module augmentation. */
 export function fromCli(cli: Cli.Cli): string {
-  const commands = Cli.toCommands.get(cli)
-  if (!commands) throw new Error('No commands registered on this CLI instance')
-
-  const entries = collectEntries(commands, [])
+  const entries = RuntimeContext.collectStructuredCommands(RuntimeContext.fromCli(cli))
 
   const lines: string[] = ["declare module 'incur' {", '  interface Register {', '    commands: {']
 
-  for (const { name, args, options } of entries)
+  for (const { id, command } of entries)
     lines.push(
-      `      '${name}': { args: ${schemaToType(args)}; options: ${schemaToType(options)} }`,
+      `      '${id}': { args: ${schemaToType(command.args)}; options: ${schemaToType(command.options)} }`,
     )
 
   lines.push('    }', '  }', '}', '')
   return lines.join('\n')
-}
-
-/** Recursively collects leaf commands with their full paths and schemas. */
-function collectEntries(
-  commands: Map<string, any>,
-  prefix: string[],
-): { name: string; args?: z.ZodObject<any>; options?: z.ZodObject<any> }[] {
-  const result: ReturnType<typeof collectEntries> = []
-  for (const [name, entry] of commands) {
-    const path = [...prefix, name]
-    if ('_group' in entry && entry._group) result.push(...collectEntries(entry.commands, path))
-    else result.push({ name: path.join(' '), args: entry.args, options: entry.options })
-  }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** Converts a Zod object schema to a TypeScript type string. Returns `{}` for undefined schemas. */
