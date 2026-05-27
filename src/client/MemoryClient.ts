@@ -2,8 +2,6 @@ import type * as Cli from '../Cli.js'
 import * as Client from './Client.js'
 import * as MemoryTransport from './transports/MemoryTransport.js'
 
-type AnyCli = Cli.Cli<any, any, any>
-
 /** Memory client instance. */
 export type MemoryClient<
   commands = Client.Commands,
@@ -23,11 +21,11 @@ export function create<
   const commands = Client.Commands,
   const defaults extends Client.Defaults = {},
 >(
-  cli: AnyCli,
+  cli: Cli.Cli<any, any, any>,
   options?: (MemoryTransport.Options & defaults & Client.Defaults) | undefined,
 ): MemoryClient<commands, defaults>
 export function create(
-  cli: AnyCli,
+  cli: Cli.Cli<any, any, any>,
   options: MemoryTransport.Options & Client.Defaults = {},
 ): MemoryClient<any, any> {
   const { env, ...defaults } = options
