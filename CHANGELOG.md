@@ -1,5 +1,12 @@
 # incur
 
+## 0.4.7
+
+### Patch Changes
+
+- 01b5c91: Added `openapiConfig.mode` for choosing operation id or namespace command generation.
+- bfc05ac: Added hosted OpenAPI command generation from `Fetch.fromRequest` sources.
+
 ## 0.4.6
 
 ### Patch Changes
