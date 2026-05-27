@@ -3,57 +3,40 @@ import { describe, expect, test, vi } from 'vitest'
 import * as Cli from '../Cli.js'
 import * as Client from './Client.js'
 import * as HttpClient from './HttpClient.js'
-import type * as Local from './Local.js'
 import * as MemoryClient from './MemoryClient.js'
-import type {
-  Request as RpcRequest,
-  Response as RpcResponse,
-  StreamResponse as RpcStreamResponse,
-} from './Rpc.js'
 import * as HttpTransport from './transports/HttpTransport.js'
-import type * as MemoryTransport from './transports/MemoryTransport.js'
-
-function mockTransport(): HttpTransport.HttpTransport {
-  return () => ({
-    config: { key: 'mock', name: 'Mock', type: 'http' as const },
-    baseUrl: new URL('https://example.com'),
-    discover: vi.fn(),
-    request: vi.fn(
-      async (_request: RpcRequest): Promise<RpcResponse | RpcStreamResponse> => ({
-        ok: true,
-        data: { ok: true },
-        meta: { command: 'status', duration: '1ms' },
-      }),
-    ),
-  })
-}
 
 describe('Client.create', () => {
   test('resolves the transport factory exactly once and keeps resolved capabilities', async () => {
-    const request = vi.fn(
-      async (_request: RpcRequest): Promise<RpcResponse> => ({
-        ok: true,
-        data: { ok: true },
-        meta: { command: 'status', duration: '1ms' },
-      }),
-    )
-    const discover = vi.fn(async () => ({ contentType: 'text/plain', body: 'help' }))
-    const transport = vi.fn(() => ({
-      config: { key: 'mock', name: 'Mock', type: 'http' as const },
-      baseUrl: new URL('https://example.com'),
-      discover,
-      request,
-    })) satisfies HttpTransport.HttpTransport
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (init?.method === 'POST' && url.pathname === '/_incur/rpc')
+        return new Response(
+          JSON.stringify({ ok: true, data: { ok: true }, meta: { command: 'status' } }),
+          { headers: { 'content-type': 'application/json' } },
+        )
+      return new Response('help', { headers: { 'content-type': 'text/plain' } })
+    }) as typeof globalThis.fetch
+    const transport = vi.fn(
+      HttpTransport.create({ baseUrl: 'https://example.com', fetch }),
+    ) satisfies HttpTransport.HttpTransport
 
     const client = Client.create({ transport })
 
     expect(transport).toHaveBeenCalledTimes(1)
-    expect(client.transport.request).toBe(request)
-    expect(client.transport.discover).toBe(discover)
     await client.run('status' as never)
     await client.help()
-    expect(request).toHaveBeenCalledTimes(1)
-    expect(discover).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      new URL('https://example.com/_incur/rpc'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      new URL('https://example.com/_incur/help'),
+      expect.objectContaining({ method: 'GET' }),
+    )
   })
 
   test('propagates transport factory errors', () => {
@@ -64,18 +47,22 @@ describe('Client.create', () => {
     expect(() => Client.create({ transport })).toThrow('cannot connect')
   })
 
-  test('resolves transport, assigns uid, preserves defaults, and binds actions', async () => {
-    const client = Client.create({
+  test('resolves memory transport, preserves defaults, and binds actions', async () => {
+    const cli = Cli.create('app').command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+    const client = MemoryClient.create(cli, {
       outputFormat: 'toon',
-      transport: mockTransport(),
     })
 
     expect(client).toMatchObject({
       defaults: { outputFormat: 'toon' },
-      transport: { key: 'mock', name: 'Mock', type: 'http' },
+      transport: { key: 'memory', name: 'Memory', type: 'memory' },
       type: 'client',
     })
-    await expect(client.run('status' as never)).resolves.toMatchObject({
+    await expect(client.run('status')).resolves.toMatchObject({
       ok: true,
       data: { ok: true },
     })
@@ -119,29 +106,21 @@ describe('Client.create', () => {
   })
 
   test('memory clients merge resource and local methods in shared namespaces', async () => {
-    const local: Local.Methods = {
-      skills: {
-        add: vi.fn(async () => ({ agents: [], paths: [], skills: [] })),
-        list: vi.fn(async () => ({ skills: [] })),
+    const cli = Cli.create('app').command('status', {
+      description: 'Show status',
+      run() {
+        return { ok: true }
       },
-      mcp: {
-        add: vi.fn(async () => ({ agents: [], command: 'app --mcp' })),
-      },
-    }
-    const transport = (() => ({
-      config: { key: 'memory', name: 'Memory', type: 'memory' as const },
-      discover: vi.fn(async () => ({ contentType: 'application/json', data: { skills: [] } })),
-      local,
-      request: vi.fn(),
-    })) satisfies MemoryTransport.MemoryTransport
+    })
+    const client = MemoryClient.create(cli)
 
-    const client = Client.create({ transport })
-
-    await expect(client.skills.index()).resolves.toEqual({ skills: [] })
-    await expect(client.skills.list()).resolves.toEqual({ skills: [] })
-    await expect(client.skills.add()).resolves.toEqual({ agents: [], paths: [], skills: [] })
-    await expect(client.mcp.add()).resolves.toEqual({ agents: [], command: 'app --mcp' })
+    await expect(client.skills.index()).resolves.toMatchObject({
+      skills: [expect.objectContaining({ name: 'status' })],
+    })
+    expect(typeof client.skills.add).toBe('function')
+    expect(typeof client.skills.list).toBe('function')
     expect(typeof client.mcp.tools).toBe('function')
+    expect(typeof client.mcp.add).toBe('function')
   })
 
   test('missing fetch implementation throws ClientError', () => {

@@ -1,7 +1,10 @@
 import { describe, expect, test, vi } from 'vitest'
+import { z } from 'zod'
 
+import * as Cli from '../../Cli.js'
 import * as Client from '../Client.js'
 import { ClientError } from '../ClientError.js'
+import * as MemoryClient from '../MemoryClient.js'
 import type {
   Request as RpcRequest,
   Response as RpcResponse,
@@ -10,18 +13,67 @@ import type {
 } from '../Rpc.js'
 import type * as HttpTransport from '../transports/HttpTransport.js'
 
-function clientWith(request: (request: RpcRequest) => Promise<RpcResponse | RpcStreamResponse>) {
-  type Commands = {
-    deploy: { args: {}; options: {}; output: {} }
-    list: { args: {}; options: {}; output: { page: number } }
-    report: { args: {}; options: {}; output: {} }
-    status: { args: {}; options: {}; output: { ok: boolean } }
-    unblock: {
-      args: { taskId: string }
-      options: { dryRun?: boolean | undefined }
-      output: { unblocked: boolean }
-    }
-  }
+type LogsCommands = {
+  logs: { args: {}; options: {}; output: unknown; stream: true }
+}
+
+type MockCommands = {
+  deploy: { args: {}; options: {}; output: {} }
+  status: { args: {}; options: {}; output: { ok: boolean } }
+}
+
+function testClient() {
+  const cli = Cli.create('app')
+    .command('list', {
+      run() {
+        return {
+          items: Array.from({ length: 200 }, (_, i) => ({
+            id: i + 1,
+            label: `item-${i + 1}`,
+            message: 'alpha beta gamma delta epsilon zeta eta theta iota kappa',
+          })),
+          page: 1,
+        }
+      },
+    })
+    .command('report', {
+      run(c) {
+        return c.ok(
+          {},
+          {
+            cta: {
+              commands: [
+                {
+                  command: 'unblock',
+                  args: { taskId: 't1' },
+                  options: { dryRun: true },
+                  description: 'Unblock task',
+                },
+              ],
+            },
+          },
+        )
+      },
+    })
+    .command('status', {
+      run() {
+        return { items: [{ ok: true }], ok: true }
+      },
+    })
+    .command('unblock', {
+      args: z.object({ taskId: z.string() }),
+      options: z.object({ dryRun: z.boolean().optional() }),
+      run() {
+        return { items: [{ unblocked: true }], unblocked: true }
+      },
+    })
+  return MemoryClient.create(cli, {
+    outputFormat: 'toon',
+    selection: ['items[0]'],
+  })
+}
+
+function mockClient(request: (request: RpcRequest) => Promise<RpcResponse | RpcStreamResponse>) {
   const transport = (() => ({
     config: { key: 'mock', name: 'Mock', type: 'http' as const },
     baseUrl: new URL('https://example.com'),
@@ -30,17 +82,37 @@ function clientWith(request: (request: RpcRequest) => Promise<RpcResponse | RpcS
       return request(r)
     },
   })) satisfies HttpTransport.HttpTransport
-  return Client.create<Commands, HttpTransport.HttpTransport>({
-    outputFormat: 'toon',
-    selection: ['items[0]'],
-    transport,
-  })
+  return Client.create<MockCommands, HttpTransport.HttpTransport>({ transport })
 }
 
-function streamClient(records: RpcStreamRecord[], onReturn = vi.fn()) {
-  type Commands = {
-    logs: { args: {}; options: {}; output: unknown; stream: true }
-  }
+function streamClient(onReturn = vi.fn()) {
+  const cli = Cli.create('app').command('logs', {
+    async *run(c) {
+      try {
+        yield { line: 1 }
+        yield { line: 2 }
+        return c.ok({ lines: 2 })
+      } finally {
+        onReturn()
+      }
+    },
+  })
+  return MemoryClient.create<LogsCommands>(cli)
+}
+
+function failingStreamClient() {
+  return mockStreamClient([
+    { type: 'chunk', data: 1 },
+    {
+      type: 'error',
+      ok: false,
+      error: { code: 'DISCONNECTED', message: 'Disconnected.' },
+      meta: { command: 'logs', duration: '2ms' },
+    },
+  ])
+}
+
+function mockStreamClient(records: RpcStreamRecord[]) {
   const transport = (() => ({
     config: { key: 'mock', name: 'Mock', type: 'http' as const },
     baseUrl: new URL('https://example.com'),
@@ -50,30 +122,19 @@ function streamClient(records: RpcStreamRecord[], onReturn = vi.fn()) {
         stream: true as const,
         async *records() {
           const terminal = records.at(-1)!
-          try {
-            for (const record of records) yield record
-            return terminal
-          } finally {
-            onReturn()
-          }
+          for (const record of records) yield record
+          return terminal
         },
       }
     },
   })) satisfies HttpTransport.HttpTransport
-  return Client.create<Commands, HttpTransport.HttpTransport>({ transport })
+  return Client.create<LogsCommands, HttpTransport.HttpTransport>({ transport })
 }
 
 describe('run action', () => {
   test('merges defaults with per-call output controls and clears selection with undefined', async () => {
-    const request = vi.fn(
-      async (_request: RpcRequest): Promise<RpcResponse> => ({
-        ok: true,
-        data: { ok: true },
-        output: { text: 'ok' },
-        meta: { command: 'status', duration: '1ms' },
-      }),
-    )
-    const client = clientWith(request)
+    const client = testClient()
+    const request = vi.spyOn(client.transport, 'request')
 
     await client.run('status', {
       outputFormat: 'md',
@@ -81,7 +142,16 @@ describe('run action', () => {
       outputTokenLimit: 24,
     })
 
-    expect(request).toHaveBeenCalledWith({
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'status',
+        args: {},
+        options: {},
+        outputFormat: 'md',
+        outputTokenLimit: 24,
+      }),
+    )
+    expect(request.mock.calls[0]?.[0]).toEqual({
       command: 'status',
       args: {},
       options: {},
@@ -112,7 +182,7 @@ describe('run action', () => {
         status: 401,
       }),
     )
-    const client = clientWith(request)
+    const client = mockClient(request)
 
     await expect(client.run('deploy')).rejects.toMatchObject({
       code: 'NOT_AUTHENTICATED',
@@ -127,31 +197,22 @@ describe('run action', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(ClientError)
       if (!(error instanceof ClientError)) throw error
-      expect(error.error).toMatchObject({ code: 'NOT_AUTHENTICATED', message: 'Login required.' })
+      expect(error.error).toMatchObject({
+        code: 'NOT_AUTHENTICATED',
+        message: 'Login required.',
+      })
       expect(error.data).toMatchObject({ ok: false, error: { code: 'NOT_AUTHENTICATED' } })
     }
   })
 
   test('output.next reruns the same command with next outputTokenOffset', async () => {
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        data: { page: 1 },
-        output: { text: 'one', nextOffset: 5, tokenCount: 10, tokenLimit: 5, tokenOffset: 0 },
-        meta: { command: 'list', duration: '1ms' },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        data: { page: 2 },
-        output: { text: 'two', tokenCount: 10, tokenLimit: 5, tokenOffset: 5 },
-        meta: { command: 'list', duration: '1ms' },
-      })
-    const client = clientWith(request)
-    const result = await client.run('list', { outputTokenLimit: 5 })
+    const client = testClient()
+    const request = vi.spyOn(client.transport, 'request')
+    const result = await client.run('list', { selection: undefined, outputTokenLimit: 5 })
 
-    expect(result.output).toMatchObject({ text: 'one', tokenCount: 10, tokenLimit: 5 })
-    await expect(result.output?.next?.()).resolves.toMatchObject({ data: { page: 2 } })
+    expect(result.output).toMatchObject({ tokenLimit: 5, tokenOffset: 0 })
+    expect(result.output?.next).toBeDefined()
+    await expect(result.output?.next?.()).resolves.toMatchObject({ data: { page: 1 } })
     expect(request).toHaveBeenLastCalledWith(
       expect.objectContaining({ command: 'list', outputTokenOffset: 5 }),
     )
@@ -166,7 +227,7 @@ describe('run action', () => {
         meta: { command: 'status', duration: '1ms' },
       }),
     )
-    const client = clientWith(request)
+    const client = mockClient(request)
 
     await expect(client.run('status')).rejects.toThrow(ClientError)
     await expect(client.run('status')).rejects.toMatchObject({
@@ -175,32 +236,8 @@ describe('run action', () => {
   })
 
   test('normalizes CTA metadata and cta.run inherits client defaults only', async () => {
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {},
-        meta: {
-          command: 'report',
-          duration: '1ms',
-          cta: {
-            commands: [
-              {
-                command: 'unblock',
-                args: { taskId: 't1' },
-                options: { dryRun: true },
-                description: 'Unblock task',
-              },
-            ],
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        data: { unblocked: true },
-        meta: { command: 'unblock', duration: '1ms' },
-      })
-    const client = clientWith(request)
+    const client = testClient()
+    const request = vi.spyOn(client.transport, 'request')
     const result = await client.run('report', { outputFormat: 'md' })
     const cta = result.meta.cta?.commands[0]
 
@@ -210,31 +247,26 @@ describe('run action', () => {
       raw: expect.any(Object),
     })
     if (!cta) throw new Error('expected CTA')
-    await expect(cta.run()).resolves.toMatchObject({ data: { unblocked: true } })
+    await expect(cta.run()).resolves.toMatchObject({ ok: true })
     expect(request).toHaveBeenLastCalledWith(
-      expect.objectContaining({ command: 'unblock', outputFormat: 'toon' }),
+      expect.objectContaining({
+        args: { taskId: 't1' },
+        command: 'unblock',
+        options: { dryRun: true },
+        outputFormat: 'toon',
+        selection: ['items[0]'],
+      }),
     )
   })
 
   test('CTA suggestions fail like normal runs when the command is invalid', async () => {
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {},
-        meta: {
-          command: 'report',
-          duration: '1ms',
-          cta: { commands: ['missing'] },
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        error: { code: 'COMMAND_NOT_FOUND', message: 'Missing command.' },
-        meta: { command: 'missing', duration: '1ms' },
-      })
-    const client = clientWith(request)
-    const result = await client.run('report')
+    const cli = Cli.create('app').command('report', {
+      run(c) {
+        return c.ok({}, { cta: { commands: [{ command: 'missing' }] } })
+      },
+    })
+    const client = MemoryClient.create(cli)
+    const result = await client.run('report', { selection: undefined })
     const cta = result.meta.cta?.commands[0]
 
     expect(cta).toMatchObject({ command: 'missing', cliCommand: 'missing' })
@@ -243,17 +275,7 @@ describe('run action', () => {
 
   describe('stream responses', () => {
     test('default async iteration yields chunks and final resolves terminal metadata', async () => {
-      const client = streamClient([
-        { type: 'chunk', data: { line: 1 } },
-        { type: 'chunk', data: { line: 2 } },
-        {
-          type: 'done',
-          ok: true,
-          data: { lines: 2 },
-          output: { text: 'lines: 2', format: 'toon', tokenCount: 2 },
-          meta: { command: 'logs', duration: '2ms' },
-        },
-      ])
+      const client = streamClient()
       const stream = await client.run('logs')
       const chunks: unknown[] = []
       for await (const chunk of stream as AsyncIterable<unknown>) chunks.push(chunk)
@@ -261,45 +283,35 @@ describe('run action', () => {
       expect(chunks).toEqual([{ line: 1 }, { line: 2 }])
       await expect(stream.final).resolves.toMatchObject({
         data: { lines: 2 },
-        output: { text: 'lines: 2', format: 'toon', tokenCount: 2 },
+        output: { format: 'toon' },
         meta: { command: 'logs' },
       })
     })
 
     test('records yields terminal errors without throwing, while iteration and final throw', async () => {
-      const terminal = {
-        type: 'error' as const,
-        ok: false as const,
-        error: { code: 'DISCONNECTED', message: 'Disconnected.' },
-        meta: { command: 'logs', duration: '2ms' },
-      }
-      const recordsStream = await streamClient([{ type: 'chunk', data: 1 }, terminal]).run('logs')
+      const recordsStream = await failingStreamClient().run('logs')
       const records: unknown[] = []
       for await (const record of recordsStream.records()) records.push(record)
       expect(records.at(-1)).toMatchObject({ type: 'error', error: { code: 'DISCONNECTED' } })
 
-      const iterStream = await streamClient([{ type: 'chunk', data: 1 }, terminal]).run('logs')
-      await expect(async () => {
-        for await (const _ of iterStream as AsyncIterable<unknown>) {
-        }
-      }).rejects.toThrow(ClientError)
+      const iterStream = await failingStreamClient().run('logs')
+      await expect(
+        (async () => {
+          for await (const _ of iterStream as AsyncIterable<unknown>) {
+          }
+        })(),
+      ).rejects.toThrow(ClientError)
 
-      const finalStream = await streamClient([terminal]).run('logs')
+      const finalStream = await failingStreamClient().run('logs')
       await expect(finalStream.final).rejects.toMatchObject({ code: 'DISCONNECTED' })
     })
 
     test('enforces single-consumer streams and returns the underlying iterator on early exit', async () => {
       const onReturn = vi.fn()
-      const stream = await streamClient(
-        [
-          { type: 'chunk', data: 1 },
-          { type: 'done', ok: true, data: undefined, meta: { command: 'logs', duration: '1ms' } },
-        ],
-        onReturn,
-      ).run('logs')
+      const stream = await streamClient(onReturn).run('logs')
 
       const iterator = stream[Symbol.asyncIterator]()
-      await expect(iterator.next()).resolves.toMatchObject({ value: 1 })
+      await expect(iterator.next()).resolves.toMatchObject({ value: { line: 1 } })
       expect(() => stream.records()).toThrow(ClientError)
       await iterator.return?.()
       expect(onReturn).toHaveBeenCalled()

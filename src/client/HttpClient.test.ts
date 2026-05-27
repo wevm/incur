@@ -64,7 +64,6 @@ describe('HttpClient.create', () => {
   test('does not expose memory-only local methods', () => {
     const client = HttpClient.create({
       baseUrl: 'https://example.com',
-      fetch: vi.fn() as unknown as typeof globalThis.fetch,
     })
 
     expect('add' in client.skills).toBe(false)
