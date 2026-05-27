@@ -33,7 +33,7 @@ export function create(cli: Cli.Cli<any, any, any>, options: Options = {}): Memo
     const ctx = CommandTree.fromCli(cli)
     const { request } = createClientRequest(ctx, { env: options.env })
     const { discover } = createClientDiscover(ctx)
-    const local = createClientLocal(ctx)
+    const { local } = createClientLocal(ctx)
     return {
       config: { key: 'memory', name: 'Memory', type: 'memory' },
       request,

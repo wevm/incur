@@ -10,54 +10,56 @@ export class LocalError extends BaseError {
 }
 
 /** Creates local setup/admin wrappers for a memory transport. */
-export function createClientLocal(ctx: CommandTree.RuntimeCliContext): Local.Runtime {
+export function createClientLocal(ctx: CommandTree.RuntimeCliContext) {
   return {
-    skills: {
-      async add(options: Local.SkillsAddOptions = {}) {
-        try {
-          return await SyncSkills.sync(ctx.name, ctx.commands, {
-            cwd: ctx.sync?.cwd,
-            depth: options.depth ?? ctx.sync?.depth ?? 1,
-            description: ctx.description,
-            global: options.global ?? true,
-            include: ctx.sync?.include,
-            rootCommand: ctx.rootCommand,
-          })
-        } catch (error) {
-          throw new LocalError('Failed to sync local skills.', {
-            cause: error instanceof Error ? error : new Error(String(error)),
-          })
-        }
+    local: {
+      skills: {
+        async add(options: Local.SkillsAddOptions = {}) {
+          try {
+            return await SyncSkills.sync(ctx.name, ctx.commands, {
+              cwd: ctx.sync?.cwd,
+              depth: options.depth ?? ctx.sync?.depth ?? 1,
+              description: ctx.description,
+              global: options.global ?? true,
+              include: ctx.sync?.include,
+              rootCommand: ctx.rootCommand,
+            })
+          } catch (error) {
+            throw new LocalError('Failed to sync local skills.', {
+              cause: error instanceof Error ? error : new Error(String(error)),
+            })
+          }
+        },
+        async list(options: Local.SkillsListOptions = {}) {
+          try {
+            return await SyncSkills.list(ctx.name, ctx.commands, {
+              cwd: ctx.sync?.cwd,
+              depth: options.depth ?? ctx.sync?.depth ?? 1,
+              description: ctx.description,
+              include: ctx.sync?.include,
+              rootCommand: ctx.rootCommand,
+            })
+          } catch (error) {
+            throw new LocalError('Failed to list local skills.', {
+              cause: error instanceof Error ? error : new Error(String(error)),
+            })
+          }
+        },
       },
-      async list(options: Local.SkillsListOptions = {}) {
-        try {
-          return await SyncSkills.list(ctx.name, ctx.commands, {
-            cwd: ctx.sync?.cwd,
-            depth: options.depth ?? ctx.sync?.depth ?? 1,
-            description: ctx.description,
-            include: ctx.sync?.include,
-            rootCommand: ctx.rootCommand,
-          })
-        } catch (error) {
-          throw new LocalError('Failed to list local skills.', {
-            cause: error instanceof Error ? error : new Error(String(error)),
-          })
-        }
-      },
-    },
-    mcp: {
-      async add(options: Local.McpAddOptions = {}) {
-        try {
-          return await SyncMcp.register(ctx.name, {
-            agents: options.agents ?? ctx.mcp?.agents,
-            command: options.command ?? ctx.mcp?.command,
-            global: options.global ?? true,
-          })
-        } catch (error) {
-          throw new LocalError('Failed to register local MCP server.', {
-            cause: error instanceof Error ? error : new Error(String(error)),
-          })
-        }
+      mcp: {
+        async add(options: Local.McpAddOptions = {}) {
+          try {
+            return await SyncMcp.register(ctx.name, {
+              agents: options.agents ?? ctx.mcp?.agents,
+              command: options.command ?? ctx.mcp?.command,
+              global: options.global ?? true,
+            })
+          } catch (error) {
+            throw new LocalError('Failed to register local MCP server.', {
+              cause: error instanceof Error ? error : new Error(String(error)),
+            })
+          }
+        },
       },
     },
   }
