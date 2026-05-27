@@ -81,12 +81,12 @@ export async function execute(command: any, options: execute.Options): Promise<e
       // HTTP mode: positional args from URL path segments, options from body/query
       const parsed = Parser.parse(argv, { args: command.args })
       args = parsed.args
-      parsedOptions = command.options ? command.options.parse(inputOptions) : {}
+      parsedOptions = command.options ? Parser.zodParse(command.options, inputOptions) : {}
     } else {
       // MCP mode: all params come from inputOptions, split into args vs options
       const split = splitParams(inputOptions, command)
-      args = command.args ? command.args.parse(split.args) : {}
-      parsedOptions = command.options ? command.options.parse(split.options) : {}
+      args = command.args ? Parser.zodParse(command.args, split.args) : {}
+      parsedOptions = command.options ? Parser.zodParse(command.options, split.options) : {}
     }
 
     // Parse env
