@@ -1,4 +1,4 @@
-import { Cli, middleware, z } from 'incur'
+import { Cli, Fetch, middleware, z } from 'incur'
 import type { MiddlewareHandler } from 'incur'
 import { expectTypeOf, test } from 'vitest'
 
@@ -35,6 +35,49 @@ test('without schemas, run receives empty objects', () => {
       expectTypeOf(c.options).toEqualTypeOf<{}>()
       return { pong: true }
     },
+  })
+})
+
+test('fetch command accepts OpenAPI object and URL sources', () => {
+  const cli = Cli.create('test')
+  const fetch = () => new Response()
+
+  cli.command('apiJson', {
+    fetch,
+    openapi: { paths: {} },
+  })
+
+  cli.command('apiString', {
+    fetch,
+    openapi: 'https://api.example.com/openapi.json',
+  })
+
+  cli.command('apiUrl', {
+    fetch,
+    openapi: new URL('https://api.example.com/openapi.json'),
+  })
+
+  cli.command('hostedApi', {
+    fetch: Fetch.fromRequest('https://api.example.com'),
+    openapi: 'openapi.json',
+  })
+})
+
+test('root fetch accepts hosted request sources with OpenAPI paths', () => {
+  Cli.create('test', {
+    fetch: Fetch.fromRequest('https://api.example.com'),
+    openapi: '/openapi.json',
+  })
+
+  Cli.create('test', {
+    fetch: Fetch.fromRequest(new URL('https://api.example.com')),
+    openapi: new URL('https://api.example.com/openapi.json'),
+  })
+
+  Cli.create('test', {
+    // @ts-expect-error -- hosted fetches must use Fetch.fromRequest.
+    fetch: 'https://api.example.com',
+    openapi: '/openapi.json',
   })
 })
 

@@ -1,7 +1,69 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { app } from '../test/fixtures/hono-api.js'
 import * as Fetch from './Fetch.js'
+
+describe('fromRequest', () => {
+  test('forwards requests to the hosted base URL', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      expect(request.url).toMatchInlineSnapshot(`"https://api.example.com/api/users?limit=5"`)
+      expect(request.method).toMatchInlineSnapshot(`"GET"`)
+      expect(request.headers.get('authorization')).toMatchInlineSnapshot(`"Bearer token"`)
+      expect(request.headers.get('x-api-key')).toMatchInlineSnapshot(`"key_test"`)
+      return Response.json({ ok: true })
+    })
+
+    try {
+      const source = Fetch.fromRequest('https://api.example.com/api', {
+        headers: { authorization: 'Bearer token' },
+      })
+      const response = await source.fetch(
+        new Request('http://localhost/users?limit=5', {
+          headers: { 'x-api-key': 'key_test' },
+        }),
+      )
+
+      expect(await response.json()).toMatchInlineSnapshot(`
+        {
+          "ok": true,
+        }
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('preserves request method and body', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      expect(request.url).toMatchInlineSnapshot(`"https://api.example.com/api/users"`)
+      expect(request.method).toMatchInlineSnapshot(`"POST"`)
+      expect(request.headers.get('content-type')).toMatchInlineSnapshot(`"application/json"`)
+      expect(await request.text()).toMatchInlineSnapshot(`"{"name":"Ada"}"`)
+      return Response.json({ created: true })
+    })
+
+    try {
+      const source = Fetch.fromRequest(new URL('https://api.example.com/api'))
+      const response = await source.fetch(
+        new Request('http://localhost/users', {
+          body: '{"name":"Ada"}',
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        }),
+      )
+
+      expect(await response.json()).toMatchInlineSnapshot(`
+        {
+          "created": true,
+        }
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+})
 
 describe('parseArgv', () => {
   test('bare tokens → path segments', () => {

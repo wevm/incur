@@ -12,6 +12,7 @@ import { app } from '../test/fixtures/hono-api.js'
 import { app as openapiApp, spec as openapiSpec } from '../test/fixtures/hono-openapi-app.js'
 import { spec } from '../test/fixtures/openapi-spec.js'
 import * as Cli from './Cli.js'
+import * as Fetch from './Fetch.js'
 import * as Openapi from './Openapi.js'
 
 function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
@@ -32,6 +33,25 @@ function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
 
 function json(output: string) {
   return JSON.parse(output.replace(/"duration": "[^"]+"/g, '"duration": "<stripped>"'))
+}
+
+function openapiUrl() {
+  return `data:application/json,${encodeURIComponent(JSON.stringify(spec))}`
+}
+
+function hostedApiFetch() {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+
+    if (url.href === 'https://api.example.com/api/openapi.json') return Response.json(spec)
+    if (url.pathname === '/api/users') {
+      url.pathname = '/users'
+      return app.fetch(new Request(url, request))
+    }
+
+    return new Response('Not Found', { status: 404 })
+  })
 }
 
 describe('fromCli', () => {
@@ -164,6 +184,40 @@ describe('cli integration', () => {
       'json',
     ])
     expect(json(output).limit).toBe(5)
+  })
+
+  test('loads OpenAPI commands from a spec URL string', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+      openapi: openapiUrl(),
+    })
+    const { output } = await serve(cli, ['api', 'listUsers'])
+    expect(output).toContain('Alice')
+  })
+
+  test('loads OpenAPI commands from a spec URL object', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+      openapi: new URL(openapiUrl()),
+    })
+    const { output } = await serve(cli, ['api', 'listUsers'])
+    expect(output).toContain('Alice')
+  })
+
+  test('generates root commands from hosted fetch and OpenAPI URLs', async () => {
+    const fetch = hostedApiFetch()
+    const cli = Cli.create('test', {
+      description: 'test',
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+    })
+
+    try {
+      const { output } = await serve(cli, ['listUsers', '--limit', '5', '--format', 'json'])
+      expect(json(output).limit).toBe(5)
+    } finally {
+      fetch.mockRestore()
+    }
   })
 
   test('GET /users/:id via positional arg', async () => {

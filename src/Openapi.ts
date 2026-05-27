@@ -14,6 +14,9 @@ import * as Schema from './Schema.js'
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
 export type OpenAPISpec = { paths?: {} | undefined }
 
+/** OpenAPI document source accepted by fetch-backed CLI commands. */
+export type OpenAPISource = OpenAPISpec | string | URL
+
 /** Options for generating an OpenAPI document from an incur CLI. */
 export type GenerateOptions = {
   /** API description. Defaults to the CLI description. */
@@ -263,6 +266,41 @@ function operationId(segments: string[], method: HttpMethod, args: string[]) {
 function encodePathSegment(segment: string) {
   if (segment.startsWith('{') && segment.endsWith('}')) return segment
   return encodeURIComponent(segment)
+}
+
+/** Resolves an OpenAPI document from a JSON object or JSON URL. */
+export async function resolve(
+  source: OpenAPISource,
+  options: resolve.Options = {},
+): Promise<OpenAPISpec> {
+  if (typeof source !== 'string' && !(source instanceof URL)) return source
+
+  const response = await fetch(resolveUrl(source, options.baseUrl))
+  if (!response.ok)
+    throw new Error(`Failed to fetch OpenAPI spec from ${source}: ${response.status}`)
+  return (await response.json()) as OpenAPISpec
+}
+
+export declare namespace resolve {
+  /** Options for resolving an OpenAPI document source. */
+  type Options = {
+    /** Base URL used to resolve relative OpenAPI document paths. */
+    baseUrl?: string | URL | undefined
+  }
+}
+
+function resolveUrl(source: string | URL, baseUrl: string | URL | undefined) {
+  if (source instanceof URL) return source
+
+  try {
+    return new URL(source)
+  } catch {
+    if (baseUrl === undefined)
+      throw new Error(`Relative OpenAPI spec URL requires a fetch URL base: ${source}`)
+    const base = new URL(baseUrl)
+    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`
+    return new URL(source, base)
+  }
 }
 
 /** Generates incur command entries from an OpenAPI spec. Resolves all `$ref` pointers. */

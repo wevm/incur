@@ -80,8 +80,8 @@ export type Cli<
       definition: {
         basePath?: string | undefined
         description?: string | undefined
-        fetch: FetchHandler
-        openapi?: Openapi.OpenAPISpec | undefined
+        fetch: FetchSource
+        openapi?: Openapi.OpenAPISource | undefined
         outputPolicy?: OutputPolicy | undefined
       },
     ): Cli<commands, vars, env>
@@ -205,12 +205,25 @@ export function create(
   const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name
   const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition
   const rootDef = 'run' in def ? (def as CommandDefinition<any, any, any>) : undefined
-  const rootFetch = 'fetch' in def ? (def.fetch as FetchHandler) : undefined
+  const rootFetchSource =
+    'fetch' in def && def.fetch !== undefined ? (def.fetch as FetchSource) : undefined
+  const rootFetch = rootFetchSource === undefined ? undefined : resolveFetch(rootFetchSource)
+  const rootFetchBaseUrl = rootFetchSource === undefined ? undefined : fetchBaseUrl(rootFetchSource)
 
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0')
+
+  if (def.openapi && rootFetch) {
+    pending.push(
+      (async () => {
+        const spec = await Openapi.resolve(def.openapi, { baseUrl: rootFetchBaseUrl })
+        const generated = await Openapi.generateCommands(spec, rootFetch)
+        for (const [name, command] of generated) commands.set(name, command)
+      })(),
+    )
+  }
 
   const cli: Cli = {
     name,
@@ -220,20 +233,25 @@ export function create(
 
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
-        if (def && 'fetch' in def && typeof def.fetch === 'function') {
+        if (def && 'fetch' in def && isFetchSource(def.fetch)) {
+          const fetch = resolveFetch(def.fetch)
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
           if (def.openapi) {
             pending.push(
-              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then(
-                (generated) => {
-                  commands.set(nameOrCli, {
-                    _group: true,
-                    description: def.description,
-                    commands: generated as Map<string, CommandEntry>,
-                    ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                  } as InternalGroup)
-                },
-              ),
+              (async () => {
+                const spec = await Openapi.resolve(def.openapi, {
+                  baseUrl: fetchBaseUrl(def.fetch),
+                })
+                const generated = await Openapi.generateCommands(spec, fetch, {
+                  basePath: def.basePath,
+                })
+                commands.set(nameOrCli, {
+                  _group: true,
+                  description: def.description,
+                  commands: generated as Map<string, CommandEntry>,
+                  ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                } as InternalGroup)
+              })(),
             )
             return cli
           }
@@ -241,7 +259,7 @@ export function create(
             _fetch: true,
             basePath: def.basePath,
             description: def.description,
-            fetch: def.fetch,
+            fetch,
             ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
           } as InternalFetchGateway)
           return cli
@@ -364,8 +382,10 @@ export declare namespace create {
     env?: env | undefined
     /** Usage examples for this command. */
     examples?: Example<args, options>[] | undefined
-    /** A fetch handler to use as the root command. All argv tokens are interpreted as path segments and curl-style flags. */
-    fetch?: FetchHandler | undefined
+    /** A fetch handler or hosted fetch source to use as the root command. All argv tokens are interpreted as path segments and curl-style flags. */
+    fetch?: FetchSource | undefined
+    /** OpenAPI spec source used to generate typed root commands for the root fetch handler. */
+    openapi?: Openapi.OpenAPISource | undefined
     /** Default output format. Overridden by `--format` or `--json`. */
     format?: Formatter.Format | undefined
     /** Zod schema for named options/flags. */
@@ -960,7 +980,18 @@ async function serveImpl(
   // --help on a fetch gateway → show fetch-specific help
   if (help && 'fetchGateway' in resolved) {
     const commandName = resolved.path === name ? name : `${name} ${resolved.path}`
-    writeln(formatFetchHelp(commandName, resolved.fetchGateway.description))
+    if (resolved.path === name && commands.size > 0)
+      writeln(
+        Help.formatRoot(name, {
+          aliases: options.aliases,
+          configFlag,
+          description: options.description,
+          version: options.version,
+          commands: collectHelpCommands(commands),
+          root: true,
+        }),
+      )
+    else writeln(formatFetchHelp(commandName, resolved.fetchGateway.description))
     return
   }
 
@@ -2420,7 +2451,10 @@ type CommandEntry =
 export type OutputPolicy = 'agent-only' | 'all'
 
 /** A standard Fetch API handler. */
-type FetchHandler = (req: Request) => Response | Promise<Response>
+export type FetchHandler = Fetch.Handler
+
+/** Fetch handler or hosted source used by fetch-backed commands. */
+export type FetchSource = Fetch.Source
 
 /** @internal A command group's internal storage. */
 type InternalGroup = {
@@ -2438,6 +2472,23 @@ type InternalFetchGateway = {
   description?: string | undefined
   fetch: FetchHandler
   outputPolicy?: OutputPolicy | undefined
+}
+
+function isFetchSource(value: unknown): value is FetchSource {
+  if (typeof value === 'function') return true
+  if (typeof value !== 'object' || value === null) return false
+
+  const source = value as { fetch?: unknown; url?: unknown }
+  return typeof source.fetch === 'function' && source.url instanceof URL
+}
+
+function resolveFetch(source: FetchSource): FetchHandler {
+  if (typeof source === 'function') return source
+  return source.fetch
+}
+
+function fetchBaseUrl(source: FetchSource) {
+  return typeof source === 'function' ? undefined : source.url
 }
 
 /** @internal Type guard for command groups. */
