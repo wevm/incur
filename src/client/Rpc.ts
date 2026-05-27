@@ -70,6 +70,9 @@ export type Envelope =
       status?: number | undefined
     }
 
+/** RPC error object. */
+export type Error = Extract<Envelope, { ok: false }>['error']
+
 /** Non-streaming RPC response. */
 export type Response = Envelope
 

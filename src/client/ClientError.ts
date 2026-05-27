@@ -9,9 +9,9 @@ export class ClientError extends BaseError {
   /** Full error envelope or diagnostic payload. */
   data: unknown | undefined
   /** RPC error object. */
-  error: Extract<Rpc.Envelope, { ok: false }>['error'] | undefined
+  error: Rpc.Error | undefined
   /** Field validation errors. */
-  fieldErrors: Extract<Rpc.Envelope, { ok: false }>['error']['fieldErrors'] | undefined
+  fieldErrors: Rpc.Error['fieldErrors'] | undefined
   /** Response metadata. */
   meta: Rpc.Meta | undefined
   /** Whether the operation can be retried. */
@@ -39,9 +39,9 @@ export declare namespace ClientError {
     /** Full error envelope or diagnostic payload. */
     data?: unknown | undefined
     /** RPC error object. */
-    error?: Extract<Rpc.Envelope, { ok: false }>['error'] | undefined
+    error?: Rpc.Error | undefined
     /** Field validation errors. */
-    fieldErrors?: Extract<Rpc.Envelope, { ok: false }>['error']['fieldErrors'] | undefined
+    fieldErrors?: Rpc.Error['fieldErrors'] | undefined
     /** Response metadata. */
     meta?: Rpc.Meta | undefined
     /** Whether the operation can be retried. */

@@ -229,9 +229,7 @@ function isRecord(value: unknown): value is Rpc.StreamRecord {
   )
 }
 
-function isErrorPayload(
-  value: unknown,
-): value is { error: Extract<Rpc.Envelope, { ok: false }>['error'] } {
+function isErrorPayload(value: unknown): value is { error: Rpc.Error } {
   return (
     typeof value === 'object' &&
     value !== null &&
