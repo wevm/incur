@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 
-import { createClient } from '../createClient.js'
+import * as Client from '../Client.js'
 import type * as MemoryTransport from '../transports/MemoryTransport.js'
 
 function memoryClient() {
@@ -25,11 +25,11 @@ function memoryClient() {
       },
     },
   })) satisfies MemoryTransport.MemoryTransport
-  return createClient<{}, MemoryTransport.MemoryTransport>({ transport })
+  return Client.create<{}, MemoryTransport.MemoryTransport>({ transport })
 }
 
 describe('local actions', () => {
-  test('memory local actions delegate and coexist with discovery namespaces', async () => {
+  test('memory local actions delegate and coexist with resources namespaces', async () => {
     const client = memoryClient()
 
     await expect(client.skills.index()).resolves.toEqual({})

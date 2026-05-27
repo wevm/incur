@@ -1,12 +1,5 @@
 import { Cli } from 'incur'
-import {
-  ClientError,
-  HttpTransport,
-  MemoryTransport,
-  createClient,
-  createHttpClient,
-  createMemoryClient,
-} from 'incur/client'
+import { Client, HttpClient, HttpTransport, MemoryClient, MemoryTransport } from 'incur/client'
 import { expectTypeOf, test } from 'vitest'
 
 type Commands = {
@@ -49,22 +42,22 @@ type Commands = {
 
 test('docs api example client surface typechecks conceptually', async () => {
   const fetcher = (() => Promise.resolve(new Response('{}'))) as typeof fetch
-  const client = createHttpClient<Commands>({
+  const client = HttpClient.create<Commands>({
     baseUrl: 'https://ops.acme.test',
     fetch: fetcher,
     outputFormat: 'toon',
   })
 
-  createClient<Commands>({
+  Client.create<Commands>({
     transport: HttpTransport.create({ baseUrl: 'https://ops.acme.test' }),
     outputFormat: 'toon',
   })
 
   const cli = Cli.create({ name: 'acme' })
-  const memoryClient = createMemoryClient<Commands>(cli, {
+  const memoryClient = MemoryClient.create<Commands>(cli, {
     env: { ACME_TOKEN: 'dev_secret_123' },
   })
-  createClient<Commands>({
+  Client.create<Commands>({
     transport: MemoryTransport.create(cli, { env: { ACME_TOKEN: 'dev_secret_123' } }),
   })
 
@@ -93,7 +86,7 @@ test('docs api example client surface typechecks conceptually', async () => {
       args: { projectId: 'proj_web_2026', environment: 'production' },
     })
   } catch (error) {
-    if (error instanceof ClientError) {
+    if (error instanceof Client.ClientError) {
       expectTypeOf(error.error?.code).toEqualTypeOf<string | undefined>()
     }
   }

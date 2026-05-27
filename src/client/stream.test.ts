@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 
+import * as Client from './Client.js'
 import { ClientError } from './ClientError.js'
-import { createClient } from './createClient.js'
 import type {
   Request as RpcRequest,
   Response as RpcResponse,
@@ -33,7 +33,7 @@ function streamClient(records: RpcStreamRecord[], onReturn = vi.fn()) {
       }
     },
   })) satisfies HttpTransport.HttpTransport
-  return createClient<Commands, HttpTransport.HttpTransport>({ transport })
+  return Client.create<Commands, HttpTransport.HttpTransport>({ transport })
 }
 
 describe('ClientStreamResponse', () => {

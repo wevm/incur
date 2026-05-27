@@ -1,23 +1,23 @@
 import { describe, expect, test, vi } from 'vitest'
 
-import type { Request as ResourcesRequest, Response as ResourcesResponse } from '../Resources.js'
-import { createClient } from '../createClient.js'
+import * as Client from '../Client.js'
+import type * as Resources from '../Resources.js'
 import type * as HttpTransport from '../transports/HttpTransport.js'
 
-function clientWith(discover: (request: ResourcesRequest) => Promise<ResourcesResponse>) {
+function clientWith(discover: (request: Resources.Request) => Promise<Resources.Response>) {
   const transport = (() => ({
     config: { key: 'mock', name: 'Mock', type: 'http' as const },
     baseUrl: new URL('https://example.com'),
-    discover(request: ResourcesRequest): Promise<ResourcesResponse> {
+    discover(request: Resources.Request): Promise<Resources.Response> {
       return discover(request)
     },
     request: vi.fn(),
   })) satisfies HttpTransport.HttpTransport
-  return createClient({ transport })
+  return Client.create({ transport })
 }
 
-describe('discovery actions', () => {
-  test('routes every discovery action and preserves structured/text returns', async () => {
+describe('resources actions', () => {
+  test('routes every resources action and preserves structured/text returns', async () => {
     const discover = vi.fn(async (request) => {
       if (request.resource === 'help') return { contentType: 'text/plain', body: 'help' }
       if (request.resource === 'skill') return { contentType: 'text/markdown', body: '# Skill' }
@@ -71,7 +71,7 @@ describe('discovery actions', () => {
     ])
   })
 
-  test('normalizes discovery failures into ClientError fields', async () => {
+  test('normalizes resources failures into ClientError fields', async () => {
     const client = clientWith(
       vi.fn(async () => {
         throw Object.assign(new Error('Unknown command'), {

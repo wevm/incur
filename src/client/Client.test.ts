@@ -1,8 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 
 import * as Cli from '../Cli.js'
-import { ClientError } from './ClientError.js'
-import { createClient, createHttpClient, createMemoryClient } from './createClient.js'
+import * as Client from './Client.js'
+import * as HttpClient from './HttpClient.js'
+import * as MemoryClient from './MemoryClient.js'
 import type {
   Request as RpcRequest,
   Response as RpcResponse,
@@ -25,9 +26,9 @@ function mockTransport(): HttpTransport.HttpTransport {
   })
 }
 
-describe('createClient', () => {
+describe('Client.create', () => {
   test('resolves transport, assigns uid, preserves defaults, and binds actions', async () => {
-    const client = createClient({
+    const client = Client.create({
       outputFormat: 'toon',
       transport: mockTransport(),
     })
@@ -43,7 +44,7 @@ describe('createClient', () => {
     })
   })
 
-  test('createHttpClient is a thin wrapper over HttpTransport.create', async () => {
+  test('HttpClient.create is a thin wrapper over HttpTransport.create', async () => {
     const fetch = vi.fn(
       async () =>
         new Response(
@@ -52,7 +53,7 @@ describe('createClient', () => {
         ),
     ) as typeof globalThis.fetch
 
-    const client = createHttpClient({ baseUrl: 'https://example.com/api', fetch })
+    const client = HttpClient.create({ baseUrl: 'https://example.com/api', fetch })
     expect(client.transport.baseUrl.href).toBe('https://example.com/api')
     await client.run('status' as never)
     expect(fetch).toHaveBeenCalledWith(
@@ -61,9 +62,9 @@ describe('createClient', () => {
     )
   })
 
-  test('createMemoryClient uses memory transport and exposes local actions', () => {
+  test('MemoryClient.create uses memory transport and exposes local actions', () => {
     const cli = Cli.create('app')
-    const client = createMemoryClient(cli)
+    const client = MemoryClient.create(cli)
 
     expect(client.transport.type).toBe('memory')
     expect(typeof client.skills.add).toBe('function')
@@ -72,7 +73,7 @@ describe('createClient', () => {
   })
 
   test('http client has no runtime local action methods', () => {
-    const client = createClient({
+    const client = Client.create({
       transport: HttpTransport.create({ baseUrl: 'https://example.com' }),
     })
     expect('add' in client.skills).toBe(false)
@@ -84,7 +85,9 @@ describe('createClient', () => {
     const original = globalThis.fetch
     Object.defineProperty(globalThis, 'fetch', { configurable: true, value: undefined })
     try {
-      expect(() => createHttpClient({ baseUrl: 'https://example.com' })).toThrow(ClientError)
+      expect(() => HttpClient.create({ baseUrl: 'https://example.com' })).toThrow(
+        Client.ClientError,
+      )
     } finally {
       Object.defineProperty(globalThis, 'fetch', { configurable: true, value: original })
     }

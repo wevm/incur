@@ -1,27 +1,8 @@
 import type * as Cli from '../Cli.js'
 import type * as Formatter from '../Formatter.js'
-import type {
-  McpAddOptions,
-  McpRegistration,
-  Runtime as LocalRuntime,
-  SkillsAddOptions,
-  SkillsList,
-  SkillsListOptions,
-  SyncedSkills,
-} from './Local.js'
-import type {
-  Envelope as RpcFullEnvelope,
-  Meta as RpcMeta,
-  Output as RpcOutput,
-  Request as RpcRequest,
-  Response as RpcResponse,
-  StreamRecord as RpcStreamRecord,
-  StreamResponse as RpcStreamResponse,
-} from './Rpc.js'
-import type {
-  Request as ResourcesRequest,
-  Response as ResourcesResponse,
-} from './Resources.js'
+import type * as Local from './Local.js'
+import type * as Resources from './Resources.js'
+import type * as Rpc from './Rpc.js'
 import type { HttpTransport } from './transports/HttpTransport.js'
 import type { MemoryTransport } from './transports/MemoryTransport.js'
 
@@ -87,7 +68,7 @@ export type Client<
   defaults extends ClientDefaults = {},
 > = ClientBase<transport, defaults> &
   RunActions<commands, transport, defaults> &
-  DiscoveryActions<commands, transport> &
+  ResourcesActions<commands, transport> &
   ([transport] extends [MemoryTransport] ? LocalActions : {})
 
 /** HTTP client instance. */
@@ -104,11 +85,8 @@ export type MemoryClient<commands = Commands, defaults extends ClientDefaults = 
   defaults
 >
 
-/** Options for `createClient`. */
-export type CreateClientOptions<
-  transport extends Transport,
-  defaults extends ClientDefaults,
-> = defaults &
+/** Options for `Client.create()`. */
+export type CreateOptions<transport extends Transport, defaults extends ClientDefaults> = defaults &
   ClientDefaults & {
     /** Transport factory to resolve. */
     transport: transport
@@ -117,12 +95,12 @@ export type CreateClientOptions<
 /** Canonical command id. */
 export type CommandId<commands> = keyof commands & string
 
-/** Command prefix usable by discovery actions. */
+/** Command prefix usable by resources actions. */
 export type CommandPrefix<command extends string> = command extends `${infer head} ${infer tail}`
   ? head | `${head} ${CommandPrefix<tail>}`
   : never
 
-/** Command or command-group scope usable by discovery actions. */
+/** Command or command-group scope usable by resources actions. */
 export type CommandScope<commands> = CommandId<commands> | CommandPrefix<CommandId<commands>>
 
 /** Command args type. */
@@ -345,11 +323,11 @@ export type ClientStreamRecord<chunk, finalData = unknown, commands = Commands> 
     }
   | { type: 'error'; ok: false; error: ClientRpcError; meta: ClientMeta<commands> }
 
-/** Discovery format. */
-export type DiscoveryFormat = 'md' | 'json' | 'jsonl' | 'yaml' | 'toon'
+/** Resources format. */
+export type ResourcesFormat = 'md' | 'json' | 'jsonl' | 'yaml' | 'toon'
 
-/** Discovery result for a structured type and format option. */
-export type DiscoveryResult<structured, format> = [format] extends [undefined]
+/** Resources result for a structured type and format option. */
+export type ResourcesResult<structured, format> = [format] extends [undefined]
   ? structured
   : [format] extends ['json']
     ? structured
@@ -418,20 +396,14 @@ export type SkillsIndex = {
   skills: { name: string; description: string; files: string[] }[]
 }
 
-/** Local skills list. */
-export type SkillsList = {
-  /** Listed skills. */
-  skills: unknown[]
-}
-
 /** MCP tool descriptor response. */
 export type McpToolsResponse<_commands = Commands> = {
   /** MCP tools. */
   tools: Record<string, unknown>[]
 }
 
-/** Discovery action set. */
-export type DiscoveryActions<commands, _transport extends Transport> = {
+/** Resources action set. */
+export type ResourcesActions<commands, _transport extends Transport> = {
   llms: LlmsAction<commands>
   llmsFull: LlmsFullAction<commands>
   schema(command?: CommandScope<commands> | undefined): Promise<CommandSchema<commands>>
@@ -446,71 +418,58 @@ export type DiscoveryActions<commands, _transport extends Transport> = {
   }
 }
 
-/** Compact LLM discovery action. */
+/** Compact LLM resources action. */
 export type LlmsAction<commands> = {
   <
     const scope extends CommandScope<commands> | undefined = undefined,
-    const format extends DiscoveryFormat | undefined = undefined,
+    const format extends ResourcesFormat | undefined = undefined,
   >(
     options?: { command?: scope | undefined; format?: format | undefined } | undefined,
-  ): Promise<DiscoveryResult<LlmsManifest<commands, scope>, format>>
+  ): Promise<ResourcesResult<LlmsManifest<commands, scope>, format>>
 }
 
-/** Full LLM discovery action. */
+/** Full LLM resources action. */
 export type LlmsFullAction<commands> = {
   <
     const scope extends CommandScope<commands> | undefined = undefined,
-    const format extends DiscoveryFormat | undefined = undefined,
+    const format extends ResourcesFormat | undefined = undefined,
   >(
     options?: { command?: scope | undefined; format?: format | undefined } | undefined,
-  ): Promise<DiscoveryResult<LlmsFullManifest<commands, scope>, format>>
+  ): Promise<ResourcesResult<LlmsFullManifest<commands, scope>, format>>
 }
 
 /** Memory-only local actions. */
 export type LocalActions = {
   skills: {
-    add(options?: SkillsAddOptions | undefined): Promise<SyncedSkills>
-    list(options?: SkillsListOptions | undefined): Promise<SkillsList>
+    add(options?: Local.SkillsAddOptions | undefined): Promise<Local.SyncedSkills>
+    list(options?: Local.SkillsListOptions | undefined): Promise<Local.SkillsList>
   }
   mcp: {
-    add(options?: McpAddOptions | undefined): Promise<McpRegistration>
+    add(options?: Local.McpAddOptions | undefined): Promise<Local.McpRegistration>
   }
 }
 
 /** Public RPC envelope alias. */
-export type ClientRpcEnvelope = RpcFullEnvelope
+export type ClientRpcEnvelope = Rpc.Envelope
 
 /** Public RPC metadata alias. */
-export type ClientRpcMeta = RpcMeta
+export type ClientRpcMeta = Rpc.Meta
 
 /** Public RPC output alias. */
-export type ClientRpcOutput = RpcOutput
+export type ClientRpcOutput = Rpc.Output
 
 /** Public RPC error object. */
-export type ClientRpcError = Extract<RpcFullEnvelope, { ok: false }>['error']
+export type ClientRpcError = Extract<Rpc.Envelope, { ok: false }>['error']
 
 /** Client implementation shape used by actions. */
 export type ActionClient = {
   defaults: ClientDefaults
   transport: {
-    request(request: RpcRequest): Promise<RpcResponse | RpcStreamResponse>
-    discover(request: ResourcesRequest): Promise<ResourcesResponse>
-    local?: LocalRuntime | undefined
+    request(request: Rpc.Request): Promise<Rpc.Response | Rpc.StreamResponse>
+    discover(request: Resources.Request): Promise<Resources.Response>
+    local?: Local.Handler | undefined
   } & ResolvedTransport<Transport>
 }
 
 /** CLI value accepted by memory clients. */
 export type AnyCli = Cli.Cli<any, any, any>
-
-export type {
-  McpAddOptions,
-  McpRegistration,
-  RpcRequest,
-  RpcResponse,
-  RpcStreamRecord,
-  RpcStreamResponse,
-  SkillsAddOptions,
-  SkillsList,
-  SkillsListOptions,
-  SyncedSkills,
-}

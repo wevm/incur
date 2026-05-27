@@ -1,18 +1,18 @@
-import type { Request as ResourcesRequest } from '../Resources.js'
 import { ClientError } from '../ClientError.js'
+import type * as Resources from '../Resources.js'
 import type {
   ActionClient,
   CommandScope,
-  DiscoveryFormat,
   McpToolsResponse,
   OpenApiDocument,
+  ResourcesFormat,
   SkillsIndex,
 } from '../types.js'
 
-/** Runs compact LLM discovery. */
+/** Reads compact LLM resources. */
 export async function llms(
   client: ActionClient,
-  options: { command?: string | undefined; format?: DiscoveryFormat | undefined } = {},
+  options: { command?: string | undefined; format?: ResourcesFormat | undefined } = {},
 ): Promise<unknown> {
   const { command, format = 'json' } = options
   return discover(client, {
@@ -22,10 +22,10 @@ export async function llms(
   })
 }
 
-/** Runs full LLM discovery. */
+/** Reads full LLM resources. */
 export async function llmsFull(
   client: ActionClient,
-  options: { command?: string | undefined; format?: DiscoveryFormat | undefined } = {},
+  options: { command?: string | undefined; format?: ResourcesFormat | undefined } = {},
 ): Promise<unknown> {
   const { command, format = 'json' } = options
   return discover(client, {
@@ -77,7 +77,7 @@ export async function mcpTools(client: ActionClient): Promise<McpToolsResponse> 
   return discover(client, { resource: 'mcpTools' }) as Promise<McpToolsResponse>
 }
 
-async function discover(client: ActionClient, request: ResourcesRequest): Promise<unknown> {
+async function discover(client: ActionClient, request: Resources.Request): Promise<unknown> {
   try {
     const response = await client.transport.discover(request)
     if ('body' in response) return response.body
@@ -88,15 +88,15 @@ async function discover(client: ActionClient, request: ResourcesRequest): Promis
       ? {
           ok: false,
           error: {
-            code: typeof error.code === 'string' ? error.code : 'DISCOVERY_ERROR',
+            code: typeof error.code === 'string' ? error.code : 'RESOURCES_ERROR',
             message: error instanceof Error ? error.message : String(error),
           },
           meta: { resource: request.resource },
         }
       : undefined
-    throw new ClientError(error instanceof Error ? error.message : 'Discovery request failed', {
+    throw new ClientError(error instanceof Error ? error.message : 'Resources request failed', {
       cause: error instanceof Error ? error : undefined,
-      code: isRecord(error) && typeof error.code === 'string' ? error.code : 'DISCOVERY_ERROR',
+      code: isRecord(error) && typeof error.code === 'string' ? error.code : 'RESOURCES_ERROR',
       data,
       error: isRecord(data) && isRecord(data.error) ? data.error : undefined,
       status: isRecord(error) && typeof error.status === 'number' ? error.status : undefined,

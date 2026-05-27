@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 
+import * as Client from '../Client.js'
 import { ClientError } from '../ClientError.js'
-import { createClient } from '../createClient.js'
 import type {
   Request as RpcRequest,
   Response as RpcResponse,
@@ -29,7 +29,7 @@ function clientWith(request: (request: RpcRequest) => Promise<RpcResponse | RpcS
       return request(r)
     },
   })) satisfies HttpTransport.HttpTransport
-  return createClient<Commands, HttpTransport.HttpTransport>({
+  return Client.create<Commands, HttpTransport.HttpTransport>({
     outputFormat: 'toon',
     selection: ['items[0]'],
     transport,
