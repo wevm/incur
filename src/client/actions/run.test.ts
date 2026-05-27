@@ -111,14 +111,14 @@ describe('run action', () => {
       .mockResolvedValueOnce({
         ok: true,
         data: { page: 1 },
-        output: { text: 'one' },
-        meta: { command: 'list', duration: '1ms', nextOffset: 5, outputTokenCount: 10 },
+        output: { text: 'one', nextOffset: 5, tokenCount: 10, tokenLimit: 5 },
+        meta: { command: 'list', duration: '1ms' },
       })
       .mockResolvedValueOnce({
         ok: true,
         data: { page: 2 },
-        output: { text: 'two' },
-        meta: { command: 'list', duration: '1ms', outputTokenCount: 10 },
+        output: { text: 'two', tokenCount: 10, tokenLimit: 5, tokenOffset: 5 },
+        meta: { command: 'list', duration: '1ms' },
       })
     const client = clientWith(request)
     const result = await client.run('list', { outputTokenLimit: 5 })

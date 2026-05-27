@@ -79,17 +79,13 @@ function output(
   request: RpcRequest,
   response: Extract<RpcFullEnvelope, { ok: true }>,
 ): ClientOutput<unknown> {
-  const nextOffset =
-    (response.output as { nextOffset?: number | undefined } | undefined)?.nextOffset ??
-    response.meta.nextOffset
+  const nextOffset = response.output?.nextOffset
   return {
     text: response.output?.text ?? '',
     ...(response.output?.format !== undefined ? { format: response.output.format } : undefined),
     ...(response.output?.tokenCount !== undefined
       ? { tokenCount: response.output.tokenCount }
-      : response.meta.outputTokenCount !== undefined
-        ? { tokenCount: response.meta.outputTokenCount }
-        : undefined),
+      : undefined),
     ...(response.output?.tokenLimit !== undefined
       ? { tokenLimit: response.output.tokenLimit }
       : request.outputTokenLimit !== undefined
