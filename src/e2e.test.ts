@@ -2833,6 +2833,8 @@ describe('fetch api', () => {
       .trim()
       .split('\n')
       .map((l) => JSON.parse(l))
+    expect(lines[2].meta.duration).toMatch(/^\d+ms$/)
+    lines[2].meta.duration = '<stripped>'
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -2850,6 +2852,7 @@ describe('fetch api', () => {
         {
           "meta": {
             "command": "stream",
+            "duration": "<stripped>",
           },
           "ok": true,
           "type": "done",

@@ -257,7 +257,7 @@ function setOption(
 }
 
 /** Wraps zod schema.parse(), converting ZodError to ValidationError. */
-function zodParse(schema: z.ZodObject<any>, data: Record<string, unknown>) {
+export function zodParse(schema: z.ZodObject<any>, data: Record<string, unknown>) {
   try {
     return schema.parse(data)
   } catch (err: any) {
