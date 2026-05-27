@@ -10,7 +10,7 @@ import * as Help from '../Help.js'
 import * as Mcp from '../Mcp.js'
 import * as Openapi from '../Openapi.js'
 import * as Skill from '../Skill.js'
-import * as CommandTree from './command-tree.js'
+import * as RuntimeContext from './client-runtime-context.js'
 
 type CommandDefinition = CliCommandDefinition<any, any, any, any, any, any>
 
@@ -49,7 +49,7 @@ const requestSchema = z.discriminatedUnion('resource', [
 ])
 
 /** Creates the shared client discovery executor. */
-export function createClientDiscover(ctx: CommandTree.RuntimeCliContext) {
+export function createClientDiscover(ctx: RuntimeContext.RuntimeCliContext) {
   return {
     async discover(request: unknown): Promise<ClientDiscover.Response> {
       const parsedRequest = requestSchema.safeParse(request)
@@ -123,7 +123,7 @@ export function createClientDiscover(ctx: CommandTree.RuntimeCliContext) {
 
       if (parsed.resource === 'schema') {
         if (scoped.type === 'command') {
-          const schema = CommandTree.buildInputSchema(scoped.command)
+          const schema = RuntimeContext.buildInputSchema(scoped.command)
           return { contentType: 'application/json', data: schema ?? {} }
         }
         return {
@@ -151,7 +151,7 @@ export function createClientDiscover(ctx: CommandTree.RuntimeCliContext) {
   }
 }
 
-function scope(ctx: CommandTree.RuntimeCliContext, command: string | undefined) {
+function scope(ctx: RuntimeContext.RuntimeCliContext, command: string | undefined) {
   if (!command)
     return {
       type: 'group' as const,
@@ -161,7 +161,7 @@ function scope(ctx: CommandTree.RuntimeCliContext, command: string | undefined) 
       rootCommand: ctx.rootCommand,
       description: ctx.description,
     }
-  const resolved = CommandTree.resolveCanonical(ctx, command)
+  const resolved = RuntimeContext.resolveCanonical(ctx, command)
   if ('error' in resolved)
     throw new DiscoverError('COMMAND_NOT_FOUND', `Unknown command '${command}'.`, 404)
   if ('gateway' in resolved)
@@ -186,7 +186,7 @@ function scope(ctx: CommandTree.RuntimeCliContext, command: string | undefined) 
   }
 }
 
-function openapi(ctx: CommandTree.RuntimeCliContext) {
+function openapi(ctx: RuntimeContext.RuntimeCliContext) {
   const cli = { name: ctx.name, description: ctx.description } as any
   Cli.toCommands.set(cli, ctx.commands as any)
   if (ctx.rootCommand) Cli.toRootDefinition.set(cli as Cli.Root, ctx.rootCommand as any)
@@ -195,7 +195,7 @@ function openapi(ctx: CommandTree.RuntimeCliContext) {
   })
 }
 
-function skills(ctx: CommandTree.RuntimeCliContext) {
+function skills(ctx: RuntimeContext.RuntimeCliContext) {
   const groups = new Map<string, string>()
   const entries = skillCommands(ctx.commands, [], groups, ctx.rootCommand)
   return { files: Skill.split(ctx.name, entries, 1, groups) }
@@ -215,14 +215,14 @@ function collect(commands: Map<string, CommandEntry>, prefix: string[], full: bo
     schema?: Record<string, unknown> | undefined
   }[] = []
   for (const [name, entry] of commands) {
-    if (CommandTree.isAlias(entry) || CommandTree.isFetchGateway(entry)) continue
+    if (RuntimeContext.isAlias(entry) || RuntimeContext.isFetchGateway(entry)) continue
     const path = [...prefix, name]
-    if (CommandTree.isGroup(entry)) result.push(...collect(entry.commands, path, full))
+    if (RuntimeContext.isGroup(entry)) result.push(...collect(entry.commands, path, full))
     else {
       const command: (typeof result)[number] = { name: path.join(' ') }
       if (entry.description) command.description = entry.description
       if (full) {
-        const input = CommandTree.buildInputSchema(entry)
+        const input = RuntimeContext.buildInputSchema(entry)
         if (input || entry.output) {
           command.schema = {}
           if (input?.args) command.schema.args = input.args
@@ -246,9 +246,9 @@ function skillCommands(
   const result: Skill.CommandInfo[] = []
   if (rootCommand) result.push(toSkillCommand(rootCommand, undefined))
   for (const [name, entry] of commands) {
-    if (CommandTree.isAlias(entry) || CommandTree.isFetchGateway(entry)) continue
+    if (RuntimeContext.isAlias(entry) || RuntimeContext.isFetchGateway(entry)) continue
     const path = [...prefix, name]
-    if (CommandTree.isGroup(entry)) {
+    if (RuntimeContext.isGroup(entry)) {
       if (entry.description) groups.set(path.join(' '), entry.description)
       result.push(...skillCommands(entry.commands, path, groups))
       continue

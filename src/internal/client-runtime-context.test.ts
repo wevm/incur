@@ -2,9 +2,9 @@ import { describe, expect, test } from 'vitest'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
-import * as CommandTree from './command-tree.js'
+import * as RuntimeContext from './client-runtime-context.js'
 
-describe('command-tree', () => {
+describe('client-runtime-context', () => {
   test('collects canonical client command IDs and excludes aliases/raw gateways', () => {
     const root = Cli.create('root', {
       run() {
@@ -32,15 +32,17 @@ describe('command-tree', () => {
     root.command(mounted)
     root.command(router)
 
-    const ctx = CommandTree.fromCli(root)
-    expect(CommandTree.collectClientCommands(ctx).map((entry) => entry.id)).toEqual([
+    const ctx = RuntimeContext.fromCli(root)
+    expect(RuntimeContext.collectClientCommands(ctx).map((entry) => entry.id)).toEqual([
       'mounted',
       'project nested leaf',
       'root',
       'target',
     ])
-    expect(CommandTree.resolveCanonical(ctx, 'alias')).toMatchObject({ error: 'unknown' })
-    expect(CommandTree.resolveCanonical(ctx, 'raw')).toMatchObject({ gateway: expect.any(Object) })
+    expect(RuntimeContext.resolveCanonical(ctx, 'alias')).toMatchObject({ error: 'unknown' })
+    expect(RuntimeContext.resolveCanonical(ctx, 'raw')).toMatchObject({
+      gateway: expect.any(Object),
+    })
   })
 
   test('includes OpenAPI-mounted operations without serving first', () => {
@@ -74,7 +76,7 @@ describe('command-tree', () => {
       },
     })
 
-    const command = CommandTree.collectClientCommands(CommandTree.fromCli(cli))[0]!
+    const command = RuntimeContext.collectClientCommands(RuntimeContext.fromCli(cli))[0]!
     expect(command.id).toBe('api getUser')
     expect(command.command.args?.shape.id).toBeDefined()
     expect(command.command.output).toBeDefined()
@@ -87,7 +89,7 @@ describe('command-tree', () => {
       options: z.object({ limit: z.number().optional() }),
       run() {},
     }
-    expect(CommandTree.buildInputSchema(command)).toMatchObject({
+    expect(RuntimeContext.buildInputSchema(command)).toMatchObject({
       args: { properties: { id: { type: 'string' } } },
       env: { properties: { TOKEN: { type: 'string' } } },
       options: { properties: { limit: { type: 'number' } } },

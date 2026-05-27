@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
 import { createClientRequest } from './client-request.js'
-import * as CommandTree from './command-tree.js'
+import * as RuntimeContext from './client-runtime-context.js'
 
 function createFixture() {
   const order: string[] = []
@@ -72,7 +72,7 @@ function createFixture() {
   cli.command(child)
   cli.command(router)
   cli.command('raw', { fetch: () => new Response('{}') })
-  return { cli, order, ctx: CommandTree.fromCli(cli) }
+  return { cli, order, ctx: RuntimeContext.fromCli(cli) }
 }
 
 describe('createClientRequest', () => {

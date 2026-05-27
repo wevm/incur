@@ -2,7 +2,7 @@ import * as Cli from '../../Cli.js'
 import { createClientDiscover } from '../../internal/client-discover.js'
 import { createClientLocal } from '../../internal/client-local.js'
 import { createClientRequest } from '../../internal/client-request.js'
-import * as CommandTree from '../../internal/command-tree.js'
+import * as RuntimeContext from '../../internal/client-runtime-context.js'
 import { ClientError } from '../ClientError.js'
 import type * as Discover from '../Discover.js'
 import type * as Local from '../Local.js'
@@ -30,7 +30,7 @@ export type Options = {
 /** Creates an in-process memory transport. */
 export function create(cli: Cli.Cli<any, any, any>, options: Options = {}): MemoryTransport {
   return () => {
-    const ctx = CommandTree.fromCli(cli)
+    const ctx = RuntimeContext.fromCli(cli)
     const { request } = createClientRequest(ctx, { env: options.env })
     const { discover } = createClientDiscover(ctx)
     const { local } = createClientLocal(ctx)

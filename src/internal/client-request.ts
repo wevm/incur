@@ -5,7 +5,7 @@ import type * as ClientRequest from '../client/Request.js'
 import type { FieldError } from '../Errors.js'
 import * as Filter from '../Filter.js'
 import * as Formatter from '../Formatter.js'
-import * as CommandTree from './command-tree.js'
+import * as RuntimeContext from './client-runtime-context.js'
 import * as Command from './command.js'
 
 const requestSchema = z.object({
@@ -22,7 +22,7 @@ const sentinel = Symbol.for('incur.sentinel')
 
 /** Creates the shared client request executor. */
 export function createClientRequest(
-  ctx: CommandTree.RuntimeCliContext,
+  ctx: RuntimeContext.RuntimeCliContext,
   options: createClientRequest.Options = {},
 ) {
   return {
@@ -51,7 +51,7 @@ export function createClientRequest(
           message: 'RPC command is required.',
         })
 
-      const resolved = CommandTree.resolveCanonical(ctx, rpc.command)
+      const resolved = RuntimeContext.resolveCanonical(ctx, rpc.command)
       if ('error' in resolved)
         return errorEnvelope(rpc.command, start, {
           code: resolved.error === 'empty' ? 'INVALID_RPC_REQUEST' : 'COMMAND_NOT_FOUND',

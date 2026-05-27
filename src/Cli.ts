@@ -14,7 +14,7 @@ import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { createClientDiscover, DiscoverError } from './internal/client-discover.js'
 import { createClientRequest } from './internal/client-request.js'
-import * as CommandTree from './internal/command-tree.js'
+import * as RuntimeContext from './internal/client-runtime-context.js'
 import {
   builtinCommands,
   type CommandMeta,
@@ -1677,7 +1677,7 @@ async function fetchImpl(
   const segments = url.pathname.split('/').filter(Boolean)
 
   if (segments[0] === '_incur') {
-    const ctx: CommandTree.RuntimeCliContext = {
+    const ctx: RuntimeContext.RuntimeCliContext = {
       commands,
       ...(options.description ? { description: options.description } : undefined),
       ...(options.envSchema ? { env: options.envSchema } : undefined),

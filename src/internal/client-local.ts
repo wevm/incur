@@ -2,7 +2,7 @@ import type * as Local from '../client/Local.js'
 import { BaseError } from '../Errors.js'
 import * as SyncMcp from '../SyncMcp.js'
 import * as SyncSkills from '../SyncSkills.js'
-import type * as CommandTree from './command-tree.js'
+import type * as RuntimeContext from './client-runtime-context.js'
 
 /** Local setup/admin failure. */
 export class LocalError extends BaseError {
@@ -10,7 +10,7 @@ export class LocalError extends BaseError {
 }
 
 /** Creates local setup/admin wrappers for a memory transport. */
-export function createClientLocal(ctx: CommandTree.RuntimeCliContext) {
+export function createClientLocal(ctx: RuntimeContext.RuntimeCliContext) {
   return {
     local: {
       skills: {
