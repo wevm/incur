@@ -84,7 +84,7 @@ export function createClientRequest(
         argv: [],
         env: ctx.env,
         envSource: options.env,
-        format: rpc.outputFormat ?? 'json',
+        format: rpc.outputFormat ?? Formatter.defaultFormat,
         formatExplicit: true,
         inputOptions: { args: rpc.args ?? {}, options: rpc.options ?? {} },
         middlewares: resolved.middlewares,
@@ -228,7 +228,7 @@ function applySelection(data: unknown, selection: string[] | undefined) {
 }
 
 function renderOutput(data: unknown, request: ClientRequest.Request) {
-  const format = request.outputFormat ?? 'json'
+  const format = request.outputFormat ?? Formatter.defaultFormat
   const text = Formatter.format(data, format)
   const count = estimateTokenCount(text)
   const offset = request.outputTokenOffset ?? 0

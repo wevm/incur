@@ -513,7 +513,7 @@ async function serveImpl(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
-    else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+    else writeln(Formatter.format({ code: 'UNKNOWN', message }, Formatter.defaultFormat))
     exit(1)
     return
   }
@@ -716,7 +716,10 @@ async function serveImpl(
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
-      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+      } else
+        writeln(
+          Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, Formatter.defaultFormat),
+        )
       exit(1)
       return
     }
@@ -763,7 +766,7 @@ async function serveImpl(
               code: 'LIST_SKILLS_FAILED',
               message: err instanceof Error ? err.message : String(err),
             },
-            formatExplicit ? formatFlag : 'toon',
+            formatExplicit ? formatFlag : Formatter.defaultFormat,
           ),
         )
         exit(1)
@@ -819,13 +822,13 @@ async function serveImpl(
       if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
         if (fullOutput && result.agents.length > 0) output.agents = result.agents
-        writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
+        writeln(Formatter.format(output, formatExplicit ? formatFlag : Formatter.defaultFormat))
       }
     } catch (err) {
       writeln(
         Formatter.format(
           { code: 'SYNC_SKILLS_FAILED', message: err instanceof Error ? err.message : String(err) },
-          formatExplicit ? formatFlag : 'toon',
+          formatExplicit ? formatFlag : Formatter.defaultFormat,
         ),
       )
       exit(1)
@@ -854,7 +857,10 @@ async function serveImpl(
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
-      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+      } else
+        writeln(
+          Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, Formatter.defaultFormat),
+        )
       exit(1)
       return
     }
@@ -903,14 +909,14 @@ async function serveImpl(
         writeln(
           Formatter.format(
             { name, command: result.command, agents: result.agents },
-            formatExplicit ? formatFlag : 'toon',
+            formatExplicit ? formatFlag : Formatter.defaultFormat,
           ),
         )
     } catch (err) {
       writeln(
         Formatter.format(
           { code: 'MCP_ADD_FAILED', message: err instanceof Error ? err.message : String(err) },
-          formatExplicit ? formatFlag : 'toon',
+          formatExplicit ? formatFlag : Formatter.defaultFormat,
         ),
       )
       exit(1)
@@ -1101,7 +1107,7 @@ async function serveImpl(
       return
     }
     const cmd = resolved.command
-    const format = formatExplicit ? formatFlag : 'toon'
+    const format = formatExplicit ? formatFlag : Formatter.defaultFormat
     const result: Record<string, unknown> = {}
     if (cmd.args) result.args = Schema.toJsonSchema(cmd.args)
     if (cmd.env) result.env = Schema.toJsonSchema(cmd.env)
@@ -1124,9 +1130,11 @@ async function serveImpl(
 
   const start = performance.now()
 
-  // Resolve effective format: explicit --format/--json → command default → CLI default → toon
+  // Resolve effective format: explicit --format/--json → command default → CLI default → Formatter.defaultFormat
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
-  const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
+  const format = formatExplicit
+    ? formatFlag
+    : resolvedFormat || options.format || Formatter.defaultFormat
 
   // Fall back to root fetch/command when no subcommand matches,
   // but only if the token doesn't look like a typo of a known command.
@@ -2294,7 +2302,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   let help = false
   let version = false
   let schema = false
-  let format: Formatter.Format = 'toon'
+  let format: Formatter.Format = Formatter.defaultFormat
   let formatExplicit = false
   let configPath: string | undefined
   let configDisabled = false
@@ -2801,7 +2809,7 @@ async function handleStreaming(
   // Incremental: no explicit format (default toon), or explicit jsonl
   // Buffered: explicit json/yaml/toon/md
   const useJsonl = ctx.format === 'jsonl'
-  const incremental = useJsonl || (!ctx.formatExplicit && ctx.format === 'toon')
+  const incremental = useJsonl || (!ctx.formatExplicit && ctx.format === Formatter.defaultFormat)
 
   if (incremental) {
     // Incremental output: write each chunk as it arrives

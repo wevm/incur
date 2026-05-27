@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
+import * as Formatter from '../Formatter.js'
 import { createClientRequest } from './client-request.js'
 import * as RuntimeContext from './client-runtime-context.js'
 
@@ -221,7 +222,7 @@ describe('createClientRequest', () => {
     })
     if ('stream' in response || !response.ok || !response.output)
       throw new Error('expected success')
-    expect(response.output).toMatchObject({ format: 'json' })
+    expect(response.output).toMatchObject({ format: Formatter.defaultFormat })
     expect(response.output).not.toHaveProperty('tokenCount')
     expect(response.output).not.toHaveProperty('tokenLimit')
     expect(response.output).not.toHaveProperty('tokenOffset')
@@ -235,7 +236,7 @@ describe('createClientRequest', () => {
     })
     expect(counted).toMatchObject({
       ok: true,
-      output: { format: 'json', tokenCount: expect.any(Number) },
+      output: { format: Formatter.defaultFormat, tokenCount: expect.any(Number) },
     })
     if ('stream' in counted || !counted.ok || !counted.output) throw new Error('expected success')
     expect(counted.output).not.toHaveProperty('tokenLimit')
@@ -256,7 +257,7 @@ describe('createClientRequest', () => {
     expect(limited).toMatchObject({
       ok: true,
       output: {
-        format: 'json',
+        format: Formatter.defaultFormat,
         tokenCount: expect.any(Number),
         tokenLimit: 100,
         tokenOffset: 0,
@@ -275,7 +276,7 @@ describe('createClientRequest', () => {
     expect(offset).toMatchObject({
       ok: true,
       output: {
-        format: 'json',
+        format: Formatter.defaultFormat,
         tokenCount: expect.any(Number),
         tokenOffset: 1,
         truncated: true,
@@ -304,7 +305,7 @@ describe('createClientRequest', () => {
         ok: true,
         meta: { command: 'project stream', cta: expect.any(Object) },
         output: {
-          format: 'json',
+          format: Formatter.defaultFormat,
           tokenCount: expect.any(Number),
           tokenLimit: 1,
           tokenOffset: 0,
