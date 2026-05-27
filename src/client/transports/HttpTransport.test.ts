@@ -120,6 +120,21 @@ describe('HttpTransport', () => {
     })
   })
 
+  test('preserves HTTP status on failed RPC envelopes', async () => {
+    const cli = Cli.create('app').command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+    const { transport } = connect(cli)
+
+    await expect(transport.request({ command: 'missing' })).resolves.toMatchObject({
+      ok: false,
+      status: 404,
+      error: { code: 'COMMAND_NOT_FOUND' },
+    })
+  })
+
   test('wraps fetch rejection and rejects malformed JSON envelopes', async () => {
     const failing = vi.fn(async () => {
       throw new Error('offline')
@@ -158,8 +173,44 @@ describe('HttpTransport', () => {
         error: { code: 'SKILL_NOT_FOUND', message: "Unknown skill 'missing'." },
         ok: false,
       },
+      error: { code: 'SKILL_NOT_FOUND', message: "Unknown skill 'missing'." },
       message: expect.stringContaining("Unknown skill 'missing'."),
       status: 404,
+    })
+  })
+
+  test('preserves structured discovery error details', async () => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              fieldErrors: [
+                {
+                  code: 'invalid_type',
+                  expected: 'string',
+                  message: 'Expected string',
+                  path: 'command',
+                  received: 'number',
+                },
+              ],
+              message: 'Invalid discovery request.',
+              retryable: false,
+            },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        ),
+    ) as typeof globalThis.fetch
+    const transport = resolve(fetch)
+
+    await expect(transport.discover({ resource: 'help' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid discovery request.' },
+      fieldErrors: [expect.objectContaining({ path: 'command' })],
+      retryable: false,
+      status: 400,
     })
   })
 

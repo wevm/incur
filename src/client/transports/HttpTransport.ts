@@ -82,6 +82,7 @@ async function parseRpcResponse(
   if (contentType !== 'application/json') throw new ClientError('RPC response was not JSON.')
   const value = await parseJson(response)
   if (!isEnvelope(value)) throw new ClientError('Malformed RPC envelope.')
+  if (!value.ok) return { ...value, status: response.status }
   return value
 }
 
@@ -164,6 +165,9 @@ async function parseDiscoverResponse(response: Response): Promise<Discover.Respo
     throw new ClientError(error?.message ?? 'Discover request failed.', {
       code: error?.code,
       data,
+      error,
+      fieldErrors: error?.fieldErrors,
+      retryable: error?.retryable,
       status: response.status,
     })
   }
@@ -229,7 +233,9 @@ function isRecord(value: unknown): value is ClientRequest.StreamRecord {
   )
 }
 
-function isErrorPayload(value: unknown): value is { error: { code?: string; message?: string } } {
+function isErrorPayload(
+  value: unknown,
+): value is { error: Extract<ClientRequest.Envelope, { ok: false }>['error'] } {
   return (
     typeof value === 'object' &&
     value !== null &&

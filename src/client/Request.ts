@@ -66,6 +66,8 @@ export type Envelope =
         retryable?: boolean | undefined
       }
       meta: Meta
+      /** HTTP status when the response came from an HTTP transport. */
+      status?: number | undefined
     }
 
 /** Non-streaming request response. */
