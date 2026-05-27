@@ -1,13 +1,7 @@
 export { ClientError } from './ClientError.js'
-export type { DiscoveryRequest, DiscoveryResponse } from '../internal/client-discovery.js'
-export type {
-  RpcFullEnvelope as ClientRpcEnvelope,
-  RpcMeta as ClientRpcMeta,
-  RpcRequest,
-  RpcResponse,
-  RpcStreamRecord,
-  RpcStreamResponse,
-} from '../internal/client-runtime.js'
+export * as Discover from './Discover.js'
 export * as HttpTransport from './transports/HttpTransport.js'
+export * as Local from './Local.js'
 export * as MemoryTransport from './transports/MemoryTransport.js'
+export * as Request from './Request.js'
 export * as Transport from './transports/Transport.js'

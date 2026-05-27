@@ -2,6 +2,8 @@ import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
+import type * as ClientDiscover from '../client/Discover.js'
+import { BaseError } from '../Errors.js'
 import * as Formatter from '../Formatter.js'
 import * as Help from '../Help.js'
 import * as Mcp from '../Mcp.js'
@@ -9,24 +11,9 @@ import * as Openapi from '../Openapi.js'
 import * as Skill from '../Skill.js'
 import * as CommandTree from './command-tree.js'
 
-/** Discovery request. */
-export type DiscoveryRequest =
-  | { resource: 'llms'; command?: string | undefined; format?: Formatter.Format | undefined }
-  | { resource: 'llmsFull'; command?: string | undefined; format?: Formatter.Format | undefined }
-  | { resource: 'schema'; command?: string | undefined }
-  | { resource: 'help'; command?: string | undefined }
-  | { resource: 'openapi'; format?: 'json' | 'yaml' | undefined }
-  | { resource: 'skillsIndex' }
-  | { resource: 'skill'; name: string }
-  | { resource: 'mcpTools' }
-
-/** Discovery response. */
-export type DiscoveryResponse =
-  | { contentType: string; body: string }
-  | { contentType: string; data: unknown }
-
-/** Discovery failure with protocol code and HTTP status metadata. */
-export class DiscoveryError extends Error {
+/** Discover failure with protocol code and HTTP status metadata. */
+export class DiscoverError extends BaseError {
+  override name = 'Incur.DiscoverError'
   /** Machine-readable error code. */
   code: string
   /** HTTP status for discovery routes. */
@@ -58,14 +45,22 @@ const requestSchema = z.discriminatedUnion('resource', [
   z.object({ resource: z.literal('mcpTools') }),
 ])
 
-/** Builds a client discovery resource from a CLI runtime context. */
-export async function discoverClientResource(
+/** Creates the shared client discovery executor. */
+export function createClientDiscover(ctx: CommandTree.RuntimeCliContext) {
+  return {
+    discover(request: unknown) {
+      return discover(ctx, request)
+    },
+  }
+}
+
+async function discover(
   ctx: CommandTree.RuntimeCliContext,
   request: unknown,
-): Promise<DiscoveryResponse> {
+): Promise<ClientDiscover.Response> {
   const parsedRequest = requestSchema.safeParse(request)
   if (!parsedRequest.success)
-    throw new DiscoveryError('VALIDATION_ERROR', 'Invalid discovery request.', 400)
+    throw new DiscoverError('VALIDATION_ERROR', 'Invalid discovery request.', 400)
   const parsed = parsedRequest.data
   if (parsed.resource === 'openapi') {
     const spec = openapi(ctx)
@@ -94,9 +89,9 @@ export async function discoverClientResource(
       }
     }
     if (!safeSkillName(parsed.name))
-      throw new DiscoveryError('INVALID_SKILL_NAME', 'Unsafe skill name.', 400)
+      throw new DiscoverError('INVALID_SKILL_NAME', 'Unsafe skill name.', 400)
     const file = files.find((value) => (value.dir || ctx.name) === parsed.name)
-    if (!file) throw new DiscoveryError('SKILL_NOT_FOUND', `Unknown skill '${parsed.name}'.`, 404)
+    if (!file) throw new DiscoverError('SKILL_NOT_FOUND', `Unknown skill '${parsed.name}'.`, 404)
     return { contentType: 'text/markdown', body: file.content }
   }
 
@@ -165,9 +160,9 @@ function scope(ctx: CommandTree.RuntimeCliContext, command: string | undefined) 
     }
   const resolved = CommandTree.resolveCanonical(ctx, command)
   if ('error' in resolved)
-    throw new DiscoveryError('COMMAND_NOT_FOUND', `Unknown command '${command}'.`, 404)
+    throw new DiscoverError('COMMAND_NOT_FOUND', `Unknown command '${command}'.`, 404)
   if ('gateway' in resolved)
-    throw new DiscoveryError('FETCH_GATEWAY', `'${command}' is a raw fetch gateway.`, 400)
+    throw new DiscoverError('FETCH_GATEWAY', `'${command}' is a raw fetch gateway.`, 400)
   if ('commands' in resolved)
     return {
       type: 'group' as const,

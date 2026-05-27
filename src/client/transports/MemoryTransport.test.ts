@@ -3,7 +3,9 @@ import { parse as yamlParse } from 'yaml'
 import { z } from 'zod'
 
 import * as Cli from '../../Cli.js'
-import type { DiscoveryRequest } from '../../internal/client-discovery.js'
+import { DiscoverError } from '../../internal/client-discover.js'
+import { ClientError } from '../ClientError.js'
+import type * as Discover from '../Discover.js'
 import * as MemoryTransport from './MemoryTransport.js'
 
 describe('MemoryTransport', () => {
@@ -65,7 +67,7 @@ describe('MemoryTransport', () => {
     })
     const transport = MemoryTransport.create(cli)()
     const cases: {
-      request: DiscoveryRequest
+      request: Discover.Request
       assert(response: Awaited<ReturnType<typeof transport.discover>>): void
     }[] = [
       {
@@ -266,6 +268,25 @@ describe('MemoryTransport', () => {
       const response = await transport.discover(item.request)
       item.assert(response)
     }
+  })
+
+  test('wraps discovery failures as client errors with internal cause', async () => {
+    const cli = Cli.create('app').command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+    const transport = MemoryTransport.create(cli)()
+
+    await expect(transport.discover({ resource: 'skill', name: 'missing' })).rejects.toMatchObject({
+      cause: expect.any(DiscoverError),
+      code: 'SKILL_NOT_FOUND',
+      message: expect.stringContaining('Discover request failed.'),
+      status: 404,
+    })
+    await expect(transport.discover({ resource: 'skill', name: 'missing' })).rejects.toThrow(
+      ClientError,
+    )
   })
 
   test('exposes memory-only local capability', async () => {

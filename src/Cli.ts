@@ -12,6 +12,9 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
+import { createClientDiscover, DiscoverError } from './internal/client-discover.js'
+import { createClientRequest } from './internal/client-request.js'
+import * as CommandTree from './internal/command-tree.js'
 import {
   builtinCommands,
   type CommandMeta,
@@ -1672,6 +1675,112 @@ async function fetchImpl(
 
   const url = new URL(req.url)
   const segments = url.pathname.split('/').filter(Boolean)
+
+  if (segments[0] === '_incur') {
+    const ctx: CommandTree.RuntimeCliContext = {
+      commands: commands as Map<string, CommandTree.CommandEntry>,
+      ...(options.description ? { description: options.description } : undefined),
+      ...(options.envSchema ? { env: options.envSchema } : undefined),
+      middlewares: options.middlewares ?? [],
+      name,
+      ...(options.rootCommand ? { rootCommand: options.rootCommand as any } : undefined),
+      ...(options.vars ? { vars: options.vars } : undefined),
+      ...(options.version ? { version: options.version } : undefined),
+    }
+
+    if (segments[1] === 'rpc' && segments.length === 2 && req.method === 'POST') {
+      const client = createClientRequest(ctx)
+      let body: unknown
+      try {
+        body = await req.json()
+      } catch {
+        const response = await client.request({})
+        return new Response(JSON.stringify(response), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      const response = await client.request(body)
+      if ('stream' in response) {
+        const records = response.records()
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              for await (const record of records)
+                controller.enqueue(encoder.encode(`${JSON.stringify(record)}\n`))
+            } finally {
+              controller.close()
+            }
+          },
+          async cancel() {
+            await records.return(undefined as any)
+          },
+        })
+        return new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/x-ndjson' },
+        })
+      }
+      return new Response(JSON.stringify(response), {
+        status: response.ok ? 200 : rpcStatus(response.error.code),
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    if (req.method === 'GET') {
+      const resource = (() => {
+        if (segments[1] === 'llms') return 'llms'
+        if (segments[1] === 'llms-full') return 'llmsFull'
+        if (segments[1] === 'schema') return 'schema'
+        if (segments[1] === 'help') return 'help'
+        if (segments[1] === 'openapi') return 'openapi'
+        if (segments[1] === 'skills') return 'skillsIndex'
+        if (segments[1] === 'skill') return 'skill'
+        if (segments[1] === 'mcp' && segments[2] === 'tools') return 'mcpTools'
+        return undefined
+      })()
+      if (resource) {
+        try {
+          const client = createClientDiscover(ctx)
+          const discovery = await client.discover({
+            resource,
+            ...(url.searchParams.get('command')
+              ? { command: url.searchParams.get('command')! }
+              : undefined),
+            ...(url.searchParams.get('format')
+              ? { format: url.searchParams.get('format')! }
+              : undefined),
+            ...(url.searchParams.get('name') ? { name: url.searchParams.get('name')! } : undefined),
+          })
+          return new Response(
+            'body' in discovery ? discovery.body : JSON.stringify(discovery.data),
+            {
+              status: 200,
+              headers: { 'content-type': discovery.contentType },
+            },
+          )
+        } catch (error) {
+          const status = error instanceof DiscoverError ? error.status : 500
+          const code = error instanceof DiscoverError ? error.code : 'DISCOVERY_ERROR'
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error: {
+                code,
+                message: error instanceof Error ? error.message : String(error),
+              },
+              meta: {
+                resource,
+                duration: `${Math.round(performance.now() - start)}ms`,
+              },
+            }),
+            { status, headers: { 'content-type': 'application/json' } },
+          )
+        }
+      }
+    }
+  }
 
   // OpenAPI discovery: route /openapi.json, /openapi.yml, /openapi.yaml, and /.well-known/openapi.json
   if (req.method === 'GET' && isOpenapiRoute(segments)) {

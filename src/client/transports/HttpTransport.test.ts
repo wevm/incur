@@ -3,8 +3,8 @@ import { parse as yamlParse } from 'yaml'
 import { z } from 'zod'
 
 import * as Cli from '../../Cli.js'
-import type { DiscoveryRequest } from '../../internal/client-discovery.js'
 import { ClientError } from '../ClientError.js'
+import type * as Discover from '../Discover.js'
 import * as HttpTransport from './HttpTransport.js'
 
 function resolve(fetch: typeof globalThis.fetch) {
@@ -115,6 +115,25 @@ describe('HttpTransport', () => {
     )
   })
 
+  test('wraps discovery route errors with response metadata', async () => {
+    const cli = Cli.create('app').command('status', {
+      run() {
+        return { ok: true }
+      },
+    })
+    const { transport } = connect(cli)
+
+    await expect(transport.discover({ resource: 'skill', name: 'missing' })).rejects.toMatchObject({
+      code: 'SKILL_NOT_FOUND',
+      data: {
+        error: { code: 'SKILL_NOT_FOUND', message: "Unknown skill 'missing'." },
+        ok: false,
+      },
+      message: expect.stringContaining("Unknown skill 'missing'."),
+      status: 404,
+    })
+  })
+
   test('streams records from the CLI HTTP route', async () => {
     const cli = Cli.create('app').command('stream', {
       async *run() {
@@ -199,7 +218,7 @@ describe('HttpTransport', () => {
     const { requests, transport } = connect(cli)
 
     const cases: {
-      request: DiscoveryRequest
+      request: Discover.Request
       url: string
       assert(response: Awaited<ReturnType<typeof transport.discover>>): void
     }[] = [

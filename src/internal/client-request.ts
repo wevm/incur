@@ -1,87 +1,12 @@
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { z } from 'zod'
 
+import type * as ClientRequest from '../client/Request.js'
 import type { FieldError } from '../Errors.js'
 import * as Filter from '../Filter.js'
 import * as Formatter from '../Formatter.js'
 import * as CommandTree from './command-tree.js'
 import * as Command from './command.js'
-
-/** RPC request accepted by HTTP and memory transports. */
-export type RpcRequest = {
-  /** Canonical command ID. */
-  command: string
-  /** Structured positional arguments. */
-  args?: Record<string, unknown> | undefined
-  /** Structured named options. */
-  options?: Record<string, unknown> | undefined
-  /** Output format for rendered text. */
-  outputFormat?: Formatter.Format | undefined
-  /** Output selection paths. */
-  selection?: string[] | undefined
-  /** Whether token metadata should be included. */
-  outputTokenCount?: boolean | undefined
-  /** Maximum rendered output tokens to return. */
-  outputTokenLimit?: number | undefined
-  /** Rendered output token offset. */
-  outputTokenOffset?: number | undefined
-}
-
-/** RPC output payload. */
-export type RpcOutput = {
-  /** Rendered output text. */
-  text: string
-  /** Whether text was truncated by token controls. */
-  truncated?: boolean | undefined
-}
-
-/** RPC metadata. */
-export type RpcMeta = {
-  /** Canonical command ID. */
-  command: string
-  /** Suggested next commands. */
-  cta?: unknown | undefined
-  /** Wall-clock duration. */
-  duration: string
-  /** Offset to request for the next token window. */
-  nextOffset?: number | undefined
-  /** Rendered token count before truncation. */
-  outputTokenCount?: number | undefined
-}
-
-/** Full RPC success/error envelope. */
-export type RpcFullEnvelope =
-  | {
-      ok: true
-      data: unknown
-      output?: RpcOutput | undefined
-      meta: RpcMeta
-    }
-  | {
-      ok: false
-      error: {
-        code: string
-        fieldErrors?: FieldError[] | undefined
-        message: string
-        retryable?: boolean | undefined
-      }
-      meta: RpcMeta
-    }
-
-/** Non-streaming RPC response. */
-export type RpcResponse = RpcFullEnvelope
-
-/** Streaming RPC record. */
-export type RpcStreamRecord =
-  | { type: 'chunk'; data: unknown }
-  | ({ type: 'done' } & Extract<RpcFullEnvelope, { ok: true }>)
-  | ({ type: 'error' } & Extract<RpcFullEnvelope, { ok: false }>)
-
-/** Streaming RPC response. */
-export type RpcStreamResponse = {
-  stream: true
-  records(): AsyncGenerator<RpcStreamRecord, RpcStreamRecord, unknown>
-}
 
 const requestSchema = z.object({
   command: z.string().transform((value) => value.trim().replace(/\s+/g, ' ')),
@@ -95,12 +20,31 @@ const requestSchema = z.object({
 })
 const sentinel = Symbol.for('incur.sentinel')
 
-/** Executes a canonical client command through the shared runtime. */
-export async function executeClientCommand(
+/** Creates the shared client request executor. */
+export function createClientRequest(
+  ctx: CommandTree.RuntimeCliContext,
+  options: createClientRequest.Options = {},
+) {
+  return {
+    request(request: unknown) {
+      return execute(ctx, request, options)
+    },
+  }
+}
+
+export declare namespace createClientRequest {
+  /** Execution options. */
+  type Options = {
+    /** Explicit environment source. */
+    env?: Record<string, string | undefined> | undefined
+  }
+}
+
+async function execute(
   ctx: CommandTree.RuntimeCliContext,
   request: unknown,
-  options: executeClientCommand.Options = {},
-): Promise<RpcResponse | RpcStreamResponse> {
+  options: createClientRequest.Options,
+): Promise<ClientRequest.Response | ClientRequest.StreamResponse> {
   const start = performance.now()
   const parsed = requestSchema.safeParse(request)
   if (!parsed.success)
@@ -165,24 +109,16 @@ export async function executeClientCommand(
   return successEnvelope(resolved.id, start, result.data, formatCta(ctx.name, result.cta), rpc)
 }
 
-export declare namespace executeClientCommand {
-  /** Execution options. */
-  type Options = {
-    /** Explicit environment source. */
-    env?: Record<string, string | undefined> | undefined
-  }
-}
-
 function streamResponse(
   stream: AsyncGenerator<unknown, unknown, unknown>,
   command: string,
   start: number,
-  request: RpcRequest,
-): RpcStreamResponse {
+  request: ClientRequest.Request,
+): ClientRequest.StreamResponse {
   return {
     stream: true,
     async *records() {
-      let terminal: RpcStreamRecord
+      let terminal: ClientRequest.StreamRecord
       try {
         while (true) {
           const { value, done } = await stream.next()
@@ -249,8 +185,8 @@ function successEnvelope(
   start: number,
   data: unknown,
   cta?: unknown | undefined,
-  request: RpcRequest = { command },
-): Extract<RpcFullEnvelope, { ok: true }> {
+  request: ClientRequest.Request = { command },
+): Extract<ClientRequest.Envelope, { ok: true }> {
   const selected = applySelection(data, request.selection)
   const output = renderOutput(selected, request)
   return {
@@ -273,8 +209,8 @@ function errorEnvelope(
     retryable?: boolean | undefined
   },
   cta?: unknown | undefined,
-  request: RpcRequest = { command },
-): Extract<RpcFullEnvelope, { ok: false }> {
+  request: ClientRequest.Request = { command },
+): Extract<ClientRequest.Envelope, { ok: false }> {
   return {
     ok: false,
     error,
@@ -292,8 +228,8 @@ function errorRecord(
     retryable?: boolean | undefined
   },
   cta: unknown | undefined,
-  request: RpcRequest,
-): Extract<RpcStreamRecord, { type: 'error' }> {
+  request: ClientRequest.Request,
+): Extract<ClientRequest.StreamRecord, { type: 'error' }> {
   return { type: 'error', ...errorEnvelope(command, start, error, cta, request) }
 }
 
@@ -305,7 +241,7 @@ function applySelection(data: unknown, selection: string[] | undefined) {
   )
 }
 
-function renderOutput(data: unknown, request: RpcRequest) {
+function renderOutput(data: unknown, request: ClientRequest.Request) {
   const text = Formatter.format(data, request.outputFormat ?? 'json')
   const count = estimateTokenCount(text)
   const offset = request.outputTokenOffset ?? 0
@@ -326,8 +262,8 @@ function meta(
   start: number,
   cta: unknown | undefined,
   output: { count: number; nextOffset?: number | undefined },
-  request: RpcRequest,
-): RpcMeta {
+  request: ClientRequest.Request,
+): ClientRequest.Meta {
   return {
     command,
     duration: `${Math.round(performance.now() - start)}ms`,

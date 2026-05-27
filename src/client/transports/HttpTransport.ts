@@ -1,11 +1,6 @@
-import type { DiscoveryRequest, DiscoveryResponse } from '../../internal/client-discovery.js'
-import type {
-  RpcRequest,
-  RpcResponse,
-  RpcStreamRecord,
-  RpcStreamResponse,
-} from '../../internal/client-runtime.js'
 import { ClientError } from '../ClientError.js'
+import type * as Discover from '../Discover.js'
+import type * as ClientRequest from '../Request.js'
 import type * as Transport from './Transport.js'
 
 /** HTTP transport factory. */
@@ -13,8 +8,10 @@ export type HttpTransport = Transport.Factory<
   'http',
   {
     baseUrl: URL
-    request(request: RpcRequest): Promise<RpcResponse | RpcStreamResponse>
-    discover(request: DiscoveryRequest): Promise<DiscoveryResponse>
+    request(
+      request: ClientRequest.Request,
+    ): Promise<ClientRequest.Response | ClientRequest.StreamResponse>
+    discover(request: Discover.Request): Promise<Discover.Response>
   }
 >
 
@@ -59,10 +56,7 @@ export function create(options: Options): HttpTransport {
           accept: 'application/json, text/plain, text/markdown',
         }),
       })
-      const contentType = response.headers.get('content-type') ?? ''
-      if (contentType.includes('application/json'))
-        return { contentType: essence(contentType), data: await parseJson(response) }
-      return { contentType: essence(contentType), body: await response.text() }
+      return parseDiscoverResponse(response)
     },
   })
 }
@@ -77,7 +71,9 @@ async function requestFetch(fetcher: typeof globalThis.fetch, input: URL, init: 
   }
 }
 
-async function parseRpcResponse(response: Response): Promise<RpcResponse | RpcStreamResponse> {
+async function parseRpcResponse(
+  response: Response,
+): Promise<ClientRequest.Response | ClientRequest.StreamResponse> {
   const contentType = essence(response.headers.get('content-type') ?? '')
   if (contentType === 'application/x-ndjson') {
     if (!response.body) throw new ClientError('Streaming RPC response is missing a body.')
@@ -89,14 +85,14 @@ async function parseRpcResponse(response: Response): Promise<RpcResponse | RpcSt
   return value
 }
 
-function streamResponse(body: ReadableStream<Uint8Array>): RpcStreamResponse {
+function streamResponse(body: ReadableStream<Uint8Array>): ClientRequest.StreamResponse {
   return {
     stream: true,
     async *records() {
       const reader = body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let terminal: RpcStreamRecord | undefined
+      let terminal: ClientRequest.StreamRecord | undefined
       try {
         while (true) {
           const { value, done } = await reader.read()
@@ -135,7 +131,7 @@ function* drainRecords(buffer: string): Generator<{ line: string; rest: string }
   }
 }
 
-function parseRecord(line: string): RpcStreamRecord {
+function parseRecord(line: string): ClientRequest.StreamRecord {
   let value: unknown
   try {
     value = JSON.parse(line)
@@ -158,7 +154,25 @@ async function parseJson(response: Response) {
   }
 }
 
-function discoveryUrl(baseUrl: URL, request: DiscoveryRequest) {
+async function parseDiscoverResponse(response: Response): Promise<Discover.Response> {
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!response.ok) {
+    const data = contentType.includes('application/json')
+      ? await parseJson(response).catch(() => undefined)
+      : await response.text().catch(() => undefined)
+    const error = isErrorPayload(data) ? data.error : undefined
+    throw new ClientError(error?.message ?? 'Discover request failed.', {
+      code: error?.code,
+      data,
+      status: response.status,
+    })
+  }
+  if (contentType.includes('application/json'))
+    return { contentType: essence(contentType), data: await parseJson(response) }
+  return { contentType: essence(contentType), body: await response.text() }
+}
+
+function discoveryUrl(baseUrl: URL, request: Discover.Request) {
   const path = (() => {
     if (request.resource === 'llms') return '_incur/llms'
     if (request.resource === 'llmsFull') return '_incur/llms-full'
@@ -196,7 +210,7 @@ function essence(value: string) {
   return value.split(';', 1)[0]!.trim().toLowerCase()
 }
 
-function isEnvelope(value: unknown): value is RpcResponse {
+function isEnvelope(value: unknown): value is ClientRequest.Response {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -205,12 +219,21 @@ function isEnvelope(value: unknown): value is RpcResponse {
   )
 }
 
-function isRecord(value: unknown): value is RpcStreamRecord {
+function isRecord(value: unknown): value is ClientRequest.StreamRecord {
   return (
     typeof value === 'object' &&
     value !== null &&
     ((value as { type?: unknown }).type === 'chunk' ||
       ((value as { type?: unknown }).type === 'done' && isEnvelope(value)) ||
       ((value as { type?: unknown }).type === 'error' && isEnvelope(value)))
+  )
+}
+
+function isErrorPayload(value: unknown): value is { error: { code?: string; message?: string } } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { error?: unknown }).error === 'object' &&
+    (value as { error?: unknown }).error !== null
   )
 }

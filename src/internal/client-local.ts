@@ -1,84 +1,63 @@
+import type * as Local from '../client/Local.js'
+import { BaseError } from '../Errors.js'
 import * as SyncMcp from '../SyncMcp.js'
 import * as SyncSkills from '../SyncSkills.js'
 import type * as CommandTree from './command-tree.js'
 
-/** Options for `skills.add()`. */
-export type SkillsAddOptions = {
-  /** Grouping depth. */
-  depth?: number | undefined
-  /** Install globally instead of project-local. */
-  global?: boolean | undefined
-}
-
-/** Options for `skills.list()`. */
-export type SkillsListOptions = {
-  /** Grouping depth. */
-  depth?: number | undefined
-}
-
-/** Options for `mcp.add()`. */
-export type McpAddOptions = {
-  /** Target agents. */
-  agents?: string[] | undefined
-  /** Command agents should run. */
-  command?: string | undefined
-  /** Install globally instead of project-local. */
-  global?: boolean | undefined
-}
-
-/** Synced skills result. */
-export type SyncedSkills = SyncSkills.sync.Result
-
-/** Skills list result. */
-export type SkillsList = SyncSkills.list.Skill[]
-
-/** MCP registration result. */
-export type McpRegistration = SyncMcp.register.Result
-
-/** Local memory-only runtime. */
-export type LocalRuntime = {
-  /** Skill setup actions. */
-  skills: {
-    add(options?: SkillsAddOptions | undefined): Promise<SyncedSkills>
-    list(options?: SkillsListOptions | undefined): Promise<SkillsList>
-  }
-  /** MCP setup actions. */
-  mcp: {
-    add(options?: McpAddOptions | undefined): Promise<McpRegistration>
-  }
+/** Local setup/admin failure. */
+export class LocalError extends BaseError {
+  override name = 'Incur.LocalError'
 }
 
 /** Creates local setup/admin wrappers for a memory transport. */
-export function createLocalRuntime(ctx: CommandTree.RuntimeCliContext): LocalRuntime {
+export function createClientLocal(ctx: CommandTree.RuntimeCliContext): Local.Runtime {
   return {
     skills: {
-      add(options: SkillsAddOptions = {}) {
-        return SyncSkills.sync(ctx.name, ctx.commands, {
-          cwd: ctx.sync?.cwd,
-          depth: options.depth ?? ctx.sync?.depth ?? 1,
-          description: ctx.description,
-          global: options.global ?? true,
-          include: ctx.sync?.include,
-          rootCommand: ctx.rootCommand,
-        })
+      async add(options: Local.SkillsAddOptions = {}) {
+        try {
+          return await SyncSkills.sync(ctx.name, ctx.commands, {
+            cwd: ctx.sync?.cwd,
+            depth: options.depth ?? ctx.sync?.depth ?? 1,
+            description: ctx.description,
+            global: options.global ?? true,
+            include: ctx.sync?.include,
+            rootCommand: ctx.rootCommand,
+          })
+        } catch (error) {
+          throw new LocalError('Failed to sync local skills.', {
+            cause: error instanceof Error ? error : new Error(String(error)),
+          })
+        }
       },
-      list(options: SkillsListOptions = {}) {
-        return SyncSkills.list(ctx.name, ctx.commands, {
-          cwd: ctx.sync?.cwd,
-          depth: options.depth ?? ctx.sync?.depth ?? 1,
-          description: ctx.description,
-          include: ctx.sync?.include,
-          rootCommand: ctx.rootCommand,
-        })
+      async list(options: Local.SkillsListOptions = {}) {
+        try {
+          return await SyncSkills.list(ctx.name, ctx.commands, {
+            cwd: ctx.sync?.cwd,
+            depth: options.depth ?? ctx.sync?.depth ?? 1,
+            description: ctx.description,
+            include: ctx.sync?.include,
+            rootCommand: ctx.rootCommand,
+          })
+        } catch (error) {
+          throw new LocalError('Failed to list local skills.', {
+            cause: error instanceof Error ? error : new Error(String(error)),
+          })
+        }
       },
     },
     mcp: {
-      add(options: McpAddOptions = {}) {
-        return SyncMcp.register(ctx.name, {
-          agents: options.agents ?? ctx.mcp?.agents,
-          command: options.command ?? ctx.mcp?.command,
-          global: options.global ?? true,
-        })
+      async add(options: Local.McpAddOptions = {}) {
+        try {
+          return await SyncMcp.register(ctx.name, {
+            agents: options.agents ?? ctx.mcp?.agents,
+            command: options.command ?? ctx.mcp?.command,
+            global: options.global ?? true,
+          })
+        } catch (error) {
+          throw new LocalError('Failed to register local MCP server.', {
+            cause: error instanceof Error ? error : new Error(String(error)),
+          })
+        }
       },
     },
   }
