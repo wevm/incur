@@ -9,11 +9,11 @@ import type {
   SkillsIndex,
 } from '../types.js'
 
+/** LLM resource action options. */
+export type LlmsOptions = { command?: string | undefined; format?: ResourcesFormat | undefined }
+
 /** Reads compact LLM resources. */
-export async function llms(
-  client: ActionClient,
-  options: { command?: string | undefined; format?: ResourcesFormat | undefined } = {},
-): Promise<unknown> {
+export async function llms(client: ActionClient, options: LlmsOptions = {}): Promise<unknown> {
   const { command, format = 'json' } = options
   return discover(client, {
     resource: 'llms',
@@ -23,10 +23,7 @@ export async function llms(
 }
 
 /** Reads full LLM resources. */
-export async function llmsFull(
-  client: ActionClient,
-  options: { command?: string | undefined; format?: ResourcesFormat | undefined } = {},
-): Promise<unknown> {
+export async function llmsFull(client: ActionClient, options: LlmsOptions = {}): Promise<unknown> {
   const { command, format = 'json' } = options
   return discover(client, {
     resource: 'llmsFull',
@@ -75,6 +72,40 @@ export async function skill(client: ActionClient, name: string): Promise<string>
 /** Reads MCP tool descriptors. */
 export async function mcpTools(client: ActionClient): Promise<McpToolsResponse> {
   return discover(client, { resource: 'mcpTools' }) as Promise<McpToolsResponse>
+}
+
+/** Binds resource actions to a client. */
+export function actions(client: ActionClient) {
+  return {
+    llms(options?: LlmsOptions | undefined) {
+      return llms(client, options)
+    },
+    llmsFull(options?: LlmsOptions | undefined) {
+      return llmsFull(client, options)
+    },
+    schema(command?: CommandScope<any> | undefined) {
+      return schema(client, command)
+    },
+    help(command?: CommandScope<any> | undefined) {
+      return help(client, command)
+    },
+    openapi() {
+      return openapi(client)
+    },
+    skills: {
+      index() {
+        return skillsIndex(client)
+      },
+      get(name: string) {
+        return skill(client, name)
+      },
+    },
+    mcp: {
+      tools() {
+        return mcpTools(client)
+      },
+    },
+  }
 }
 
 async function discover(client: ActionClient, request: Resources.Request): Promise<unknown> {

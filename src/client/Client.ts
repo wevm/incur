@@ -1,8 +1,9 @@
 import * as local from './actions/local.js'
 import * as resources from './actions/resources.js'
-import { run } from './actions/run.js'
+import * as run from './actions/run.js'
 export { ClientError } from './ClientError.js'
 import type {
+  ActionClient,
   Client,
   ClientBase,
   ClientCta,
@@ -113,61 +114,33 @@ export function create<
     defaults,
     transport: { ...config, ...capabilities },
     type: 'client',
-  } as unknown as Client<commands, transport, defaults>
+  } satisfies ActionClient & { type: 'client' }
 
-  return attachActions(client) as Client<commands, transport, defaults>
+  return {
+    ...client,
+    ...actions(client),
+  } as unknown as Client<commands, transport, defaults>
 }
 
-function attachActions<const client extends object>(client: client): client {
-  Object.assign(client, {
-    run(command: string, input?: unknown) {
-      return run(client as never, command, input as never)
-    },
-    llms(options?: unknown) {
-      return resources.llms(client as never, options as never)
-    },
-    llmsFull(options?: unknown) {
-      return resources.llmsFull(client as never, options as never)
-    },
-    schema(command?: string | undefined) {
-      return resources.schema(client as never, command)
-    },
-    help(command?: string | undefined) {
-      return resources.help(client as never, command)
-    },
-    openapi() {
-      return resources.openapi(client as never)
-    },
-    skills: {
-      index() {
-        return resources.skillsIndex(client as never)
-      },
-      get(name: string) {
-        return resources.skill(client as never, name)
-      },
-    },
-    mcp: {
-      tools() {
-        return resources.mcpTools(client as never)
-      },
-    },
-  })
-
-  if ('transport' in client && 'local' in (client as { transport: object }).transport) {
-    Object.assign((client as unknown as { skills: object }).skills, {
-      add(options?: unknown) {
-        return local.skillsAdd(client as never, options as never)
-      },
-      list(options?: unknown) {
-        return local.skillsList(client as never, options as never)
-      },
-    })
-    Object.assign((client as unknown as { mcp: object }).mcp, {
-      add(options?: unknown) {
-        return local.mcpAdd(client as never, options as never)
-      },
-    })
+function actions(client: ActionClient) {
+  const base = {
+    ...run.actions(client),
+    ...resources.actions(client),
   }
 
-  return client
+  if (!client.transport.local) return base
+  const memory = local.actions(client)
+
+  return {
+    ...base,
+    ...memory,
+    skills: {
+      ...base.skills,
+      ...memory.skills,
+    },
+    mcp: {
+      ...base.mcp,
+      ...memory.mcp,
+    },
+  }
 }

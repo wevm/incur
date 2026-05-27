@@ -21,11 +21,14 @@ import type {
   OutputOptions,
 } from '../types.js'
 
+/** Runtime input accepted by the untyped run action wrapper. */
+export type Input = OutputOptions & { args?: unknown; options?: unknown }
+
 /** Executes a command through a client transport. */
 export async function run(
   client: ActionClient,
   command: string,
-  input: (OutputOptions & { args?: unknown; options?: unknown }) | undefined,
+  input: Input | undefined,
 ): Promise<unknown> {
   const request = toRequest(client.defaults, command, input)
   const response = await client.transport.request(request)
@@ -33,11 +36,16 @@ export async function run(
   return normalizeEnvelope(client, request, response)
 }
 
-function toRequest(
-  defaults: OutputOptions,
-  command: string,
-  input: (OutputOptions & { args?: unknown; options?: unknown }) | undefined,
-): RpcRequest {
+/** Binds command run actions to a client. */
+export function actions(client: ActionClient) {
+  return {
+    run(command: string, input?: Input | undefined) {
+      return run(client, command, input)
+    },
+  }
+}
+
+function toRequest(defaults: OutputOptions, command: string, input: Input | undefined): RpcRequest {
   const merged = {
     ...defaults,
     ...input,

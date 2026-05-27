@@ -1,3 +1,4 @@
+import { ClientError } from '../ClientError.js'
 import type * as Local from '../Local.js'
 import type { ActionClient } from '../types.js'
 
@@ -16,14 +17,27 @@ export function mcpAdd(client: ActionClient, options?: Local.McpAddOptions | und
   return local(client).mcp.add(options)
 }
 
-function local(client: ActionClient) {
-  return client.transport.local as {
+/** Binds memory-local actions to a client. */
+export function actions(client: ActionClient) {
+  return {
     skills: {
-      add(options?: Local.SkillsAddOptions | undefined): Promise<unknown>
-      list(options?: Local.SkillsListOptions | undefined): Promise<Local.SkillsList>
-    }
+      add(options?: Local.SkillsAddOptions | undefined) {
+        return skillsAdd(client, options)
+      },
+      list(options?: Local.SkillsListOptions | undefined) {
+        return skillsList(client, options)
+      },
+    },
     mcp: {
-      add(options?: Local.McpAddOptions | undefined): Promise<unknown>
-    }
+      add(options?: Local.McpAddOptions | undefined) {
+        return mcpAdd(client, options)
+      },
+    },
   }
+}
+
+function local(client: ActionClient): Local.Handler {
+  const { local } = client.transport
+  if (!local) throw new ClientError('Local actions require a memory client.')
+  return local
 }
