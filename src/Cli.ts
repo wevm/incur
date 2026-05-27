@@ -13,7 +13,7 @@ import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { createClientDiscover, DiscoverError } from './internal/client-discover.js'
-import { createClientRequest } from './internal/client-request.js'
+import { createClientRequest, getClientRequestStatus } from './internal/client-request.js'
 import * as RuntimeContext from './internal/client-runtime-context.js'
 import {
   builtinCommands,
@@ -1723,7 +1723,7 @@ async function fetchImpl(
         })
       }
       return new Response(JSON.stringify(response), {
-        status: response.ok ? 200 : rpcStatus(response.error.code),
+        status: response.ok ? 200 : getClientRequestStatus(response.error.code),
         headers: { 'content-type': 'application/json' },
       })
     }

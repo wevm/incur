@@ -4175,7 +4175,8 @@ describe('Command.execute', () => {
 async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
   const res = await cli.fetch(req)
   const body = await res.json()
-  if (body.meta?.duration) body.meta.duration = '<stripped>'
+  expect(body.meta.duration).toMatch(/^\d+ms$/)
+  body.meta.duration = '<stripped>'
   return { status: res.status, body }
 }
 

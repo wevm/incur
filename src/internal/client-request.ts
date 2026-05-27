@@ -20,6 +20,14 @@ const requestSchema = z.object({
 })
 const sentinel = Symbol.for('incur.sentinel')
 
+/** Returns the HTTP status for a client request error code. */
+export function getClientRequestStatus(code: string) {
+  if (code === 'COMMAND_NOT_FOUND') return 404
+  if (code === 'VALIDATION_ERROR' || code === 'INVALID_RPC_REQUEST') return 400
+  if (code === 'COMMAND_GROUP' || code === 'FETCH_GATEWAY') return 400
+  return 500
+}
+
 /** Creates the shared client request executor. */
 export function createClientRequest(
   ctx: RuntimeContext.RuntimeCliContext,
