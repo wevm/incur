@@ -19,7 +19,7 @@ export function fromCli(cli: Cli.Cli): string {
 
   for (const { id, command } of entries)
     lines.push(
-      `      '${id}': { args: ${schemaToType(command.args)}; options: ${schemaToType(command.options)} }`,
+      `      ${propertyKey(id)}: { args: ${schemaToType(command.args)}; options: ${schemaToType(command.options)} }`,
     )
 
   lines.push('    }', '  }', '}', '')
@@ -34,9 +34,11 @@ function schemaToType(schema: z.ZodObject<any> | undefined): string {
   const properties = json.properties as Record<string, Record<string, unknown>> | undefined
   if (!properties || Object.keys(properties).length === 0) return '{}'
   const required = new Set((json.required as string[] | undefined) ?? [])
-  const entries = Object.entries(properties).map(
-    ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
-  )
+  const entries = Object.entries(properties).map(([key, value]) => {
+    const type = resolveType(value, defs)
+    if (required.has(key)) return `${propertyKey(key)}: ${type}`
+    return `${propertyKey(key)}?: ${type} | undefined`
+  })
   return `{ ${entries.join('; ')} }`
 }
 
@@ -82,12 +84,18 @@ function resolveType(
       const properties = schema.properties as Record<string, Record<string, unknown>> | undefined
       if (!properties || Object.keys(properties).length === 0) return '{}'
       const required = new Set((schema.required as string[] | undefined) ?? [])
-      const entries = Object.entries(properties).map(
-        ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
-      )
+      const entries = Object.entries(properties).map(([key, value]) => {
+        const type = resolveType(value, defs)
+        if (required.has(key)) return `${propertyKey(key)}: ${type}`
+        return `${propertyKey(key)}?: ${type} | undefined`
+      })
       return `{ ${entries.join('; ')} }`
     }
     default:
       return 'unknown'
   }
+}
+
+function propertyKey(key: string) {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key)
 }
