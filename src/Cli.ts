@@ -82,6 +82,7 @@ export type Cli<
         description?: string | undefined
         fetch: FetchSource
         openapi?: Openapi.OpenAPISource | undefined
+        openapiConfig?: Openapi.Config | undefined
         outputPolicy?: OutputPolicy | undefined
       },
     ): Cli<commands, vars, env>
@@ -219,7 +220,9 @@ export function create(
     pending.push(
       (async () => {
         const spec = await Openapi.resolve(def.openapi, { baseUrl: rootFetchBaseUrl })
-        const generated = await Openapi.generateCommands(spec, rootFetch)
+        const generated = await Openapi.generateCommands(spec, rootFetch, {
+          config: def.openapiConfig,
+        })
         for (const [name, command] of generated) commands.set(name, command)
       })(),
     )
@@ -244,6 +247,7 @@ export function create(
                 })
                 const generated = await Openapi.generateCommands(spec, fetch, {
                   basePath: def.basePath,
+                  config: def.openapiConfig,
                 })
                 commands.set(nameOrCli, {
                   _group: true,
@@ -386,6 +390,8 @@ export declare namespace create {
     fetch?: FetchSource | undefined
     /** OpenAPI spec source used to generate typed root commands for the root fetch handler. */
     openapi?: Openapi.OpenAPISource | undefined
+    /** Configuration for generated OpenAPI commands. */
+    openapiConfig?: Openapi.Config | undefined
     /** Default output format. Overridden by `--format` or `--json`. */
     format?: Formatter.Format | undefined
     /** Zod schema for named options/flags. */

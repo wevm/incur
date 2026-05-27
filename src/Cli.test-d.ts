@@ -60,6 +60,13 @@ test('fetch command accepts OpenAPI object and URL sources', () => {
   cli.command('hostedApi', {
     fetch: Fetch.fromRequest('https://api.example.com'),
     openapi: 'openapi.json',
+    openapiConfig: { mode: 'namespace' },
+  })
+
+  cli.command('apiOperationMode', {
+    fetch,
+    openapi: { paths: {} },
+    openapiConfig: { mode: 'operation' },
   })
 })
 
@@ -67,17 +74,28 @@ test('root fetch accepts hosted request sources with OpenAPI paths', () => {
   Cli.create('test', {
     fetch: Fetch.fromRequest('https://api.example.com'),
     openapi: '/openapi.json',
+    openapiConfig: { mode: 'namespace' },
   })
 
   Cli.create('test', {
     fetch: Fetch.fromRequest(new URL('https://api.example.com')),
     openapi: new URL('https://api.example.com/openapi.json'),
+    openapiConfig: { mode: 'operation' },
   })
 
   Cli.create('test', {
     // @ts-expect-error -- hosted fetches must use Fetch.fromRequest.
     fetch: 'https://api.example.com',
     openapi: '/openapi.json',
+  })
+
+  Cli.create('test', {
+    fetch: Fetch.fromRequest('https://api.example.com'),
+    openapi: '/openapi.json',
+    openapiConfig: {
+      // @ts-expect-error -- OpenAPI mode must be namespace or operation.
+      mode: 'path',
+    },
   })
 })
 

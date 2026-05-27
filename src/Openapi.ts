@@ -17,6 +17,15 @@ export type OpenAPISpec = { paths?: {} | undefined }
 /** OpenAPI document source accepted by fetch-backed CLI commands. */
 export type OpenAPISource = OpenAPISpec | string | URL
 
+/** Strategy used to name commands generated from OpenAPI operations. */
+export type Mode = 'namespace' | 'operation'
+
+/** Configuration for generating commands from an OpenAPI document. */
+export type Config = {
+  /** Command naming strategy. Defaults to `'operation'`. */
+  mode?: Mode | undefined
+}
+
 /** Options for generating an OpenAPI document from an incur CLI. */
 export type GenerateOptions = {
   /** API description. Defaults to the CLI description. */
@@ -88,6 +97,25 @@ type GeneratedCommand = {
   description?: string | undefined
   options?: z.ZodObject<any> | undefined
   run: (context: any) => any
+}
+
+type GeneratedEntry = GeneratedCommand | GeneratedGroup
+
+type GeneratedGroup = {
+  _group: true
+  description?: string | undefined
+  commands: Map<string, GeneratedEntry>
+}
+
+type CommandSegment = {
+  description?: string | undefined
+  name: string
+}
+
+type OperationEntry = {
+  method: string
+  operation: Operation
+  path: string
 }
 
 function addEntry(paths: NonNullable<Document['paths']>, segments: string[], entry: any) {
@@ -307,72 +335,220 @@ function resolveUrl(source: string | URL, baseUrl: string | URL | undefined) {
 export async function generateCommands(
   spec: OpenAPISpec,
   fetch: FetchHandler,
-  options: { basePath?: string | undefined } = {},
-): Promise<Map<string, GeneratedCommand>> {
+  options: generateCommands.Options = {},
+): Promise<Map<string, GeneratedEntry>> {
   const resolved = dereference(structuredClone(spec)) as OpenAPISpec
-  const commands = new Map<string, GeneratedCommand>()
+  const commands = new Map<string, GeneratedEntry>()
   const paths = (resolved.paths ?? {}) as Record<string, Record<string, unknown>>
+  const operations = openapiOperations(paths)
+  const namespaceInfo = getNamespaceInfo(operations)
+  const { config } = options
 
-  for (const [path, methods] of Object.entries(paths)) {
-    for (const [method, operation] of Object.entries(methods)) {
-      if (method.startsWith('x-')) continue
-      const op = operation as Operation
-      const name = op.operationId ?? `${method}_${path.replace(/[/{}]/g, '_')}`
-      const httpMethod = method.toUpperCase()
+  for (const { method, operation: op, path } of operations) {
+    const segments = commandSegments({
+      method,
+      mode: config?.mode ?? 'operation',
+      namespaceInfo,
+      operation: op,
+      path,
+    })
+    const httpMethod = method.toUpperCase()
 
-      const pathParams = (op.parameters ?? []).filter((p) => p.in === 'path')
-      const queryParams = (op.parameters ?? []).filter((p) => p.in === 'query')
+    const pathParams = (op.parameters ?? []).filter((p) => p.in === 'path')
+    const queryParams = (op.parameters ?? []).filter((p) => p.in === 'query')
 
-      const bodySchema = op.requestBody?.content?.['application/json']?.schema
-      const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
-      const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
+    const bodySchema = op.requestBody?.content?.['application/json']?.schema
+    const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
+    const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
 
-      // Build args Zod schema from path params
-      let argsSchema: z.ZodObject<any> | undefined
-      if (pathParams.length > 0) {
-        const shape: Record<string, z.ZodType> = {}
-        for (const p of pathParams) {
-          let zodType = p.schema ? toZod(p.schema) : z.string()
-          if (p.description) zodType = zodType.describe(p.description)
-          // Path params need coercion from string argv
-          shape[p.name] = coerceIfNeeded(zodType)
-        }
-        argsSchema = z.object(shape)
-      }
-
-      // Build options Zod schema from query params + body properties
-      const optShape: Record<string, z.ZodType> = {}
-      for (const p of queryParams) {
+    // Build args Zod schema from path params
+    let argsSchema: z.ZodObject<any> | undefined
+    if (pathParams.length > 0) {
+      const shape: Record<string, z.ZodType> = {}
+      for (const p of pathParams) {
         let zodType = p.schema ? toZod(p.schema) : z.string()
-        if (!p.required) zodType = zodType.optional()
         if (p.description) zodType = zodType.describe(p.description)
-        optShape[p.name] = coerceIfNeeded(zodType)
+        // Path params need coercion from string argv
+        shape[p.name] = coerceIfNeeded(zodType)
       }
-      for (const [key, schema] of Object.entries(bodyProps)) {
-        let zodType = toZod(schema)
-        if (!bodyRequired.has(key)) zodType = zodType.optional()
-        optShape[key] = zodType
-      }
-      const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
-
-      commands.set(name, {
-        description: op.summary ?? op.description,
-        args: argsSchema,
-        options: optionsSchema,
-        run: createHandler({
-          basePath: options.basePath,
-          fetch,
-          httpMethod,
-          path,
-          pathParams,
-          queryParams,
-          bodyProps,
-        }),
-      })
+      argsSchema = z.object(shape)
     }
+
+    // Build options Zod schema from query params + body properties
+    const optShape: Record<string, z.ZodType> = {}
+    for (const p of queryParams) {
+      let zodType = p.schema ? toZod(p.schema) : z.string()
+      if (!p.required) zodType = zodType.optional()
+      if (p.description) zodType = zodType.describe(p.description)
+      optShape[p.name] = coerceIfNeeded(zodType)
+    }
+    for (const [key, schema] of Object.entries(bodyProps)) {
+      let zodType = toZod(schema)
+      if (!bodyRequired.has(key)) zodType = zodType.optional()
+      optShape[key] = zodType
+    }
+    const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
+
+    setCommand(commands, segments, {
+      description: op.summary ?? op.description,
+      args: argsSchema,
+      options: optionsSchema,
+      run: createHandler({
+        basePath: options.basePath,
+        fetch,
+        httpMethod,
+        path,
+        pathParams,
+        queryParams,
+        bodyProps,
+      }),
+    })
   }
 
   return commands
+}
+
+export declare namespace generateCommands {
+  /** Options for generating incur commands from an OpenAPI spec. */
+  type Options = {
+    /** Base path prepended to generated request paths. */
+    basePath?: string | undefined
+    /** Configuration for generated OpenAPI commands. */
+    config?: Config | undefined
+  }
+}
+
+const openapiMethods = new Set([
+  'delete',
+  'get',
+  'head',
+  'options',
+  'patch',
+  'post',
+  'put',
+  'trace',
+])
+
+function openapiOperations(paths: Record<string, Record<string, unknown>>) {
+  const operations: OperationEntry[] = []
+  for (const [path, methods] of Object.entries(paths))
+    for (const [method, operation] of Object.entries(methods))
+      if (openapiMethods.has(method))
+        operations.push({ method, operation: operation as Operation, path })
+  return operations
+}
+
+function getNamespaceInfo(operations: OperationEntry[]) {
+  const pathOperations = new Map<string, number>()
+  const parentPaths = new Set<string>()
+
+  for (const { path } of operations) {
+    pathOperations.set(path, (pathOperations.get(path) ?? 0) + 1)
+
+    const segments = namespaceNames(path)
+    for (let i = 1; i < segments.length; i++) parentPaths.add(`/${segments.slice(0, i).join('/')}`)
+  }
+
+  return { parentPaths, pathOperations }
+}
+
+function commandSegments(options: commandSegments.Options) {
+  const { method, mode, namespaceInfo, operation, path } = options
+  if (mode === 'operation')
+    return [{ name: operation.operationId ?? `${method}_${path.replace(/[/{}]/g, '_')}` }]
+
+  const segments = namespaceSegments(path, operation)
+  const needsMethod =
+    segments.length === 0 ||
+    namespaceInfo.parentPaths.has(namespacePath(path)) ||
+    (namespaceInfo.pathOperations.get(path) ?? 0) > 1
+  const describedSegments = describeNamespaceLeaf(
+    segments,
+    operation.summary ?? operation.description,
+  )
+  return [
+    ...(describedSegments.length > 0 ? describedSegments : [{ name: 'root' }]),
+    ...(needsMethod ? [{ name: method }] : []),
+  ]
+}
+
+declare namespace commandSegments {
+  type Options = {
+    method: string
+    mode: Mode
+    namespaceInfo: {
+      parentPaths: Set<string>
+      pathOperations: Map<string, number>
+    }
+    operation: Operation
+    path: string
+  }
+}
+
+function namespaceSegments(path: string, operation?: Operation | undefined) {
+  return path
+    .split('/')
+    .map((segment) => namespaceSegment(segment, operation))
+    .filter((segment): segment is CommandSegment => segment !== undefined)
+}
+
+function namespaceNames(path: string) {
+  return namespaceSegments(path).map((segment) => segment.name)
+}
+
+function namespacePath(path: string) {
+  return `/${namespaceNames(path).join('/')}`
+}
+
+function namespaceSegment(segment: string, operation?: Operation | undefined) {
+  if (!segment) return undefined
+  const name = segment.startsWith('{') && segment.endsWith('}') ? segment.slice(1, -1) : segment
+  const description = operation?.parameters?.find(
+    (parameter) => parameter.in === 'path' && parameter.name === name,
+  )?.description
+  return {
+    ...(description ? { description } : undefined),
+    name: name.replace(/[^\w.-]+/g, '-'),
+  }
+}
+
+function describeNamespaceLeaf(segments: CommandSegment[], description: string | undefined) {
+  if (!description || segments.length === 0) return segments
+  return segments.map((segment, index) =>
+    index === segments.length - 1 && !segment.description ? { ...segment, description } : segment,
+  )
+}
+
+function setCommand(
+  commands: Map<string, GeneratedEntry>,
+  segments: CommandSegment[],
+  command: GeneratedCommand,
+) {
+  const [head, ...tail] = segments
+  if (!head) return
+  if (tail.length === 0) {
+    commands.set(head.name, command)
+    return
+  }
+
+  const group = getGroup(commands, head)
+  setCommand(group.commands, tail, command)
+}
+
+function getGroup(commands: Map<string, GeneratedEntry>, segment: CommandSegment) {
+  const existing = commands.get(segment.name)
+  if (existing && '_group' in existing) {
+    if (!existing.description && segment.description) existing.description = segment.description
+    return existing
+  }
+
+  const group: GeneratedGroup = {
+    _group: true,
+    commands: new Map(),
+    ...(segment.description ? { description: segment.description } : undefined),
+  }
+  commands.set(segment.name, group)
+  return group
 }
 
 function createHandler(config: {

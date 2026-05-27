@@ -2495,6 +2495,107 @@ describe('hosted OpenAPI CLI', () => {
       fetch.mockRestore()
     }
   })
+
+  test('namespace mode help renders path-derived command groups', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test
+
+        Usage: test <command>
+
+        Commands:
+          health  Health check
+          users   List users
+
+        Integrations:
+          completions  Generate shell completion script
+          mcp add      Register as MCP server
+          skills       Sync skill files to agents (add, list)
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --mcp                               Start as MCP stdio server
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+          --version                           Show version
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode group help renders path-derived subcommands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['users', '--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test users — List users
+
+        Usage: test users <command>
+
+        Commands:
+          get   List users
+          id    User ID
+          post  Create a user
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode runs path-derived subcommands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['users', 'get', '--limit', '5'])
+      expect(output).toMatchInlineSnapshot(`
+        "users[1]{id,name}:
+          1,Alice
+        limit: 5
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
 })
 
 async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {

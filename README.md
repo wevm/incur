@@ -337,6 +337,25 @@ $ my-cli api createUser --name Bob
 # → name: Bob
 ```
 
+Set `openapiConfig.mode` to `'namespace'` to generate nested commands from path segments instead of using `operationId`:
+
+```ts
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('api', { fetch: app.fetch, openapi: spec, openapiConfig: { mode: 'namespace' } })
+  .serve()
+```
+
+```sh
+$ my-cli api users --help
+# Commands:
+#   get   List users
+#   id    User ID
+#   post  Create a user
+
+$ my-cli api users get --limit 5
+# → users: ...
+```
+
 When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
 
 ### Serve CLIs as APIs
