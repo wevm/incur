@@ -1,5 +1,5 @@
 import { BaseError } from '../Errors.js'
-import type * as Request from './Request.js'
+import type * as Rpc from './Rpc.js'
 
 /** Error thrown by client transports. */
 export class ClientError extends BaseError {
@@ -8,12 +8,12 @@ export class ClientError extends BaseError {
   code: string | undefined
   /** Full error envelope or diagnostic payload. */
   data: unknown | undefined
-  /** Request error object. */
-  error: Extract<Request.Envelope, { ok: false }>['error'] | undefined
+  /** RPC error object. */
+  error: Extract<Rpc.Envelope, { ok: false }>['error'] | undefined
   /** Field validation errors. */
-  fieldErrors: Extract<Request.Envelope, { ok: false }>['error']['fieldErrors'] | undefined
+  fieldErrors: Extract<Rpc.Envelope, { ok: false }>['error']['fieldErrors'] | undefined
   /** Response metadata. */
-  meta: Request.Meta | undefined
+  meta: Rpc.Meta | undefined
   /** Whether the operation can be retried. */
   retryable: boolean | undefined
   /** HTTP status when available. */
@@ -38,12 +38,12 @@ export declare namespace ClientError {
     code?: string | undefined
     /** Full error envelope or diagnostic payload. */
     data?: unknown | undefined
-    /** Request error object. */
-    error?: Extract<Request.Envelope, { ok: false }>['error'] | undefined
+    /** RPC error object. */
+    error?: Extract<Rpc.Envelope, { ok: false }>['error'] | undefined
     /** Field validation errors. */
-    fieldErrors?: Extract<Request.Envelope, { ok: false }>['error']['fieldErrors'] | undefined
+    fieldErrors?: Extract<Rpc.Envelope, { ok: false }>['error']['fieldErrors'] | undefined
     /** Response metadata. */
-    meta?: Request.Meta | undefined
+    meta?: Rpc.Meta | undefined
     /** Whether the operation can be retried. */
     retryable?: boolean | undefined
     /** HTTP status when available. */

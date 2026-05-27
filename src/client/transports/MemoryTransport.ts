@@ -4,19 +4,17 @@ import { createClientLocal } from '../../internal/client-local.js'
 import { createClientRequest } from '../../internal/client-request.js'
 import * as RuntimeContext from '../../internal/runtime-context.js'
 import { ClientError } from '../ClientError.js'
-import type * as Discover from '../Discover.js'
 import type * as Local from '../Local.js'
-import type * as ClientRequest from '../Request.js'
+import type * as Resources from '../Resources.js'
+import type * as Rpc from '../Rpc.js'
 import type * as Transport from './Transport.js'
 
 /** Memory transport factory. */
 export type MemoryTransport = Transport.Factory<
   'memory',
   {
-    request(
-      request: ClientRequest.Request,
-    ): Promise<ClientRequest.Response | ClientRequest.StreamResponse>
-    discover(request: Discover.Request): Promise<Discover.Response>
+    request(request: Rpc.Request): Promise<Rpc.Response | Rpc.StreamResponse>
+    discover(request: Resources.Request): Promise<Resources.Response>
     local: Local.Runtime
   }
 >

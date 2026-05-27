@@ -2,7 +2,7 @@ import { stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
-import type * as ClientDiscover from '../client/Discover.js'
+import type * as Resources from '../client/Resources.js'
 import { BaseError } from '../Errors.js'
 import * as Formatter from '../Formatter.js'
 import * as Help from '../Help.js'
@@ -48,7 +48,7 @@ const requestSchema = z.discriminatedUnion('resource', [
 /** Creates the shared client discovery executor. */
 export function createClientDiscover(ctx: RuntimeContext.RuntimeCliContext) {
   return {
-    async discover(request: unknown): Promise<ClientDiscover.Response> {
+    async discover(request: unknown): Promise<Resources.Response> {
       const parsedRequest = requestSchema.safeParse(request)
       if (!parsedRequest.success)
         throw new DiscoverError('VALIDATION_ERROR', 'Invalid discovery request.', 400)

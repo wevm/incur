@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 import * as Cli from '../../Cli.js'
 import { ClientError } from '../ClientError.js'
-import type * as Discover from '../Discover.js'
+import type * as Resources from '../Resources.js'
 import * as HttpTransport from './HttpTransport.js'
 
 function resolve(fetch: typeof globalThis.fetch) {
@@ -298,7 +298,7 @@ describe('HttpTransport', () => {
     const { requests, transport } = connect(cli)
 
     const cases: {
-      request: Discover.Request
+      request: Resources.Request
       url: string
       assert(response: Awaited<ReturnType<typeof transport.discover>>): void
     }[] = [

@@ -1,6 +1,6 @@
 import type * as Formatter from '../Formatter.js'
 
-/** Request accepted by `transport.discover()`. */
+/** Resource request accepted by `transport.discover()`. */
 export type Request =
   | { resource: 'llms'; command?: string | undefined; format?: Formatter.Format | undefined }
   | { resource: 'llmsFull'; command?: string | undefined; format?: Formatter.Format | undefined }
@@ -11,7 +11,7 @@ export type Request =
   | { resource: 'skill'; name: string }
   | { resource: 'mcpTools' }
 
-/** Response returned by `transport.discover()`. */
+/** Resource response returned by `transport.discover()`. */
 export type Response =
   | { contentType: string; body: string }
   | { contentType: string; data: unknown }

@@ -1,6 +1,6 @@
 import { ClientError } from '../ClientError.js'
-import type * as Discover from '../Discover.js'
-import type * as ClientRequest from '../Request.js'
+import type * as Resources from '../Resources.js'
+import type * as Rpc from '../Rpc.js'
 import type * as Transport from './Transport.js'
 
 /** HTTP transport factory. */
@@ -8,10 +8,8 @@ export type HttpTransport = Transport.Factory<
   'http',
   {
     baseUrl: URL
-    request(
-      request: ClientRequest.Request,
-    ): Promise<ClientRequest.Response | ClientRequest.StreamResponse>
-    discover(request: Discover.Request): Promise<Discover.Response>
+    request(request: Rpc.Request): Promise<Rpc.Response | Rpc.StreamResponse>
+    discover(request: Resources.Request): Promise<Resources.Response>
   }
 >
 
@@ -71,9 +69,7 @@ async function requestFetch(fetcher: typeof globalThis.fetch, input: URL, init: 
   }
 }
 
-async function parseRpcResponse(
-  response: Response,
-): Promise<ClientRequest.Response | ClientRequest.StreamResponse> {
+async function parseRpcResponse(response: Response): Promise<Rpc.Response | Rpc.StreamResponse> {
   const contentType = essence(response.headers.get('content-type') ?? '')
   if (contentType === 'application/x-ndjson') {
     if (!response.body) throw new ClientError('Streaming RPC response is missing a body.')
@@ -86,14 +82,14 @@ async function parseRpcResponse(
   return value
 }
 
-function streamResponse(body: ReadableStream<Uint8Array>): ClientRequest.StreamResponse {
+function streamResponse(body: ReadableStream<Uint8Array>): Rpc.StreamResponse {
   return {
     stream: true,
     async *records() {
       const reader = body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let terminal: ClientRequest.StreamRecord | undefined
+      let terminal: Rpc.StreamRecord | undefined
       try {
         while (true) {
           const { value, done } = await reader.read()
@@ -132,7 +128,7 @@ function* drainRecords(buffer: string): Generator<{ line: string; rest: string }
   }
 }
 
-function parseRecord(line: string): ClientRequest.StreamRecord {
+function parseRecord(line: string): Rpc.StreamRecord {
   let value: unknown
   try {
     value = JSON.parse(line)
@@ -155,7 +151,7 @@ async function parseJson(response: Response) {
   }
 }
 
-async function parseDiscoverResponse(response: Response): Promise<Discover.Response> {
+async function parseDiscoverResponse(response: Response): Promise<Resources.Response> {
   const contentType = response.headers.get('content-type') ?? ''
   if (!response.ok) {
     const data = contentType.includes('application/json')
@@ -176,7 +172,7 @@ async function parseDiscoverResponse(response: Response): Promise<Discover.Respo
   return { contentType: essence(contentType), body: await response.text() }
 }
 
-function discoveryUrl(baseUrl: URL, request: Discover.Request) {
+function discoveryUrl(baseUrl: URL, request: Resources.Request) {
   const path = (() => {
     if (request.resource === 'llms') return '_incur/llms'
     if (request.resource === 'llmsFull') return '_incur/llms-full'
@@ -214,7 +210,7 @@ function essence(value: string) {
   return value.split(';', 1)[0]!.trim().toLowerCase()
 }
 
-function isEnvelope(value: unknown): value is ClientRequest.Response {
+function isEnvelope(value: unknown): value is Rpc.Response {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -223,7 +219,7 @@ function isEnvelope(value: unknown): value is ClientRequest.Response {
   )
 }
 
-function isRecord(value: unknown): value is ClientRequest.StreamRecord {
+function isRecord(value: unknown): value is Rpc.StreamRecord {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -235,7 +231,7 @@ function isRecord(value: unknown): value is ClientRequest.StreamRecord {
 
 function isErrorPayload(
   value: unknown,
-): value is { error: Extract<ClientRequest.Envelope, { ok: false }>['error'] } {
+): value is { error: Extract<Rpc.Envelope, { ok: false }>['error'] } {
   return (
     typeof value === 'object' &&
     value !== null &&

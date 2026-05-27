@@ -5,7 +5,7 @@ import { z } from 'zod'
 import * as Cli from '../../Cli.js'
 import { DiscoverError } from '../../internal/client-discover.js'
 import { ClientError } from '../ClientError.js'
-import type * as Discover from '../Discover.js'
+import type * as Resources from '../Resources.js'
 import * as MemoryTransport from './MemoryTransport.js'
 
 describe('MemoryTransport', () => {
@@ -96,7 +96,7 @@ describe('MemoryTransport', () => {
     })
     const transport = MemoryTransport.create(cli)()
     const cases: {
-      request: Discover.Request
+      request: Resources.Request
       assert(response: Awaited<ReturnType<typeof transport.discover>>): void
     }[] = [
       {

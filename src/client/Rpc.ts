@@ -1,7 +1,7 @@
 import type { FieldError } from '../Errors.js'
 import type * as Formatter from '../Formatter.js'
 
-/** Request accepted by `transport.request()`. */
+/** RPC request accepted by `transport.request()`. */
 export type Request = {
   /** Canonical command ID. */
   command: string
@@ -39,7 +39,7 @@ export type Output = {
   truncated?: boolean | undefined
 }
 
-/** Request metadata. */
+/** RPC response metadata. */
 export type Meta = {
   /** Canonical command ID. */
   command: string
@@ -49,7 +49,7 @@ export type Meta = {
   duration: string
 }
 
-/** Full request success/error envelope. */
+/** Full RPC success/error envelope. */
 export type Envelope =
   | {
       ok: true
@@ -70,16 +70,16 @@ export type Envelope =
       status?: number | undefined
     }
 
-/** Non-streaming request response. */
+/** Non-streaming RPC response. */
 export type Response = Envelope
 
-/** Streaming request record. */
+/** Streaming RPC record. */
 export type StreamRecord =
   | { type: 'chunk'; data: unknown }
   | ({ type: 'done' } & Extract<Envelope, { ok: true }>)
   | ({ type: 'error' } & Extract<Envelope, { ok: false }>)
 
-/** Streaming request response. */
+/** Streaming RPC response. */
 export type StreamResponse = {
   stream: true
   records(): AsyncGenerator<StreamRecord, StreamRecord, unknown>

@@ -1,7 +1,7 @@
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { z } from 'zod'
 
-import type * as ClientRequest from '../client/Request.js'
+import type * as Rpc from '../client/Rpc.js'
 import type { FieldError } from '../Errors.js'
 import * as Filter from '../Filter.js'
 import * as Formatter from '../Formatter.js'
@@ -34,9 +34,7 @@ export function createClientRequest(
   options: createClientRequest.Options = {},
 ) {
   return {
-    async request(
-      request: unknown,
-    ): Promise<ClientRequest.Response | ClientRequest.StreamResponse> {
+    async request(request: unknown): Promise<Rpc.Response | Rpc.StreamResponse> {
       const start = performance.now()
       const parsed = requestSchema.safeParse(request)
       if (!parsed.success)
@@ -115,12 +113,12 @@ function streamResponse(
   stream: AsyncGenerator<unknown, unknown, unknown>,
   command: string,
   start: number,
-  request: ClientRequest.Request,
-): ClientRequest.StreamResponse {
+  request: Rpc.Request,
+): Rpc.StreamResponse {
   return {
     stream: true,
     async *records() {
-      let terminal: ClientRequest.StreamRecord
+      let terminal: Rpc.StreamRecord
       try {
         while (true) {
           const { value, done } = await stream.next()
@@ -174,8 +172,8 @@ function successEnvelope(
   start: number,
   data: unknown,
   cta?: unknown | undefined,
-  request: ClientRequest.Request = { command },
-): Extract<ClientRequest.Envelope, { ok: true }> {
+  request: Rpc.Request = { command },
+): Extract<Rpc.Envelope, { ok: true }> {
   const selected = applySelection(data, request.selection)
   const output = renderOutput(selected, request)
   const payload = outputPayload(output, request)
@@ -197,7 +195,7 @@ function errorEnvelope(
     retryable?: boolean | undefined
   },
   cta?: unknown | undefined,
-): Extract<ClientRequest.Envelope, { ok: false }> {
+): Extract<Rpc.Envelope, { ok: false }> {
   return {
     ok: false,
     error,
@@ -215,7 +213,7 @@ function errorRecord(
     retryable?: boolean | undefined
   },
   cta: unknown | undefined,
-): Extract<ClientRequest.StreamRecord, { type: 'error' }> {
+): Extract<Rpc.StreamRecord, { type: 'error' }> {
   return { type: 'error', ...errorEnvelope(command, start, error, cta) }
 }
 
@@ -227,7 +225,7 @@ function applySelection(data: unknown, selection: string[] | undefined) {
   )
 }
 
-function renderOutput(data: unknown, request: ClientRequest.Request) {
+function renderOutput(data: unknown, request: Rpc.Request) {
   const format = request.outputFormat ?? Formatter.defaultFormat
   const text = Formatter.format(data, format)
   const count = estimateTokenCount(text)
@@ -248,8 +246,8 @@ function renderOutput(data: unknown, request: ClientRequest.Request) {
 
 function outputPayload(
   output: ReturnType<typeof renderOutput>,
-  request: ClientRequest.Request,
-): ClientRequest.Output | undefined {
+  request: Rpc.Request,
+): Rpc.Output | undefined {
   if (!output.text && !includeTokenMetadata(request)) return undefined
   return {
     text: output.text,
@@ -266,7 +264,7 @@ function outputPayload(
   }
 }
 
-function includeTokenMetadata(request: ClientRequest.Request) {
+function includeTokenMetadata(request: Rpc.Request) {
   return (
     request.outputTokenCount ||
     request.outputTokenLimit !== undefined ||
@@ -274,7 +272,7 @@ function includeTokenMetadata(request: ClientRequest.Request) {
   )
 }
 
-function meta(command: string, start: number, cta: unknown | undefined): ClientRequest.Meta {
+function meta(command: string, start: number, cta: unknown | undefined): Rpc.Meta {
   return {
     command,
     duration: `${Math.round(performance.now() - start)}ms`,
