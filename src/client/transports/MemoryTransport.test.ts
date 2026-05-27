@@ -323,6 +323,79 @@ describe('MemoryTransport', () => {
     }
   })
 
+  test('discovery reuses CLI manifest and skill projection behavior', async () => {
+    const cli = Cli.create('app', { description: 'App' })
+      .command('status', {
+        description: 'Show status',
+        aliases: ['st'],
+        args: z.object({ id: z.string() }),
+        options: z.object({ verbose: z.boolean().default(false) }),
+        output: z.object({ id: z.string() }),
+        examples: [
+          {
+            args: { id: '123' },
+            options: { verbose: true },
+            description: 'Verbose status',
+          },
+        ],
+        run(c) {
+          return { id: c.args.id }
+        },
+      })
+      .command('api', {
+        description: 'Proxy API',
+        fetch: () => new Response('{}'),
+      })
+
+    const transport = MemoryTransport.create(cli)()
+
+    await expect(transport.discover({ resource: 'llms', format: 'json' })).resolves.toMatchObject({
+      data: {
+        commands: [
+          { name: 'api', description: 'Proxy API' },
+          { name: 'status', description: 'Show status' },
+        ],
+      },
+    })
+
+    const full = await transport.discover({ resource: 'llmsFull', format: 'json' })
+    expect(full).toMatchObject({
+      contentType: 'application/json',
+      data: {
+        commands: [
+          { name: 'api', description: 'Proxy API' },
+          {
+            name: 'status',
+            description: 'Show status',
+            examples: [
+              {
+                command: 'status 123 --verbose true',
+                description: 'Verbose status',
+              },
+            ],
+            schema: {
+              output: { properties: { id: { type: 'string' } }, required: ['id'] },
+            },
+          },
+        ],
+      },
+    })
+
+    const schema = await transport.discover({ resource: 'schema', command: 'status' })
+    expect(schema).toMatchObject({
+      data: {
+        output: { properties: { id: { type: 'string' } }, required: ['id'] },
+      },
+    })
+
+    const markdown = await transport.discover({ resource: 'llmsFull' })
+    if (!('body' in markdown)) throw new Error('expected markdown body')
+    expect(markdown.body).toContain('Verbose status')
+    expect(markdown.body).toContain('## Output')
+    expect(markdown.body).toContain('Fetch gateway. Pass path segments')
+    expect(markdown.body).not.toMatch(/^# app st$/m)
+  })
+
   test('wraps discovery failures as client errors with internal cause', async () => {
     const cli = Cli.create('app').command('status', {
       run() {

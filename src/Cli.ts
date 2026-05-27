@@ -14,7 +14,6 @@ import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { createClientDiscover, DiscoverError } from './internal/client-discover.js'
 import { createClientRequest, getClientRequestStatus } from './internal/client-request.js'
-import * as RuntimeContext from './internal/runtime-context.js'
 import {
   builtinCommands,
   type CommandMeta,
@@ -26,6 +25,7 @@ import {
 import * as Command from './internal/command.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
+import * as RuntimeContext from './internal/runtime-context.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
@@ -1106,14 +1106,8 @@ async function serveImpl(
       exit(1)
       return
     }
-    const cmd = resolved.command
     const format = formatExplicit ? formatFlag : Formatter.defaultFormat
-    const result: Record<string, unknown> = {}
-    if (cmd.args) result.args = Schema.toJsonSchema(cmd.args)
-    if (cmd.env) result.env = Schema.toJsonSchema(cmd.env)
-    if (cmd.options) result.options = Schema.toJsonSchema(cmd.options)
-    if (cmd.output) result.output = Schema.toJsonSchema(cmd.output)
-    writeln(Formatter.format(result, format))
+    writeln(Formatter.format(buildCommandSchema(resolved.command) ?? {}, format))
     return
   }
 
@@ -1825,8 +1819,7 @@ async function fetchImpl(
     if (segments[2] === 'index.json' && segments.length === 3) {
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
-        const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
-        const meta = fmMatch ? (yamlParse(fmMatch[1]!) as Record<string, string>) : {}
+        const meta = parseSkillFrontmatter(f.content)
         return {
           name: f.dir || name,
           description: meta.description ?? '',
@@ -2604,7 +2597,7 @@ export type CommandsMap = Record<
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
 export type CommandEntry =
-  | CommandDefinition<any, any, any>
+  | CommandDefinition<any, any, any, any>
   | InternalGroup
   | InternalFetchGateway
   | InternalAlias
@@ -2688,7 +2681,7 @@ export function resolveAlias(
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
 /** @internal Maps CLI instances to their middleware arrays. */
-const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
+export const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
 
 /** @internal Maps root CLI instances to their command definitions. */
 export const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
@@ -3017,7 +3010,7 @@ function formatCta(name: string, cta: Cta): FormattedCta {
 }
 
 /** @internal Builds the `--llms` index manifest (name + description only) from the command tree. */
-function buildIndexManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
+export function buildIndexManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
   return {
     version: 'incur.v1',
     commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
@@ -3047,7 +3040,7 @@ function collectIndexCommands(
 }
 
 /** @internal Builds the `--llms` manifest from the command tree. */
-function buildManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
+export function buildManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
   return {
     version: 'incur.v1',
     commands: collectCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
@@ -3078,14 +3071,13 @@ function collectCommands(
       const cmd: (typeof result)[number] = { name: path.join(' ') }
       if (entry.description) cmd.description = entry.description
 
-      const inputSchema = buildInputSchema(entry.args, entry.env, entry.options)
-      const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
-      if (inputSchema || outputSchema) {
+      const schema = buildCommandSchema(entry)
+      if (schema) {
         cmd.schema = {}
-        if (inputSchema?.args) cmd.schema.args = inputSchema.args
-        if (inputSchema?.env) cmd.schema.env = inputSchema.env
-        if (inputSchema?.options) cmd.schema.options = inputSchema.options
-        if (outputSchema) cmd.schema.output = outputSchema
+        if (schema.args) cmd.schema.args = schema.args
+        if (schema.env) cmd.schema.env = schema.env
+        if (schema.options) cmd.schema.options = schema.options
+        if (schema.output) cmd.schema.output = schema.output
       }
 
       const examples = formatExamples(entry.examples)
@@ -3188,27 +3180,32 @@ export function parseSkillFrontmatter(content: string): {
   return meta as { description?: string | undefined; name?: string | undefined }
 }
 
-/** @internal Builds separate args, env, and options JSON Schemas. */
-function buildInputSchema(
-  args: z.ZodObject<any> | undefined,
-  env: z.ZodObject<any> | undefined,
-  options: z.ZodObject<any> | undefined,
+/** @internal Builds separate command JSON Schemas. */
+export function buildCommandSchema(
+  command: Pick<
+    CommandDefinition<any, any, any, any, any, any>,
+    'args' | 'env' | 'options' | 'output'
+  >,
 ):
   | {
       args?: Record<string, unknown> | undefined
       env?: Record<string, unknown> | undefined
       options?: Record<string, unknown> | undefined
+      output?: Record<string, unknown> | undefined
     }
   | undefined {
-  if (!args && !env && !options) return undefined
+  const { args, env, options, output } = command
+  if (!args && !env && !options && !output) return undefined
   const result: {
     args?: Record<string, unknown> | undefined
     env?: Record<string, unknown> | undefined
     options?: Record<string, unknown> | undefined
+    output?: Record<string, unknown> | undefined
   } = {}
   if (args) result.args = Schema.toJsonSchema(args)
   if (env) result.env = Schema.toJsonSchema(env)
   if (options) result.options = Schema.toJsonSchema(options)
+  if (output) result.output = Schema.toJsonSchema(output)
   return result
 }
 

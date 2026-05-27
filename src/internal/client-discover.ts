@@ -1,8 +1,7 @@
-import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
+import { stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
-import type { CommandDefinition as CliCommandDefinition, CommandEntry } from '../Cli.js'
 import type * as ClientDiscover from '../client/Discover.js'
 import { BaseError } from '../Errors.js'
 import * as Formatter from '../Formatter.js'
@@ -11,8 +10,6 @@ import * as Mcp from '../Mcp.js'
 import * as Openapi from '../Openapi.js'
 import * as Skill from '../Skill.js'
 import * as RuntimeContext from './runtime-context.js'
-
-type CommandDefinition = CliCommandDefinition<any, any, any, any, any, any>
 
 /** Discover failure with protocol code and HTTP status metadata. */
 export class DiscoverError extends BaseError {
@@ -75,7 +72,7 @@ export function createClientDiscover(ctx: RuntimeContext.RuntimeCliContext) {
             contentType: 'application/json',
             data: {
               skills: files.map((file) => {
-                const meta = parseFrontmatter(file.content)
+                const meta = Cli.parseSkillFrontmatter(file.content)
                 return {
                   name: file.dir || ctx.name,
                   description: meta.description ?? '',
@@ -113,32 +110,41 @@ export function createClientDiscover(ctx: RuntimeContext.RuntimeCliContext) {
           contentType: 'text/plain',
           body: Help.formatRoot(scoped.id, {
             description: scoped.description,
-            commands: collect(scoped.commands, [], false).map(({ name, description }) => ({
-              name,
-              ...(description ? { description } : undefined),
-            })),
+            commands: Cli.buildIndexManifest(scoped.commands, []).commands.map(
+              ({ name, description }) => ({
+                name,
+                ...(description ? { description } : undefined),
+              }),
+            ),
           }),
         }
       }
 
       if (parsed.resource === 'schema') {
         if (scoped.type === 'command') {
-          const schema = RuntimeContext.buildInputSchema(scoped.command)
+          const schema = Cli.buildCommandSchema(scoped.command)
           return { contentType: 'application/json', data: schema ?? {} }
         }
         return {
           contentType: 'application/json',
-          data: manifest(scoped.commands, scoped.prefix, true),
+          data: Cli.buildManifest(scoped.commands, scoped.prefix),
         }
       }
 
       const full = parsed.resource === 'llmsFull'
       const format = parsed.format ?? 'md'
-      const data = manifest(scoped.commands, scoped.prefix, full)
+      const data = full
+        ? Cli.buildManifest(scoped.commands, scoped.prefix)
+        : Cli.buildIndexManifest(scoped.commands, scoped.prefix)
       if (format === 'json') return { contentType: 'application/json', data }
       if (format === 'md') {
         const groups = new Map<string, string>()
-        const entries = skillCommands(scoped.commands, scoped.prefix, groups, scoped.rootCommand)
+        const entries = Cli.collectSkillCommands(
+          scoped.commands,
+          scoped.prefix,
+          groups,
+          scoped.rootCommand,
+        )
         const name = scoped.prefix.length > 0 ? `${ctx.name} ${scoped.prefix.join(' ')}` : ctx.name
         const body = full
           ? Skill.generate(name, entries, groups)
@@ -199,82 +205,8 @@ function openapi(ctx: RuntimeContext.RuntimeCliContext) {
 
 function skills(ctx: RuntimeContext.RuntimeCliContext) {
   const groups = new Map<string, string>()
-  const entries = skillCommands(ctx.commands, [], groups, ctx.rootCommand)
+  const entries = Cli.collectSkillCommands(ctx.commands, [], groups, ctx.rootCommand)
   return { files: Skill.split(ctx.name, entries, 1, groups) }
-}
-
-function manifest(commands: Map<string, CommandEntry>, prefix: string[], full: boolean) {
-  return {
-    version: 'incur.v1',
-    commands: collect(commands, prefix, full).sort((a, b) => a.name.localeCompare(b.name)),
-  }
-}
-
-function collect(commands: Map<string, CommandEntry>, prefix: string[], full: boolean) {
-  const result: {
-    name: string
-    description?: string | undefined
-    schema?: Record<string, unknown> | undefined
-  }[] = []
-  for (const [name, entry] of commands) {
-    if (RuntimeContext.isAlias(entry) || RuntimeContext.isFetchGateway(entry)) continue
-    const path = [...prefix, name]
-    if (RuntimeContext.isGroup(entry)) result.push(...collect(entry.commands, path, full))
-    else {
-      const command: (typeof result)[number] = { name: path.join(' ') }
-      if (entry.description) command.description = entry.description
-      if (full) {
-        const input = RuntimeContext.buildInputSchema(entry)
-        if (input || entry.output) {
-          command.schema = {}
-          if (input?.args) command.schema.args = input.args
-          if (input?.env) command.schema.env = input.env
-          if (input?.options) command.schema.options = input.options
-          if (entry.output) command.schema.output = z.toJSONSchema(entry.output)
-        }
-      }
-      result.push(command)
-    }
-  }
-  return result
-}
-
-function skillCommands(
-  commands: Map<string, CommandEntry>,
-  prefix: string[],
-  groups: Map<string, string>,
-  rootCommand?: CommandDefinition | undefined,
-): Skill.CommandInfo[] {
-  const result: Skill.CommandInfo[] = []
-  if (rootCommand) result.push(toSkillCommand(rootCommand, undefined))
-  for (const [name, entry] of commands) {
-    if (RuntimeContext.isAlias(entry) || RuntimeContext.isFetchGateway(entry)) continue
-    const path = [...prefix, name]
-    if (RuntimeContext.isGroup(entry)) {
-      if (entry.description) groups.set(path.join(' '), entry.description)
-      result.push(...skillCommands(entry.commands, path, groups))
-      continue
-    }
-    result.push(toSkillCommand(entry, path.join(' ')))
-  }
-  return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-}
-
-function toSkillCommand(command: CommandDefinition, name: string | undefined) {
-  return {
-    ...(name ? { name } : undefined),
-    ...(command.description ? { description: command.description } : undefined),
-    ...(command.args ? { args: command.args } : undefined),
-    ...(command.env ? { env: command.env } : undefined),
-    ...(command.hint ? { hint: command.hint } : undefined),
-    ...(command.options ? { options: command.options } : undefined),
-    ...(command.output ? { output: command.output } : undefined),
-  } satisfies Skill.CommandInfo
-}
-
-function parseFrontmatter(content: string) {
-  const match = content.match(/^---\n([\s\S]*?)\n---/)
-  return match ? (yamlParse(match[1]!) as Record<string, string>) : {}
 }
 
 function safeSkillName(name: string) {
