@@ -1854,24 +1854,61 @@ async function executeCommand(
 
   // Streaming path — async generator → NDJSON response
   if ('stream' in result) {
+    const iterator = result.stream
+    const encoder = new TextEncoder()
+    const meta = (cta?: FormattedCtaBlock | undefined) => ({
+      command: path,
+      duration: `${Math.round(performance.now() - start)}ms`,
+      ...(cta ? { cta } : undefined),
+    })
+    const errorRecord = (err: ErrorResult) => ({
+      type: 'error',
+      ok: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+      },
+      meta: meta(formatCtaBlock(options.name ?? path, err.cta)),
+    })
     const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder()
+      async cancel() {
+        await iterator.return(undefined)
+      },
+      async pull(controller) {
         try {
-          for await (const value of result.stream) {
+          const { value, done } = await iterator.next()
+          if (done) {
+            if (isSentinel(value) && value[sentinel] === 'error') {
+              controller.enqueue(encoder.encode(JSON.stringify(errorRecord(value)) + '\n'))
+              controller.close()
+              return
+            }
+            const cta =
+              isSentinel(value) && value[sentinel] === 'ok'
+                ? formatCtaBlock(options.name ?? path, value.cta)
+                : undefined
             controller.enqueue(
-              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
+              encoder.encode(
+                JSON.stringify({
+                  type: 'done',
+                  ok: true,
+                  meta: meta(cta),
+                }) + '\n',
+              ),
             )
+            controller.close()
+            return
           }
-          controller.enqueue(
-            encoder.encode(
-              JSON.stringify({
-                type: 'done',
-                ok: true,
-                meta: { command: path },
-              }) + '\n',
-            ),
-          )
+
+          if (isSentinel(value) && value[sentinel] === 'error') {
+            controller.enqueue(encoder.encode(JSON.stringify(errorRecord(value)) + '\n'))
+            await iterator.return(undefined)
+            controller.close()
+            return
+          }
+
+          controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'))
         } catch (error) {
           controller.enqueue(
             encoder.encode(
@@ -1879,14 +1916,16 @@ async function executeCommand(
                 type: 'error',
                 ok: false,
                 error: {
-                  code: 'UNKNOWN',
+                  code: error instanceof IncurError ? error.code : 'UNKNOWN',
                   message: error instanceof Error ? error.message : String(error),
+                  ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
                 },
+                meta: meta(),
               }) + '\n',
             ),
           )
+          controller.close()
         }
-        controller.close()
       },
     })
     return new Response(stream, {
@@ -2719,6 +2758,7 @@ async function handleStreaming(
             error: {
               code: error instanceof IncurError ? error.code : 'UNKNOWN',
               message: error instanceof Error ? error.message : String(error),
+              ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
             },
           }),
         )
@@ -2802,6 +2842,7 @@ async function handleStreaming(
         error: {
           code: error instanceof IncurError ? error.code : 'UNKNOWN',
           message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
         },
         meta: {
           command: ctx.path,
@@ -2925,11 +2966,11 @@ function collectCommands(
 }
 
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
-function collectSkillCommands(
+export function collectSkillCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
   groups: Map<string, string>,
-  rootCommand?: CommandDefinition<any, any, any> | undefined,
+  rootCommand?: SkillCommandSource | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
   if (rootCommand) {
@@ -2977,6 +3018,11 @@ function collectSkillCommands(
   return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
+type SkillCommandSource = Pick<
+  CommandDefinition<any, any, any, any, any, any>,
+  'args' | 'description' | 'env' | 'examples' | 'hint' | 'options' | 'output'
+>
+
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
 export function formatExamples(
   examples: Example<any, any>[] | undefined,
@@ -2991,6 +3037,18 @@ export function formatExamples(
     if (ex.description) result.description = ex.description
     return result
   })
+}
+
+/** @internal Parses YAML frontmatter from generated skill Markdown. */
+export function parseSkillFrontmatter(content: string): {
+  description?: string | undefined
+  name?: string | undefined
+} {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const meta = yamlParse(match[1]!)
+  if (!meta || typeof meta !== 'object') return {}
+  return meta as { description?: string | undefined; name?: string | undefined }
 }
 
 /** @internal Builds separate args, env, and options JSON Schemas. */
