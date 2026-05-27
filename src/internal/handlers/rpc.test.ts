@@ -4,7 +4,7 @@ import { z } from 'zod'
 import * as Cli from '../../Cli.js'
 import * as Formatter from '../../Formatter.js'
 import * as RuntimeContext from '../runtime-context.js'
-import { createRpcHandler } from './rpc.js'
+import { createRpcHandler, getRpcStatus } from './rpc.js'
 
 function createFixture() {
   const order: string[] = []
@@ -48,6 +48,21 @@ function createFixture() {
     async *run(c) {
       yield { step: 1 }
       return c.error({ code: 'STREAM_FAILED', message: 'nope', retryable: true })
+    },
+  })
+  router.command('denied', {
+    run(c) {
+      return c.error({
+        code: 'DENIED',
+        cta: { commands: ['project list'] },
+        message: 'Denied.',
+        retryable: true,
+      })
+    },
+  })
+  router.command('throw', {
+    run() {
+      throw new Error('boom')
     },
   })
 
@@ -120,7 +135,36 @@ describe('createRpcHandler', () => {
     ])
   })
 
-  test('rejects invalid RPC shape, unknown commands, groups, aliases, and raw fetch gateways', async () => {
+  test('rejects malformed RPC requests with field errors', async () => {
+    const { ctx } = createFixture()
+    const { request } = createRpcHandler(ctx)
+    const cases = [
+      null,
+      {},
+      { command: 1 },
+      { command: 'project list', args: [] },
+      { command: 'project list', options: [] },
+      { command: 'project list', outputFormat: 'xml' },
+      { command: 'project list', outputTokenLimit: -1 },
+      { command: 'project list', outputTokenOffset: 1.5 },
+      { command: 'project list', selection: [] },
+    ]
+
+    for (const item of cases) {
+      const response = await request(item)
+      expect(response).toMatchObject({
+        ok: false,
+        error: {
+          code: 'INVALID_RPC_REQUEST',
+          fieldErrors: expect.arrayContaining([
+            expect.objectContaining({ message: expect.any(String) }),
+          ]),
+        },
+      })
+    }
+  })
+
+  test('rejects unknown commands, groups, aliases, and raw fetch gateways', async () => {
     const { ctx } = createFixture()
     const { request } = createRpcHandler(ctx)
     await expect(request({ command: '' })).resolves.toMatchObject({
@@ -175,6 +219,36 @@ describe('createRpcHandler', () => {
         options: {},
       }),
     ).resolves.toMatchObject({ ok: false, error: { code: 'VALIDATION_ERROR' } })
+  })
+
+  test('returns command error envelopes with retryable and CTA metadata', async () => {
+    const { ctx } = createFixture()
+    const response = await createRpcHandler(ctx, { env: { API_KEY: 'k' } }).request({
+      command: 'project denied',
+    })
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: 'DENIED', message: 'Denied.', retryable: true },
+      meta: {
+        command: 'project denied',
+        cta: {
+          commands: [{ command: 'root project list' }],
+          description: 'Suggested command:',
+        },
+      },
+    })
+  })
+
+  test('returns thrown errors as unknown command failures', async () => {
+    const { ctx } = createFixture()
+    await expect(
+      createRpcHandler(ctx, { env: { API_KEY: 'k' } }).request({ command: 'project throw' }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'UNKNOWN', message: 'boom' },
+      meta: { command: 'project throw' },
+    })
   })
 
   test('applies selection, formatting, token metadata, and CTA metadata', async () => {
@@ -331,5 +405,14 @@ describe('createRpcHandler', () => {
     await iterator.next()
     await iterator.return(undefined as any)
     expect(order).toContain('stream:return')
+  })
+
+  test('maps RPC error codes to HTTP statuses', () => {
+    expect(getRpcStatus('COMMAND_NOT_FOUND')).toBe(404)
+    expect(getRpcStatus('VALIDATION_ERROR')).toBe(400)
+    expect(getRpcStatus('INVALID_RPC_REQUEST')).toBe(400)
+    expect(getRpcStatus('COMMAND_GROUP')).toBe(400)
+    expect(getRpcStatus('FETCH_GATEWAY')).toBe(400)
+    expect(getRpcStatus('UNKNOWN')).toBe(500)
   })
 })
