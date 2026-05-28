@@ -43,6 +43,7 @@
     "examples",
     "dist",
     "src",
+    "skills",
     "SKILL.md"
   ],
   "dependencies": {
