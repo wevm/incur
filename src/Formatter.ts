@@ -4,8 +4,11 @@ import { stringify as yamlStringify } from 'yaml'
 /** Supported output formats. */
 export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl'
 
+/** Default rendered output format. */
+export const defaultFormat = 'toon' satisfies Format
+
 /** Serializes a value to the specified format. Defaults to TOON. */
-export function format(value: unknown, fmt: Format = 'toon'): string {
+export function format(value: unknown, fmt: Format = defaultFormat): string {
   if (value == null) return ''
   if (fmt === 'json') {
     if (typeof value === 'string') {

@@ -8,6 +8,7 @@
     "target": "esnext",
     "paths": {
       "incur": ["./src/index.ts"],
+      "incur/client": ["./src/client/index.ts"],
       "incur/register": ["./src/Register.ts"]
     },
 

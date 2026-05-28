@@ -1,4 +1,4 @@
-import { Cli, SyncSkills } from 'incur'
+import { Cli, SyncSkills, z } from 'incur'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -286,6 +286,44 @@ test('list includes root command skill', async () => {
   const names = result.map((s) => s.name)
   expect(names).toContain('test')
   expect(names).toContain('test-ping')
+})
+
+test('sync uses CLI skill projection for aliases, fetch gateways, examples, and output', async () => {
+  const tmp = join(tmpdir(), `clac-sync-drift-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('tool')
+    .command('real', {
+      description: 'Real command',
+      aliases: ['r'],
+      options: z.object({ dryRun: z.boolean().default(false) }),
+      output: z.object({ value: z.string() }),
+      examples: [{ options: { dryRun: true }, description: 'Preview' }],
+      run: () => ({ value: 'ok' }),
+    })
+    .command('api', { description: 'Raw API', fetch: () => new Response('{}') })
+
+  const commands = Cli.toCommands.get(cli)!
+  const listed = await SyncSkills.list('tool', commands)
+  const names = listed.map((skill) => skill.name)
+  expect(names).toContain('tool-api')
+  expect(names).toContain('tool-real')
+  expect(names).not.toContain('tool-r')
+
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+  const synced = await SyncSkills.sync('tool', commands, {
+    depth: 0,
+    global: false,
+    cwd: installDir,
+  })
+  const content = readFileSync(join(synced.paths[0]!, 'SKILL.md'), 'utf8')
+  expect(content).toContain('Preview')
+  expect(content).toContain('## Output')
+  expect(content).toContain('Fetch gateway. Pass path segments')
+  expect(content).not.toMatch(/^# tool r$/m)
+
+  rmSync(tmp, { recursive: true, force: true })
 })
 
 test('list results are sorted alphabetically', async () => {

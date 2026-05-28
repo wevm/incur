@@ -159,6 +159,28 @@ test('Cta accepts object form', () => {
   expectTypeOf<{ command: 'auth login'; description: 'Log in' }>().toMatchTypeOf<Cli.Cta>()
 })
 
+test('OpenAPI-mounted operations are included in CLI command map type', () => {
+  const cli = Cli.create('test').command('api', {
+    fetch: () => new Response('{}'),
+    openapi: {
+      paths: {
+        '/users': {
+          get: {
+            operationId: 'listUsers',
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    },
+  })
+
+  expectTypeOf<typeof cli>().toMatchTypeOf<
+    Cli.Cli<{
+      'api listUsers': { args: Record<string, unknown>; options: Record<string, unknown> }
+    }>
+  >()
+})
+
 test('Cta narrows strings and objects to registered commands', () => {
   type Commands = {
     get: { args: { id: number }; options: {} }

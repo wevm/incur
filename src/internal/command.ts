@@ -81,12 +81,20 @@ export async function execute(command: any, options: execute.Options): Promise<e
       // HTTP mode: positional args from URL path segments, options from body/query
       const parsed = Parser.parse(argv, { args: command.args })
       args = parsed.args
-      parsedOptions = command.options ? command.options.parse(inputOptions) : {}
-    } else {
+      parsedOptions = command.options ? Parser.zodParse(command.options, inputOptions) : {}
+    } else if (parseMode === 'flat') {
       // MCP mode: all params come from inputOptions, split into args vs options
       const split = splitParams(inputOptions, command)
-      args = command.args ? command.args.parse(split.args) : {}
-      parsedOptions = command.options ? command.options.parse(split.options) : {}
+      args = command.args ? Parser.zodParse(command.args, split.args) : {}
+      parsedOptions = command.options ? Parser.zodParse(command.options, split.options) : {}
+    } else {
+      // RPC mode: args and options are already separated structured values.
+      const input = inputOptions as {
+        args?: Record<string, unknown>
+        options?: Record<string, unknown>
+      }
+      args = command.args ? Parser.zodParse(command.args, input.args ?? {}) : {}
+      parsedOptions = command.options ? Parser.zodParse(command.options, input.options ?? {}) : {}
     }
 
     // Parse env
@@ -128,7 +136,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
         })
         async function* wrapped() {
           try {
-            yield* raw as AsyncGenerator<unknown, unknown, unknown>
+            return yield* raw as AsyncGenerator<unknown, unknown, unknown>
           } finally {
             resolveStreamConsumed!()
           }
@@ -296,8 +304,9 @@ export declare namespace execute {
      * - `'argv'` (default): parse both args and options from argv tokens (CLI mode)
      * - `'split'`: args from argv, options from inputOptions (HTTP mode)
      * - `'flat'`: all params from inputOptions, split by schema shapes (MCP mode)
+     * - `'structured'`: inputOptions contains separate args/options objects (RPC mode)
      */
-    parseMode?: 'argv' | 'split' | 'flat' | undefined
+    parseMode?: 'argv' | 'split' | 'flat' | 'structured' | undefined
     /** The resolved command path. */
     path: string
     /** Vars schema for middleware variables. */

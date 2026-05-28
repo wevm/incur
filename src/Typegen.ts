@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import { z } from 'zod'
 
 import * as Cli from './Cli.js'
+import * as RuntimeContext from './internal/runtime-context.js'
 import { importCli } from './internal/utils.js'
 
 /** Imports a CLI from `input` (must `export default` a `Cli`), generates the `.d.ts`, and writes it to `output`. */
@@ -12,48 +13,45 @@ export async function generate(input: string, output: string): Promise<void> {
 
 /** Generates a `.d.ts` declaration string for the `incur` module augmentation. */
 export function fromCli(cli: Cli.Cli): string {
-  const commands = Cli.toCommands.get(cli)
-  if (!commands) throw new Error('No commands registered on this CLI instance')
+  const entries = RuntimeContext.collectStructuredCommands(RuntimeContext.fromCli(cli))
 
-  const entries = collectEntries(commands, [])
+  const lines: string[] = ['export type Commands = {']
 
-  const lines: string[] = ["declare module 'incur' {", '  interface Register {', '    commands: {']
-
-  for (const { name, args, options } of entries)
+  for (const { id, command } of entries)
     lines.push(
-      `      '${name}': { args: ${schemaToType(args)}; options: ${schemaToType(options)} }`,
+      `  ${propertyKey(id)}: { args: ${objectSchemaToType(command.args)}; options: ${objectSchemaToType(command.options)}${command.output ? `; output: ${schemaToType(command.output)}` : ''}${isStream(command) ? '; stream: true' : ''} }`,
     )
 
-  lines.push('    }', '  }', '}', '')
+  lines.push(
+    '}',
+    '',
+    "declare module 'incur' {",
+    '  interface Register {',
+    '    commands: Commands',
+    '  }',
+    '}',
+    '',
+    "declare module 'incur/client' {",
+    '  interface Register {',
+    '    commands: Commands',
+    '  }',
+    '}',
+    '',
+  )
   return lines.join('\n')
 }
 
-/** Recursively collects leaf commands with their full paths and schemas. */
-function collectEntries(
-  commands: Map<string, any>,
-  prefix: string[],
-): { name: string; args?: z.ZodObject<any>; options?: z.ZodObject<any> }[] {
-  const result: ReturnType<typeof collectEntries> = []
-  for (const [name, entry] of commands) {
-    const path = [...prefix, name]
-    if ('_group' in entry && entry._group) result.push(...collectEntries(entry.commands, path))
-    else result.push({ name: path.join(' '), args: entry.args, options: entry.options })
-  }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+/** Converts a Zod object schema to a TypeScript type string. Returns `{}` for undefined schemas. */
+function objectSchemaToType(schema: z.ZodObject<any> | undefined): string {
+  if (!schema) return '{}'
+  return schemaToType(schema)
 }
 
-/** Converts a Zod object schema to a TypeScript type string. Returns `{}` for undefined schemas. */
-function schemaToType(schema: z.ZodObject<any> | undefined): string {
-  if (!schema) return '{}'
+/** Converts a Zod schema to a TypeScript type string. */
+function schemaToType(schema: z.ZodType): string {
   const json = z.toJSONSchema(schema) as Record<string, unknown>
   const defs = (json.$defs ?? {}) as Record<string, Record<string, unknown>>
-  const properties = json.properties as Record<string, Record<string, unknown>> | undefined
-  if (!properties || Object.keys(properties).length === 0) return '{}'
-  const required = new Set((json.required as string[] | undefined) ?? [])
-  const entries = Object.entries(properties).map(
-    ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
-  )
-  return `{ ${entries.join('; ')} }`
+  return resolveType(json, defs)
 }
 
 /** Recursively resolves a JSON Schema node to a TypeScript type string. */
@@ -98,12 +96,22 @@ function resolveType(
       const properties = schema.properties as Record<string, Record<string, unknown>> | undefined
       if (!properties || Object.keys(properties).length === 0) return '{}'
       const required = new Set((schema.required as string[] | undefined) ?? [])
-      const entries = Object.entries(properties).map(
-        ([key, value]) => `${key}${required.has(key) ? '' : '?'}: ${resolveType(value, defs)}`,
-      )
+      const entries = Object.entries(properties).map(([key, value]) => {
+        const type = resolveType(value, defs)
+        if (required.has(key)) return `${propertyKey(key)}: ${type}`
+        return `${propertyKey(key)}?: ${type} | undefined`
+      })
       return `{ ${entries.join('; ')} }`
     }
     default:
       return 'unknown'
   }
+}
+
+function propertyKey(key: string) {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key)
+}
+
+function isStream(command: Cli.CommandDefinition<any, any, any, any, any, any>) {
+  return command.run.constructor.name === 'AsyncGeneratorFunction'
 }
