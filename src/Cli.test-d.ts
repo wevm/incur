@@ -1,4 +1,4 @@
-import { Cli, Fetch, middleware, z } from 'incur'
+import { Cli, Elicitation, Fetch, middleware, z } from 'incur'
 import type { MiddlewareHandler } from 'incur'
 import { expectTypeOf, test } from 'vitest'
 
@@ -206,6 +206,76 @@ test('without vars, c.var is empty object', () => {
       return {}
     },
   })
+})
+
+test('form elicitation content infers from schema', () => {
+  Cli.create('test').command('ask', {
+    async run(c) {
+      const result = await c.elicit.form({
+        key: 'profile',
+        message: 'Need profile',
+        schema: z.object({
+          name: z.string(),
+          count: z.number().default(0),
+        }),
+      })
+      if (result.action === 'accept')
+        expectTypeOf(result.content).toEqualTypeOf<{ name: string; count: number }>()
+      else expectTypeOf(result.content).toEqualTypeOf<undefined>()
+      return {}
+    },
+  })
+})
+
+test('elicitation result types distinguish form and URL content', () => {
+  type Form = Elicitation.FormResult<z.ZodObject<{ name: z.ZodString }>>
+  expectTypeOf<Form>().toMatchTypeOf<
+    | { action: 'accept'; content: { name: string } }
+    | { action: 'decline' | 'cancel'; content?: undefined }
+  >()
+  expectTypeOf<Elicitation.UrlResult>().toMatchTypeOf<{
+    action: 'accept' | 'decline' | 'cancel'
+    content?: undefined
+  }>()
+})
+
+test('mcp metadata and registrations type check', () => {
+  Cli.create('test', {
+    mcpServer: {
+      authorization: {
+        oauthClientCredentials: { scopes: ['read:tools'] },
+        enterpriseManagedAuthorization: true,
+        authorize: ({ bearerToken }) => bearerToken === 'ok',
+      },
+      cache: { ttlMs: 1000, cacheScope: 'private' },
+    },
+  })
+    .command('meta', {
+      mcpTool: {
+        title: 'Meta',
+        icons: [{ src: 'https://example.com/icon.svg', mimeType: 'image/svg+xml' }],
+        annotations: { readOnlyHint: true },
+        headers: { token: 'Authorization' },
+        task: { required: true, ttlMs: 1000, pollIntervalMs: 100 },
+      },
+      run() {
+        return {}
+      },
+    })
+    .resource('config', {
+      uri: 'file:///config.json',
+      read: () => ({ uri: 'file:///config.json', text: '{}' }),
+    })
+    .resourceTemplate('user', {
+      uriTemplate: 'file:///users/{id}.json',
+      complete: { id: (value) => [value] },
+    })
+    .prompt('review', {
+      args: z.object({ language: z.string() }),
+      complete: { language: (value) => [value] },
+      get: (args) => [{ role: 'user', content: { type: 'text', text: String(args.language) } }],
+    })
+    .app('panel', { resourceUri: 'ui://panel', html: '<main />' })
 })
 
 test('command() accumulates command types through chaining', () => {
