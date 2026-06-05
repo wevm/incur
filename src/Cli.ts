@@ -634,7 +634,9 @@ async function serveImpl(
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+        // Command names are relative to the scope; `scopedName` already carries
+        // the prefix, so pass `[]` to avoid prepending it twice.
+        const cmds = collectSkillCommands(scopedCommands, [], groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
@@ -645,7 +647,9 @@ async function serveImpl(
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+      // Command names are relative to the scope; `scopedName` already carries
+      // the prefix, so pass `[]` to avoid prepending it twice.
+      const cmds = collectSkillCommands(scopedCommands, [], groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return

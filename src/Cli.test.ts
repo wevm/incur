@@ -1385,8 +1385,11 @@ describe('--llms', () => {
     cli.command('ping', { description: 'Health check', run: () => ({}) })
 
     const { output } = await serve(cli, ['auth', '--llms'])
-    expect(output).toContain('test auth auth login')
-    expect(output).toContain('test auth auth logout')
+    expect(output).toContain('test auth login')
+    expect(output).toContain('test auth logout')
+    // The scoped prefix must not be duplicated in the command signature.
+    expect(output).not.toContain('test auth auth login')
+    expect(output).not.toContain('test auth auth logout')
     expect(output).not.toContain('ping')
   })
 
