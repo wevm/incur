@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import * as Cli from './Cli.js'
 import { importCli } from './internal/utils.js'
+import * as Yaml from './internal/yaml.js'
 import * as Skill from './Skill.js'
 
 /** Imports a CLI from `input`, generates Markdown skill files, and writes them to `output`. */
@@ -14,6 +15,8 @@ export async function generate(input: string, output: string, depth = 1): Promis
   const groups = new Map<string, string>()
   if (cli.description) groups.set(cli.name, cli.description)
   const entries = collectEntries(commands, [], groups)
+  // Pre-load yaml for `Skill.split`'s sync call path.
+  await Yaml.load()
   const files = Skill.split(cli.name, entries, depth, groups)
 
   if (depth > 0) await fs.rm(output, { recursive: true, force: true })

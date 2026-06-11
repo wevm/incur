@@ -1,4 +1,3 @@
-import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
@@ -13,6 +12,9 @@ export async function serve(
   commands: Map<string, any>,
   options: serve.Options = {},
 ): Promise<void> {
+  // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
+  const { McpServer, StdioServerTransport } = await import('@modelcontextprotocol/server')
+
   const server = new McpServer({ name, version })
 
   for (const tool of collectTools(commands, [])) {

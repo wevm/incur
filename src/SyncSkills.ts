@@ -2,10 +2,10 @@ import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { parse as yamlParse } from 'yaml'
 
 import { formatExamples } from './Cli.js'
 import * as Agents from './internal/agents.js'
+import * as Yaml from './internal/yaml.js'
 import * as Skill from './Skill.js'
 
 /** Generates skill files from a command map and installs them natively. */
@@ -16,6 +16,9 @@ export async function sync(
 ): Promise<sync.Result> {
   const { depth = 1, description, global = true } = options
   const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
+
+  // Pre-load yaml for the sync call paths below (`Skill.split`, `parseFrontmatter`).
+  await Yaml.load()
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
@@ -136,6 +139,9 @@ export async function list(
 ): Promise<list.Skill[]> {
   const { depth = 1, description } = options
   const cwd = options.cwd ?? process.cwd()
+
+  // Pre-load yaml for the sync call paths below (`Skill.split`, `parseFrontmatter`).
+  await Yaml.load()
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
@@ -287,7 +293,7 @@ function parseFrontmatter(content: string): {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
 
-  const meta = yamlParse(match[1]!)
+  const meta = Yaml.loadSync().parse(match[1]!)
   if (!meta || typeof meta !== 'object') return {}
   return meta as { description?: string | undefined; name?: string | undefined }
 }
