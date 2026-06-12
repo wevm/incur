@@ -3,6 +3,7 @@ import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
 import * as Command from './internal/command.js'
+import * as Json from './internal/json.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
 
@@ -122,7 +123,7 @@ export async function callTool(
         if (progressToken !== undefined && options.sendNotification)
           await options.sendNotification({
             method: 'notifications/progress' as const,
-            params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
+            params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
           })
       }
     } catch (err) {
@@ -131,7 +132,7 @@ export async function callTool(
         isError: true,
       }
     }
-    return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+    return { content: [{ type: 'text', text: Json.stringify(chunks) }] }
   }
 
   if (!result.ok)
@@ -142,7 +143,7 @@ export async function callTool(
 
   const data = result.data ?? null
   return {
-    content: [{ type: 'text', text: JSON.stringify(data) }],
+    content: [{ type: 'text', text: Json.stringify(data) }],
     ...(data !== null && tool.outputSchema
       ? { structuredContent: data as Record<string, unknown> }
       : undefined),
