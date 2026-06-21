@@ -4679,4 +4679,27 @@ describe('--mcp', () => {
       spy.mockRestore()
     }
   })
+
+  test('command mcp metadata is forwarded through public command definitions', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const cli = Cli.create('test')
+      cli.command('deploy', {
+        mcp: {
+          annotations: { destructiveHint: true, idempotentHint: false },
+          instructions: 'Require confirmation before production deploys.',
+        },
+        run: () => ({ deployed: true }),
+      })
+      await cli.serve(['--mcp'])
+
+      const commands = spy.mock.calls[0]![2] as Map<string, any>
+      const [tool] = Mcp.collectTools(commands, [])
+      expect(tool?.name).toBe('deploy')
+      expect(tool?.annotations).toEqual({ destructiveHint: true, idempotentHint: false })
+      expect(tool?.instructions).toBe('Require confirmation before production deploys.')
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })
