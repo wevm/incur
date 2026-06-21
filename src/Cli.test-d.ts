@@ -396,6 +396,19 @@ test('root run() context exposes displayName', () => {
   })
 })
 
+test('create() accepts root command hint', () => {
+  Cli.create('test', {
+    hint: 'Fetch immediately before sending the transaction.',
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create({
+    name: 'test',
+    hint: 'Fetch immediately before sending the transaction.',
+    run: () => ({ ok: true }),
+  })
+})
+
 test('create() accepts config-file defaults options', () => {
   Cli.create('test', {
     config: {},
