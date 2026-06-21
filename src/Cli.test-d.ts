@@ -290,6 +290,30 @@ test('run() context exposes format metadata', () => {
   })
 })
 
+test('command mcp metadata accepts instructions and annotations', () => {
+  Cli.create('test').command('read', {
+    mcp: {
+      annotations: {
+        title: 'Read data',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      instructions: 'Only pass validated input.',
+    },
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create('test', {
+    mcp: {
+      instructions: 'Use this server for test commands.',
+      // @ts-expect-error -- annotations belong on command definitions
+      annotations: { readOnlyHint: true },
+    },
+  })
+})
+
 test('root run() context exposes displayName', () => {
   Cli.create('test', {
     run(c) {

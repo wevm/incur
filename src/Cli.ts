@@ -426,21 +426,6 @@ export declare namespace create {
           command?: string | undefined
           /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
-          /** MCP tool annotations for this command. */
-          annotations?:
-            | {
-                /** A human-readable title for the tool. */
-                title?: string
-                /** If true, the tool does not modify its environment. Default: false. */
-                readOnlyHint?: boolean
-                /** If true, the tool may perform destructive updates to its environment. Meaningful only when readOnlyHint is false. Default: true. */
-                destructiveHint?: boolean
-                /** If true, calling the tool repeatedly with the same arguments has no additional effect. Meaningful only when readOnlyHint is false. Default: false. */
-                idempotentHint?: boolean
-                /** If true, the tool may interact with an open world of external entities. Default: true. */
-                openWorldHint?: boolean
-              }
-            | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -2027,15 +2012,6 @@ declare namespace serveImpl {
           agents?: string[] | undefined
           command?: string | undefined
           instructions?: string | undefined
-          annotations?:
-            | {
-                title?: string
-                readOnlyHint?: boolean
-                destructiveHint?: boolean
-                idempotentHint?: boolean
-                openWorldHint?: boolean
-              }
-            | undefined
         }
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
@@ -3027,6 +3003,15 @@ type CommandDefinition<
   format?: Formatter.Format | undefined
   /** Plain text hint displayed after examples and before global options. */
   hint?: string | undefined
+  /** MCP-specific metadata exposed when this command is served as a tool. */
+  mcp?:
+    | {
+        /** MCP tool annotations that describe tool behavior to clients. */
+        annotations?: Mcp.ToolAnnotations | undefined
+        /** Tool-specific instructions surfaced to MCP clients. */
+        instructions?: string | undefined
+      }
+    | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
   /**

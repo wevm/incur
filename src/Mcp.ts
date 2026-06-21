@@ -168,18 +168,24 @@ export type ToolEntry = {
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
   outputSchema?: Record<string, unknown> | undefined
-  annotations?:
-    | {
-        title?: string
-        readOnlyHint?: boolean
-        destructiveHint?: boolean
-        idempotentHint?: boolean
-        openWorldHint?: boolean
-      }
-    | undefined
+  annotations?: ToolAnnotations | undefined
   instructions?: string | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
+}
+
+/** MCP tool annotations that describe tool behavior to clients. */
+export type ToolAnnotations = {
+  /** A human-readable title for the tool. */
+  title?: string | undefined
+  /** If true, the tool does not modify its environment. Default: false. */
+  readOnlyHint?: boolean | undefined
+  /** If true, the tool may perform destructive updates to its environment. Meaningful only when readOnlyHint is false. Default: true. */
+  destructiveHint?: boolean | undefined
+  /** If true, calling the tool repeatedly with the same arguments has no additional effect. Meaningful only when readOnlyHint is false. Default: false. */
+  idempotentHint?: boolean | undefined
+  /** If true, the tool may interact with an open world of external entities. Default: true. */
+  openWorldHint?: boolean | undefined
 }
 
 /** @internal Recursively collects leaf commands as tool entries. */
