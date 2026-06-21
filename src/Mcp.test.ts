@@ -181,6 +181,7 @@ describe('Mcp', () => {
     const commands = new Map<string, any>()
     commands.set('whois', {
       description: 'Return ENS data',
+      output: z.object({ expiry: z.bigint() }),
       run() {
         return { expiry: 2461152330n }
       },
@@ -192,6 +193,7 @@ describe('Mcp', () => {
     ])
     expect(res.result.isError).toBeUndefined()
     expect(res.result.content).toEqual([{ type: 'text', text: '{"expiry":"2461152330"}' }])
+    expect(res.result.structuredContent).toEqual({ expiry: '2461152330' })
   })
 
   test('callTool serializes bigint values as strings', async () => {
@@ -199,6 +201,11 @@ describe('Mcp', () => {
       {
         name: 'whois',
         inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+          type: 'object',
+          properties: { expiry: { type: 'string' } },
+          required: ['expiry'],
+        },
         command: {
           run() {
             return { expiry: 2461152330n }
@@ -210,6 +217,7 @@ describe('Mcp', () => {
 
     expect(result.isError).toBeUndefined()
     expect(result.content).toEqual([{ type: 'text', text: '{"expiry":"2461152330"}' }])
+    expect(result.structuredContent).toEqual({ expiry: '2461152330' })
   })
 
   test('callTool serializes streamed bigint chunks as strings', async () => {

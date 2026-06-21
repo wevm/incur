@@ -3072,12 +3072,14 @@ describe('outputPolicy', () => {
       async *run() {
         yield { step: 1 }
         yield { step: 2 }
+        yield { expiry: 2461152330n }
       },
     })
 
     const { output } = await serve(cli, ['stream'])
     expect(output).toContain('{"type":"chunk","data":{"step":1}}')
     expect(output).toContain('{"type":"chunk","data":{"step":2}}')
+    expect(output).toContain('{"type":"chunk","data":{"expiry":"2461152330"}}')
   })
 
   test('e2e: realistic multi-level CLI with mixed policies', async () => {
@@ -4201,6 +4203,16 @@ describe('fetch', () => {
     `)
   })
 
+  test('serializes bigint values in command responses', async () => {
+    const cli = Cli.create('test')
+    cli.command('whois', {
+      output: z.object({ expiry: z.bigint() }),
+      run: () => ({ expiry: 2461152330n }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/whois'))
+    expect(body.data).toEqual({ expiry: '2461152330' })
+  })
+
   test('trailing path segments → positional args', async () => {
     const cli = Cli.create('test')
     cli.command('users', {
@@ -4288,7 +4300,7 @@ describe('fetch', () => {
     cli.command('stream', {
       async *run() {
         yield { progress: 1 }
-        yield { progress: 2 }
+        yield { expiry: 2461152330n }
         return { done: true }
       },
     })
@@ -4310,7 +4322,7 @@ describe('fetch', () => {
         },
         {
           "data": {
-            "progress": 2,
+            "expiry": "2461152330",
           },
           "type": "chunk",
         },

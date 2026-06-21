@@ -1,4 +1,4 @@
-import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
+import { fromJsonSchema, McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
@@ -28,7 +28,7 @@ export async function serve(
       {
         ...(tool.description ? { description: tool.description } : undefined),
         ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
-        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
+        ...(tool.outputSchema ? { outputSchema: fromJsonSchema(tool.outputSchema) } : undefined),
       } as never,
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
@@ -142,10 +142,11 @@ export async function callTool(
     }
 
   const data = result.data ?? null
+  const jsonData = Json.normalize(data)
   return {
-    content: [{ type: 'text', text: Json.stringify(data) }],
+    content: [{ type: 'text', text: Json.stringify(jsonData) }],
     ...(data !== null && tool.outputSchema
-      ? { structuredContent: data as Record<string, unknown> }
+      ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
   }
 }

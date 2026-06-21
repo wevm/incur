@@ -9,3 +9,8 @@ export function stringify(value: unknown, space?: number): string {
     space,
   )
 }
+
+/** Converts a value to JSON-compatible data. */
+export function normalize(value: unknown): unknown {
+  return JSON.parse(stringify(value))
+}

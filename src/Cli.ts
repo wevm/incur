@@ -22,6 +22,7 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
+import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -1595,7 +1596,7 @@ function createMcpHttpHandler(name: string, version: string) {
     },
   ): Promise<Response> => {
     if (!transport) {
-      const { McpServer, WebStandardStreamableHTTPServerTransport } =
+      const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
         await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
@@ -1612,6 +1613,9 @@ function createMcpHttpHandler(name: string, version: string) {
           {
             ...(tool.description ? { description: tool.description } : undefined),
             ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
+            ...(tool.outputSchema
+              ? { outputSchema: fromJsonSchema(tool.outputSchema) }
+              : undefined),
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
@@ -1750,7 +1754,7 @@ async function fetchImpl(
   }
 
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1823,7 +1827,7 @@ async function executeCommand(
   options: fetchImpl.Options,
 ): Promise<Response> {
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1860,12 +1864,12 @@ async function executeCommand(
         try {
           for await (const value of result.stream) {
             controller.enqueue(
-              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
+              encoder.encode(Json.stringify({ type: 'chunk', data: value }) + '\n'),
             )
           }
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              Json.stringify({
                 type: 'done',
                 ok: true,
                 meta: { command: path },
@@ -1875,7 +1879,7 @@ async function executeCommand(
         } catch (error) {
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              Json.stringify({
                 type: 'error',
                 ok: false,
                 error: {
@@ -2667,7 +2671,7 @@ async function handleStreaming(
             return
           }
         }
-        if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
+        if (useJsonl) ctx.writeln(Json.stringify({ type: 'chunk', data: value }))
         else if (ctx.renderOutput)
           ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
