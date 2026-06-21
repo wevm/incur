@@ -1513,9 +1513,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app auth auth login\` | Log in to the service |
-      | \`app auth auth logout\` | Log out of the service |
-      | \`app auth auth status\` | Show authentication status |
+      | \`app auth login\` | Log in to the service |
+      | \`app auth logout\` | Log out of the service |
+      | \`app auth status\` | Show authentication status |
 
       Run \`app auth --llms-full\` for full manifest. Run \`app auth <command> --schema\` for argument details.
       "
@@ -1531,9 +1531,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app project deploy project deploy create <env>\` | Create a deployment |
-      | \`app project deploy project deploy rollback <deployId>\` | Rollback a deployment |
-      | \`app project deploy project deploy status <deployId>\` | Check deployment status |
+      | \`app project deploy create <env>\` | Create a deployment |
+      | \`app project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy status <deployId>\` | Check deployment status |
 
       Run \`app project deploy --llms-full\` for full manifest. Run \`app project deploy <command> --schema\` for argument details.
       "
@@ -2833,6 +2833,8 @@ describe('fetch api', () => {
       .trim()
       .split('\n')
       .map((l) => JSON.parse(l))
+    expect(lines[2].meta.duration).toMatch(/^\d+ms$/)
+    lines[2].meta.duration = '<stripped>'
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -2850,6 +2852,7 @@ describe('fetch api', () => {
         {
           "meta": {
             "command": "stream",
+            "duration": "<stripped>",
           },
           "ok": true,
           "type": "done",

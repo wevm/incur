@@ -21,6 +21,7 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
+import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Yaml from './internal/yaml.js'
@@ -633,11 +634,15 @@ async function serveImpl(
     }
 
     const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+    // Markdown skill output renders scopedName separately. Passing prefix again
+    // to those collect helpers would double the group segment in command names
+    // (e.g. "cli auth auth login" instead of "cli auth login").
+    const collectPrefix = prefix.length > 0 ? ([] as string[]) : prefix
 
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+        const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
@@ -648,7 +653,7 @@ async function serveImpl(
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+      const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
@@ -1599,7 +1604,7 @@ function createMcpHttpHandler(name: string, version: string) {
     },
   ): Promise<Response> => {
     if (!transport) {
-      const { McpServer, WebStandardStreamableHTTPServerTransport } =
+      const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
         await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
@@ -1616,6 +1621,9 @@ function createMcpHttpHandler(name: string, version: string) {
           {
             ...(tool.description ? { description: tool.description } : undefined),
             ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
+            ...(tool.outputSchema
+              ? { outputSchema: fromJsonSchema(tool.outputSchema) }
+              : undefined),
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
@@ -1756,7 +1764,7 @@ async function fetchImpl(
   }
 
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1829,7 +1837,7 @@ async function executeCommand(
   options: fetchImpl.Options,
 ): Promise<Response> {
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1860,39 +1868,78 @@ async function executeCommand(
 
   // Streaming path — async generator → NDJSON response
   if ('stream' in result) {
+    const iterator = result.stream
+    const encoder = new TextEncoder()
+    const meta = (cta?: FormattedCtaBlock | undefined) => ({
+      command: path,
+      duration: `${Math.round(performance.now() - start)}ms`,
+      ...(cta ? { cta } : undefined),
+    })
+    const errorRecord = (err: ErrorResult) => ({
+      type: 'error',
+      ok: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+      },
+      meta: meta(formatCtaBlock(options.name ?? path, err.cta)),
+    })
     const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder()
+      async cancel() {
+        await iterator.return(undefined)
+      },
+      async pull(controller) {
         try {
-          for await (const value of result.stream) {
+          const { value, done } = await iterator.next()
+          if (done) {
+            if (isSentinel(value) && value[sentinel] === 'error') {
+              controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
+              controller.close()
+              return
+            }
+            const cta =
+              isSentinel(value) && value[sentinel] === 'ok'
+                ? formatCtaBlock(options.name ?? path, value.cta)
+                : undefined
             controller.enqueue(
-              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
+              encoder.encode(
+                Json.stringify({
+                  type: 'done',
+                  ok: true,
+                  meta: meta(cta),
+                }) + '\n',
+              ),
             )
+            controller.close()
+            return
           }
-          controller.enqueue(
-            encoder.encode(
-              JSON.stringify({
-                type: 'done',
-                ok: true,
-                meta: { command: path },
-              }) + '\n',
-            ),
-          )
+
+          if (isSentinel(value) && value[sentinel] === 'error') {
+            controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
+            await iterator.return(undefined)
+            controller.close()
+            return
+          }
+
+          controller.enqueue(encoder.encode(Json.stringify({ type: 'chunk', data: value }) + '\n'))
         } catch (error) {
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              Json.stringify({
                 type: 'error',
                 ok: false,
                 error: {
-                  code: 'UNKNOWN',
+                  code: error instanceof IncurError ? error.code : 'UNKNOWN',
                   message: error instanceof Error ? error.message : String(error),
+                  ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
                 },
+                meta: meta(),
               }) + '\n',
             ),
           )
+          controller.close()
         }
-        controller.close()
       },
     })
     return new Response(stream, {
@@ -1912,6 +1959,7 @@ async function executeCommand(
           ...(result.error.retryable !== undefined
             ? { retryable: result.error.retryable }
             : undefined),
+          ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
         },
         meta: {
           command: path,
@@ -2673,7 +2721,7 @@ async function handleStreaming(
             return
           }
         }
-        if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
+        if (useJsonl) ctx.writeln(Json.stringify({ type: 'chunk', data: value }))
         else if (ctx.renderOutput)
           ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
@@ -2725,6 +2773,7 @@ async function handleStreaming(
             error: {
               code: error instanceof IncurError ? error.code : 'UNKNOWN',
               message: error instanceof Error ? error.message : String(error),
+              ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
             },
           }),
         )
@@ -2808,6 +2857,7 @@ async function handleStreaming(
         error: {
           code: error instanceof IncurError ? error.code : 'UNKNOWN',
           message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
         },
         meta: {
           command: ctx.path,
@@ -2931,11 +2981,11 @@ function collectCommands(
 }
 
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
-function collectSkillCommands(
+export function collectSkillCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
   groups: Map<string, string>,
-  rootCommand?: CommandDefinition<any, any, any> | undefined,
+  rootCommand?: SkillCommandSource | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
   if (rootCommand) {
@@ -2983,6 +3033,11 @@ function collectSkillCommands(
   return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
+type SkillCommandSource = Pick<
+  CommandDefinition<any, any, any, any, any, any>,
+  'args' | 'description' | 'env' | 'examples' | 'hint' | 'options' | 'output'
+>
+
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
 export function formatExamples(
   examples: Example<any, any>[] | undefined,
@@ -2997,6 +3052,18 @@ export function formatExamples(
     if (ex.description) result.description = ex.description
     return result
   })
+}
+
+/** @internal Parses YAML frontmatter from generated skill Markdown. */
+export function parseSkillFrontmatter(content: string): {
+  description?: string | undefined
+  name?: string | undefined
+} {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const meta = Yaml.loadSync().parse(match[1]!)
+  if (!meta || typeof meta !== 'object') return {}
+  return meta as { description?: string | undefined; name?: string | undefined }
 }
 
 /** @internal Builds separate args, env, and options JSON Schemas. */
