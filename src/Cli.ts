@@ -484,6 +484,8 @@ export declare namespace create {
     openapiConfig?: Openapi.Config | undefined
     /** Default output format. Overridden by `--format` or `--json`. */
     format?: Formatter.Format | undefined
+    /** Plain text hint displayed after examples and before global options. */
+    hint?: string | undefined
     /** Map of global option names to single-char aliases. */
     globalAlias?: globals extends z.ZodObject<any>
       ? Partial<Record<keyof z.output<globals>, string>>
