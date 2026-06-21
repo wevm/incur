@@ -2950,7 +2950,7 @@ describe('fetch api', () => {
           clientInfo: { name: 'test-client', version: '1.0.0' },
         },
       })
-      const sessionId = res.headers.get('mcp-session-id')!
+      const sessionId = res.headers.get('mcp-session-id') ?? undefined
       await mcpRequest(cli, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId)
       return sessionId
     }
@@ -2968,6 +2968,7 @@ describe('fetch api', () => {
         },
       })
       expect(res.status).toBe(200)
+      expect(res.headers.get('mcp-session-id')).toBeNull()
       const body = await res.json()
       expect({
         serverInfo: body.result.serverInfo,
@@ -2981,6 +2982,41 @@ describe('fetch api', () => {
           },
         }
       `)
+    })
+
+    test('tools/list works without session state', async () => {
+      const cli = createApp()
+      await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.result.tools.map((t: any) => t.name).sort()).toContain('ping')
+    })
+
+    test('GET /mcp returns method not allowed in stateless mode', async () => {
+      const cli = createApp()
+      const res = await cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'GET',
+          headers: { accept: 'text/event-stream' },
+        }),
+      )
+      expect(res.status).toBe(405)
+      expect(res.headers.get('allow')).toBe('POST')
     })
 
     test('tools/list → lists all registered tools', async () => {

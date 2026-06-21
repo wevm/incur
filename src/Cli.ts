@@ -241,7 +241,9 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
-  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0')
+  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+    stateless: def.mcp?.stateless,
+  })
 
   if (def.openapi && rootFetch) {
     pending.push(
@@ -542,7 +544,7 @@ export declare namespace create {
           | Promise<InferReturn<output>>
           | AsyncGenerator<InferReturn<output>, unknown, unknown>)
       | undefined
-    /** Options for the built-in `mcp add` command. */
+    /** Options for MCP integration. */
     mcp?:
       | {
           /** Target specific agents by default (e.g. `['claude-code', 'cursor']`). */
@@ -551,6 +553,8 @@ export declare namespace create {
           command?: string | undefined
           /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
+          /** Disable HTTP MCP session management. Defaults to `true`. */
+          stateless?: boolean | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -1761,7 +1765,11 @@ declare namespace fetchImpl {
 }
 
 /** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
-function createMcpHttpHandler(name: string, version: string) {
+function createMcpHttpHandler(
+  name: string,
+  version: string,
+  options: createMcpHttpHandler.Options = {},
+) {
   let transport: any
 
   return async (
@@ -1773,6 +1781,10 @@ function createMcpHttpHandler(name: string, version: string) {
       vars?: z.ZodObject<any> | undefined
     },
   ): Promise<Response> => {
+    const stateless = options.stateless ?? true
+    if (stateless && req.method !== 'POST')
+      return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+
     if (!transport) {
       const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
         await import('@modelcontextprotocol/server')
@@ -1808,13 +1820,23 @@ function createMcpHttpHandler(name: string, version: string) {
         )
       }
 
-      transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-        enableJsonResponse: true,
-      })
+      const transportOptions = stateless
+        ? { enableJsonResponse: true }
+        : {
+            sessionIdGenerator: () => crypto.randomUUID(),
+            enableJsonResponse: true,
+          }
+      transport = new WebStandardStreamableHTTPServerTransport(transportOptions)
       await server.connect(transport)
     }
     return transport.handleRequest(req)
+  }
+}
+
+declare namespace createMcpHttpHandler {
+  type Options = {
+    /** Disable HTTP MCP session management. Defaults to `true`. */
+    stateless?: boolean | undefined
   }
 }
 
@@ -2369,6 +2391,7 @@ declare namespace serveImpl {
           agents?: string[] | undefined
           command?: string | undefined
           instructions?: string | undefined
+          stateless?: boolean | undefined
         }
       | undefined
     /** Banner config, called before root help. */

@@ -5176,8 +5176,12 @@ describe('fetch', () => {
       const sessionId = res.headers.get('mcp-session-id')
       const body = await res.json()
       // Send initialized notification
-      await mcpRequest(cli, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId!)
-      return { sessionId: sessionId!, body }
+      await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+        sessionId ?? undefined,
+      )
+      return { sessionId: sessionId ?? undefined, body }
     }
 
     test('POST /mcp with initialize → valid MCP response', async () => {
@@ -5193,6 +5197,7 @@ describe('fetch', () => {
         },
       })
       expect(res.status).toBe(200)
+      expect(res.headers.get('mcp-session-id')).toBeNull()
       const body = await res.json()
       expect({
         serverInfo: body.result.serverInfo,
@@ -5205,6 +5210,34 @@ describe('fetch', () => {
             "version": "1.0.0",
           },
         }
+      `)
+    })
+
+    test('POST /mcp with tools/list works without session state', async () => {
+      const cli = mcpCli()
+      await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.result.tools.map((t: any) => t.name)).toMatchInlineSnapshot(`
+        [
+          "greet",
+          "ping",
+        ]
       `)
     })
 
@@ -5237,6 +5270,37 @@ describe('fetch', () => {
           },
         ]
       `)
+    })
+
+    test('GET /mcp returns method not allowed in stateless mode', async () => {
+      const cli = mcpCli()
+      const res = await cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'GET',
+          headers: { accept: 'text/event-stream' },
+        }),
+      )
+      expect(res.status).toBe(405)
+      expect(res.headers.get('allow')).toBe('POST')
+      expect(await res.text()).toBe('')
+    })
+
+    test('mcp.stateless false keeps stateful session handling', async () => {
+      const cli = Cli.create('test', { version: '1.0.0', mcp: { stateless: false } })
+      cli.command('ping', {
+        description: 'Ping',
+        run: () => ({ pong: true }),
+      })
+      const { sessionId } = await initSession(cli)
+      expect(sessionId).toEqual(expect.any(String))
+
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(400)
     })
 
     test('POST /mcp with tools/call → executes command', async () => {

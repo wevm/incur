@@ -369,6 +369,7 @@ test('command mcp metadata accepts instructions and annotations', () => {
   Cli.create('test', {
     mcp: {
       instructions: 'Use this server for test commands.',
+      stateless: false,
       // @ts-expect-error -- annotations belong on command definitions
       annotations: { readOnlyHint: true },
     },
