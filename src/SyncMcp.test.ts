@@ -143,7 +143,6 @@ test('register handles quoted command paths with spaces', async () => {
 })
 
 test('register uses bare name for global binary installs', async () => {
-  // Simulate global install: argv[1] is outside node_modules
   process.argv[1] = '/usr/local/bin/my-cli'
 
   const { execFile } = await import('node:child_process')
@@ -159,6 +158,45 @@ test('register uses bare name for global binary installs', async () => {
     command: 'my-cli',
     args: ['--mcp'],
   })
+})
+
+test('register uses runner for source entrypoints outside node_modules', async () => {
+  process.argv[1] = join(tmp, 'dist', 'bin.js')
+
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', { agents: ['amp'] })
+
+  expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
+  expect(result.command).toContain('my-cli --mcp')
+})
+
+test('register uses bare name for global package entrypoints under node_modules', async () => {
+  process.argv[1] = join(tmp, 'global', 'node_modules', 'my-cli', 'dist', 'bin.js')
+
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', { agents: ['amp'] })
+
+  expect(result.command).toBe('my-cli --mcp')
+})
+
+test('register uses runner for project dev dependency entrypoints under node_modules', async () => {
+  writeFileSync(
+    join(tmp, 'package.json'),
+    JSON.stringify({ devDependencies: { 'my-cli': '1.0.0' } }),
+  )
+  process.argv[1] = join(tmp, 'node_modules', 'my-cli', 'dist', 'bin.js')
+
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', { agents: ['amp'] })
+
+  expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
+  expect(result.command).toContain('my-cli --mcp')
 })
 
 test('register uses runner for node_modules installs', async () => {

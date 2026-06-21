@@ -11,8 +11,7 @@ export async function register(
   options: register.Options = {},
 ): Promise<register.Result> {
   const runner = detectRunner()
-  const command = options.command
-    ?? (nodeModulesRoot() ? `${runner} ${detectPackageSpecifier(name)} --mcp` : `${name} --mcp`)
+  const command = options.command ?? defaultCommand(name, runner)
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
@@ -99,19 +98,56 @@ export declare namespace register {
   }
 }
 
-/** @internal Returns the node_modules root path if running from a local install, or `null` for global installs. */
-function nodeModulesRoot(): string | null {
-  const match = process.argv[1]?.match(/^(.+)[/\\]node_modules[/\\]/)
-  return match?.[1] ?? null
+/** @internal Builds the default MCP command for the current launch mode. */
+function defaultCommand(name: string, runner: string): string {
+  return shouldUseBareCommand(name)
+    ? `${name} --mcp`
+    : `${runner} ${detectPackageSpecifier(name)} --mcp`
+}
+
+/** @internal Returns node_modules path details for the current entrypoint. */
+function nodeModulesInfo(): { entry: string; root: string } | null {
+  const normalized = process.argv[1]?.replace(/\\/g, '/')
+  const match = normalized?.match(/^(.+)\/node_modules\/(.+)$/)
+  if (!match) return null
+  return { root: match[1]!, entry: match[2]! }
+}
+
+/** @internal Uses the bare command only when the binary is expected on PATH. */
+function shouldUseBareCommand(name: string): boolean {
+  const bin = process.argv[1]
+  if (!bin) return false
+
+  const info = nodeModulesInfo()
+  if (info) return !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, name)
+
+  const file = bin.replace(/\\/g, '/').split('/').pop()
+  return file === name || file === `${name}.cmd` || file === `${name}.ps1`
+}
+
+/** @internal Checks whether the entrypoint came from a project dependency install. */
+function packageDependsOn(root: string, name: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8'))
+    const dependencyFields = [
+      pkg.dependencies,
+      pkg.devDependencies,
+      pkg.optionalDependencies,
+      pkg.peerDependencies,
+    ]
+    return dependencyFields.some((dependencies) => name in (dependencies ?? {}))
+  } catch {
+    return false
+  }
 }
 
 /** @internal Detects the package specifier used to run this CLI (handles dlx/npx URL and version installs). */
 export function detectPackageSpecifier(name: string): string {
-  const root = nodeModulesRoot()
-  if (!root) return name
+  const info = nodeModulesInfo()
+  if (!info) return name
 
   try {
-    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8'))
+    const pkg = JSON.parse(readFileSync(join(info.root, 'package.json'), 'utf-8'))
     const deps = pkg.dependencies ?? {}
     const spec = deps[name]
     if (!spec || Object.keys(deps).length !== 1) return name
