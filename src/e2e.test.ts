@@ -1266,9 +1266,9 @@ describe('--llms-full', () => {
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
-        "login",
-        "logout",
-        "status",
+        "auth login",
+        "auth logout",
+        "auth status",
       ]
     `)
   })
@@ -1284,9 +1284,9 @@ describe('--llms-full', () => {
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
-        "create",
-        "rollback",
-        "status",
+        "project deploy create",
+        "project deploy rollback",
+        "project deploy status",
       ]
     `)
   })
@@ -1318,15 +1318,15 @@ describe('--llms-full', () => {
       '--format',
       'json',
     ])
-    const deployCreate = json(output).commands.find((c: any) => c.name === 'create')
+    const deployCreate = json(output).commands.find((c: any) => c.name === 'project deploy create')
     expect(deployCreate.examples).toMatchInlineSnapshot(`
       [
         {
-          "command": "create staging",
+          "command": "project deploy create staging",
           "description": "Deploy staging from main",
         },
         {
-          "command": "create production --branch release --dryRun true",
+          "command": "project deploy create production --branch release --dryRun true",
           "description": "Dry run a production deploy",
         },
       ]
@@ -1959,7 +1959,7 @@ describe('env', () => {
 
   test('--llms-full json includes schema.env', async () => {
     const { output } = await serve(createApp(), ['auth', '--llms-full', '--format', 'json'])
-    const login = json(output).commands.find((c: any) => c.name === 'login')
+    const login = json(output).commands.find((c: any) => c.name === 'auth login')
     expect(login.schema.env.properties).toMatchInlineSnapshot(`
       {
         "AUTH_HOST": {

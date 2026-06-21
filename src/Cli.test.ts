@@ -1422,6 +1422,18 @@ describe('--llms', () => {
     expect(output).toContain('# my-cli auth')
     expect(output).not.toContain('# my-cli \n')
   })
+
+  test('scoped json index keeps full command paths', async () => {
+    const cli = Cli.create('test')
+    const group = Cli.create('auth', { description: 'Authentication' })
+    group.command('login', { description: 'Log in', run: () => ({}) })
+    group.command('logout', { description: 'Log out', run: () => ({}) })
+    cli.command(group)
+
+    const { output } = await serve(cli, ['auth', '--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
+  })
 })
 
 describe('--schema', () => {
@@ -3580,9 +3592,7 @@ test('--llms scoped to group', async () => {
   const { output } = await serve(cli, ['--llms-full', '--format', 'json', 'pr'])
   const manifest = JSON.parse(output)
   expect(manifest.commands).toHaveLength(2)
-  // When scoped to a group, command names should NOT include the group prefix
-  // (the scope context already establishes it)
-  expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['create', 'list'])
+  expect(manifest.commands.every((c: any) => c.name.startsWith('pr '))).toBe(true)
 })
 
 test('--help on root with rootCommand shows command help with subcommands', async () => {
