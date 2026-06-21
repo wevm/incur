@@ -1387,8 +1387,9 @@ describe('--llms', () => {
     cli.command('ping', { description: 'Health check', run: () => ({}) })
 
     const { output } = await serve(cli, ['auth', '--llms'])
-    expect(output).toContain('test auth auth login')
-    expect(output).toContain('test auth auth logout')
+    expect(output).toContain('test auth login')
+    expect(output).toContain('test auth logout')
+    expect(output).not.toContain('test auth auth') // no doubled namespace
     expect(output).not.toContain('ping')
   })
 
@@ -1422,6 +1423,18 @@ describe('--llms', () => {
     expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
     expect(output).toContain('# my-cli auth')
     expect(output).not.toContain('# my-cli \n')
+  })
+
+  test('scoped json index keeps full command paths', async () => {
+    const cli = Cli.create('test')
+    const group = Cli.create('auth', { description: 'Authentication' })
+    group.command('login', { description: 'Log in', run: () => ({}) })
+    group.command('logout', { description: 'Log out', run: () => ({}) })
+    cli.command(group)
+
+    const { output } = await serve(cli, ['auth', '--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
   })
 })
 
@@ -2220,6 +2233,129 @@ describe('help', () => {
         --version                           Show version
       "
     `)
+  })
+
+  test('banner is printed before root help', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => '  status: all good',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('status: all good')
+    expect(output.indexOf('status: all good')).toBeLessThan(output.indexOf('mycli'))
+  })
+
+  test('async banner is supported', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: async () => '  async banner',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('async banner')
+  })
+
+  test('banner returning undefined shows only help', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => undefined,
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toMatch(/^mycli/)
+  })
+
+  test('banner errors are swallowed', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => {
+        throw new Error('boom')
+      },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toMatch(/^mycli/)
+    expect(output).not.toContain('boom')
+  })
+
+  test('banner is skipped for subcommands', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => 'BANNER',
+    })
+    cli.command('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+      output: z.object({ pong: z.boolean() }),
+    })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('BANNER')
+  })
+
+  test('banner with mode "agent" shows in non-TTY', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'AGENT BANNER', mode: 'agent' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('AGENT BANNER')
+  })
+
+  test('banner with mode "human" is skipped in non-TTY', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'HUMAN BANNER', mode: 'human' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).not.toContain('HUMAN BANNER')
+  })
+
+  test('banner object with default mode shows for all', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'ALL BANNER' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('ALL BANNER')
+  })
+
+  test('banner is skipped for --help flag', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => 'BANNER',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--help'])
+    expect(output).not.toContain('BANNER')
+  })
+
+  test('banner is printed before root command help for missing required args', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('fetch', {
+      banner: () => 'BANNER',
+      description: 'Fetch a URL',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      run: ({ args }) => args.url,
+    })
+
+    const { output, exitCode } = await serve(cli, [])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('BANNER')
+    expect(output.indexOf('BANNER')).toBeLessThan(output.indexOf('fetch — Fetch a URL'))
   })
 
   test('--help on leaf shows command help', async () => {
@@ -3074,12 +3210,14 @@ describe('outputPolicy', () => {
       async *run() {
         yield { step: 1 }
         yield { step: 2 }
+        yield { expiry: 2461152330n }
       },
     })
 
     const { output } = await serve(cli, ['stream'])
     expect(output).toContain('{"type":"chunk","data":{"step":1}}')
     expect(output).toContain('{"type":"chunk","data":{"step":2}}')
+    expect(output).toContain('{"type":"chunk","data":{"expiry":"2461152330"}}')
   })
 
   test('e2e: realistic multi-level CLI with mixed policies', async () => {
@@ -4336,6 +4474,16 @@ describe('fetch', () => {
     `)
   })
 
+  test('serializes bigint values in command responses', async () => {
+    const cli = Cli.create('test')
+    cli.command('whois', {
+      output: z.object({ expiry: z.bigint() }),
+      run: () => ({ expiry: 2461152330n }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/whois'))
+    expect(body.data).toEqual({ expiry: '2461152330' })
+  })
+
   test('trailing path segments → positional args', async () => {
     const cli = Cli.create('test')
     cli.command('users', {
@@ -4416,6 +4564,38 @@ describe('fetch', () => {
     })
   })
 
+  test('object validation error includes fieldErrors', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ name: z.string() }),
+      run: (c) => ({ name: c.options.name }),
+    })
+
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 123 }),
+      }),
+    )
+
+    expect(status).toBe(400)
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: [
+          {
+            code: 'invalid_type',
+            missing: false,
+            path: 'name',
+          },
+        ],
+      },
+    })
+  })
+
   test('thrown error → 500', async () => {
     const cli = Cli.create('test')
     cli.command('fail', {
@@ -4446,7 +4626,7 @@ describe('fetch', () => {
     cli.command('stream', {
       async *run() {
         yield { progress: 1 }
-        yield { progress: 2 }
+        yield { expiry: 2461152330n }
         return { done: true }
       },
     })
@@ -4462,7 +4642,7 @@ describe('fetch', () => {
           },
           {
             "data": {
-              "progress": 2,
+              "expiry": "2461152330",
             },
             "type": "chunk",
           },

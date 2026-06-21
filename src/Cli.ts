@@ -2,7 +2,6 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Completions from './Completions.js'
@@ -22,8 +21,10 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
+import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
+import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
@@ -314,6 +315,7 @@ export function create(
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
+        banner: def.banner,
         config: def.config,
         description: def.description,
         envSchema: def.env,
@@ -360,6 +362,19 @@ export declare namespace create {
       : Record<string, string> | undefined
     /** Alternative binary names for this CLI (e.g. shorter aliases in package.json `bin`). Shell completions are registered for all names. */
     aliases?: string[] | undefined
+    /**
+     * Text to display above root help output (e.g. branding, live status). Only called when the CLI is invoked with no subcommand. Errors are silently swallowed.
+     *
+     * Pass a function for all consumers, or an object with `mode` to target `'human'`, `'agent'`, or `'all'` (default).
+     */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          /** @default 'all' */
+          mode?: 'all' | 'human' | 'agent' | undefined
+        }
+      | undefined
     /** Zod schema for positional arguments. */
     args?: args | undefined
     /** Enable config-file defaults for command options. */
@@ -504,6 +519,20 @@ async function serveImpl(
     stdout(s.endsWith('\n') ? s : `${s}\n`)
   }
 
+  async function writeBanner() {
+    if (!options.banner || help) return
+    const banner =
+      typeof options.banner === 'function'
+        ? { render: options.banner, mode: 'all' as const }
+        : options.banner
+    const mode = banner.mode ?? 'all'
+    if (mode !== 'all' && mode !== (human ? 'human' : 'agent')) return
+    try {
+      const text = await banner.render()
+      if (text) writeln(text)
+    } catch {}
+  }
+
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
   try {
     builtinFlags = extractBuiltinFlags(argv, { configFlag })
@@ -533,6 +562,9 @@ async function serveImpl(
     configDisabled,
     rest: filtered,
   } = builtinFlags
+
+  // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily — see internal/yaml.ts).
+  if (formatFlag === 'yaml') await Yaml.load()
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -630,11 +662,15 @@ async function serveImpl(
     }
 
     const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+    // Markdown skill output renders scopedName separately. Passing prefix again
+    // to those collect helpers would double the group segment in command names
+    // (e.g. "cli auth auth login" instead of "cli auth login").
+    const collectPrefix = prefix.length > 0 ? ([] as string[]) : prefix
 
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+        const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
@@ -645,7 +681,7 @@ async function serveImpl(
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+      const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
@@ -930,6 +966,7 @@ async function serveImpl(
     ) {
       // Root command with args but none provided (human mode) — show help
       const cmd = options.rootCommand
+      await writeBanner()
       writeln(
         Help.formatCommand(name, {
           alias: cmd.alias as Record<string, string> | undefined,
@@ -953,6 +990,7 @@ async function serveImpl(
     if (options.rootCommand || options.rootFetch) {
       // Root command/fetch with no args — treat as root invocation
     } else {
+      await writeBanner()
       writeln(
         Help.formatRoot(name, {
           aliases: options.aliases,
@@ -1124,6 +1162,7 @@ async function serveImpl(
   // Resolve effective format: explicit --format/--json → command default → CLI default → toon
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
+  if (format === 'yaml') await Yaml.load()
 
   // Fall back to root fetch/command when no subcommand matches,
   // but only if the token doesn't look like a typo of a known command.
@@ -1595,7 +1634,7 @@ function createMcpHttpHandler(name: string, version: string) {
     },
   ): Promise<Response> => {
     if (!transport) {
-      const { McpServer, WebStandardStreamableHTTPServerTransport } =
+      const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
         await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
@@ -1612,6 +1651,9 @@ function createMcpHttpHandler(name: string, version: string) {
           {
             ...(tool.description ? { description: tool.description } : undefined),
             ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
+            ...(tool.outputSchema
+              ? { outputSchema: fromJsonSchema(tool.outputSchema) }
+              : undefined),
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
@@ -1677,7 +1719,7 @@ async function fetchImpl(
   if (req.method === 'GET' && isOpenapiRoute(segments)) {
     const spec = generatedOpenapi(name, commands, options)
     const yaml = segments[0] === 'openapi.yml' || segments[0] === 'openapi.yaml'
-    return new Response(yaml ? yamlStringify(spec) : JSON.stringify(spec), {
+    return new Response(yaml ? (await Yaml.load()).stringify(spec) : JSON.stringify(spec), {
       status: 200,
       headers: {
         'content-type': yaml ? 'application/yaml' : 'application/json',
@@ -1701,6 +1743,8 @@ async function fetchImpl(
     segments.length >= 3 &&
     req.method === 'GET'
   ) {
+    // Pre-load yaml for the sync call paths below (`Skill.split`, frontmatter parsing).
+    await Yaml.load()
     const groups = new Map<string, string>()
     const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
 
@@ -1709,7 +1753,7 @@ async function fetchImpl(
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
         const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
-        const meta = fmMatch ? (yamlParse(fmMatch[1]!) as Record<string, string>) : {}
+        const meta = fmMatch ? (Yaml.loadSync().parse(fmMatch[1]!) as Record<string, string>) : {}
         return {
           name: f.dir || name,
           description: meta.description ?? '',
@@ -1750,7 +1794,7 @@ async function fetchImpl(
   }
 
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1823,7 +1867,7 @@ async function executeCommand(
   options: fetchImpl.Options,
 ): Promise<Response> {
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1880,7 +1924,7 @@ async function executeCommand(
           const { value, done } = await iterator.next()
           if (done) {
             if (isSentinel(value) && value[sentinel] === 'error') {
-              controller.enqueue(encoder.encode(JSON.stringify(errorRecord(value)) + '\n'))
+              controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
               controller.close()
               return
             }
@@ -1890,7 +1934,7 @@ async function executeCommand(
                 : undefined
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                Json.stringify({
                   type: 'done',
                   ok: true,
                   meta: meta(cta),
@@ -1902,17 +1946,17 @@ async function executeCommand(
           }
 
           if (isSentinel(value) && value[sentinel] === 'error') {
-            controller.enqueue(encoder.encode(JSON.stringify(errorRecord(value)) + '\n'))
+            controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
             await iterator.return(undefined)
             controller.close()
             return
           }
 
-          controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'))
+          controller.enqueue(encoder.encode(Json.stringify({ type: 'chunk', data: value }) + '\n'))
         } catch (error) {
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              Json.stringify({
                 type: 'error',
                 ok: false,
                 error: {
@@ -2155,6 +2199,14 @@ declare namespace serveImpl {
       | {
           agents?: string[] | undefined
           command?: string | undefined
+        }
+      | undefined
+    /** Banner config, called before root help. */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          mode?: 'all' | 'human' | 'agent' | undefined
         }
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
@@ -2707,7 +2759,7 @@ async function handleStreaming(
             return
           }
         }
-        if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
+        if (useJsonl) ctx.writeln(Json.stringify({ type: 'chunk', data: value }))
         else if (ctx.renderOutput)
           ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
@@ -2967,11 +3019,11 @@ function collectCommands(
 }
 
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
-function collectSkillCommands(
+export function collectSkillCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
   groups: Map<string, string>,
-  rootCommand?: CommandDefinition<any, any, any> | undefined,
+  rootCommand?: SkillCommandSource | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
   if (rootCommand) {
@@ -3019,6 +3071,11 @@ function collectSkillCommands(
   return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }
 
+type SkillCommandSource = Pick<
+  CommandDefinition<any, any, any, any, any, any>,
+  'args' | 'description' | 'env' | 'examples' | 'hint' | 'options' | 'output'
+>
+
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
 export function formatExamples(
   examples: Example<any, any>[] | undefined,
@@ -3033,6 +3090,18 @@ export function formatExamples(
     if (ex.description) result.description = ex.description
     return result
   })
+}
+
+/** @internal Parses YAML frontmatter from generated skill Markdown. */
+export function parseSkillFrontmatter(content: string): {
+  description?: string | undefined
+  name?: string | undefined
+} {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const meta = Yaml.loadSync().parse(match[1]!)
+  if (!meta || typeof meta !== 'object') return {}
+  return meta as { description?: string | undefined; name?: string | undefined }
 }
 
 /** @internal Builds separate args, env, and options JSON Schemas. */

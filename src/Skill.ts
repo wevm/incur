@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { stringify as yamlStringify } from 'yaml'
 import type { z } from 'zod'
 
+import * as Yaml from './internal/yaml.js'
 import * as Schema from './Schema.js'
 
 /** Information about a single command, passed to `generate()`. */
@@ -137,10 +137,12 @@ function renderGroup(
     ? `${desc.replace(/\.$/, '')}. Run \`${title} --help\` for usage details.`
     : `Run \`${title} --help\` for usage details.`
 
-  const fm = yamlStringify(
-    { name: slugify(title), description, requires_bin: cli, command: title },
-    { lineWidth: 0 },
-  ).trimEnd()
+  const fm = Yaml.loadSync()
+    .stringify(
+      { name: slugify(title), description, requires_bin: cli, command: title },
+      { lineWidth: 0 },
+    )
+    .trimEnd()
   const fmBlock = `---\n${fm}\n---`
 
   const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')

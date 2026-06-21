@@ -70,6 +70,11 @@ cli.serve()
     expect(stdout).toContain('result: HELLO')
   })
 
+  test('runs command with --format yaml (lazy yaml import)', async () => {
+    const { stdout } = await exec(bin, ['ping', '--format', 'yaml'])
+    expect(stdout).toContain('pong: true')
+  })
+
   test('shows help', async () => {
     const { stdout } = await exec(bin, ['--help'])
     expect(stdout).toContain('test-cli')
