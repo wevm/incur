@@ -12,15 +12,15 @@ import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
 
 /** MCP 2026 release-candidate protocol version advertised by incur. */
-export const DRAFT_PROTOCOL_VERSION = 'DRAFT-2026-v1'
+export const draftProtocolVersion = 'DRAFT-2026-v1'
 
 /** MCP 2026 final protocol version planned by the release candidate. */
-export const PROTOCOL_VERSION_2026 = '2026-07-28'
+export const protocolVersion2026 = '2026-07-28'
 
 /** Protocol versions supported by incur's MCP server implementation. */
-export const SUPPORTED_PROTOCOL_VERSIONS = [
-  DRAFT_PROTOCOL_VERSION,
-  PROTOCOL_VERSION_2026,
+export const supportedProtocolVersions = [
+  draftProtocolVersion,
+  protocolVersion2026,
   '2025-11-25',
   '2025-06-18',
   '2025-03-26',
@@ -28,24 +28,23 @@ export const SUPPORTED_PROTOCOL_VERSIONS = [
 ]
 
 /** Canonical MCP Apps extension identifier. */
-export const APPS_EXTENSION_ID = 'io.modelcontextprotocol/ui'
+export const appsExtensionId = 'io.modelcontextprotocol/ui'
 
 /** MCP Apps compatibility extension identifier used by the draft lifecycle examples. */
-export const APPS_EXTENSION_ALIAS = 'io.modelcontextprotocol/apps'
+export const appsExtensionAlias = 'io.modelcontextprotocol/apps'
 
 /** MCP Tasks extension identifier. */
-export const TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks'
+export const tasksExtensionId = 'io.modelcontextprotocol/tasks'
 
 /** OAuth client credentials authorization extension identifier. */
-export const OAUTH_CLIENT_CREDENTIALS_EXTENSION_ID =
-  'io.modelcontextprotocol/oauth-client-credentials'
+export const oauthClientCredentialsExtensionId = 'io.modelcontextprotocol/oauth-client-credentials'
 
 /** Enterprise-managed authorization extension identifier. */
-export const ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID =
+export const enterpriseManagedAuthorizationExtensionId =
   'io.modelcontextprotocol/enterprise-managed-authorization'
 
 /** MCP Apps HTML resource MIME type. */
-export const APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app'
+export const appResourceMimeType = 'text/html;profile=mcp-app'
 
 /** Starts a stdio MCP server that exposes commands as tools. */
 export async function serve(
@@ -193,9 +192,9 @@ async function handle2026StdioLine(
   const message = JSON.parse(line) as JsonRpcRequest
   const protocolVersion =
     message.method === 'server/discover'
-      ? DRAFT_PROTOCOL_VERSION
+      ? draftProtocolVersion
       : String(
-          metaFrom(message)?.['io.modelcontextprotocol/protocolVersion'] ?? DRAFT_PROTOCOL_VERSION,
+          metaFrom(message)?.['io.modelcontextprotocol/protocolVersion'] ?? draftProtocolVersion,
         )
   const response = await handle2026Http(
     new Request('http://localhost/mcp', {
@@ -317,10 +316,10 @@ export async function handle2026Http(
 
   if (message.method !== 'server/discover') {
     const protocolVersion = protocolVersionFrom(req, message)
-    if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion))
+    if (!supportedProtocolVersions.includes(protocolVersion))
       return json(
         error(message.id, -32001, `Unsupported protocol version: ${protocolVersion}`, {
-          supportedVersions: SUPPORTED_PROTOCOL_VERSIONS,
+          supportedVersions: supportedProtocolVersions,
         }),
         400,
       )
@@ -361,6 +360,7 @@ export async function handle2026Http(
     if (message.id === undefined) return new Response(null, { status: 202 })
     return json({ jsonrpc: '2.0', id: message.id, result })
   } catch (err) {
+    if (message.id === undefined) return new Response(null, { status: 202 })
     if (err instanceof InputRequiredError)
       return json({
         jsonrpc: '2.0',
@@ -380,7 +380,7 @@ export async function handle2026Http(
 /** Returns true when a request should use incur's stateless MCP 2026 dispatcher. */
 export async function is2026HttpRequest(req: Request): Promise<boolean> {
   const version = req.headers.get('MCP-Protocol-Version') ?? req.headers.get('mcp-protocol-version')
-  if (version === DRAFT_PROTOCOL_VERSION || version === PROTOCOL_VERSION_2026) return true
+  if (version === draftProtocolVersion || version === protocolVersion2026) return true
 
   try {
     const message = (await req.clone().json()) as JsonRpcRequest
@@ -394,8 +394,8 @@ function is2026Message(message: JsonRpcRequest) {
   if (message.method === 'server/discover') return true
   const meta = metaFrom(message)
   return (
-    meta?.['io.modelcontextprotocol/protocolVersion'] === DRAFT_PROTOCOL_VERSION ||
-    meta?.['io.modelcontextprotocol/protocolVersion'] === PROTOCOL_VERSION_2026
+    meta?.['io.modelcontextprotocol/protocolVersion'] === draftProtocolVersion ||
+    meta?.['io.modelcontextprotocol/protocolVersion'] === protocolVersion2026
   )
 }
 
@@ -710,7 +710,7 @@ async function handle2026Message(
 ): Promise<Record<string, unknown> | Response> {
   if (message.method === 'server/discover')
     return complete({
-      supportedVersions: SUPPORTED_PROTOCOL_VERSIONS,
+      supportedVersions: supportedProtocolVersions,
       capabilities: capabilities(commands, options),
       serverInfo: { name, version },
     })
@@ -772,8 +772,8 @@ async function call2026Tool(
   const args = isObject(params.arguments) ? params.arguments : {}
   const meta = tool.command.mcpTool as ToolMetadata | undefined
   if (meta?.task?.required) {
-    if (!hasClientExtension(message, TASKS_EXTENSION_ID))
-      throw missingRequiredClientCapability(TASKS_EXTENSION_ID)
+    if (!hasClientExtension(message, tasksExtensionId))
+      throw missingRequiredClientCapability(tasksExtensionId)
     return createTask(tool, args, name, version, options, meta.task)
   }
 
@@ -832,13 +832,13 @@ function capabilities(commands: Map<string, any>, options: handle2026Http.Option
   if ((options.apps?.length ?? 0) > 0)
     result.extensions = {
       ...(result.extensions as Record<string, unknown>),
-      [APPS_EXTENSION_ID]: { mimeTypes: [APP_RESOURCE_MIME_TYPE] },
-      [APPS_EXTENSION_ALIAS]: { mimeTypes: [APP_RESOURCE_MIME_TYPE] },
+      [appsExtensionId]: { mimeTypes: [appResourceMimeType] },
+      [appsExtensionAlias]: { mimeTypes: [appResourceMimeType] },
     }
   if (hasTaskTools(commands)) {
     result.extensions = {
       ...(result.extensions as Record<string, unknown>),
-      [TASKS_EXTENSION_ID]: {},
+      [tasksExtensionId]: {},
     }
   }
   result.extensions = {
@@ -851,11 +851,11 @@ function capabilities(commands: Map<string, any>, options: handle2026Http.Option
 function advertisedAuthorizationExtensions(options: AuthorizationOptions | undefined) {
   const extensions: Record<string, unknown> = {}
   if (options?.oauthClientCredentials)
-    extensions[OAUTH_CLIENT_CREDENTIALS_EXTENSION_ID] = extensionSettings(
+    extensions[oauthClientCredentialsExtensionId] = extensionSettings(
       options.oauthClientCredentials,
     )
   if (options?.enterpriseManagedAuthorization)
-    extensions[ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID] = extensionSettings(
+    extensions[enterpriseManagedAuthorizationExtensionId] = extensionSettings(
       options.enterpriseManagedAuthorization,
     )
   return extensions
@@ -903,11 +903,11 @@ function resources(options: handle2026Http.Options): ResourceDefinition[] {
       uri: app.resourceUri,
       title: app.title,
       description: app.description,
-      mimeType: APP_RESOURCE_MIME_TYPE,
+      mimeType: appResourceMimeType,
       icons: app.icons,
       async read() {
         const html = typeof app.html === 'function' ? await app.html() : app.html
-        return { uri: app.resourceUri, mimeType: APP_RESOURCE_MIME_TYPE, text: html }
+        return { uri: app.resourceUri, mimeType: appResourceMimeType, text: html }
       },
     }),
   )
@@ -977,7 +977,13 @@ async function get2026Prompt(message: JsonRpcRequest, options: handle2026Http.Op
   const prompt = (options.prompts ?? []).find((p) => p.name === name)
   if (!prompt) throw new JsonRpcError(-32602, `Unknown prompt: ${name}`)
   const rawArgs = isObject(params.arguments) ? params.arguments : {}
-  const parsed = prompt.args ? prompt.args.parse(rawArgs) : rawArgs
+  let parsed: Record<string, unknown>
+  try {
+    parsed = prompt.args ? prompt.args.parse(rawArgs) : rawArgs
+  } catch (error) {
+    if (error instanceof z.ZodError) throw new JsonRpcError(-32602, error.message)
+    throw error
+  }
   return complete({
     ...(prompt.description ? { description: prompt.description } : undefined),
     messages: await prompt.get(parsed as Record<string, string>),
@@ -1065,7 +1071,7 @@ async function createTask(
   tasks.set(taskId, task)
   void (async () => {
     try {
-      task.result = await callTool(tool, args, {
+      const result = await callTool(tool, args, {
         elicitation: createTaskElicitationAdapter(task),
         env: options.env,
         middlewares: options.middlewares,
@@ -1073,10 +1079,13 @@ async function createTask(
         vars: options.vars,
         version,
       })
+      if (task.status === 'cancelled') return
+      task.result = result
       task.status = 'completed'
       task.inputRequests = {}
       touchTask(task)
     } catch (error) {
+      if (task.status === 'cancelled') return
       task.status = 'failed'
       task.error = {
         code: -32603,
@@ -1116,6 +1125,9 @@ function updateTask(message: JsonRpcRequest) {
 function cancelTask(message: JsonRpcRequest) {
   const task = taskFrom(message)
   task.status = 'cancelled'
+  task.inputRequests = {}
+  for (const waiter of task.waiters.values()) waiter({ action: 'cancel' })
+  task.waiters.clear()
   touchTask(task)
   return complete({})
 }

@@ -145,6 +145,14 @@ function create2026Commands() {
       return { done: true }
     },
   })
+  commands.set('task-slow', {
+    description: 'Slow task backed command',
+    mcpTool: { title: 'Slow Task', task: { required: true, ttlMs: 300000 } },
+    async run() {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return { done: true }
+    },
+  })
   commands.set('task-input', {
     description: 'Task with input',
     mcpTool: { title: 'Task Input', task: { required: true, ttlMs: 300000 } },
@@ -254,7 +262,7 @@ async function mcp2026(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+      'MCP-Protocol-Version': Mcp.draftProtocolVersion,
       ...headers,
     },
     body: JSON.stringify({ jsonrpc: '2.0', ...body }),
@@ -762,10 +770,10 @@ describe('Mcp', () => {
   test('2026 server/discover advertises stateless capabilities', async () => {
     const { body } = await mcp2026({ id: 1, method: 'server/discover' })
     expect(body.result.resultType).toBe('complete')
-    expect(body.result.supportedVersions).toContain(Mcp.DRAFT_PROTOCOL_VERSION)
+    expect(body.result.supportedVersions).toContain(Mcp.draftProtocolVersion)
     expect(body.result.serverInfo).toEqual({ name: 'test-cli', version: '1.0.0' })
     expect(body.result.capabilities.tools).toBeDefined()
-    expect(body.result.capabilities.extensions[Mcp.TASKS_EXTENSION_ID]).toEqual({})
+    expect(body.result.capabilities.extensions[Mcp.tasksExtensionId]).toEqual({})
   })
 
   test('2026 rejects unsupported protocol versions', async () => {
@@ -776,7 +784,13 @@ describe('Mcp', () => {
     )
     expect(res.status).toBe(400)
     expect(body.error.code).toBe(-32001)
-    expect(body.error.data.supportedVersions).toContain(Mcp.DRAFT_PROTOCOL_VERSION)
+    expect(body.error.data.supportedVersions).toContain(Mcp.draftProtocolVersion)
+  })
+
+  test('2026 notifications do not return errors', async () => {
+    const notification = await mcp2026({ method: 'bogus/method', params: {} })
+    expect(notification.res.status).toBe(202)
+    expect(notification.body).toBeUndefined()
   })
 
   test('2026 validates method and name routing headers', async () => {
@@ -806,7 +820,7 @@ describe('Mcp', () => {
       { id: 1, method: 'server/discover', params: {} },
     ])
     expect(res.result.resultType).toBe('complete')
-    expect(res.result.supportedVersions).toContain(Mcp.DRAFT_PROTOCOL_VERSION)
+    expect(res.result.supportedVersions).toContain(Mcp.draftProtocolVersion)
   })
 
   test('2026 tools/list includes metadata, headers, output schemas, and cache hints', async () => {
@@ -815,7 +829,7 @@ describe('Mcp', () => {
         id: 1,
         method: 'tools/list',
         params: {
-          _meta: { 'io.modelcontextprotocol/protocolVersion': Mcp.DRAFT_PROTOCOL_VERSION },
+          _meta: { 'io.modelcontextprotocol/protocolVersion': Mcp.draftProtocolVersion },
         },
       },
       { cache: { ttlMs: 1000, cacheScope: 'private' } },
@@ -838,7 +852,7 @@ describe('Mcp', () => {
         params: {
           name: 'echo',
           arguments: { message: 'hi', upper: true },
-          _meta: { 'io.modelcontextprotocol/protocolVersion': Mcp.DRAFT_PROTOCOL_VERSION },
+          _meta: { 'io.modelcontextprotocol/protocolVersion': Mcp.draftProtocolVersion },
         },
       },
       {},
@@ -853,7 +867,7 @@ describe('Mcp', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+        'MCP-Protocol-Version': Mcp.draftProtocolVersion,
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
@@ -871,7 +885,7 @@ describe('Mcp', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+        'MCP-Protocol-Version': Mcp.draftProtocolVersion,
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
@@ -900,7 +914,7 @@ describe('Mcp', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+          'MCP-Protocol-Version': Mcp.draftProtocolVersion,
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
@@ -921,7 +935,7 @@ describe('Mcp', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+          'MCP-Protocol-Version': Mcp.draftProtocolVersion,
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
@@ -972,7 +986,7 @@ describe('Mcp', () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+            'MCP-Protocol-Version': Mcp.draftProtocolVersion,
           },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
         }),
@@ -988,7 +1002,7 @@ describe('Mcp', () => {
     ).toBe('file:///users/{id}.json')
     const panel = (await request('resources/read', { uri: 'ui://panel' })).result.contents[0]
     expect(panel.text).toContain('panel')
-    expect(panel.mimeType).toBe(Mcp.APP_RESOURCE_MIME_TYPE)
+    expect(panel.mimeType).toBe(Mcp.appResourceMimeType)
     const missing = await request('resources/read', { uri: 'file:///missing.json' })
     expect(missing.error.code).toBe(-32602)
     expect(missing.error.data.uri).toBe('file:///missing.json')
@@ -1013,13 +1027,16 @@ describe('Mcp', () => {
         })
       ).result.completion.values,
     ).toEqual(['one'])
+    expect((await request('prompts/get', { name: 'review', arguments: {} })).error.code).toBe(
+      -32602,
+    )
 
     const discover = await request('server/discover')
-    expect(discover.result.capabilities.extensions[Mcp.APPS_EXTENSION_ID].mimeTypes).toEqual([
-      Mcp.APP_RESOURCE_MIME_TYPE,
+    expect(discover.result.capabilities.extensions[Mcp.appsExtensionId].mimeTypes).toEqual([
+      Mcp.appResourceMimeType,
     ])
-    expect(discover.result.capabilities.extensions[Mcp.APPS_EXTENSION_ALIAS].mimeTypes).toEqual([
-      Mcp.APP_RESOURCE_MIME_TYPE,
+    expect(discover.result.capabilities.extensions[Mcp.appsExtensionAlias].mimeTypes).toEqual([
+      Mcp.appResourceMimeType,
     ])
   })
 
@@ -1032,7 +1049,7 @@ describe('Mcp', () => {
         arguments: {},
         _meta: {
           'io.modelcontextprotocol/clientCapabilities': {
-            extensions: { [Mcp.TASKS_EXTENSION_ID]: {} },
+            extensions: { [Mcp.tasksExtensionId]: {} },
           },
         },
       },
@@ -1054,6 +1071,30 @@ describe('Mcp', () => {
     expect(afterCancel.body.result.status).toBe('cancelled')
   })
 
+  test('2026 task cancellation remains final after command completion', async () => {
+    const created = await mcp2026({
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'task-slow',
+        arguments: {},
+        _meta: {
+          'io.modelcontextprotocol/clientCapabilities': {
+            extensions: { [Mcp.tasksExtensionId]: {} },
+          },
+        },
+      },
+    })
+    const taskId = created.body.result.taskId
+
+    await mcp2026({ id: 2, method: 'tasks/cancel', params: { taskId } })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const polled = await mcp2026({ id: 3, method: 'tasks/get', params: { taskId } })
+    expect(polled.body.result.status).toBe('cancelled')
+    expect(polled.body.result.result).toBeUndefined()
+  })
+
   test('2026 task methods validate Mcp-Name against taskId', async () => {
     const created = await mcp2026({
       id: 1,
@@ -1063,7 +1104,7 @@ describe('Mcp', () => {
         arguments: {},
         _meta: {
           'io.modelcontextprotocol/clientCapabilities': {
-            extensions: { [Mcp.TASKS_EXTENSION_ID]: {} },
+            extensions: { [Mcp.tasksExtensionId]: {} },
           },
         },
       },
@@ -1084,7 +1125,7 @@ describe('Mcp', () => {
       params: { name: 'tasked', arguments: {} },
     })
     expect(created.body.error.code).toBe(-32003)
-    expect(created.body.error.data.requiredCapabilities.extensions[Mcp.TASKS_EXTENSION_ID]).toEqual(
+    expect(created.body.error.data.requiredCapabilities.extensions[Mcp.tasksExtensionId]).toEqual(
       {},
     )
   })
@@ -1098,7 +1139,7 @@ describe('Mcp', () => {
         arguments: {},
         _meta: {
           'io.modelcontextprotocol/clientCapabilities': {
-            extensions: { [Mcp.TASKS_EXTENSION_ID]: {} },
+            extensions: { [Mcp.tasksExtensionId]: {} },
           },
         },
       },
@@ -1126,6 +1167,41 @@ describe('Mcp', () => {
     expect(JSON.parse(completed.body.result.result.content[0].text)).toEqual({ name: 'octocat' })
   })
 
+  test('2026 task cancellation clears pending input requests', async () => {
+    const created = await mcp2026({
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'task-input',
+        arguments: {},
+        _meta: {
+          'io.modelcontextprotocol/clientCapabilities': {
+            extensions: { [Mcp.tasksExtensionId]: {} },
+          },
+        },
+      },
+    })
+    const taskId = created.body.result.taskId
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await mcp2026({ id: 2, method: 'tasks/cancel', params: { taskId } })
+    const cancelled = await mcp2026({ id: 3, method: 'tasks/get', params: { taskId } })
+    expect(cancelled.body.result.status).toBe('cancelled')
+    expect(cancelled.body.result.inputRequests).toBeUndefined()
+
+    await mcp2026({
+      id: 4,
+      method: 'tasks/update',
+      params: {
+        taskId,
+        inputResponses: { profile: { action: 'accept', content: { name: 'octocat' } } },
+      },
+    })
+    const afterUpdate = await mcp2026({ id: 5, method: 'tasks/get', params: { taskId } })
+    expect(afterUpdate.body.result.status).toBe('cancelled')
+    expect(afterUpdate.body.result.result).toBeUndefined()
+  })
+
   test('2026 authorization extensions advertise and enforce an authorization hook', async () => {
     const cli = Cli.create('secure', {
       mcpServer: {
@@ -1140,7 +1216,7 @@ describe('Mcp', () => {
     async function request(token?: string) {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+        'MCP-Protocol-Version': Mcp.draftProtocolVersion,
       }
       if (token) headers.Authorization = `Bearer ${token}`
       const res = await cli.fetch(
@@ -1160,7 +1236,7 @@ describe('Mcp', () => {
 
     const denied = await request('bad')
     expect(denied.error.code).toBe(-32004)
-    expect(denied.error.data.extensions[Mcp.OAUTH_CLIENT_CREDENTIALS_EXTENSION_ID]).toEqual({
+    expect(denied.error.data.extensions[Mcp.oauthClientCredentialsExtensionId]).toEqual({
       scopes: ['read:tools'],
     })
 
@@ -1176,12 +1252,10 @@ describe('Mcp', () => {
     )
     const discoverBody = (await discover.json()) as any
     expect(
-      discoverBody.result.capabilities.extensions[Mcp.OAUTH_CLIENT_CREDENTIALS_EXTENSION_ID],
+      discoverBody.result.capabilities.extensions[Mcp.oauthClientCredentialsExtensionId],
     ).toEqual({ scopes: ['read:tools'] })
     expect(
-      discoverBody.result.capabilities.extensions[
-        Mcp.ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID
-      ],
+      discoverBody.result.capabilities.extensions[Mcp.enterpriseManagedAuthorizationExtensionId],
     ).toEqual({})
   })
 })
