@@ -1,5 +1,23 @@
 # incur
 
+## 0.4.9
+
+### Patch Changes
+
+- 0720a24: Added custom global options support via `globals` and `globalAlias` on `Cli.create()`.
+- 7e94269: Added destructive command hints to generated skill files.
+- a14e41d: Fixed BigInt serialization across JSON, JSONL, MCP, and fetch output paths.
+- cb05897: Fixed MCP registration command detection for global, local, and source-launched CLIs.
+- 15c9068: Defaulted MCP-over-HTTP to stateless transport behavior and returned `405` for unsupported stateless methods.
+- 1c52be9: Lazy-loaded YAML and MCP SDK imports outside plain command runs.
+- dc0faff: Added typed MCP command metadata for `instructions` and `annotations`.
+- 1cbe459: Fixed HTTP and MCP command input validation to return standard validation field errors for object-shaped inputs.
+- 43c1551: Added `banner` option to `Cli.create` for displaying custom content above root help output with sync/async functions, error swallowing, and `mode` targeting.
+- a0f469f: Fixed streaming command terminal records so HTTP NDJSON responses preserved returned `c.ok()` CTA metadata, represented returned or yielded `c.error()` values as terminal errors, included terminal duration metadata, unwound generators on response cancellation, and preserved `IncurError.retryable` metadata in streaming machine-format errors.
+- 9a43129: Surfaced `c.ok(..., { cta })` metadata on MCP tool responses under `_meta.cta`.
+- a0f469f: Fixed generated and synced skills to use the same command projection as CLI skill output, avoided duplicate skills for command aliases, preserved output schemas and examples consistently, and included the fetch gateway skill hint for fetch-based commands.
+- bffbdf4: Typed the root command `hint` option on `Cli.create`.
+
 ## 0.4.8
 
 ### Patch Changes
