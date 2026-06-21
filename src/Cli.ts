@@ -2,7 +2,6 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Completions from './Completions.js'
@@ -25,6 +24,7 @@ import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
+import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
@@ -350,6 +350,7 @@ export function create(
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
+        banner: def.banner,
         config: def.config,
         description: def.description,
         envSchema: def.env,
@@ -436,6 +437,19 @@ export declare namespace create {
       : Record<string, string> | undefined
     /** Alternative binary names for this CLI (e.g. shorter aliases in package.json `bin`). Shell completions are registered for all names. */
     aliases?: string[] | undefined
+    /**
+     * Text to display above root help output (e.g. branding, live status). Only called when the CLI is invoked with no subcommand. Errors are silently swallowed.
+     *
+     * Pass a function for all consumers, or an object with `mode` to target `'human'`, `'agent'`, or `'all'` (default).
+     */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          /** @default 'all' */
+          mode?: 'all' | 'human' | 'agent' | undefined
+        }
+      | undefined
     /** Zod schema for positional arguments. */
     args?: args | undefined
     /** Enable config-file defaults for command options. */
@@ -586,6 +600,20 @@ async function serveImpl(
     stdout(s.endsWith('\n') ? s : `${s}\n`)
   }
 
+  async function writeBanner() {
+    if (!options.banner || help) return
+    const banner =
+      typeof options.banner === 'function'
+        ? { render: options.banner, mode: 'all' as const }
+        : options.banner
+    const mode = banner.mode ?? 'all'
+    if (mode !== 'all' && mode !== (human ? 'human' : 'agent')) return
+    try {
+      const text = await banner.render()
+      if (text) writeln(text)
+    } catch {}
+  }
+
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
   try {
     builtinFlags = extractBuiltinFlags(argv, { configFlag })
@@ -638,6 +666,9 @@ async function serveImpl(
   }
 
   if (!parseGlobalOptions(false)) return
+
+  // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
+  if (formatFlag === 'yaml') await Yaml.load()
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -1057,6 +1088,7 @@ async function serveImpl(
     ) {
       // Root command with args but none provided (human mode) — show help
       const cmd = options.rootCommand
+      await writeBanner()
       writeln(
         Help.formatCommand(name, {
           alias: cmd.alias as Record<string, string> | undefined,
@@ -1081,6 +1113,7 @@ async function serveImpl(
     if (options.rootCommand || options.rootFetch) {
       // Root command/fetch with no args — treat as root invocation
     } else {
+      await writeBanner()
       writeln(
         Help.formatRoot(name, {
           aliases: options.aliases,
@@ -1259,6 +1292,7 @@ async function serveImpl(
   // Resolve effective format: explicit --format/--json → command default → CLI default → toon
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
+  if (format === 'yaml') await Yaml.load()
 
   // Fall back to root fetch/command when no subcommand matches,
   // but only if the token doesn't look like a typo of a known command.
@@ -1822,7 +1856,7 @@ async function fetchImpl(
   if (req.method === 'GET' && isOpenapiRoute(segments)) {
     const spec = generatedOpenapi(name, commands, options)
     const yaml = segments[0] === 'openapi.yml' || segments[0] === 'openapi.yaml'
-    return new Response(yaml ? yamlStringify(spec) : JSON.stringify(spec), {
+    return new Response(yaml ? (await Yaml.load()).stringify(spec) : JSON.stringify(spec), {
       status: 200,
       headers: {
         'content-type': yaml ? 'application/yaml' : 'application/json',
@@ -1846,6 +1880,8 @@ async function fetchImpl(
     segments.length >= 3 &&
     req.method === 'GET'
   ) {
+    // Pre-load yaml for the sync call paths below (`Skill.split`, frontmatter parsing).
+    await Yaml.load()
     const groups = new Map<string, string>()
     const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
 
@@ -1854,7 +1890,7 @@ async function fetchImpl(
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
         const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
-        const meta = fmMatch ? (yamlParse(fmMatch[1]!) as Record<string, string>) : {}
+        const meta = fmMatch ? (Yaml.loadSync().parse(fmMatch[1]!) as Record<string, string>) : {}
         return {
           name: f.dir || name,
           description: meta.description ?? '',
@@ -2329,6 +2365,14 @@ declare namespace serveImpl {
       | {
           agents?: string[] | undefined
           command?: string | undefined
+        }
+      | undefined
+    /** Banner config, called before root help. */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          mode?: 'all' | 'human' | 'agent' | undefined
         }
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
@@ -3275,7 +3319,7 @@ export function parseSkillFrontmatter(content: string): {
 } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
-  const meta = yamlParse(match[1]!)
+  const meta = Yaml.loadSync().parse(match[1]!)
   if (!meta || typeof meta !== 'object') return {}
   return meta as { description?: string | undefined; name?: string | undefined }
 }
