@@ -375,6 +375,18 @@ test('command mcp metadata accepts instructions and annotations', () => {
   })
 })
 
+test('command metadata accepts destructive flag', () => {
+  Cli.create('test').command('destroy', {
+    destructive: true,
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create('destroy', {
+    destructive: true,
+    run: () => ({ ok: true }),
+  })
+})
+
 test('root run() context exposes displayName', () => {
   Cli.create('test', {
     run(c) {

@@ -247,6 +247,7 @@ export function hash(commands: CommandInfo[]): string {
   const data = commands.map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
+    hint: cmd.hint,
     args: cmd.args ? Schema.toJsonSchema(cmd.args) : undefined,
     env: cmd.env ? Schema.toJsonSchema(cmd.env) : undefined,
     options: cmd.options ? Schema.toJsonSchema(cmd.options) : undefined,

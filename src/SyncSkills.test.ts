@@ -161,6 +161,45 @@ test('installed SKILL.md contains frontmatter', async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('installed SKILL.md marks destructive commands', async () => {
+  const tmp = join(tmpdir(), `clac-destructive-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('my-tool')
+  cli.command('destroy', {
+    description: 'Destroy data',
+    destructive: true,
+    hint: 'Deletes all data.',
+    run: () => ({}),
+  })
+  cli.command('status', {
+    description: 'Check status',
+    hint: 'Shows current status.',
+    run: () => ({}),
+  })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const result = await SyncSkills.sync('my-tool', commands, {
+    depth: 0,
+    global: false,
+    cwd: installDir,
+  })
+
+  const content = readFileSync(join(result.paths[0]!, 'SKILL.md'), 'utf8')
+  expect(content).toContain(
+    'Deletes all data. Confirm with the user before executing this destructive command.',
+  )
+  expect(content).toContain('Shows current status.')
+  expect(content).not.toContain(
+    'Shows current status. Confirm with the user before executing this destructive command.',
+  )
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('sync returns unquoted descriptions from YAML frontmatter', async () => {
   const tmp = join(tmpdir(), `clac-quoted-description-test-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })

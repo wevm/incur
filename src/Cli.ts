@@ -36,6 +36,8 @@ import * as Skill from './Skill.js'
 import * as SyncMcp from './SyncMcp.js'
 import * as SyncSkills from './SyncSkills.js'
 
+const destructiveCommandHint = 'Confirm with the user before executing this destructive command.'
+
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<
   commands extends CommandsMap = {},
@@ -472,6 +474,8 @@ export declare namespace create {
       | undefined
     /** A short description of what the CLI does. */
     description?: string | undefined
+    /** Marks the root command as destructive when generating agent skills. */
+    destructive?: boolean | undefined
     /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
     env?: env | undefined
     /** Usage examples for this command. */
@@ -3256,6 +3260,7 @@ export function collectSkillCommands(
     if (rootCommand.args) cmd.args = rootCommand.args
     if (rootCommand.env) cmd.env = rootCommand.env
     if (rootCommand.hint) cmd.hint = rootCommand.hint
+    if (isDestructive(rootCommand)) cmd.hint = appendDestructiveHint(cmd.hint)
     if (rootCommand.options) cmd.options = rootCommand.options
     if (rootCommand.output) cmd.output = rootCommand.output
     const examples = formatExamples(rootCommand.examples)
@@ -3279,6 +3284,7 @@ export function collectSkillCommands(
       if (entry.args) cmd.args = entry.args
       if (entry.env) cmd.env = entry.env
       if (entry.hint) cmd.hint = entry.hint
+      if (isDestructive(entry)) cmd.hint = appendDestructiveHint(cmd.hint)
       if (entry.options) cmd.options = entry.options
       if (entry.output) cmd.output = entry.output
       const examples = formatExamples(entry.examples)
@@ -3297,8 +3303,26 @@ export function collectSkillCommands(
 
 type SkillCommandSource = Pick<
   CommandDefinition<any, any, any, any, any, any>,
-  'args' | 'description' | 'env' | 'examples' | 'hint' | 'options' | 'output'
+  | 'args'
+  | 'description'
+  | 'destructive'
+  | 'env'
+  | 'examples'
+  | 'hint'
+  | 'mcp'
+  | 'options'
+  | 'output'
 >
+
+function isDestructive(command: SkillCommandSource): boolean {
+  return command.destructive === true || command.mcp?.annotations?.destructiveHint === true
+}
+
+function appendDestructiveHint(hint: string | undefined): string {
+  if (!hint) return destructiveCommandHint
+  if (hint.includes(destructiveCommandHint)) return hint
+  return `${hint} ${destructiveCommandHint}`
+}
 
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
 export function formatExamples(
@@ -3456,6 +3480,8 @@ type CommandDefinition<
   args?: args | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
   env?: env | undefined
+  /** Marks this command as destructive when generating agent skills. */
+  destructive?: boolean | undefined
   /** Usage examples for this command. */
   examples?: Example<args, options>[] | undefined
   /** Default output format. Overridden by `--format` or `--json`. */

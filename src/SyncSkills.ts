@@ -6,6 +6,7 @@ import path from 'node:path'
 import { collectSkillCommands, parseSkillFrontmatter } from './Cli.js'
 import * as Agents from './internal/agents.js'
 import * as Yaml from './internal/yaml.js'
+import type * as Mcp from './Mcp.js'
 import * as Skill from './Skill.js'
 
 /** Generates skill files from a command map and installs them natively. */
@@ -103,8 +104,10 @@ export declare namespace sync {
       | {
           description?: string | undefined
           args?: any
+          destructive?: boolean | undefined
           env?: any
           hint?: string | undefined
+          mcp?: { annotations?: Mcp.ToolAnnotations | undefined } | undefined
           options?: any
           output?: any
           examples?: any[] | undefined
@@ -210,8 +213,10 @@ export declare namespace list {
       | {
           description?: string | undefined
           args?: any
+          destructive?: boolean | undefined
           env?: any
           hint?: string | undefined
+          mcp?: { annotations?: Mcp.ToolAnnotations | undefined } | undefined
           options?: any
           output?: any
           examples?: any[] | undefined

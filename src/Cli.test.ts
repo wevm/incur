@@ -3973,6 +3973,42 @@ test('--llms includes hint in skill output', async () => {
   expect(output).toContain('Always confirm before deploying to production')
 })
 
+test('--llms appends confirmation hint for destructive commands', async () => {
+  const cli = Cli.create('test')
+  cli.command('destroy', {
+    description: 'Destroy the app',
+    destructive: true,
+    hint: 'Deletes production resources.',
+    run: () => ({}),
+  })
+  cli.command('status', {
+    description: 'Show status',
+    hint: 'Read-only status check.',
+    run: () => ({}),
+  })
+
+  const { output } = await serve(cli, ['--llms-full'])
+  expect(output).toContain(
+    'Deletes production resources. Confirm with the user before executing this destructive command.',
+  )
+  expect(output).toContain('Read-only status check.')
+  expect(output).not.toContain(
+    'Read-only status check. Confirm with the user before executing this destructive command.',
+  )
+})
+
+test('--llms treats MCP destructiveHint as destructive', async () => {
+  const cli = Cli.create('test')
+  cli.command('deploy', {
+    description: 'Deploy the app',
+    mcp: { annotations: { destructiveHint: true } },
+    run: () => ({}),
+  })
+
+  const { output } = await serve(cli, ['--llms-full'])
+  expect(output).toContain('Confirm with the user before executing this destructive command.')
+})
+
 describe('fetch', async () => {
   const { app } = await import('../test/fixtures/hono-api.js')
 

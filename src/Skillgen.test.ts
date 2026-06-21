@@ -85,3 +85,42 @@ test('includes args, options, and examples in output', async () => {
   expect(content).toContain('Fetch gateway. Pass path segments')
   expect(content).not.toContain('# tool hi')
 })
+
+test('appends confirmation hint for destructive commands', async () => {
+  const cli = Cli.create('tool')
+    .command('destroy', {
+      description: 'Destroy data',
+      destructive: true,
+      hint: 'Deletes all data.',
+      run: () => ({}),
+    })
+    .command('status', {
+      description: 'Check status',
+      hint: 'Shows current status.',
+      run: () => ({}),
+    })
+  vi.mocked(importCli).mockResolvedValue(cli)
+
+  const files = await generate('fake-input', tmp, 0)
+  const content = readFileSync(files[0]!, 'utf-8')
+  expect(content).toContain(
+    'Deletes all data. Confirm with the user before executing this destructive command.',
+  )
+  expect(content).toContain('Shows current status.')
+  expect(content).not.toContain(
+    'Shows current status. Confirm with the user before executing this destructive command.',
+  )
+})
+
+test('uses MCP destructiveHint when generating skill files', async () => {
+  const cli = Cli.create('tool').command('deploy', {
+    description: 'Deploy',
+    mcp: { annotations: { destructiveHint: true } },
+    run: () => ({}),
+  })
+  vi.mocked(importCli).mockResolvedValue(cli)
+
+  const files = await generate('fake-input', tmp, 0)
+  const content = readFileSync(files[0]!, 'utf-8')
+  expect(content).toContain('Confirm with the user before executing this destructive command.')
+})
