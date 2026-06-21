@@ -33,9 +33,10 @@ import { registerHooks } from 'node:module'
 
 const loaded: string[] = []
 registerHooks({
-  load(url, context, next) {
-    loaded.push(url)
-    return next(url, context)
+  resolve(specifier, context, next) {
+    const result = next(specifier, context)
+    loaded.push(result.url)
+    return result
   },
 })
 
