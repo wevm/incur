@@ -145,6 +145,21 @@ function create2026Commands() {
       return { done: true }
     },
   })
+  commands.set('task-short', {
+    description: 'Short TTL task backed command',
+    mcpTool: { title: 'Short Task', task: { required: true, ttlMs: 1 } },
+    run() {
+      return { done: true }
+    },
+  })
+  commands.set('task-slow', {
+    description: 'Slow task backed command',
+    mcpTool: { title: 'Slow Task', task: { required: true, ttlMs: 300000 } },
+    async run() {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return { done: true }
+    },
+  })
   commands.set('task-input', {
     description: 'Task with input',
     mcpTool: { title: 'Task Input', task: { required: true, ttlMs: 300000 } },
@@ -260,6 +275,21 @@ async function mcp2026(
     body: JSON.stringify({ jsonrpc: '2.0', ...body }),
   })
   const res = await Mcp.handle2026Http(req, 'test-cli', '1.0.0', create2026Commands(), options)
+  const text = await res.text()
+  return { res, body: text ? JSON.parse(text) : undefined }
+}
+
+async function mcp2026Raw(body: string, headers: Record<string, string> = {}) {
+  const req = new Request('http://localhost/mcp', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'MCP-Protocol-Version': Mcp.DRAFT_PROTOCOL_VERSION,
+      ...headers,
+    },
+    body,
+  })
+  const res = await Mcp.handle2026Http(req, 'test-cli', '1.0.0', create2026Commands())
   const text = await res.text()
   return { res, body: text ? JSON.parse(text) : undefined }
 }
@@ -779,6 +809,24 @@ describe('Mcp', () => {
     expect(body.error.data.supportedVersions).toContain(Mcp.DRAFT_PROTOCOL_VERSION)
   })
 
+  test('2026 handles malformed requests and notifications', async () => {
+    const malformed = await mcp2026Raw('{')
+    expect(malformed.res.status).toBe(400)
+    expect(malformed.body.error.code).toBe(-32700)
+
+    const invalid = await mcp2026Raw(JSON.stringify({ jsonrpc: '2.0', id: 1 }))
+    expect(invalid.res.status).toBe(400)
+    expect(invalid.body.error.code).toBe(-32600)
+
+    const notification = await mcp2026({ method: 'tools/list', params: {} })
+    expect(notification.res.status).toBe(202)
+    expect(notification.body).toBeUndefined()
+
+    const unknownNotification = await mcp2026({ method: 'bogus/method', params: {} })
+    expect(unknownNotification.res.status).toBe(202)
+    expect(unknownNotification.body).toBeUndefined()
+  })
+
   test('2026 validates method and name routing headers', async () => {
     const wrongMethod = await mcp2026(
       { id: 1, method: 'tools/list', params: {} },
@@ -960,7 +1008,10 @@ describe('Mcp', () => {
       .prompt('review', {
         args: z.object({ language: z.string().describe('Language') }),
         complete: {
-          language: (value) => ['typescript', 'rust'].filter((lang) => lang.startsWith(value)),
+          language: (value) =>
+            value === 'many'
+              ? Array.from({ length: 105 }, (_, i) => `item-${i}`)
+              : ['typescript', 'rust'].filter((lang) => lang.startsWith(value)),
         },
         get: (args) => [{ role: 'user', content: Mcp.text(`Review ${args.language}`) }],
       })
@@ -1013,6 +1064,18 @@ describe('Mcp', () => {
         })
       ).result.completion.values,
     ).toEqual(['one'])
+    const many = (
+      await request('completion/complete', {
+        ref: { type: 'ref/prompt', name: 'review' },
+        argument: { name: 'language', value: 'many' },
+      })
+    ).result.completion
+    expect(many.values).toHaveLength(100)
+    expect(many.total).toBe(105)
+    expect(many.hasMore).toBe(true)
+    expect((await request('prompts/get', { name: 'review', arguments: {} })).error.code).toBe(
+      -32602,
+    )
 
     const discover = await request('server/discover')
     expect(discover.result.capabilities.extensions[Mcp.APPS_EXTENSION_ID].mimeTypes).toEqual([
@@ -1054,6 +1117,30 @@ describe('Mcp', () => {
     expect(afterCancel.body.result.status).toBe('cancelled')
   })
 
+  test('2026 task cancellation remains final after command completion', async () => {
+    const created = await mcp2026({
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'task-slow',
+        arguments: {},
+        _meta: {
+          'io.modelcontextprotocol/clientCapabilities': {
+            extensions: { [Mcp.TASKS_EXTENSION_ID]: {} },
+          },
+        },
+      },
+    })
+    const taskId = created.body.result.taskId
+
+    await mcp2026({ id: 2, method: 'tasks/cancel', params: { taskId } })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const polled = await mcp2026({ id: 3, method: 'tasks/get', params: { taskId } })
+    expect(polled.body.result.status).toBe('cancelled')
+    expect(polled.body.result.result).toBeUndefined()
+  })
+
   test('2026 task methods validate Mcp-Name against taskId', async () => {
     const created = await mcp2026({
       id: 1,
@@ -1075,6 +1162,29 @@ describe('Mcp', () => {
     )
     expect(wrongName.body.error.code).toBe(-32600)
     expect(wrongName.body.error.message).toContain('taskId')
+  })
+
+  test('2026 task state expires after ttlMs', async () => {
+    const created = await mcp2026({
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'task-short',
+        arguments: {},
+        _meta: {
+          'io.modelcontextprotocol/clientCapabilities': {
+            extensions: { [Mcp.TASKS_EXTENSION_ID]: {} },
+          },
+        },
+      },
+    })
+    const taskId = created.body.result.taskId
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const expired = await mcp2026({ id: 2, method: 'tasks/get', params: { taskId } })
+    expect(expired.res.status).toBe(400)
+    expect(expired.body.error.code).toBe(-32602)
+    expect(expired.body.error.data.taskId).toBe(taskId)
   })
 
   test('2026 task tools require client task extension support', async () => {
@@ -1124,6 +1234,41 @@ describe('Mcp', () => {
     const completed = await mcp2026({ id: 4, method: 'tasks/get', params: { taskId } })
     expect(completed.body.result.status).toBe('completed')
     expect(JSON.parse(completed.body.result.result.content[0].text)).toEqual({ name: 'octocat' })
+  })
+
+  test('2026 task cancellation clears pending input requests', async () => {
+    const created = await mcp2026({
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'task-input',
+        arguments: {},
+        _meta: {
+          'io.modelcontextprotocol/clientCapabilities': {
+            extensions: { [Mcp.TASKS_EXTENSION_ID]: {} },
+          },
+        },
+      },
+    })
+    const taskId = created.body.result.taskId
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await mcp2026({ id: 2, method: 'tasks/cancel', params: { taskId } })
+    const cancelled = await mcp2026({ id: 3, method: 'tasks/get', params: { taskId } })
+    expect(cancelled.body.result.status).toBe('cancelled')
+    expect(cancelled.body.result.inputRequests).toBeUndefined()
+
+    await mcp2026({
+      id: 4,
+      method: 'tasks/update',
+      params: {
+        taskId,
+        inputResponses: { profile: { action: 'accept', content: { name: 'octocat' } } },
+      },
+    })
+    const afterUpdate = await mcp2026({ id: 5, method: 'tasks/get', params: { taskId } })
+    expect(afterUpdate.body.result.status).toBe('cancelled')
+    expect(afterUpdate.body.result.result).toBeUndefined()
   })
 
   test('2026 authorization extensions advertise and enforce an authorization hook', async () => {

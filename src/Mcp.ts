@@ -361,6 +361,7 @@ export async function handle2026Http(
     if (message.id === undefined) return new Response(null, { status: 202 })
     return json({ jsonrpc: '2.0', id: message.id, result })
   } catch (err) {
+    if (message.id === undefined) return new Response(null, { status: 202 })
     if (err instanceof InputRequiredError)
       return json({
         jsonrpc: '2.0',
@@ -977,7 +978,13 @@ async function get2026Prompt(message: JsonRpcRequest, options: handle2026Http.Op
   const prompt = (options.prompts ?? []).find((p) => p.name === name)
   if (!prompt) throw new JsonRpcError(-32602, `Unknown prompt: ${name}`)
   const rawArgs = isObject(params.arguments) ? params.arguments : {}
-  const parsed = prompt.args ? prompt.args.parse(rawArgs) : rawArgs
+  let parsed: Record<string, unknown>
+  try {
+    parsed = prompt.args ? prompt.args.parse(rawArgs) : rawArgs
+  } catch (error) {
+    if (error instanceof z.ZodError) throw new JsonRpcError(-32602, error.message)
+    throw error
+  }
   return complete({
     ...(prompt.description ? { description: prompt.description } : undefined),
     messages: await prompt.get(parsed as Record<string, string>),
@@ -1065,7 +1072,7 @@ async function createTask(
   tasks.set(taskId, task)
   void (async () => {
     try {
-      task.result = await callTool(tool, args, {
+      const result = await callTool(tool, args, {
         elicitation: createTaskElicitationAdapter(task),
         env: options.env,
         middlewares: options.middlewares,
@@ -1073,10 +1080,13 @@ async function createTask(
         vars: options.vars,
         version,
       })
+      if (task.status === 'cancelled') return
+      task.result = result
       task.status = 'completed'
       task.inputRequests = {}
       touchTask(task)
     } catch (error) {
+      if (task.status === 'cancelled') return
       task.status = 'failed'
       task.error = {
         code: -32603,
@@ -1116,6 +1126,9 @@ function updateTask(message: JsonRpcRequest) {
 function cancelTask(message: JsonRpcRequest) {
   const task = taskFrom(message)
   task.status = 'cancelled'
+  task.inputRequests = {}
+  for (const waiter of task.waiters.values()) waiter({ action: 'cancel' })
+  task.waiters.clear()
   touchTask(task)
   return complete({})
 }
