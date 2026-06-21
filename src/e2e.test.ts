@@ -1,8 +1,10 @@
-import { Cli, Errors, Skill, Typegen, z } from 'incur'
+import { Cli, Errors, Fetch, Skill, Typegen, z } from 'incur'
 
 import { app as honoApp } from '../test/fixtures/hono-api.js'
+import { spec as openapiSpec } from '../test/fixtures/openapi-spec.js'
 
 let __mockSkillsHash: string | undefined
+let __mockSkillsInstalled = true
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -14,7 +16,11 @@ afterAll(() => {
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => __mockSkillsHash }
+  return {
+    ...actual,
+    hasInstalledSkills: () => __mockSkillsInstalled,
+    readHash: () => __mockSkillsHash,
+  }
 })
 
 describe('routing', () => {
@@ -1507,9 +1513,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app auth auth login\` | Log in to the service |
-      | \`app auth auth logout\` | Log out of the service |
-      | \`app auth auth status\` | Show authentication status |
+      | \`app auth login\` | Log in to the service |
+      | \`app auth logout\` | Log out of the service |
+      | \`app auth status\` | Show authentication status |
 
       Run \`app auth --llms-full\` for full manifest. Run \`app auth <command> --schema\` for argument details.
       "
@@ -1525,9 +1531,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app project deploy project deploy create <env>\` | Create a deployment |
-      | \`app project deploy project deploy rollback <deployId>\` | Rollback a deployment |
-      | \`app project deploy project deploy status <deployId>\` | Check deployment status |
+      | \`app project deploy create <env>\` | Create a deployment |
+      | \`app project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy status <deployId>\` | Check deployment status |
 
       Run \`app project deploy --llms-full\` for full manifest. Run \`app project deploy <command> --schema\` for argument details.
       "
@@ -1983,11 +1989,13 @@ describe('skills staleness', () => {
   beforeEach(() => {
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   afterEach(() => {
     stderrSpy.mockRestore()
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   test('includes skills CTA when stale', async () => {
@@ -2011,6 +2019,14 @@ describe('skills staleness', () => {
 
   test('no warning on first use (no hash stored)', async () => {
     __mockSkillsHash = undefined
+    const { output } = await serve(createApp(), ['ping'])
+    expect(output).toContain('pong: true')
+    expect(output).not.toContain('Skills are out of date')
+  })
+
+  test('no warning when skills are not installed', async () => {
+    __mockSkillsHash = '0000000000000000'
+    __mockSkillsInstalled = false
     const { output } = await serve(createApp(), ['ping'])
     expect(output).toContain('pong: true')
     expect(output).not.toContain('Skills are out of date')
@@ -2357,6 +2373,231 @@ describe('fetch gateway', () => {
   })
 })
 
+describe('hosted OpenAPI CLI', () => {
+  test('runs root commands from a hosted fetch source and relative OpenAPI path', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+    })
+
+    try {
+      const { output } = await serve(cli, ['listUsers', '--limit', '5'])
+      expect(output).toMatchInlineSnapshot(`
+        "users[1]{id,name}:
+          1,Alice
+        limit: 5
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('runs mounted commands from a hosted fetch source and URL OpenAPI spec', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test').command('api', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: new URL('https://api.example.com/api/openapi.json'),
+    })
+
+    try {
+      const { output } = await serve(cli, ['api', 'getUser', '42'])
+      expect(output).toMatchInlineSnapshot(`
+        "id: 42
+        name: Alice
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('root help renders generated commands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+    })
+
+    try {
+      const { output } = await serve(cli, ['--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test
+
+        Usage: test <command>
+
+        Commands:
+          createUser   Create a user
+          deleteUser   Delete a user
+          getUser      Get a user by ID
+          healthCheck  Health check
+          listUsers    List users
+
+        Integrations:
+          completions  Generate shell completion script
+          mcp add      Register as MCP server
+          skills       Sync skill files to agents (add, list)
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --mcp                               Start as MCP stdio server
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+          --version                           Show version
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('mounted help renders generated commands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test').command('api', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: new URL('https://api.example.com/api/openapi.json'),
+    })
+
+    try {
+      const { output } = await serve(cli, ['api', '--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test api
+
+        Usage: test api <command>
+
+        Commands:
+          createUser   Create a user
+          deleteUser   Delete a user
+          getUser      Get a user by ID
+          healthCheck  Health check
+          listUsers    List users
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode help renders path-derived command groups', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test
+
+        Usage: test <command>
+
+        Commands:
+          health  Health check
+          users   List users
+
+        Integrations:
+          completions  Generate shell completion script
+          mcp add      Register as MCP server
+          skills       Sync skill files to agents (add, list)
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --mcp                               Start as MCP stdio server
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+          --version                           Show version
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode group help renders path-derived subcommands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['users', '--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test users — List users
+
+        Usage: test users <command>
+
+        Commands:
+          get   List users
+          id    User ID
+          post  Create a user
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode runs path-derived subcommands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['users', 'get', '--limit', '5'])
+      expect(output).toMatchInlineSnapshot(`
+        "users[1]{id,name}:
+          1,Alice
+        limit: 5
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+})
+
 async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
   const res = await cli.fetch(req)
   const body = await res.json()
@@ -2592,6 +2833,8 @@ describe('fetch api', () => {
       .trim()
       .split('\n')
       .map((l) => JSON.parse(l))
+    expect(lines[2].meta.duration).toMatch(/^\d+ms$/)
+    lines[2].meta.duration = '<stripped>'
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -2609,6 +2852,7 @@ describe('fetch api', () => {
         {
           "meta": {
             "command": "stream",
+            "duration": "<stripped>",
           },
           "ok": true,
           "type": "done",
@@ -3036,6 +3280,21 @@ async function serve(
 
 function json(raw: string) {
   return JSON.parse(raw)
+}
+
+function hostedOpenapiFetch() {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+
+    if (url.href === 'https://api.example.com/api/openapi.json') return Response.json(openapiSpec)
+    if (url.pathname.startsWith('/api/')) {
+      url.pathname = url.pathname.slice('/api'.length)
+      return honoApp.fetch(new Request(url, request))
+    }
+
+    return new Response('Not Found', { status: 404 })
+  })
 }
 
 function createMiddlewareApp() {

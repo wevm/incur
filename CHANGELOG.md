@@ -1,5 +1,49 @@
 # incur
 
+## 0.4.8
+
+### Patch Changes
+
+- 935e6f7: Generated OpenAPI commands accepted header parameters and header security schemes as CLI options.
+
+## 0.4.7
+
+### Patch Changes
+
+- 01b5c91: Added `openapiConfig.mode` for choosing operation id or namespace command generation.
+- bfc05ac: Added hosted OpenAPI command generation from `Fetch.fromRequest` sources.
+
+## 0.4.6
+
+### Patch Changes
+
+- ed18ddc: Added support for automatic OpenAPI v3.2.0 schema generation
+
+## 0.4.5
+
+### Patch Changes
+
+- 85e98bc: Fixed `--json` to emit parsed JSON objects and arrays instead of double-encoding top-level JSON strings.
+- 3124fe7: Clarified TTY validation output for missing options and environment variables.
+
+## 0.4.4
+
+### Patch Changes
+
+- 9875d59: Fixed skill frontmatter generation and parsing so descriptions containing YAML-sensitive text like `key: value` were quoted and read correctly.
+
+## 0.4.3
+
+### Patch Changes
+
+- 01c675f: Added `ls` alias for `skills list`.
+
+## 0.4.2
+
+### Patch Changes
+
+- a6c584d: Fixed stale skills warnings to only appear when synced skill files were still installed on disk, and updated `skills list` to reflect actual install state instead of stale metadata.
+
 ## 0.4.1
 
 ### Minor Changes

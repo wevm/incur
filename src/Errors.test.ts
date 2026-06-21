@@ -66,6 +66,8 @@ describe('ValidationError', () => {
       message: 'Invalid arguments',
       fieldErrors: [
         {
+          code: 'invalid_value',
+          missing: false,
           path: 'state',
           expected: 'open | closed',
           received: 'invalid',
@@ -76,6 +78,8 @@ describe('ValidationError', () => {
     expect(error.name).toBe('Incur.ValidationError')
     expect(error.fieldErrors).toEqual([
       {
+        code: 'invalid_value',
+        missing: false,
         path: 'state',
         expected: 'open | closed',
         received: 'invalid',

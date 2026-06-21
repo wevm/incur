@@ -62,6 +62,15 @@ describe('format', () => {
     `)
   })
 
+  test('formats bigint values as strings in JSON', () => {
+    const result = Formatter.format({ expiry: 2461152330n }, 'json')
+    expect(result).toMatchInlineSnapshot(`
+      "{
+        "expiry": "2461152330"
+      }"
+    `)
+  })
+
   test('formats as YAML', () => {
     const result = Formatter.format({ message: 'hello' }, 'yaml')
     expect(result).toMatchInlineSnapshot(`
@@ -79,6 +88,16 @@ describe('format', () => {
     expect(Formatter.format('hello world')).toBe('hello world')
     expect(Formatter.format('hello world', 'json')).toBe('"hello world"')
     expect(Formatter.format('hello world', 'md')).toBe('hello world')
+  })
+
+  test('formats JSON object strings as JSON', () => {
+    const result = Formatter.format('{"url":"https://example.com/","title":""}', 'json')
+    expect(result).toMatchInlineSnapshot(`
+      "{
+        "url": "https://example.com/",
+        "title": ""
+      }"
+    `)
   })
 
   test('formats number value', () => {
@@ -306,6 +325,14 @@ describe('format jsonl', () => {
     expect(result).toMatchInlineSnapshot(`
       "{"id":1}
       {"id":2}"
+    `)
+  })
+
+  test('array outputs bigint values as strings', () => {
+    const result = Formatter.format([{ expiry: 2461152330n }, { expiry: 2461152331n }], 'jsonl')
+    expect(result).toMatchInlineSnapshot(`
+      "{"expiry":"2461152330"}
+      {"expiry":"2461152331"}"
     `)
   })
 

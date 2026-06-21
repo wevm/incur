@@ -60,13 +60,20 @@ test('collects group descriptions', async () => {
 test('includes args, options, and examples in output', async () => {
   const cli = Cli.create('tool', {
     description: 'A tool',
-  }).command('greet', {
-    description: 'Greet someone',
-    args: z.object({ name: z.string().describe('Name to greet') }),
-    options: z.object({ loud: z.boolean().default(false).describe('Shout') }),
-    examples: [{ args: { name: 'world' }, description: 'Greet the world' }],
-    run: () => ({}),
   })
+    .command('greet', {
+      description: 'Greet someone',
+      aliases: ['hi'],
+      args: z.object({ name: z.string().describe('Name to greet') }),
+      options: z.object({ loud: z.boolean().default(false).describe('Shout') }),
+      output: z.object({ message: z.string() }),
+      examples: [{ args: { name: 'world' }, description: 'Greet the world' }],
+      run: () => ({ message: 'hi' }),
+    })
+    .command('api', {
+      description: 'Proxy API',
+      fetch: () => new Response('{}'),
+    })
   vi.mocked(importCli).mockResolvedValue(cli)
 
   const files = await generate('fake-input', tmp, 0)
@@ -74,4 +81,7 @@ test('includes args, options, and examples in output', async () => {
   expect(content).toContain('Name to greet')
   expect(content).toContain('Shout')
   expect(content).toContain('Greet the world')
+  expect(content).toContain('## Output')
+  expect(content).toContain('Fetch gateway. Pass path segments')
+  expect(content).not.toContain('# tool hi')
 })

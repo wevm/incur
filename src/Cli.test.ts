@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import * as Command from './internal/command.js'
+
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
   ;(process.stdout as any).isTTY = false
@@ -12,10 +14,15 @@ afterAll(() => {
 })
 
 let __mockSkillsHash: string | undefined
+let __mockSkillsInstalled = true
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => __mockSkillsHash }
+  return {
+    ...actual,
+    hasInstalledSkills: () => __mockSkillsInstalled,
+    readHash: () => __mockSkillsHash,
+  }
 })
 
 async function serve(
@@ -930,6 +937,101 @@ describe('serve', () => {
     expect(output).toContain('Error: missing required argument <name>')
   })
 
+  test('ValidationError preserves Zod messages in machine output', async () => {
+    const cli = Cli.create('test')
+    cli.command('send', {
+      options: z.object({ address: z.string().min(32) }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['send', '--address', 'abc', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      fieldErrors: [
+        {
+          code: 'too_small',
+          message: 'Too small: expected string to have >=32 characters',
+          missing: false,
+          path: 'address',
+        },
+      ],
+    })
+  })
+
+  test('ValidationError shows invalid option messages in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('send', {
+      options: z.object({ address: z.string().min(32) }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['send', '--address', 'abc'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain(
+      'Error: invalid value for --address: Too small: expected string to have >=32 characters',
+    )
+    expect(output).not.toContain('Error: missing required argument <address>')
+  })
+
+  test('ValidationError shows missing required options in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('send', {
+      options: z.object({ address: z.string() }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['send'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Error: missing required option --address')
+  })
+
+  test('ValidationError shows invalid enum messages in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('list', {
+      options: z.object({ state: z.enum(['open', 'closed']) }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['list', '--state', 'invalid'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain(
+      'Error: invalid value for --state: Invalid option: expected one of "open"|"closed"',
+    )
+  })
+
+  test('ValidationError shows positional refinement messages in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('get', {
+      args: z.object({
+        id: z.string().refine((value) => value.startsWith('x'), { message: 'must start with x' }),
+      }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['get', 'abc'])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Error: invalid value for <id>: must start with x')
+  })
+
   test('agent is true when not TTY', async () => {
     let agent: boolean | undefined
     const cli = Cli.create('test')
@@ -988,6 +1090,17 @@ describe('serve', () => {
     cli.command('ping', { run: () => ({ pong: true }) })
     const { output } = await serve(cli, ['ping', '--json'])
     expect(JSON.parse(output)).toEqual({ pong: true })
+  })
+
+  test('--json parses top-level JSON strings instead of quoting them again', async () => {
+    const cli = Cli.create('test')
+    cli.command('snapshot', {
+      output: z.string(),
+      run: () => JSON.stringify({ url: 'https://example.com/', title: '' }),
+    })
+
+    const { output } = await serve(cli, ['snapshot', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'https://example.com/', title: '' })
   })
 
   test('--full-output --format json outputs full envelope as JSON', async () => {
@@ -1274,8 +1387,9 @@ describe('--llms', () => {
     cli.command('ping', { description: 'Health check', run: () => ({}) })
 
     const { output } = await serve(cli, ['auth', '--llms'])
-    expect(output).toContain('test auth auth login')
-    expect(output).toContain('test auth auth logout')
+    expect(output).toContain('test auth login')
+    expect(output).toContain('test auth logout')
+    expect(output).not.toContain('test auth auth') // no doubled namespace
     expect(output).not.toContain('ping')
   })
 
@@ -1309,6 +1423,18 @@ describe('--llms', () => {
     expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
     expect(output).toContain('# my-cli auth')
     expect(output).not.toContain('# my-cli \n')
+  })
+
+  test('scoped json index keeps full command paths', async () => {
+    const cli = Cli.create('test')
+    const group = Cli.create('auth', { description: 'Authentication' })
+    group.command('login', { description: 'Log in', run: () => ({}) })
+    group.command('logout', { description: 'Log out', run: () => ({}) })
+    cli.command(group)
+
+    const { output } = await serve(cli, ['auth', '--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
   })
 })
 
@@ -2333,6 +2459,7 @@ describe('env', () => {
   })
 
   test('env validation error for missing required var', async () => {
+    ;(process.stdout as any).isTTY = true
     const cli = Cli.create('test')
     cli.command('deploy', {
       env: z.object({
@@ -2344,8 +2471,29 @@ describe('env', () => {
     })
 
     const { output, exitCode } = await serve(cli, ['deploy'], { env: {} })
+    ;(process.stdout as any).isTTY = false
     expect(exitCode).toBe(1)
-    expect(output).toContain('Error')
+    expect(output).toContain('Error: missing required environment variable API_TOKEN')
+  })
+
+  test('env validation error for invalid var shows human message in TTY', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('test')
+    cli.command('deploy', {
+      env: z.object({
+        API_TOKEN: z.string().min(8).describe('Auth token'),
+      }),
+      run() {
+        return {}
+      },
+    })
+
+    const { output, exitCode } = await serve(cli, ['deploy'], { env: { API_TOKEN: 'short' } })
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBe(1)
+    expect(output).toContain(
+      'Error: invalid value for environment variable API_TOKEN: Too small: expected string to have >=8 characters',
+    )
   })
 
   test('env with defaults works when var is unset', async () => {
@@ -2631,7 +2779,16 @@ describe('built-in commands', () => {
     cli.command('ping', { run: () => ({ pong: true }) })
     const { output } = await serve(cli, ['skills', 'list', '--help'])
     expect(output).toContain('test skills list')
+    expect(output).toContain('Aliases: ls')
     expect(output).toContain('List skills')
+  })
+
+  test('skills ls resolves to list', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    const { output: aliased } = await serve(cli, ['skills', 'ls'])
+    const { output: canonical } = await serve(cli, ['skills', 'list'])
+    expect(aliased).toBe(canonical)
   })
 
   test('skills list shows skills with install status', async () => {
@@ -2652,11 +2809,13 @@ describe('skills staleness', () => {
   beforeEach(() => {
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   afterEach(() => {
     stderrSpy.mockRestore()
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   test('includes skills CTA when stale', async () => {
@@ -2723,6 +2882,16 @@ describe('skills staleness', () => {
     __mockSkillsHash = undefined
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('Skills are out of date')
+  })
+
+  test('does not warn when skills are not installed', async () => {
+    __mockSkillsHash = '0000000000000000'
+    __mockSkillsInstalled = false
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
 
     const { output } = await serve(cli, ['ping'])
     expect(output).not.toContain('Skills are out of date')
@@ -2918,12 +3087,14 @@ describe('outputPolicy', () => {
       async *run() {
         yield { step: 1 }
         yield { step: 2 }
+        yield { expiry: 2461152330n }
       },
     })
 
     const { output } = await serve(cli, ['stream'])
     expect(output).toContain('{"type":"chunk","data":{"step":1}}')
     expect(output).toContain('{"type":"chunk","data":{"step":2}}')
+    expect(output).toContain('{"type":"chunk","data":{"expiry":"2461152330"}}')
   })
 
   test('e2e: realistic multi-level CLI with mixed policies', async () => {
@@ -3500,6 +3671,57 @@ test('streaming: generator throws in buffered mode', async () => {
   expect(output).toContain('generator exploded')
 })
 
+test('streaming: thrown IncurError preserves retryable metadata in machine formats', async () => {
+  const cli = Cli.create('test')
+  cli.command('limited', {
+    async *run() {
+      yield { step: 1 }
+      throw new Errors.IncurError({
+        code: 'RATE_LIMITED',
+        message: 'too fast',
+        retryable: true,
+      })
+    },
+  })
+
+  const jsonl = await serve(cli, ['limited', '--format', 'jsonl'])
+  const jsonlLines = jsonl.output
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  expect(jsonl.exitCode).toBe(1)
+  expect(jsonlLines[1]).toMatchInlineSnapshot(`
+    {
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "too fast",
+        "retryable": true,
+      },
+      "ok": false,
+      "type": "error",
+    }
+  `)
+
+  const json = await serve(cli, ['limited', '--full-output', '--format', 'json'])
+  const body = JSON.parse(json.output)
+  body.meta.duration = '<stripped>'
+  expect(json.exitCode).toBe(1)
+  expect(body).toMatchInlineSnapshot(`
+    {
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "too fast",
+        "retryable": true,
+      },
+      "meta": {
+        "command": "limited",
+        "duration": "<stripped>",
+      },
+      "ok": false,
+    }
+  `)
+})
+
 test('streaming: generator returns error in buffered mode', async () => {
   const cli = Cli.create('test')
   cli.command('fail', {
@@ -3897,11 +4119,93 @@ describe('--filter-output', () => {
   })
 })
 
+describe('Command.execute', () => {
+  test.each([
+    {
+      name: 'split',
+      command: { options: z.object({ name: z.string() }), run: () => ({ ok: true }) },
+      inputOptions: { name: 123 },
+      path: 'name',
+      parseMode: 'split' as const,
+    },
+    {
+      name: 'flat',
+      command: { args: z.object({ id: z.string() }), run: () => ({ ok: true }) },
+      inputOptions: { id: 123 },
+      path: 'id',
+      parseMode: 'flat' as const,
+    },
+  ])('$name mode returns validation fieldErrors for invalid command input', async (c) => {
+    const result = await Command.execute(c.command, {
+      agent: true,
+      argv: [],
+      format: 'json',
+      formatExplicit: false,
+      inputOptions: c.inputOptions,
+      name: 'test',
+      parseMode: c.parseMode,
+      path: 'users',
+      version: undefined,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: [
+          {
+            code: 'invalid_type',
+            missing: false,
+            path: c.path,
+          },
+        ],
+      },
+    })
+  })
+
+  test('does not normalize handler-thrown Zod errors as command input', async () => {
+    const result = await Command.execute(
+      {
+        run() {
+          z.object({ name: z.string() }).parse({ name: 123 })
+        },
+      },
+      {
+        agent: true,
+        argv: [],
+        format: 'json',
+        formatExplicit: false,
+        inputOptions: {},
+        name: 'test',
+        path: 'users',
+        version: undefined,
+      },
+    )
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
+    expect(result).not.toHaveProperty('error.fieldErrors')
+  })
+})
+
 async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
   const res = await cli.fetch(req)
   const body = await res.json()
   body.meta.duration = '<stripped>'
   return { status: res.status, body }
+}
+
+async function fetchNdjson(cli: Cli.Cli<any, any, any>, req: Request) {
+  const res = await cli.fetch(req)
+  const lines = (await res.text())
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  for (const line of lines)
+    if (line.meta?.duration) {
+      expect(line.meta.duration).toMatch(/^\d+ms$/)
+      line.meta.duration = '<stripped>'
+    }
+  return { status: res.status, contentType: res.headers.get('content-type'), lines }
 }
 
 describe('fetch', () => {
@@ -4047,6 +4351,16 @@ describe('fetch', () => {
     `)
   })
 
+  test('serializes bigint values in command responses', async () => {
+    const cli = Cli.create('test')
+    cli.command('whois', {
+      output: z.object({ expiry: z.bigint() }),
+      run: () => ({ expiry: 2461152330n }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/whois'))
+    expect(body.data).toEqual({ expiry: '2461152330' })
+  })
+
   test('trailing path segments → positional args', async () => {
     const cli = Cli.create('test')
     cli.command('users', {
@@ -4104,6 +4418,38 @@ describe('fetch', () => {
     expect(body.error.code).toBe('VALIDATION_ERROR')
   })
 
+  test('object validation error includes fieldErrors', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ name: z.string() }),
+      run: (c) => ({ name: c.options.name }),
+    })
+
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 123 }),
+      }),
+    )
+
+    expect(status).toBe(400)
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: [
+          {
+            code: 'invalid_type',
+            missing: false,
+            path: 'name',
+          },
+        ],
+      },
+    })
+  })
+
   test('thrown error → 500', async () => {
     const cli = Cli.create('test')
     cli.command('fail', {
@@ -4134,40 +4480,360 @@ describe('fetch', () => {
     cli.command('stream', {
       async *run() {
         yield { progress: 1 }
-        yield { progress: 2 }
+        yield { expiry: 2461152330n }
         return { done: true }
       },
     })
+    expect(await fetchNdjson(cli, new Request('http://localhost/stream'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "data": {
+              "progress": 1,
+            },
+            "type": "chunk",
+          },
+          {
+            "data": {
+              "expiry": "2461152330",
+            },
+            "type": "chunk",
+          },
+          {
+            "meta": {
+              "command": "stream",
+              "duration": "<stripped>",
+            },
+            "ok": true,
+            "type": "done",
+          },
+        ],
+        "status": 200,
+      }
+    `)
+  })
+
+  test('streaming response preserves returned ok CTA through middleware', async () => {
+    const cli = Cli.create('test')
+    cli.use(async (_c, next) => {
+      await next()
+    })
+    cli.command('stream', {
+      async *run(c) {
+        yield { progress: 1 }
+        return c.ok({ ignored: true }, { cta: { commands: ['next'], description: 'Next steps:' } })
+      },
+    })
+    expect(await fetchNdjson(cli, new Request('http://localhost/stream'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "data": {
+              "progress": 1,
+            },
+            "type": "chunk",
+          },
+          {
+            "meta": {
+              "command": "stream",
+              "cta": {
+                "commands": [
+                  {
+                    "command": "test next",
+                  },
+                ],
+                "description": "Next steps:",
+              },
+              "duration": "<stripped>",
+            },
+            "ok": true,
+            "type": "done",
+          },
+        ],
+        "status": 200,
+      }
+    `)
+  })
+
+  test('streaming response handles terminal-only sentinel returns through middleware', async () => {
+    const order: string[] = []
+    const cli = Cli.create('test')
+    cli.use(async (c, next) => {
+      order.push(`before:${c.command}`)
+      await next()
+      order.push(`after:${c.command}`)
+    })
+    const sub = Cli.create('ops')
+    sub.command('ok', {
+      // oxlint-disable-next-line require-yield -- exercises a stream that returns before yielding.
+      async *run(c) {
+        return c.ok(
+          { ignored: true },
+          { cta: { commands: [{ command: 'next', description: 'Continue' }] } },
+        )
+      },
+    })
+    sub.command('fail', {
+      // oxlint-disable-next-line require-yield -- exercises a stream that returns before yielding.
+      async *run(c) {
+        return c.error({
+          code: 'EMPTY_FAIL',
+          cta: { commands: ['retry'], description: 'Recover with:' },
+          message: 'failed before chunks',
+          retryable: true,
+        })
+      },
+    })
+    cli.command(sub)
+
+    const ok = await fetchNdjson(cli, new Request('http://localhost/ops/ok'))
+    expect(ok).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "meta": {
+              "command": "ops ok",
+              "cta": {
+                "commands": [
+                  {
+                    "command": "test next",
+                    "description": "Continue",
+                  },
+                ],
+                "description": "Suggested command:",
+              },
+              "duration": "<stripped>",
+            },
+            "ok": true,
+            "type": "done",
+          },
+        ],
+        "status": 200,
+      }
+    `)
+    expect(ok.lines[0]).not.toHaveProperty('data')
+
+    expect(await fetchNdjson(cli, new Request('http://localhost/ops/fail'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "error": {
+              "code": "EMPTY_FAIL",
+              "message": "failed before chunks",
+              "retryable": true,
+            },
+            "meta": {
+              "command": "ops fail",
+              "cta": {
+                "commands": [
+                  {
+                    "command": "test retry",
+                  },
+                ],
+                "description": "Recover with:",
+              },
+              "duration": "<stripped>",
+            },
+            "ok": false,
+            "type": "error",
+          },
+        ],
+        "status": 200,
+      }
+    `)
+    expect(order).toEqual(['before:ops ok', 'after:ops ok', 'before:ops fail', 'after:ops fail'])
+  })
+
+  test('streaming response represents returned error as terminal error', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        yield { progress: 1 }
+        return c.error({ code: 'STREAM_FAIL', message: 'failed late', retryable: true })
+      },
+    })
+    expect(await fetchNdjson(cli, new Request('http://localhost/stream'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "data": {
+              "progress": 1,
+            },
+            "type": "chunk",
+          },
+          {
+            "error": {
+              "code": "STREAM_FAIL",
+              "message": "failed late",
+              "retryable": true,
+            },
+            "meta": {
+              "command": "stream",
+              "duration": "<stripped>",
+            },
+            "ok": false,
+            "type": "error",
+          },
+        ],
+        "status": 200,
+      }
+    `)
+  })
+
+  test('streaming response represents yielded error as terminal error', async () => {
+    let closed = false
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run(c) {
+        try {
+          yield { progress: 1 }
+          yield c.error({ code: 'STREAM_FAIL', message: 'failed now' })
+          yield { progress: 2 }
+        } finally {
+          closed = true
+        }
+      },
+    })
+    expect(await fetchNdjson(cli, new Request('http://localhost/stream'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "data": {
+              "progress": 1,
+            },
+            "type": "chunk",
+          },
+          {
+            "error": {
+              "code": "STREAM_FAIL",
+              "message": "failed now",
+            },
+            "meta": {
+              "command": "stream",
+              "duration": "<stripped>",
+            },
+            "ok": false,
+            "type": "error",
+          },
+        ],
+        "status": 200,
+      }
+    `)
+    expect(closed).toBe(true)
+  })
+
+  test('streaming response cancellation unwinds generator and middleware', async () => {
+    let resolveAfter = () => {}
+    const after = new Promise<void>((resolve) => {
+      resolveAfter = resolve
+    })
+    const order: string[] = []
+    const cli = Cli.create('test')
+    cli.use(async (_c, next) => {
+      order.push('mw:before')
+      await next()
+      order.push('mw:after')
+      resolveAfter()
+    })
+    cli.command('stream', {
+      async *run() {
+        try {
+          order.push('stream:yield')
+          yield { progress: 1 }
+          while (true) yield { progress: 2 }
+        } finally {
+          order.push('stream:finally')
+        }
+      },
+    })
     const res = await cli.fetch(new Request('http://localhost/stream'))
-    expect(res.status).toBe(200)
-    expect(res.headers.get('content-type')).toBe('application/x-ndjson')
-    const text = await res.text()
-    const lines = text
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l))
-    expect(lines).toMatchInlineSnapshot(`
-      [
-        {
-          "data": {
-            "progress": 1,
+    const reader = res.body!.getReader()
+    await reader.read()
+    await reader.cancel()
+    await after
+    expect(order).toEqual(['mw:before', 'stream:yield', 'stream:finally', 'mw:after'])
+  })
+
+  test('streaming response thrown error includes terminal duration metadata', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run() {
+        yield { progress: 1 }
+        throw new Error('boom')
+      },
+    })
+    expect(await fetchNdjson(cli, new Request('http://localhost/stream'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "data": {
+              "progress": 1,
+            },
+            "type": "chunk",
           },
-          "type": "chunk",
-        },
-        {
-          "data": {
-            "progress": 2,
+          {
+            "error": {
+              "code": "UNKNOWN",
+              "message": "boom",
+            },
+            "meta": {
+              "command": "stream",
+              "duration": "<stripped>",
+            },
+            "ok": false,
+            "type": "error",
           },
-          "type": "chunk",
-        },
-        {
-          "meta": {
-            "command": "stream",
+        ],
+        "status": 200,
+      }
+    `)
+  })
+
+  test('streaming response thrown IncurError preserves code and retryable metadata', async () => {
+    const cli = Cli.create('test')
+    cli.command('stream', {
+      async *run() {
+        yield { progress: 1 }
+        throw new Errors.IncurError({
+          code: 'RATE_LIMITED',
+          message: 'too fast',
+          retryable: true,
+        })
+      },
+    })
+    expect(await fetchNdjson(cli, new Request('http://localhost/stream'))).toMatchInlineSnapshot(`
+      {
+        "contentType": "application/x-ndjson",
+        "lines": [
+          {
+            "data": {
+              "progress": 1,
+            },
+            "type": "chunk",
           },
-          "ok": true,
-          "type": "done",
-        },
-      ]
+          {
+            "error": {
+              "code": "RATE_LIMITED",
+              "message": "too fast",
+              "retryable": true,
+            },
+            "meta": {
+              "command": "stream",
+              "duration": "<stripped>",
+            },
+            "ok": false,
+            "type": "error",
+          },
+        ],
+        "status": 200,
+      }
     `)
   })
 

@@ -15,9 +15,58 @@ export type FetchOutput = {
   status: number
 }
 
+/** A standard Fetch API handler. */
+export type Handler = (req: Request) => Response | Promise<Response>
+
+/** Fetch source accepted by fetch-backed CLI commands. */
+export type Source = Handler | RequestSource
+
+/** Hosted request source created from a base URL. */
+export type RequestSource = {
+  /** Handles a forwarded request. */
+  fetch: Handler
+  /** Base URL used to resolve relative OpenAPI documents. */
+  url: URL
+}
+
 /** Reserved flags consumed by the fetch gateway (not forwarded as query params). */
 const reservedFlags = new Set(['method', 'body', 'data', 'header'])
 const reservedShort: Record<string, string> = { X: 'method', d: 'data', H: 'header' }
+
+/** Creates a hosted fetch source from a base request URL and shared request options. */
+export function fromRequest(url: string | URL, options: fromRequest.Options = {}): RequestSource {
+  const base = new URL(url)
+  const { headers: defaultHeaders, ...init } = options
+
+  return {
+    url: base,
+    fetch(request) {
+      const incoming = new URL(request.url)
+      const target = new URL(base)
+      target.pathname = joinPath(base.pathname, incoming.pathname)
+      target.search = incoming.search
+
+      const headers = new Headers(defaultHeaders)
+      request.headers.forEach((value, key) => headers.set(key, value))
+
+      return fetch(new Request(new Request(target, request), { ...init, headers }))
+    },
+  }
+}
+
+export declare namespace fromRequest {
+  /** Request options applied to every forwarded request. */
+  type Options = Omit<RequestInit, 'body' | 'headers' | 'method'> & {
+    /** Headers merged into every forwarded request. Per-request headers take precedence. */
+    headers?: HeadersInit | undefined
+  }
+}
+
+function joinPath(basePath: string, path: string) {
+  const prefix = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+  const suffix = path.startsWith('/') ? path : `/${path}`
+  return `${prefix}${suffix}` || '/'
+}
 
 /** Parses curl-style argv into a structured fetch input. */
 export function parseArgv(argv: string[]): FetchInput {

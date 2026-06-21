@@ -1,4 +1,4 @@
-import { Cli, SyncSkills } from 'incur'
+import { Cli, SyncSkills, z } from 'incur'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -161,6 +161,37 @@ test('installed SKILL.md contains frontmatter', async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('sync returns unquoted descriptions from YAML frontmatter', async () => {
+  const tmp = join(tmpdir(), `clac-quoted-description-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const search = Cli.create('search', { description: 'Search items. Use key: value for precision' })
+  search.command('list', { description: 'List results', run: () => ({}) })
+
+  const cli = Cli.create('app')
+  cli.command('search', search)
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const result = await SyncSkills.sync('app', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  expect(result.skills).toMatchInlineSnapshot(`
+    [
+      {
+        "description": "Search items. Use key: value for precision. Run \`app search --help\` for usage details.",
+        "name": "app-search",
+      },
+    ]
+  `)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('list returns skills from command map', async () => {
   const cli = Cli.create('test', { description: 'A test CLI' })
   cli.command('ping', { description: 'Health check', run: () => ({}) })
@@ -205,6 +236,32 @@ test('list shows installed status after sync', async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('list shows not installed when synced skills are removed', async () => {
+  const tmp = join(tmpdir(), `clac-list-missing-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('test')
+  cli.command('ping', { description: 'Ping', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const sync = await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+  })
+
+  rmSync(sync.paths[0]!, { recursive: true, force: true })
+
+  const result = await SyncSkills.list('test', commands)
+  expect(result).toHaveLength(1)
+  expect(result[0]!.installed).toBe(false)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('list returns empty for CLI with no commands', async () => {
   const cli = Cli.create('empty')
   const commands = Cli.toCommands.get(cli)!
@@ -229,6 +286,44 @@ test('list includes root command skill', async () => {
   const names = result.map((s) => s.name)
   expect(names).toContain('test')
   expect(names).toContain('test-ping')
+})
+
+test('sync uses CLI skill projection for aliases, fetch gateways, examples, and output', async () => {
+  const tmp = join(tmpdir(), `clac-sync-drift-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('tool')
+    .command('real', {
+      description: 'Real command',
+      aliases: ['r'],
+      options: z.object({ dryRun: z.boolean().default(false) }),
+      output: z.object({ value: z.string() }),
+      examples: [{ options: { dryRun: true }, description: 'Preview' }],
+      run: () => ({ value: 'ok' }),
+    })
+    .command('api', { description: 'Raw API', fetch: () => new Response('{}') })
+
+  const commands = Cli.toCommands.get(cli)!
+  const listed = await SyncSkills.list('tool', commands)
+  const names = listed.map((skill) => skill.name)
+  expect(names).toContain('tool-api')
+  expect(names).toContain('tool-real')
+  expect(names).not.toContain('tool-r')
+
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+  const synced = await SyncSkills.sync('tool', commands, {
+    depth: 0,
+    global: false,
+    cwd: installDir,
+  })
+  const content = readFileSync(join(synced.paths[0]!, 'SKILL.md'), 'utf8')
+  expect(content).toContain('Preview')
+  expect(content).toContain('## Output')
+  expect(content).toContain('Fetch gateway. Pass path segments')
+  expect(content).not.toMatch(/^# tool r$/m)
+
+  rmSync(tmp, { recursive: true, force: true })
 })
 
 test('list results are sorted alphabetically', async () => {

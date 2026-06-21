@@ -177,6 +177,75 @@ describe('Mcp', () => {
     expect(res.result.content).toEqual([{ type: 'text', text: '{"greeting":"hello world"}' }])
   })
 
+  test('tools/call serializes bigint values as strings', async () => {
+    const commands = new Map<string, any>()
+    commands.set('whois', {
+      description: 'Return ENS data',
+      output: z.object({ expiry: z.bigint() }),
+      run() {
+        return { expiry: 2461152330n }
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'whois', arguments: {} } },
+    ])
+    expect(res.result.isError).toBeUndefined()
+    expect(res.result.content).toEqual([{ type: 'text', text: '{"expiry":"2461152330"}' }])
+    expect(res.result.structuredContent).toEqual({ expiry: '2461152330' })
+  })
+
+  test('callTool serializes bigint values as strings', async () => {
+    const result = await Mcp.callTool(
+      {
+        name: 'whois',
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+          type: 'object',
+          properties: { expiry: { type: 'string' } },
+          required: ['expiry'],
+        },
+        command: {
+          run() {
+            return { expiry: 2461152330n }
+          },
+        },
+      },
+      {},
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(result.content).toEqual([{ type: 'text', text: '{"expiry":"2461152330"}' }])
+    expect(result.structuredContent).toEqual({ expiry: '2461152330' })
+  })
+
+  test('callTool serializes streamed bigint chunks as strings', async () => {
+    const notifications: any[] = []
+    const result = await Mcp.callTool(
+      {
+        name: 'whois',
+        inputSchema: { type: 'object', properties: {} },
+        command: {
+          async *run() {
+            yield { expiry: 2461152330n }
+          },
+        },
+      },
+      {},
+      {
+        extra: { mcpReq: { _meta: { progressToken: 'tok-1' } } },
+        sendNotification: async (notification) => {
+          notifications.push(notification)
+        },
+      },
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(result.content).toEqual([{ type: 'text', text: '[{"expiry":"2461152330"}]' }])
+    expect(notifications[0].params.message).toBe('{"expiry":"2461152330"}')
+  })
+
   test('tools/call unknown tool returns error', async () => {
     const [, res] = await mcpSession(createTestCommands(), [
       { id: 1, method: 'initialize', params: initParams },
