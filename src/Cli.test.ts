@@ -4328,6 +4328,38 @@ describe('fetch', () => {
     expect(body.error.code).toBe('VALIDATION_ERROR')
   })
 
+  test('object validation error includes fieldErrors', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ name: z.string() }),
+      run: (c) => ({ name: c.options.name }),
+    })
+
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 123 }),
+      }),
+    )
+
+    expect(status).toBe(400)
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: [
+          {
+            code: 'invalid_type',
+            missing: false,
+            path: 'name',
+          },
+        ],
+      },
+    })
+  })
+
   test('thrown error → 500', async () => {
     const cli = Cli.create('test')
     cli.command('fail', {

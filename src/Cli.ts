@@ -1906,6 +1906,7 @@ async function executeCommand(
           ...(result.error.retryable !== undefined
             ? { retryable: result.error.retryable }
             : undefined),
+          ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
         },
         meta: {
           command: path,
