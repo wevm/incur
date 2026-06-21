@@ -20,6 +20,7 @@ import {
   shells,
 } from './internal/command.js'
 import * as Command from './internal/command.js'
+import { formatCtaBlock, type FormattedCta, type FormattedCtaBlock } from './internal/cta.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
@@ -3121,31 +3122,6 @@ async function handleStreaming(
   }
 }
 
-/** @internal Formats a CTA block into the output envelope shape. */
-function formatCtaBlock(name: string, block: CtaBlock | undefined): FormattedCtaBlock | undefined {
-  if (!block || block.commands.length === 0) return undefined
-  return {
-    description:
-      block.description ??
-      (block.commands.length === 1 ? 'Suggested command:' : 'Suggested commands:'),
-    commands: block.commands.map((c) => formatCta(name, c)),
-  }
-}
-
-/** @internal Formats a CTA by prefixing the CLI name. Handles string and object forms. */
-function formatCta(name: string, cta: Cta): FormattedCta {
-  if (typeof cta === 'string') return { command: `${name} ${cta}` }
-  const prefix = cta.command === name || cta.command.startsWith(`${name} `) ? '' : `${name} `
-  let cmd = `${prefix}${cta.command}`
-  if (cta.args)
-    for (const [key, value] of Object.entries(cta.args))
-      cmd += value === true ? ` <${key}>` : ` ${value}`
-  if (cta.options)
-    for (const [key, value] of Object.entries(cta.options))
-      cmd += value === true ? ` --${key} <${key}>` : ` --${key} ${value}`
-  return { command: cmd, ...(cta.description ? { description: cta.description } : undefined) }
-}
-
 /** @internal Builds the `--llms` index manifest (name + description only) from the command tree. */
 function buildIndexManifest(
   commands: Map<string, CommandEntry>,
@@ -3521,22 +3497,6 @@ type CommandDefinition<
     | InferReturn<output>
     | Promise<InferReturn<output>>
     | AsyncGenerator<InferReturn<output>, unknown, unknown>
-}
-
-/** @internal A formatted CTA block as it appears in the output envelope. */
-type FormattedCtaBlock = {
-  /** Formatted command suggestions. */
-  commands: FormattedCta[]
-  /** Human-readable label for the CTA block. */
-  description: string
-}
-
-/** @internal A formatted CTA as it appears in the output envelope. */
-type FormattedCta = {
-  /** The full command string with args and options folded in. */
-  command: string
-  /** A short description of what the command does. */
-  description?: string | undefined
 }
 
 /** @internal Scans argv for deprecated flags and writes warnings to stderr. */

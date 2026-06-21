@@ -208,6 +208,37 @@ describe('Mcp', () => {
     expect(res.result.structuredContent).toEqual({ expiry: '2461152330' })
   })
 
+  test('tools/call surfaces cta metadata without changing structured content', async () => {
+    const commands = new Map<string, any>()
+    commands.set('show', {
+      description: 'Show a record',
+      output: z.object({ id: z.string() }),
+      run(c: any) {
+        return c.ok(
+          { id: 'foo' },
+          {
+            cta: {
+              description: 'Next:',
+              commands: [{ command: 'list', description: 'List all' }],
+            },
+          },
+        )
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'show', arguments: {} } },
+    ])
+
+    expect(res.result.content).toEqual([{ type: 'text', text: '{"id":"foo"}' }])
+    expect(res.result.structuredContent).toEqual({ id: 'foo' })
+    expect(res.result._meta?.cta).toEqual({
+      description: 'Next:',
+      commands: [{ command: 'test-cli list', description: 'List all' }],
+    })
+  })
+
   test('callTool serializes bigint values as strings', async () => {
     const result = await Mcp.callTool(
       {

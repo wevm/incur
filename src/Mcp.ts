@@ -2,6 +2,7 @@ import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
 import * as Command from './internal/command.js'
+import { formatCtaBlock, type FormattedCtaBlock } from './internal/cta.js'
 import * as Json from './internal/json.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
@@ -99,6 +100,7 @@ export async function callTool(
 ): Promise<{
   content: { type: 'text'; text: string }[]
   structuredContent?: Record<string, unknown>
+  _meta?: { cta: FormattedCtaBlock } | undefined
   isError?: boolean
 }> {
   const allMiddleware = [
@@ -160,11 +162,13 @@ export async function callTool(
 
   const data = result.data ?? null
   const jsonData = Json.normalize(data)
+  const cta = formatCtaBlock(options.name ?? tool.name, result.cta as Command.CtaBlock | undefined)
   return {
     content: [{ type: 'text', text: Json.stringify(jsonData) }],
     ...(data !== null && tool.outputSchema
       ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
+    ...(cta ? { _meta: { cta } } : undefined),
   }
 }
 
