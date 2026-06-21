@@ -22,6 +22,7 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
+import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
@@ -630,11 +631,15 @@ async function serveImpl(
     }
 
     const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+    // Markdown skill output renders scopedName separately. Passing prefix again
+    // to those collect helpers would double the group segment in command names
+    // (e.g. "cli auth auth login" instead of "cli auth login").
+    const collectPrefix = prefix.length > 0 ? ([] as string[]) : prefix
 
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+        const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
@@ -645,7 +650,7 @@ async function serveImpl(
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups, scopedRoot)
+      const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
@@ -1595,7 +1600,7 @@ function createMcpHttpHandler(name: string, version: string) {
     },
   ): Promise<Response> => {
     if (!transport) {
-      const { McpServer, WebStandardStreamableHTTPServerTransport } =
+      const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
         await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
@@ -1612,6 +1617,9 @@ function createMcpHttpHandler(name: string, version: string) {
           {
             ...(tool.description ? { description: tool.description } : undefined),
             ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
+            ...(tool.outputSchema
+              ? { outputSchema: fromJsonSchema(tool.outputSchema) }
+              : undefined),
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
@@ -1750,7 +1758,7 @@ async function fetchImpl(
   }
 
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1823,7 +1831,7 @@ async function executeCommand(
   options: fetchImpl.Options,
 ): Promise<Response> {
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1880,7 +1888,7 @@ async function executeCommand(
           const { value, done } = await iterator.next()
           if (done) {
             if (isSentinel(value) && value[sentinel] === 'error') {
-              controller.enqueue(encoder.encode(JSON.stringify(errorRecord(value)) + '\n'))
+              controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
               controller.close()
               return
             }
@@ -1890,7 +1898,7 @@ async function executeCommand(
                 : undefined
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                Json.stringify({
                   type: 'done',
                   ok: true,
                   meta: meta(cta),
@@ -1902,17 +1910,17 @@ async function executeCommand(
           }
 
           if (isSentinel(value) && value[sentinel] === 'error') {
-            controller.enqueue(encoder.encode(JSON.stringify(errorRecord(value)) + '\n'))
+            controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
             await iterator.return(undefined)
             controller.close()
             return
           }
 
-          controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'))
+          controller.enqueue(encoder.encode(Json.stringify({ type: 'chunk', data: value }) + '\n'))
         } catch (error) {
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              Json.stringify({
                 type: 'error',
                 ok: false,
                 error: {
@@ -1945,6 +1953,7 @@ async function executeCommand(
           ...(result.error.retryable !== undefined
             ? { retryable: result.error.retryable }
             : undefined),
+          ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
         },
         meta: {
           command: path,
@@ -2706,7 +2715,7 @@ async function handleStreaming(
             return
           }
         }
-        if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
+        if (useJsonl) ctx.writeln(Json.stringify({ type: 'chunk', data: value }))
         else if (ctx.renderOutput)
           ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }

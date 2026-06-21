@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.8
+
+### Patch Changes
+
+- 935e6f7: Generated OpenAPI commands accepted header parameters and header security schemes as CLI options.
+
 ## 0.4.7
 
 ### Patch Changes

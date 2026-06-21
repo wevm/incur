@@ -1,8 +1,9 @@
-import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
+import { fromJsonSchema, McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
 import * as Command from './internal/command.js'
+import * as Json from './internal/json.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
 
@@ -27,7 +28,7 @@ export async function serve(
       {
         ...(tool.description ? { description: tool.description } : undefined),
         ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
-        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
+        ...(tool.outputSchema ? { outputSchema: fromJsonSchema(tool.outputSchema) } : undefined),
       } as never,
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
@@ -122,7 +123,7 @@ export async function callTool(
         if (progressToken !== undefined && options.sendNotification)
           await options.sendNotification({
             method: 'notifications/progress' as const,
-            params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
+            params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
           })
       }
     } catch (err) {
@@ -131,7 +132,7 @@ export async function callTool(
         isError: true,
       }
     }
-    return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+    return { content: [{ type: 'text', text: Json.stringify(chunks) }] }
   }
 
   if (!result.ok)
@@ -141,10 +142,11 @@ export async function callTool(
     }
 
   const data = result.data ?? null
+  const jsonData = Json.normalize(data)
   return {
-    content: [{ type: 'text', text: JSON.stringify(data) }],
+    content: [{ type: 'text', text: Json.stringify(jsonData) }],
     ...(data !== null && tool.outputSchema
-      ? { structuredContent: data as Record<string, unknown> }
+      ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
   }
 }
