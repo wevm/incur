@@ -2161,6 +2161,22 @@ describe('help', () => {
     expect(output).not.toContain('BANNER')
   })
 
+  test('banner is printed before root command help for missing required args', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('fetch', {
+      banner: () => 'BANNER',
+      description: 'Fetch a URL',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      run: ({ args }) => args.url,
+    })
+
+    const { output, exitCode } = await serve(cli, [])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('BANNER')
+    expect(output.indexOf('BANNER')).toBeLessThan(output.indexOf('fetch — Fetch a URL'))
+  })
+
   test('--help on leaf shows command help', async () => {
     const cli = Cli.create('tool')
     cli.command('greet', {

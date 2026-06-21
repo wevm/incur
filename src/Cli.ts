@@ -477,6 +477,20 @@ async function serveImpl(
     stdout(s.endsWith('\n') ? s : `${s}\n`)
   }
 
+  async function writeBanner() {
+    if (!options.banner || help) return
+    const banner =
+      typeof options.banner === 'function'
+        ? { render: options.banner, mode: 'all' as const }
+        : options.banner
+    const mode = banner.mode ?? 'all'
+    if (mode !== 'all' && mode !== (human ? 'human' : 'agent')) return
+    try {
+      const text = await banner.render()
+      if (text) writeln(text)
+    } catch {}
+  }
+
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
   try {
     builtinFlags = extractBuiltinFlags(argv, { configFlag })
@@ -860,6 +874,7 @@ async function serveImpl(
     ) {
       // Root command with args but none provided (human mode) — show help
       const cmd = options.rootCommand
+      await writeBanner()
       writeln(
         Help.formatCommand(name, {
           alias: cmd.alias as Record<string, string> | undefined,
@@ -883,16 +898,7 @@ async function serveImpl(
     if (options.rootCommand || options.rootFetch) {
       // Root command/fetch with no args — treat as root invocation
     } else {
-      if (options.banner && !help) {
-        const banner = typeof options.banner === 'function' ? { render: options.banner, mode: 'all' as const } : options.banner
-        const mode = banner.mode ?? 'all'
-        if (mode === 'all' || (mode === 'human' && human) || (mode === 'agent' && !human)) {
-          try {
-            const text = await banner.render()
-            if (text) writeln(text)
-          } catch {}
-        }
-      }
+      await writeBanner()
       writeln(
         Help.formatRoot(name, {
           aliases: options.aliases,
