@@ -1,9 +1,9 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { fromJsonSchema, McpServer, StdioServerTransport } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import * as Command from './internal/command.js'
+import * as Json from './internal/json.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
 
@@ -27,8 +27,8 @@ export async function serve(
       tool.name,
       {
         ...(tool.description ? { description: tool.description } : undefined),
-        ...(hasInput ? { inputSchema: mergedShape } : undefined),
-        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
+        ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
+        ...(tool.outputSchema ? { outputSchema: fromJsonSchema(tool.outputSchema) } : undefined),
       } as never,
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
@@ -36,6 +36,7 @@ export async function serve(
         const extra = hasInput ? callArgs[1] : callArgs[0]
         return callTool(tool, params, {
           extra,
+          sendNotification: (n) => server.server.notification(n),
           name,
           version,
           middlewares: options.middlewares,
@@ -76,9 +77,9 @@ export async function callTool(
   params: Record<string, unknown>,
   options: {
     extra?: {
-      _meta?: { progressToken?: string | number }
-      sendNotification?: (n: any) => Promise<void>
+      mcpReq?: { _meta?: { progressToken?: string | number } }
     }
+    sendNotification?: (n: ProgressNotification) => Promise<void>
     name?: string | undefined
     version?: string | undefined
     middlewares?: MiddlewareHandler[] | undefined
@@ -114,15 +115,15 @@ export async function callTool(
   if ('stream' in result) {
     // Streaming: send progress notifications per chunk, then return buffered result
     const chunks: unknown[] = []
-    const progressToken = options.extra?._meta?.progressToken
+    const progressToken = options.extra?.mcpReq?._meta?.progressToken
     let i = 0
     try {
       for await (const chunk of result.stream) {
         chunks.push(chunk)
-        if (progressToken !== undefined && options.extra?.sendNotification)
-          await options.extra.sendNotification({
+        if (progressToken !== undefined && options.sendNotification)
+          await options.sendNotification({
             method: 'notifications/progress' as const,
-            params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
+            params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
           })
       }
     } catch (err) {
@@ -131,7 +132,7 @@ export async function callTool(
         isError: true,
       }
     }
-    return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+    return { content: [{ type: 'text', text: Json.stringify(chunks) }] }
   }
 
   if (!result.ok)
@@ -141,12 +142,19 @@ export async function callTool(
     }
 
   const data = result.data ?? null
+  const jsonData = Json.normalize(data)
   return {
-    content: [{ type: 'text', text: JSON.stringify(data) }],
+    content: [{ type: 'text', text: Json.stringify(jsonData) }],
     ...(data !== null && tool.outputSchema
-      ? { structuredContent: data as Record<string, unknown> }
+      ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
   }
+}
+
+/** @internal A progress notification sent during streaming tool calls. */
+type ProgressNotification = {
+  method: 'notifications/progress'
+  params: { progressToken: string | number; progress: number; message: string }
 }
 
 /** @internal A resolved tool entry from the command tree. */
@@ -167,6 +175,7 @@ export function collectTools(
 ): ToolEntry[] {
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
+    if ('_alias' in entry) continue
     const path = [...prefix, name]
     if ('_group' in entry && entry._group) {
       const groupMw = [

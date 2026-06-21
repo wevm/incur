@@ -40,7 +40,7 @@
 - [**`--llms` flag**](#agent-discovery): token-efficient command manifest in Markdown or JSON schema
 - [**Well-formed I/O**](#well-formed-io): Schemas schemas for arguments, options, environment variables, and output
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
-- [**Global options**](#global-options): `--format`, `--json`, `--verbose`, `--help`, `--version` on every CLI for free
+- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--version` on every CLI for free
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `.command()`, `.serve()` – that's it
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 
@@ -116,6 +116,7 @@ $ greet --help
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
+#   --full-output                       Show full output envelope
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
@@ -123,7 +124,6 @@ $ greet --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
-#   --verbose                           Show full output envelope
 #   --version                           Show version
 ```
 
@@ -186,6 +186,7 @@ $ my-cli --help
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
+#   --full-output                       Show full output envelope
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
@@ -193,7 +194,6 @@ $ my-cli --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
-#   --verbose                           Show full output envelope
 #   --version                           Show version
 ```
 
@@ -243,6 +243,7 @@ $ my-cli --help
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
+#   --full-output                       Show full output envelope
 #   --help                              Show help
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
@@ -250,7 +251,6 @@ $ my-cli --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
-#   --verbose                           Show full output envelope
 #   --version                           Show version
 ```
 
@@ -337,6 +337,27 @@ $ my-cli api createUser --name Bob
 # → name: Bob
 ```
 
+Set `openapiConfig.mode` to `'namespace'` to generate nested commands from path segments instead of using `operationId`:
+
+```ts
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('api', { fetch: app.fetch, openapi: spec, openapiConfig: { mode: 'namespace' } })
+  .serve()
+```
+
+```sh
+$ my-cli api users --help
+# Commands:
+#   get   List users
+#   id    User ID
+#   post  Create a user
+
+$ my-cli api users get --limit 5
+# → users: ...
+```
+
+When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
+
 ### Serve CLIs as APIs
 
 The inverse of mounting — expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.
@@ -370,7 +391,7 @@ GET  /users/42         → my-cli users 42
 POST /users { "name": "Bob" }  → my-cli users --name Bob
 ```
 
-Responses use the same JSON envelope as `--verbose --format json`:
+Responses use the same JSON envelope as `--full-output --format json`:
 
 ```json
 { "ok": true, "data": { "users": [...] }, "meta": { "command": "users", "duration": "3ms" } }
@@ -411,7 +432,7 @@ my-cli --llms
 
 Most CLIs expose tools via MCP or a single monolithic skill file. incur combines on-demand skill loading with TOON output to cut token usage across the entire session – from discovery through invocation and response.
 
-The table below models a session with a 20-command CLI producing verbose output.
+The table below models a session with a 20-command CLI producing full output envelopes.
 
 - **Session start** – tokens consumed just by having the tool available. _MCP injects all tool schemas into every turn; skills only load frontmatter (name + description)._
 - **Discovery** – tokens to learn what commands exist and how to call them. _MCP gets this at session start; skills load the full skill file on demand; incur splits by command group so only relevant commands are loaded._
@@ -620,7 +641,7 @@ cli.command('greet', {
 
 ### Output policy
 
-Control whether output data is displayed to humans. By default, output goes to everyone (`'all'`). Set `outputPolicy: 'agent-only'` to suppress data in TTY mode while still returning it to agents via `--json`, `--format`, or `--verbose`.
+Control whether output data is displayed to humans. By default, output goes to everyone (`'all'`). Set `outputPolicy: 'agent-only'` to suppress data in TTY mode while still returning it to agents via `--json`, `--format`, or `--full-output`.
 
 ```ts
 cli.command('deploy', {
@@ -803,18 +824,18 @@ Every incur CLI includes these flags automatically:
 
 | Flag                     | Description                                            |
 | ------------------------ | ------------------------------------------------------ |
+| `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
+| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
+| `--full-output`          | Include full envelope (`ok`, `data`, `meta`)           |
 | `--help`, `-h`           | Show help for the CLI or a specific command            |
-| `--version`              | Print CLI version                                      |
 | `--llms`                 | Output agent-readable command manifest                 |
 | `--mcp`                  | Start as an MCP stdio server                           |
 | `--json`                 | Shorthand for `--format json`                          |
-| `--format <fmt>`         | Output format: `toon`, `json`, `yaml`, `md`            |
-| `--filter-output <keys>` | Filter output by key paths (e.g. `foo,bar.baz,a[0,3]`) |
 | `--schema`               | Show JSON Schema for command's args, options, output   |
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
-| `--verbose`              | Include full envelope (`ok`, `data`, `meta`)           |
+| `--version`              | Print CLI version                                      |
 
 ### Config file
 

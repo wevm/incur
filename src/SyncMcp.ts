@@ -11,7 +11,7 @@ export async function register(
   options: register.Options = {},
 ): Promise<register.Result> {
   const runner = detectRunner()
-  const command = options.command ?? `${runner} ${detectPackageSpecifier(name)} --mcp`
+  const command = options.command ?? defaultCommand(name, runner)
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
@@ -64,7 +64,7 @@ function registerAmp(name: string, command: string): boolean {
     }
   }
 
-  const [cmd, ...args] = command.split(' ')
+  const [cmd, ...args] = splitCommand(command)
   if (!cmd) return false
 
   const servers: Record<string, any> = config['amp.mcpServers'] ?? {}
@@ -98,16 +98,56 @@ export declare namespace register {
   }
 }
 
+/** @internal Builds the default MCP command for the current launch mode. */
+function defaultCommand(name: string, runner: string): string {
+  return shouldUseBareCommand(name)
+    ? `${name} --mcp`
+    : `${runner} ${detectPackageSpecifier(name)} --mcp`
+}
+
+/** @internal Returns node_modules path details for the current entrypoint. */
+function nodeModulesInfo(): { entry: string; root: string } | null {
+  const normalized = process.argv[1]?.replace(/\\/g, '/')
+  const match = normalized?.match(/^(.+)\/node_modules\/(.+)$/)
+  if (!match) return null
+  return { root: match[1]!, entry: match[2]! }
+}
+
+/** @internal Uses the bare command only when the binary is expected on PATH. */
+function shouldUseBareCommand(name: string): boolean {
+  const bin = process.argv[1]
+  if (!bin) return false
+
+  const info = nodeModulesInfo()
+  if (info) return !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, name)
+
+  const file = bin.replace(/\\/g, '/').split('/').pop()
+  return file === name || file === `${name}.cmd` || file === `${name}.ps1`
+}
+
+/** @internal Checks whether the entrypoint came from a project dependency install. */
+function packageDependsOn(root: string, name: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8'))
+    const dependencyFields = [
+      pkg.dependencies,
+      pkg.devDependencies,
+      pkg.optionalDependencies,
+      pkg.peerDependencies,
+    ]
+    return dependencyFields.some((dependencies) => name in (dependencies ?? {}))
+  } catch {
+    return false
+  }
+}
+
 /** @internal Detects the package specifier used to run this CLI (handles dlx/npx URL and version installs). */
 export function detectPackageSpecifier(name: string): string {
-  const bin = process.argv[1]
-  if (!bin) return name
-
-  const match = bin.match(/^(.+)[/\\]node_modules[/\\]/)
-  if (!match) return name
+  const info = nodeModulesInfo()
+  if (!info) return name
 
   try {
-    const pkg = JSON.parse(readFileSync(join(match[1]!, 'package.json'), 'utf-8'))
+    const pkg = JSON.parse(readFileSync(join(info.root, 'package.json'), 'utf-8'))
     const deps = pkg.dependencies ?? {}
     const spec = deps[name]
     if (!spec || Object.keys(deps).length !== 1) return name
@@ -117,6 +157,30 @@ export function detectPackageSpecifier(name: string): string {
   } catch {}
 
   return name
+}
+
+/** Splits a command string into tokens, respecting single and double quotes. */
+function splitCommand(input: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let quote: string | null = null
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === ' ') {
+      if (current) tokens.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  if (current) tokens.push(current)
+  return tokens
 }
 
 /** Promisified execFile with stderr in error message. */

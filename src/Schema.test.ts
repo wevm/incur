@@ -97,6 +97,35 @@ describe('toJsonSchema', () => {
     })
   })
 
+  test('converts z.bigint() as string', () => {
+    expect(Schema.toJsonSchema(z.bigint())).toEqual({ type: 'string' })
+  })
+
+  test('converts z.coerce.bigint() as string', () => {
+    expect(Schema.toJsonSchema(z.coerce.bigint())).toEqual({ type: 'string' })
+  })
+
+  test('converts z.object() with bigint field', () => {
+    expect(
+      Schema.toJsonSchema(z.object({ amount: z.coerce.bigint().describe('Token amount') })),
+    ).toEqual({
+      type: 'object',
+      properties: {
+        amount: { type: 'string', description: 'Token amount' },
+      },
+      required: ['amount'],
+      additionalProperties: false,
+    })
+  })
+
+  test('converts z.date() as string', () => {
+    expect(Schema.toJsonSchema(z.date())).toEqual({ type: 'string' })
+  })
+
+  test('converts z.coerce.date() as string', () => {
+    expect(Schema.toJsonSchema(z.coerce.date())).toEqual({ type: 'string' })
+  })
+
   test('full object with optional, default, and describe', () => {
     const result = Schema.toJsonSchema(
       z.object({

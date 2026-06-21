@@ -62,6 +62,15 @@ describe('format', () => {
     `)
   })
 
+  test('formats bigint values as strings in JSON', () => {
+    const result = Formatter.format({ expiry: 2461152330n }, 'json')
+    expect(result).toMatchInlineSnapshot(`
+      "{
+        "expiry": "2461152330"
+      }"
+    `)
+  })
+
   test('formats as YAML', () => {
     const result = Formatter.format({ message: 'hello' }, 'yaml')
     expect(result).toMatchInlineSnapshot(`
@@ -79,6 +88,16 @@ describe('format', () => {
     expect(Formatter.format('hello world')).toBe('hello world')
     expect(Formatter.format('hello world', 'json')).toBe('"hello world"')
     expect(Formatter.format('hello world', 'md')).toBe('hello world')
+  })
+
+  test('formats JSON object strings as JSON', () => {
+    const result = Formatter.format('{"url":"https://example.com/","title":""}', 'json')
+    expect(result).toMatchInlineSnapshot(`
+      "{
+        "url": "https://example.com/",
+        "title": ""
+      }"
+    `)
   })
 
   test('formats number value', () => {
@@ -296,8 +315,29 @@ describe('format md', () => {
 })
 
 describe('format jsonl', () => {
-  test('falls through to toon', () => {
+  test('single object outputs one JSON line', () => {
     const result = Formatter.format({ message: 'hello' }, 'jsonl')
-    expect(result).toMatchInlineSnapshot(`"message: hello"`)
+    expect(result).toMatchInlineSnapshot(`"{"message":"hello"}"`)
+  })
+
+  test('array outputs one JSON line per element', () => {
+    const result = Formatter.format([{ id: 1 }, { id: 2 }], 'jsonl')
+    expect(result).toMatchInlineSnapshot(`
+      "{"id":1}
+      {"id":2}"
+    `)
+  })
+
+  test('array outputs bigint values as strings', () => {
+    const result = Formatter.format([{ expiry: 2461152330n }, { expiry: 2461152331n }], 'jsonl')
+    expect(result).toMatchInlineSnapshot(`
+      "{"expiry":"2461152330"}
+      {"expiry":"2461152331"}"
+    `)
+  })
+
+  test('scalar value outputs JSON', () => {
+    expect(Formatter.format(42, 'jsonl')).toMatchInlineSnapshot(`"42"`)
+    expect(Formatter.format('hi', 'jsonl')).toMatchInlineSnapshot(`""hi""`)
   })
 })

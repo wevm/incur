@@ -1,16 +1,32 @@
 import { encode } from '@toon-format/toon'
 import { stringify as yamlStringify } from 'yaml'
 
+import * as Json from './internal/json.js'
+
 /** Supported output formats. */
 export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl'
 
 /** Serializes a value to the specified format. Defaults to TOON. */
 export function format(value: unknown, fmt: Format = 'toon'): string {
   if (value == null) return ''
-  if (fmt === 'json') return JSON.stringify(value, null, 2)
+  if (fmt === 'json') {
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return JSON.stringify(JSON.parse(value), null, 2)
+        } catch {}
+      }
+    }
+    return Json.stringify(value, 2)
+  }
   if (fmt === 'yaml') return yamlStringify(value)
   if (fmt === 'md') return formatMarkdown(value)
-  // toon
+  if (fmt === 'jsonl') {
+    if (Array.isArray(value)) return value.map((v) => Json.stringify(v)).join('\n')
+    return Json.stringify(value)
+  }
+  // toon (default)
   if (isScalar(value)) return String(value)
   return encode(value as Record<string, unknown>)
 }

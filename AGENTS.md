@@ -32,6 +32,7 @@
 ## Documentation Conventions
 
 - **JSDoc on all exports** — every exported function, type, and constant gets a JSDoc comment. Type properties get JSDoc too. Namespace types (e.g. `declare namespace create { type Options }`) get JSDoc too. Doc-driven development: write the JSDoc before or alongside the implementation, not after.
+- **Parse structured frontmatter structurally** — when `SKILL.md` frontmatter is emitted as YAML, read it back with the YAML parser instead of regex-scraping individual fields.
 
 ## Testing Conventions
 

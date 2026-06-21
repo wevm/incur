@@ -1,8 +1,10 @@
-import { Cli, Errors, Skill, Typegen, z } from 'incur'
+import { Cli, Errors, Fetch, Skill, Typegen, z } from 'incur'
 
 import { app as honoApp } from '../test/fixtures/hono-api.js'
+import { spec as openapiSpec } from '../test/fixtures/openapi-spec.js'
 
 let __mockSkillsHash: string | undefined
+let __mockSkillsInstalled = true
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -14,7 +16,11 @@ afterAll(() => {
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => __mockSkillsHash }
+  return {
+    ...actual,
+    hasInstalledSkills: () => __mockSkillsInstalled,
+    readHash: () => __mockSkillsHash,
+  }
 })
 
 describe('routing', () => {
@@ -173,7 +179,7 @@ describe('args and options', () => {
       'read',
       '--scopes',
       'write',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -192,7 +198,7 @@ describe('args and options', () => {
       'list',
       '--limit',
       '5',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -327,8 +333,8 @@ describe('output formats', () => {
     `)
   })
 
-  test('--verbose full envelope', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose'])
+  test('--full-output full envelope', async () => {
+    const { output } = await serve(createApp(), ['ping', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -340,8 +346,8 @@ describe('output formats', () => {
     `)
   })
 
-  test('--verbose --format json full envelope', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json'])
+  test('--full-output --format json full envelope', async () => {
+    const { output } = await serve(createApp(), ['ping', '--full-output', '--format', 'json'])
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "data": {
@@ -356,13 +362,13 @@ describe('output formats', () => {
     `)
   })
 
-  test('nested command path in verbose meta', async () => {
+  test('nested command path in full-output meta', async () => {
     const { output } = await serve(createApp(), [
       'project',
       'deploy',
       'status',
       'd-1',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -400,8 +406,8 @@ describe('undefined output', () => {
     expect(output).toBe('')
   })
 
-  test('void command shows envelope with --verbose', async () => {
-    const { output } = await serve(createApp(), ['noop', '--verbose', '--format', 'json'])
+  test('void command shows envelope with --full-output', async () => {
+    const { output } = await serve(createApp(), ['noop', '--full-output', '--format', 'json'])
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "meta": {
@@ -455,10 +461,10 @@ describe('--token-limit and --token-offset', () => {
     `)
   })
 
-  test('works with --verbose', async () => {
+  test('works with --full-output', async () => {
     const { output } = await serve(createApp(), [
       'ping',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
       '--token-limit',
@@ -479,10 +485,10 @@ describe('--token-limit and --token-offset', () => {
     `)
   })
 
-  test('--verbose includes meta.nextOffset when truncated', async () => {
+  test('--full-output includes meta.nextOffset when truncated', async () => {
     const { output } = await serve(createApp(), [
       'ping',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
       '--token-limit',
@@ -492,10 +498,10 @@ describe('--token-limit and --token-offset', () => {
     expect(output).toContain('[truncated:')
   })
 
-  test('--verbose omits meta.nextOffset when not truncated', async () => {
+  test('--full-output omits meta.nextOffset when not truncated', async () => {
     const { output } = await serve(createApp(), [
       'ping',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
       '--token-limit',
@@ -575,7 +581,7 @@ describe('error handling', () => {
     const { output, exitCode } = await serve(createApp(), [
       'auth',
       'status',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -633,7 +639,7 @@ describe('error handling', () => {
   test('command not found returns error envelope', async () => {
     const { output, exitCode } = await serve(createApp(), [
       'nonexistent',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -676,7 +682,13 @@ describe('error handling', () => {
 
 describe('cta', () => {
   test('ok() with string CTAs', async () => {
-    const { output } = await serve(createApp(), ['auth', 'login', '--verbose', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'auth',
+      'login',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     expect(json(output).meta.cta).toMatchInlineSnapshot(`
       {
         "commands": [
@@ -694,7 +706,7 @@ describe('cta', () => {
       'project',
       'create',
       'MyProject',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -715,7 +727,13 @@ describe('cta', () => {
   })
 
   test('error() with CTA', async () => {
-    const { output } = await serve(createApp(), ['auth', 'status', '--verbose', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'auth',
+      'status',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     expect(json(output).meta.cta).toMatchInlineSnapshot(`
       {
         "commands": [
@@ -729,7 +747,7 @@ describe('cta', () => {
   })
 
   test('plain return omits CTA', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json'])
+    const { output } = await serve(createApp(), ['ping', '--full-output', '--format', 'json'])
     expect(json(output).meta.cta).toBeUndefined()
   })
 
@@ -738,7 +756,7 @@ describe('cta', () => {
       'project',
       'list',
       '--archived',
-      '--verbose',
+      '--full-output',
       '--format',
       'json',
     ])
@@ -780,8 +798,8 @@ describe('streaming', () => {
     `)
   })
 
-  test('default streams toon per chunk (--verbose)', async () => {
-    const { output } = await serve(createApp(), ['stream', '--verbose'])
+  test('default streams toon per chunk (--full-output)', async () => {
+    const { output } = await serve(createApp(), ['stream', '--full-output'])
     expect(output).toMatchInlineSnapshot(`
       "content: hello
       content: world
@@ -803,8 +821,8 @@ describe('streaming', () => {
     `)
   })
 
-  test('--format json --verbose buffers with envelope', async () => {
-    const { output } = await serve(createApp(), ['stream', '--verbose', '--format', 'json'])
+  test('--format json --full-output buffers with envelope', async () => {
+    const { output } = await serve(createApp(), ['stream', '--full-output', '--format', 'json'])
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "data": [
@@ -967,11 +985,12 @@ describe('help', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -979,7 +998,6 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -1006,13 +1024,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1033,13 +1051,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1054,18 +1072,18 @@ describe('help', () => {
       Options:
         --limit, -l <number>               Max results (default: 20)
         --sort, -s <name|created|updated>  Sort field (default: name)
-        --archived <boolean>               Include archived (default: false)
+        --archived                         Include archived
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1082,7 +1100,7 @@ describe('help', () => {
 
       Options:
         --branch, -b <string>  Branch to deploy (default: main)
-        --dry-run <boolean>    Dry run mode (default: false)
+        --dry-run              Dry run mode
 
       Examples:
         app project deploy create staging                                    # Deploy staging from main
@@ -1091,13 +1109,13 @@ describe('help', () => {
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
       "
     `)
   })
@@ -1495,9 +1513,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app auth auth login\` | Log in to the service |
-      | \`app auth auth logout\` | Log out of the service |
-      | \`app auth auth status\` | Show authentication status |
+      | \`app auth login\` | Log in to the service |
+      | \`app auth logout\` | Log out of the service |
+      | \`app auth status\` | Show authentication status |
 
       Run \`app auth --llms-full\` for full manifest. Run \`app auth <command> --schema\` for argument details.
       "
@@ -1513,9 +1531,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app project deploy project deploy create <env>\` | Create a deployment |
-      | \`app project deploy project deploy rollback <deployId>\` | Rollback a deployment |
-      | \`app project deploy project deploy status <deployId>\` | Check deployment status |
+      | \`app project deploy create <env>\` | Create a deployment |
+      | \`app project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy status <deployId>\` | Check deployment status |
 
       Run \`app project deploy --llms-full\` for full manifest. Run \`app project deploy <command> --schema\` for argument details.
       "
@@ -1742,11 +1760,12 @@ describe('root command with subcommands', () => {
       Integrations:
         completions  Generate shell completion script
         mcp add      Register as MCP server
-        skills add   Sync skill files to agents
+        skills       Sync skill files to agents (add, list)
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
@@ -1754,7 +1773,6 @@ describe('root command with subcommands', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
         --version                           Show version
       "
     `)
@@ -1865,7 +1883,7 @@ describe('edge cases', () => {
       'prod',
       '--branch',
       'release',
-      '--verbose',
+      '--full-output',
     ])
     expect(json(output)).toMatchInlineSnapshot(`
       {
@@ -1894,7 +1912,7 @@ describe('env', () => {
   test('env vars passed to handler', async () => {
     const { output } = await serve(
       createApp(),
-      ['auth', 'login', '--verbose', '--format', 'json'],
+      ['auth', 'login', '--full-output', '--format', 'json'],
       { env: { AUTH_HOST: 'custom.example.com' } },
     )
     expect(json(output).data.hostname).toBe('custom.example.com')
@@ -1903,7 +1921,7 @@ describe('env', () => {
   test('env defaults applied when var is unset', async () => {
     const { output } = await serve(
       createApp(),
-      ['auth', 'login', '--verbose', '--format', 'json'],
+      ['auth', 'login', '--full-output', '--format', 'json'],
       { env: {} },
     )
     expect(json(output).data.hostname).toBe('api.example.com')
@@ -1918,19 +1936,19 @@ describe('env', () => {
 
       Options:
         --hostname, -h <string>  API hostname (default: api.example.com)
-        --web, -w <boolean>      Open browser (default: false)
+        --web, -w                Open browser
         --scopes <array>         OAuth scopes
 
       Global Options:
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
-        --verbose                           Show full output envelope
 
       Environment Variables:
         AUTH_TOKEN  Pre-existing auth token
@@ -1971,11 +1989,13 @@ describe('skills staleness', () => {
   beforeEach(() => {
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   afterEach(() => {
     stderrSpy.mockRestore()
     __mockSkillsHash = undefined
+    __mockSkillsInstalled = true
   })
 
   test('includes skills CTA when stale', async () => {
@@ -1999,6 +2019,14 @@ describe('skills staleness', () => {
 
   test('no warning on first use (no hash stored)', async () => {
     __mockSkillsHash = undefined
+    const { output } = await serve(createApp(), ['ping'])
+    expect(output).toContain('pong: true')
+    expect(output).not.toContain('Skills are out of date')
+  })
+
+  test('no warning when skills are not installed', async () => {
+    __mockSkillsHash = '0000000000000000'
+    __mockSkillsInstalled = false
     const { output } = await serve(createApp(), ['ping'])
     expect(output).toContain('pong: true')
     expect(output).not.toContain('Skills are out of date')
@@ -2037,9 +2065,9 @@ describe('middleware', () => {
     `)
   })
 
-  test('vars: verbose envelope includes var data', async () => {
+  test('vars: full-output envelope includes var data', async () => {
     const { cli } = createMiddlewareApp()
-    const { output } = await serve(cli, ['whoami', '--verbose', '--format', 'json'])
+    const { output } = await serve(cli, ['whoami', '--full-output', '--format', 'json'])
     const parsed = json(output)
     expect(parsed.data.user).toBe('alice')
     expect(parsed.data.requestId).toBe('req-default')
@@ -2276,8 +2304,14 @@ describe('fetch gateway', () => {
     expect(json(output)).toEqual({ ok: true })
   })
 
-  test('--verbose wraps in envelope', async () => {
-    const { output } = await serve(createApp(), ['api', 'health', '--verbose', '--format', 'json'])
+  test('--full-output wraps in envelope', async () => {
+    const { output } = await serve(createApp(), [
+      'api',
+      'health',
+      '--full-output',
+      '--format',
+      'json',
+    ])
     const parsed = json(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ ok: true })
@@ -2336,6 +2370,231 @@ describe('fetch gateway', () => {
     expect(lines[0]).toEqual({ type: 'chunk', data: { progress: 1 } })
     expect(lines[1]).toEqual({ type: 'chunk', data: { progress: 2 } })
     expect(lines[2].type).toBe('done')
+  })
+})
+
+describe('hosted OpenAPI CLI', () => {
+  test('runs root commands from a hosted fetch source and relative OpenAPI path', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+    })
+
+    try {
+      const { output } = await serve(cli, ['listUsers', '--limit', '5'])
+      expect(output).toMatchInlineSnapshot(`
+        "users[1]{id,name}:
+          1,Alice
+        limit: 5
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('runs mounted commands from a hosted fetch source and URL OpenAPI spec', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test').command('api', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: new URL('https://api.example.com/api/openapi.json'),
+    })
+
+    try {
+      const { output } = await serve(cli, ['api', 'getUser', '42'])
+      expect(output).toMatchInlineSnapshot(`
+        "id: 42
+        name: Alice
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('root help renders generated commands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+    })
+
+    try {
+      const { output } = await serve(cli, ['--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test
+
+        Usage: test <command>
+
+        Commands:
+          createUser   Create a user
+          deleteUser   Delete a user
+          getUser      Get a user by ID
+          healthCheck  Health check
+          listUsers    List users
+
+        Integrations:
+          completions  Generate shell completion script
+          mcp add      Register as MCP server
+          skills       Sync skill files to agents (add, list)
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --mcp                               Start as MCP stdio server
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+          --version                           Show version
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('mounted help renders generated commands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test').command('api', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: new URL('https://api.example.com/api/openapi.json'),
+    })
+
+    try {
+      const { output } = await serve(cli, ['api', '--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test api
+
+        Usage: test api <command>
+
+        Commands:
+          createUser   Create a user
+          deleteUser   Delete a user
+          getUser      Get a user by ID
+          healthCheck  Health check
+          listUsers    List users
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode help renders path-derived command groups', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test
+
+        Usage: test <command>
+
+        Commands:
+          health  Health check
+          users   List users
+
+        Integrations:
+          completions  Generate shell completion script
+          mcp add      Register as MCP server
+          skills       Sync skill files to agents (add, list)
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --mcp                               Start as MCP stdio server
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+          --version                           Show version
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode group help renders path-derived subcommands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['users', '--help'])
+      expect(output).toMatchInlineSnapshot(`
+        "test users — List users
+
+        Usage: test users <command>
+
+        Commands:
+          get   List users
+          id    User ID
+          post  Create a user
+
+        Global Options:
+          --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+          --format <toon|json|yaml|md|jsonl>  Output format
+          --full-output                       Show full output envelope
+          --help                              Show help
+          --llms, --llms-full                 Print LLM-readable manifest
+          --schema                            Show JSON Schema for command
+          --token-count                       Print token count of output (instead of output)
+          --token-limit <n>                   Limit output to n tokens
+          --token-offset <n>                  Skip first n tokens of output
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  test('namespace mode runs path-derived subcommands', async () => {
+    const fetch = hostedOpenapiFetch()
+    const cli = Cli.create('test', {
+      fetch: Fetch.fromRequest('https://api.example.com/api'),
+      openapi: 'openapi.json',
+      openapiConfig: { mode: 'namespace' },
+    })
+
+    try {
+      const { output } = await serve(cli, ['users', 'get', '--limit', '5'])
+      expect(output).toMatchInlineSnapshot(`
+        "users[1]{id,name}:
+          1,Alice
+        limit: 5
+        "
+      `)
+    } finally {
+      fetch.mockRestore()
+    }
   })
 })
 
@@ -2574,6 +2833,8 @@ describe('fetch api', () => {
       .trim()
       .split('\n')
       .map((l) => JSON.parse(l))
+    expect(lines[2].meta.duration).toMatch(/^\d+ms$/)
+    lines[2].meta.duration = '<stripped>'
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -2591,6 +2852,7 @@ describe('fetch api', () => {
         {
           "meta": {
             "command": "stream",
+            "duration": "<stripped>",
           },
           "ok": true,
           "type": "done",
@@ -2848,6 +3110,47 @@ describe('fetch api', () => {
       `)
     })
 
+    test('tools/call with no-args command', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 6,
+          method: 'tools/call',
+          params: { name: 'ping', arguments: {} },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(JSON.parse(body.result.content[0].text)).toMatchInlineSnapshot(`
+        {
+          "pong": true,
+        }
+      `)
+    })
+
+    test('tools/call with streaming command', async () => {
+      const cli = createApp()
+      const sessionId = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'tools/call',
+          params: { name: 'stream', arguments: {} },
+        },
+        sessionId,
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const chunks = JSON.parse(body.result.content[0].text)
+      expect(chunks).toEqual([{ content: 'hello' }, { content: 'world' }])
+    })
+
     test('non-/mcp paths still work alongside MCP', async () => {
       const cli = createApp()
       // Initialize MCP first
@@ -3042,6 +3345,21 @@ async function serve(
 
 function json(raw: string) {
   return JSON.parse(raw)
+}
+
+function hostedOpenapiFetch() {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+
+    if (url.href === 'https://api.example.com/api/openapi.json') return Response.json(openapiSpec)
+    if (url.pathname.startsWith('/api/')) {
+      url.pathname = url.pathname.slice('/api'.length)
+      return honoApp.fetch(new Request(url, request))
+    }
+
+    return new Response('Not Found', { status: 404 })
+  })
 }
 
 function createMiddlewareApp() {

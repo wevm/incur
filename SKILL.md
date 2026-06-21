@@ -419,10 +419,10 @@ Control with `--format <fmt>` or `--json`:
 
 ### Envelope
 
-With `--verbose`, the full envelope is emitted:
+With `--full-output`, the full envelope is emitted:
 
 ```sh
-tool info express --verbose
+tool info express --full-output
 ```
 
 ```
@@ -435,7 +435,7 @@ meta:
   duration: 12ms
 ```
 
-Without `--verbose`, only `data` is emitted. On errors, only the `error` block is emitted.
+Without `--full-output`, only `data` is emitted. On errors, only the `error` block is emitted.
 
 ### Filtering output
 
@@ -482,7 +482,7 @@ tool users --token-limit 20
 tool users --token-offset 20 --token-limit 20
 ```
 
-With `--verbose`, truncated output includes `meta.nextOffset` for programmatic pagination.
+With `--full-output`, truncated output includes `meta.nextOffset` for programmatic pagination.
 
 ### Command schema
 
@@ -725,7 +725,7 @@ Use `--llms --format json` for JSON schema manifest:
 | `--mcp`          | Start as an MCP stdio server                 |
 | `--json`         | Shorthand for `--format json`                |
 | `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md`  |
-| `--verbose`      | Include full envelope (`ok`, `data`, `meta`) |
+| `--full-output`  | Include full envelope (`ok`, `data`, `meta`) |
 
 ## Examples
 
@@ -760,7 +760,7 @@ Hints are displayed after examples in help output and included in skill files.
 
 ### Output policy
 
-Control whether output data is displayed to humans. `'all'` (default) shows output to everyone. `'agent-only'` suppresses data in human/TTY mode while still returning it via `--json`, `--format`, or `--verbose`.
+Control whether output data is displayed to humans. `'all'` (default) shows output to everyone. `'agent-only'` suppresses data in human/TTY mode while still returning it via `--json`, `--format`, or `--full-output`.
 
 ```ts
 cli.command('deploy', {
