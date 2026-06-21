@@ -244,12 +244,14 @@ export function create(
             pending.push(
               Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then(
                 (generated) => {
-                  commands.set(nameOrCli, {
+                  const entry = {
                     _group: true,
                     description: def.description,
                     commands: generated as Map<string, CommandEntry>,
                     ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                  } as InternalGroup)
+                  } as InternalGroup
+                  assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
+                  commands.set(nameOrCli, entry)
                 },
               ),
             )
@@ -264,31 +266,13 @@ export function create(
           } as InternalFetchGateway)
           return cli
         }
-        const globalsDesc = toGlobals.get(cli)
-        if (globalsDesc && def?.options) {
-          const globalKeys = Object.keys(globalsDesc.schema.shape)
-          const optionKeys = Object.keys(def.options.shape)
-          for (const key of optionKeys) {
-            if (globalKeys.includes(key))
-              throw new Error(
-                `Command '${nameOrCli}' option '${key}' conflicts with a global option. Choose a different name.`,
-              )
-          }
-        }
-        if (globalsDesc?.alias && def?.alias) {
-          const globalAliasValues = new Set(Object.values(globalsDesc.alias))
-          for (const [name, short] of Object.entries(def.alias as Record<string, string>)) {
-            if (globalAliasValues.has(short))
-              throw new Error(
-                `Command '${nameOrCli}' alias '-${short}' for '${name}' conflicts with a global alias. Choose a different alias.`,
-              )
-          }
-        }
+        assertNoGlobalOptionConflicts(nameOrCli, def, toGlobals.get(cli))
         commands.set(nameOrCli, def)
         return cli
       }
       const mountedRootDef = toRootDefinition.get(nameOrCli)
       if (mountedRootDef) {
+        assertNoGlobalOptionConflicts(nameOrCli.name, mountedRootDef, toGlobals.get(cli))
         commands.set(nameOrCli.name, mountedRootDef)
         return cli
       }
@@ -296,13 +280,15 @@ export function create(
       const subCommands = toCommands.get(sub)!
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
-      commands.set(sub.name, {
+      const entry = {
         _group: true,
         description: sub.description,
         commands: subCommands,
         ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
         ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
-      })
+      } as InternalGroup
+      assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
+      commands.set(sub.name, entry)
       return cli
     },
 
@@ -369,7 +355,9 @@ export function create(
       'tokenLimit',
       'tokenOffset',
       'tokenCount',
-      ...(def.config?.flag ? [def.config.flag, `no${def.config.flag[0].toUpperCase()}${def.config.flag.slice(1)}`] : []),
+      ...(def.config?.flag
+        ? [def.config.flag, `no${def.config.flag[0].toUpperCase()}${def.config.flag.slice(1)}`]
+        : []),
     ]
     const globalKeys = Object.keys(def.globals.shape)
     for (const key of globalKeys) {
@@ -586,22 +574,28 @@ async function serveImpl(
     rest,
   } = builtinFlags
 
-  // Parse global options from argv remainder
   let globals: Record<string, unknown> = {}
   let filtered = rest
-  if (options.globals) {
+
+  function parseGlobalOptions(validate: boolean) {
+    if (!options.globals) return true
     try {
-      const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias)
-      globals = result.parsed
+      const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias, {
+        validate,
+      })
+      if (validate) globals = result.parsed
       filtered = result.rest
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
       else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
       exit(1)
-      return
+      return false
     }
   }
+
+  if (!parseGlobalOptions(false)) return
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -1317,6 +1311,7 @@ async function serveImpl(
 
   // Fetch gateway execution path
   if ('fetchGateway' in effective) {
+    if (!parseGlobalOptions(true)) return
     const { fetchGateway, path, rest: fetchRest } = effective
     const fetchMiddleware = [
       ...(options.middlewares ?? []),
@@ -1454,6 +1449,8 @@ async function serveImpl(
   }
 
   const { command, path, rest: commandRest } = effective
+
+  if (!parseGlobalOptions(true)) return
 
   // Collect middleware: root CLI + groups traversed + per-command
   const allMiddleware = [
@@ -1831,13 +1828,40 @@ async function executeCommand(
     ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
+  let globals: Record<string, unknown> = {}
+  let commandInputOptions = inputOptions
+  if (options.globals) {
+    const globalKeys = new Set(Object.keys(options.globals.schema.shape))
+    const rawGlobals: Record<string, unknown> = {}
+    commandInputOptions = {}
+    for (const [key, value] of Object.entries(inputOptions)) {
+      if (globalKeys.has(key)) rawGlobals[key] = value
+      else commandInputOptions[key] = value
+    }
+    try {
+      globals = options.globals.schema.parse(rawGlobals)
+    } catch (error: any) {
+      const issues: any[] = error?.issues ?? error?.error?.issues ?? []
+      const message = issues.map((i: any) => i.message).join('; ') || 'Validation failed'
+      return jsonResponse(
+        {
+          ok: false,
+          error: { code: 'VALIDATION_ERROR', message },
+          meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
+        },
+        400,
+      )
+    }
+  }
+
   const result = await Command.execute(command, {
     agent: true,
     argv: rest,
     env: options.envSchema,
     format: 'json',
     formatExplicit: true,
-    inputOptions,
+    globals,
+    inputOptions: commandInputOptions,
     middlewares: allMiddleware,
     name: options.name ?? path,
     parseMode: 'split',
@@ -2431,6 +2455,41 @@ function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
   return '_fetch' in entry
 }
 
+/** @internal Validates command options against CLI-level global options. */
+function assertNoGlobalOptionConflicts(
+  path: string,
+  entry: CommandEntry,
+  globals: GlobalsDescriptor | undefined,
+) {
+  if (!globals || isFetchGateway(entry)) return
+  if (isGroup(entry)) {
+    for (const [name, child] of entry.commands)
+      assertNoGlobalOptionConflicts(`${path} ${name}`, child, globals)
+    return
+  }
+
+  if (entry.options) {
+    const globalKeys = Object.keys(globals.schema.shape)
+    const optionKeys = Object.keys(entry.options.shape)
+    for (const key of optionKeys) {
+      if (globalKeys.includes(key))
+        throw new Error(
+          `Command '${path}' option '${key}' conflicts with a global option. Choose a different name.`,
+        )
+    }
+  }
+
+  if (globals.alias && entry.alias) {
+    const globalAliasValues = new Set(Object.values(globals.alias))
+    for (const [name, short] of Object.entries(entry.alias)) {
+      if (short && globalAliasValues.has(short))
+        throw new Error(
+          `Command '${path}' alias '-${short}' for '${name}' conflicts with a global alias. Choose a different alias.`,
+        )
+    }
+  }
+}
+
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
@@ -2450,7 +2509,10 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
 
 /** Descriptor for a CLI's custom global options schema and aliases. */
-export type GlobalsDescriptor = { schema: z.ZodObject<any>; alias?: Record<string, string> | undefined }
+export type GlobalsDescriptor = {
+  schema: z.ZodObject<any>
+  alias?: Record<string, string> | undefined
+}
 
 /** @internal Maps CLI instances to their globals schema and alias map. */
 const toGlobals = new WeakMap<Cli, GlobalsDescriptor>()

@@ -319,6 +319,7 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
   argv: string[],
   schema: globals,
   alias?: Record<string, string>,
+  options: parseGlobals.Options = {},
 ): { parsed: z.output<globals>; rest: string[] } {
   const optionNames = createOptionNames(schema, alias)
 
@@ -426,13 +427,22 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
     }
   }
 
+  if (options.validate === false) return { parsed: rawOptions as z.output<globals>, rest }
+
   // Coerce raw option values before zod validation
-  for (const [name, value] of Object.entries(rawOptions)) {
+  for (const [name, value] of Object.entries(rawOptions))
     rawOptions[name] = coerce(value, name, schema)
-  }
 
   const parsed = zodParse(schema, rawOptions) as z.output<globals>
   return { parsed, rest }
+}
+
+export declare namespace parseGlobals {
+  /** Options for parsing global flags. */
+  type Options = {
+    /** Whether to validate parsed globals against the schema. */
+    validate?: boolean | undefined
+  }
 }
 
 /** Returns the best available env source for the current runtime. */
