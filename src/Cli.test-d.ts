@@ -354,6 +354,8 @@ test('run() context exposes format metadata', () => {
 test('command mcp metadata accepts instructions and annotations', () => {
   Cli.create('test').command('read', {
     mcp: {
+      name: 'read_data',
+      description: 'Read data through MCP',
       annotations: {
         title: 'Read data',
         readOnlyHint: true,

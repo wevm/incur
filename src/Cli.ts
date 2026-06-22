@@ -3492,6 +3492,10 @@ type CommandDefinition<
   /** MCP-specific metadata exposed when this command is served as a tool. */
   mcp?:
     | {
+        /** Override the command name exposed to MCP clients. */
+        name?: string | undefined
+        /** Override the command description exposed to MCP clients. */
+        description?: string | undefined
         /** MCP tool annotations that describe tool behavior to clients. */
         annotations?: Mcp.ToolAnnotations | undefined
         /** Tool-specific instructions surfaced to MCP clients. */

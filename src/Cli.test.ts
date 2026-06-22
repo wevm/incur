@@ -5888,6 +5888,8 @@ describe('--mcp', () => {
       const cli = Cli.create('test')
       cli.command('deploy', {
         mcp: {
+          name: 'deploy_service',
+          description: 'Deploy service through MCP',
           annotations: { destructiveHint: true, idempotentHint: false },
           instructions: 'Require confirmation before production deploys.',
         },
@@ -5897,7 +5899,8 @@ describe('--mcp', () => {
 
       const commands = spy.mock.calls[0]![2] as Map<string, any>
       const [tool] = Mcp.collectTools(commands, [])
-      expect(tool?.name).toBe('deploy')
+      expect(tool?.name).toBe('deploy_service')
+      expect(tool?.description).toBe('Deploy service through MCP')
       expect(tool?.annotations).toEqual({ destructiveHint: true, idempotentHint: false })
       expect(tool?.instructions).toBe('Require confirmation before production deploys.')
     } finally {

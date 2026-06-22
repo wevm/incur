@@ -134,6 +134,54 @@ describe('Mcp', () => {
     expect(echoTool.inputSchema.required).toContain('message')
   })
 
+  test('tools/list uses command MCP name and description overrides', async () => {
+    const commands = new Map<string, any>()
+    commands.set('whoami', {
+      description: 'Show wallet identity',
+      mcp: {
+        name: 'get_balance',
+        description: 'Get wallet balance',
+      },
+      run() {
+        return { balance: '1.00' }
+      },
+    })
+
+    const [, listRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    const names = listRes.result.tools.map((tool: any) => tool.name)
+    expect(names).toEqual(['get_balance'])
+    expect(listRes.result.tools[0].description).toBe('Get wallet balance')
+
+    const [, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'get_balance', arguments: {} } },
+    ])
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"balance":"1.00"}' }])
+  })
+
+  test('collectTools rejects duplicate MCP tool names', () => {
+    const commands = new Map<string, any>()
+    commands.set('whoami', {
+      mcp: { name: 'get_balance' },
+      run() {
+        return { balance: '1.00' }
+      },
+    })
+    commands.set('balance', {
+      mcp: { name: 'get_balance' },
+      run() {
+        return { balance: '1.00' }
+      },
+    })
+
+    expect(() => Mcp.collectTools(commands, [])).toThrowError(
+      'Duplicate MCP tool name: get_balance',
+    )
+  })
+
   test('notifications are ignored (no response)', async () => {
     const responses = await mcpSession(createTestCommands(), [
       { id: 1, method: 'initialize', params: initParams },

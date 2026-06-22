@@ -222,8 +222,8 @@ export function collectTools(
       result.push(...collectTools(entry.commands, path, groupMw))
     } else {
       result.push({
-        name: path.join('_'),
-        description: entry.description,
+        name: entry.mcp?.name ?? path.join('_'),
+        description: entry.mcp?.description ?? entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
         ...(entry.output
           ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> }
@@ -235,7 +235,16 @@ export function collectTools(
       })
     }
   }
+  assertUniqueToolNames(result)
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function assertUniqueToolNames(tools: ToolEntry[]) {
+  const seen = new Set<string>()
+  for (const tool of tools) {
+    if (seen.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`)
+    seen.add(tool.name)
+  }
 }
 
 /** @internal Builds a merged JSON Schema from args and options Zod schemas. */
