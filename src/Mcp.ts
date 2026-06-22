@@ -221,13 +221,12 @@ export function collectTools(
       ]
       result.push(...collectTools(entry.commands, path, groupMw))
     } else {
+      const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
       result.push({
         name: entry.mcp?.name ?? path.join('_'),
         description: entry.mcp?.description ?? entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
-        ...(entry.output
-          ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> }
-          : undefined),
+        ...(outputSchema ? { outputSchema } : undefined),
         ...(entry.mcp?.annotations ? { annotations: entry.mcp.annotations } : undefined),
         ...(entry.mcp?.instructions ? { instructions: entry.mcp.instructions } : undefined),
         command: entry,
@@ -245,6 +244,12 @@ function assertUniqueToolNames(tools: ToolEntry[]) {
     if (seen.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`)
     seen.add(tool.name)
   }
+}
+
+function mcpOutputSchema(output: any): Record<string, unknown> | undefined {
+  const schema = Schema.toJsonSchema(output) as Record<string, unknown>
+  if (schema.type === 'object') return schema
+  return undefined
 }
 
 /** @internal Builds a merged JSON Schema from args and options Zod schemas. */

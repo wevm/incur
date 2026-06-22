@@ -256,6 +256,54 @@ describe('Mcp', () => {
     expect(res.result.structuredContent).toEqual({ expiry: '2461152330' })
   })
 
+  test('tools/list tolerates non-object output schemas', async () => {
+    const commands = new Map<string, any>()
+    commands.set('list', {
+      description: 'List records',
+      output: z.array(z.object({ id: z.string() })),
+      run() {
+        return [{ id: 'foo' }]
+      },
+    })
+    commands.set('count', {
+      description: 'Count records',
+      output: z.number(),
+      run() {
+        return 1
+      },
+    })
+    commands.set('show', {
+      description: 'Show record',
+      output: z.object({ id: z.string() }),
+      run() {
+        return { id: 'foo' }
+      },
+    })
+
+    const tools = Mcp.collectTools(commands, [])
+    expect(tools.find((tool) => tool.name === 'list')?.outputSchema).toBeUndefined()
+    expect(tools.find((tool) => tool.name === 'count')?.outputSchema).toBeUndefined()
+    expect(tools.find((tool) => tool.name === 'show')?.outputSchema?.type).toBe('object')
+
+    const [, listRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    expect(listRes.error).toBeUndefined()
+    expect(listRes.result.tools.map((tool: any) => tool.name).sort()).toEqual([
+      'count',
+      'list',
+      'show',
+    ])
+
+    const [, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'list', arguments: {} } },
+    ])
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '[{"id":"foo"}]' }])
+    expect(callRes.result.structuredContent).toBeUndefined()
+  })
+
   test('tools/call surfaces cta metadata without changing structured content', async () => {
     const commands = new Map<string, any>()
     commands.set('show', {
