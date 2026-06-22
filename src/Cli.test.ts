@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import * as Command from './internal/command.js'
+import * as SyncMcp from './SyncMcp.js'
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -45,6 +46,15 @@ async function serve(
     output: output.replace(/duration: \d+ms/, 'duration: <stripped>'),
     exitCode,
   }
+}
+
+function mockMcpServeResponses(responses: unknown[]) {
+  return vi.spyOn(Mcp, 'serve').mockImplementation(async (_name, _version, _commands, options) => {
+    for (const response of responses)
+      options!.output?.write(
+        `${typeof response === 'string' ? response : JSON.stringify(response)}\n`,
+      )
+  })
 }
 
 function createConfigCli(flag?: string) {
@@ -2854,6 +2864,55 @@ describe('built-in commands', () => {
     expect(output).toContain('--agent')
   })
 
+  test('mcp add forwards command, agent, and global flags', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'pnpm test --mcp', agents: ['Cursor'] })
+    try {
+      const cli = Cli.create('test', { sync: { suggestions: ['Check health'] } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, [
+        'mcp',
+        'add',
+        '--no-global',
+        '-c',
+        'pnpm test --mcp',
+        '--agent',
+        'cursor',
+        '--json',
+      ])
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('test', {
+        command: 'pnpm test --mcp',
+        global: false,
+        agents: ['cursor'],
+      })
+      expect(output).toContain('Registered test as MCP server')
+      expect(output).toContain('Try asking:')
+      expect(output).toContain('"Check health"')
+      expect(output).toContain('"command": "pnpm test --mcp"')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp add exits nonzero when registration fails', async () => {
+    const spy = vi.spyOn(SyncMcp, 'register').mockRejectedValue('register failed')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add', '--json'])
+      expect(exitCode).toBe(1)
+      expect(output).toContain('Registering MCP server...')
+      expect(JSON.parse(output.slice(output.indexOf('{')))).toEqual({
+        code: 'MCP_ADD_FAILED',
+        message: 'register failed',
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp doctor --help shows description', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
@@ -2877,6 +2936,37 @@ describe('built-in commands', () => {
     })
   })
 
+  test('mcp doctor forwards MCP instructions to the smoke test server', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+    ])
+    try {
+      const cli = Cli.create('test', {
+        version: '2.0.0',
+        mcp: { instructions: 'Use read-only commands first.' },
+      })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        'test',
+        '2.0.0',
+        expect.any(Map),
+        expect.objectContaining({
+          version: '2.0.0',
+          instructions: 'Use read-only commands first.',
+        }),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp doctor does not call tools', async () => {
     let calls = 0
     const cli = Cli.create('test')
@@ -2893,20 +2983,14 @@ describe('built-in commands', () => {
   })
 
   test('mcp doctor warns when no tools are exposed', async () => {
-    const spy = vi
-      .spyOn(Mcp, 'serve')
-      .mockImplementation(async (_name, _version, _commands, options) => {
-        options!.output?.write(
-          `${JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
-          })}\n`,
-        )
-        options!.output?.write(
-          `${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [] } })}\n`,
-        )
-      })
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+    ])
     try {
       const cli = Cli.create('test')
       cli.command('ping', { run: () => ({ pong: true }) })
@@ -2917,6 +3001,46 @@ describe('built-in commands', () => {
         toolCount: 0,
         tools: [],
         warnings: ['No MCP tools exposed.'],
+        errors: [],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor filters malformed tools from tools/list', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          tools: [
+            null,
+            { name: 123, description: 'bad name' },
+            { name: 'without_description', description: 123 },
+            { name: 'with_description', description: 'Useful tool' },
+          ],
+        },
+      },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toEqual({
+        ok: true,
+        toolCount: 2,
+        tools: [
+          { name: 'without_description' },
+          { name: 'with_description', description: 'Useful tool' },
+        ],
+        warnings: [],
         errors: [],
       })
     } finally {
@@ -2943,12 +3067,21 @@ describe('built-in commands', () => {
     }
   })
 
+  test('mcp doctor stringifies non-error MCP server failures', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockRejectedValue('boom')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([{ code: 'MCP_SERVER_FAILED', message: 'boom' }])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp doctor exits nonzero when MCP response cannot be parsed', async () => {
-    const spy = vi
-      .spyOn(Mcp, 'serve')
-      .mockImplementation(async (_name, _version, _commands, options) => {
-        options!.output?.write('{bad json}\n')
-      })
+    const spy = mockMcpServeResponses(['{bad json}'])
     try {
       const cli = Cli.create('test')
       cli.command('ping', { run: () => ({ pong: true }) })
@@ -2966,25 +3099,90 @@ describe('built-in commands', () => {
     }
   })
 
-  test('mcp doctor exits nonzero when tools/list fails', async () => {
-    const spy = vi
-      .spyOn(Mcp, 'serve')
-      .mockImplementation(async (_name, _version, _commands, options) => {
-        options!.output?.write(
-          `${JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
-          })}\n`,
-        )
-        options!.output?.write(
-          `${JSON.stringify({
-            jsonrpc: '2.0',
-            id: 2,
-            error: { code: -32603, message: 'list failed' },
-          })}\n`,
-        )
+  test('mcp doctor exits nonzero when an MCP response is not an object', async () => {
+    const spy = mockMcpServeResponses([null])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toMatchObject({
+        ok: false,
+        errors: [
+          {
+            code: 'MCP_RESPONSE_PARSE_FAILED',
+            message: 'Expected JSON-RPC response object.',
+          },
+        ],
       })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when initialize response is missing', async () => {
+    const spy = mockMcpServeResponses([{ jsonrpc: '2.0', id: 2, result: { tools: [] } }])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_INITIALIZE_MISSING', message: 'Missing initialize response.' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when initialize fails', async () => {
+    const spy = mockMcpServeResponses([
+      { jsonrpc: '2.0', id: 1, error: 'initialize failed' },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_INITIALIZE_FAILED', message: '"initialize failed"' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list response is missing', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_TOOLS_LIST_MISSING', message: 'Missing tools/list response.' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list fails', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, error: { code: -32603, message: 'list failed' } },
+    ])
     try {
       const cli = Cli.create('test')
       cli.command('ping', { run: () => ({ pong: true }) })
@@ -2997,6 +3195,28 @@ describe('built-in commands', () => {
         warnings: [],
         errors: [{ code: 'MCP_TOOLS_LIST_FAILED', message: 'list failed' }],
       })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list has an invalid shape', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, result: { tools: 'invalid' } },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_TOOLS_LIST_INVALID', message: 'tools/list did not return a tools array.' },
+      ])
     } finally {
       spy.mockRestore()
     }
@@ -3036,6 +3256,22 @@ describe('built-in commands', () => {
     expect(exitCode).toBe(1)
     expect(output).toContain("Did you mean 'add'?")
     expect(output).toContain('test mcp add')
+  })
+
+  test('mcp typo shows human suggestions in TTY', async () => {
+    const previous = process.stdout.isTTY
+    ;(process.stdout as any).isTTY = true
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({}) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'zzzz'])
+      expect(exitCode).toBe(1)
+      expect(output).toContain("Error: 'zzzz' is not a command for 'test mcp'.")
+      expect(output).toContain('Suggested command:')
+      expect(output).toContain('test mcp --help')
+    } finally {
+      ;(process.stdout as any).isTTY = previous
+    }
   })
 
   test('skills add --help shows options', async () => {
