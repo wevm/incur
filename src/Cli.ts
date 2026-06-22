@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { z } from 'zod'
 
@@ -1002,12 +1003,16 @@ async function serveImpl(
     return
   }
 
-  // mcp add: register CLI as MCP server via `npx add-mcp`
+  // mcp add/doctor: register or smoke-test CLI MCP server integration.
   const mcpIdx = builtinIdx(filtered, name, 'mcp')
   if (mcpIdx !== -1) {
+    const builtin = findBuiltin('mcp')!
     const mcpSub = filtered[mcpIdx + 1]
-    if (mcpSub && mcpSub !== 'add') {
-      const suggestion = suggest(mcpSub, ['add'])
+    const sub = mcpSub ? findBuiltinSubcommand(builtin, mcpSub) : undefined
+    if (mcpSub && !sub) {
+      const candidates =
+        builtin.subcommands?.flatMap((sub) => [sub.name, ...(sub.aliases ?? [])]) ?? []
+      const suggestion = suggest(mcpSub, candidates)
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
       const message = `'${mcpSub}' is not a command for '${name} mcp'.${didYouMean}`
       const ctaCommands: FormattedCta[] = []
@@ -1028,13 +1033,17 @@ async function serveImpl(
       return
     }
     if (!mcpSub) {
-      const b = findBuiltin('mcp')!
-      writeln(formatBuiltinHelp(name, b))
+      writeln(formatBuiltinHelp(name, builtin))
       return
     }
     if (help) {
-      const b = findBuiltin('mcp')!
-      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
+      writeln(formatBuiltinSubcommandHelp(name, builtin, sub!.name))
+      return
+    }
+    if (sub!.name === 'doctor') {
+      const result = await runMcpDoctor(name, commands, options)
+      writeln(Formatter.format(result, formatExplicit ? formatFlag : 'toon'))
+      if (!result.ok) exit(1)
       return
     }
     const rest = filtered.slice(mcpIdx + 2)
@@ -2711,6 +2720,136 @@ function formatBuiltinSubcommandHelp(
     hideGlobalOptions: true,
     options: sub?.options,
   })
+}
+
+type McpDoctorResult = {
+  ok: boolean
+  toolCount: number
+  tools: { name: string; description?: string | undefined }[]
+  warnings: string[]
+  errors: { code: string; message: string }[]
+}
+
+async function runMcpDoctor(
+  name: string,
+  commands: Map<string, CommandEntry>,
+  options: serveImpl.Options,
+): Promise<McpDoctorResult> {
+  const warnings: string[] = []
+  const errors: McpDoctorResult['errors'] = []
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const chunks: string[] = []
+  output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+  let serveError: unknown
+  const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
+    input,
+    output,
+    middlewares: options.middlewares,
+    env: options.envSchema,
+    vars: options.vars,
+    version: options.version,
+    ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+  }).catch((error) => {
+    serveError = error
+  })
+
+  input.write(
+    `${Json.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'incur-doctor', version: '1.0.0' },
+      },
+    })}\n`,
+  )
+  input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  input.end()
+  await done
+
+  if (serveError)
+    return {
+      ok: false,
+      toolCount: 0,
+      tools: [],
+      warnings,
+      errors: [{ code: 'MCP_SERVER_FAILED', message: errorMessage(serveError) }],
+    }
+
+  let responses: Record<string, unknown>[]
+  try {
+    responses = parseMcpDoctorResponses(chunks)
+  } catch (error) {
+    return {
+      ok: false,
+      toolCount: 0,
+      tools: [],
+      warnings,
+      errors: [{ code: 'MCP_RESPONSE_PARSE_FAILED', message: errorMessage(error) }],
+    }
+  }
+
+  const initialize = responses.find((response) => response.id === 1)
+  if (!initialize)
+    errors.push({ code: 'MCP_INITIALIZE_MISSING', message: 'Missing initialize response.' })
+  else if (initialize.error)
+    errors.push({ code: 'MCP_INITIALIZE_FAILED', message: mcpErrorMessage(initialize.error) })
+
+  const toolsList = responses.find((response) => response.id === 2)
+  let tools: McpDoctorResult['tools'] = []
+  if (!toolsList)
+    errors.push({ code: 'MCP_TOOLS_LIST_MISSING', message: 'Missing tools/list response.' })
+  else if (toolsList.error)
+    errors.push({ code: 'MCP_TOOLS_LIST_FAILED', message: mcpErrorMessage(toolsList.error) })
+  else if (!isRecord(toolsList.result) || !Array.isArray(toolsList.result.tools))
+    errors.push({
+      code: 'MCP_TOOLS_LIST_INVALID',
+      message: 'tools/list did not return a tools array.',
+    })
+  else
+    tools = toolsList.result.tools
+      .filter(isRecord)
+      .map((tool) => ({
+        name: typeof tool.name === 'string' ? tool.name : '',
+        ...(typeof tool.description === 'string' ? { description: tool.description } : undefined),
+      }))
+      .filter((tool) => tool.name)
+
+  if (errors.length === 0 && tools.length === 0) warnings.push('No MCP tools exposed.')
+
+  return {
+    ok: errors.length === 0,
+    toolCount: tools.length,
+    tools,
+    warnings,
+    errors,
+  }
+}
+
+function parseMcpDoctorResponses(chunks: string[]): Record<string, unknown>[] {
+  const responses: Record<string, unknown>[] = []
+  for (const line of chunks.join('').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parsed = JSON.parse(trimmed)
+    if (!isRecord(parsed)) throw new Error('Expected JSON-RPC response object.')
+    responses.push(parsed)
+  }
+  return responses
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function mcpErrorMessage(error: unknown): string {
+  if (isRecord(error) && typeof error.message === 'string') return error.message
+  return Json.stringify(error)
 }
 
 /** @internal Formats help text for a fetch gateway command. */

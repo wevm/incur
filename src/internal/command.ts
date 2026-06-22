@@ -419,6 +419,10 @@ export const builtinCommands = [
           noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
         }),
       }),
+      subcommand({
+        name: 'doctor',
+        description: 'Validate MCP server startup and tool listing',
+      }),
     ],
   },
   {

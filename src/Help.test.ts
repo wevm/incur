@@ -392,7 +392,7 @@ describe('formatRoot', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:

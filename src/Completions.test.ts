@@ -599,6 +599,7 @@ describe('serve integration', () => {
       _COMPLETE_INDEX: '2',
     })
     expect(output).toContain('add')
+    expect(output).toContain('doctor')
   })
 
   test('COMPLETE=zsh with words outputs candidates in zsh format', async () => {

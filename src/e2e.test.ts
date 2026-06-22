@@ -984,7 +984,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -1759,7 +1759,7 @@ describe('root command with subcommands', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2436,7 +2436,7 @@ describe('hosted OpenAPI CLI', () => {
 
         Integrations:
           completions  Generate shell completion script
-          mcp add      Register as MCP server
+          mcp          Register as MCP server (add, doctor)
           skills       Sync skill files to agents (add, list)
 
         Global Options:
@@ -2517,7 +2517,7 @@ describe('hosted OpenAPI CLI', () => {
 
         Integrations:
           completions  Generate shell completion script
-          mcp add      Register as MCP server
+          mcp          Register as MCP server (add, doctor)
           skills       Sync skill files to agents (add, list)
 
         Global Options:

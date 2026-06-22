@@ -2178,7 +2178,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2216,7 +2216,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2502,7 +2502,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2832,6 +2832,7 @@ describe('built-in commands', () => {
     expect(output).toContain('test mcp')
     expect(output).toContain('Register as MCP server')
     expect(output).toContain('add')
+    expect(output).toContain('doctor')
   })
 
   test('mcp --help shows help with subcommands', async () => {
@@ -2840,6 +2841,7 @@ describe('built-in commands', () => {
     const { output } = await serve(cli, ['mcp', '--help'])
     expect(output).toContain('test mcp')
     expect(output).toContain('add')
+    expect(output).toContain('doctor')
   })
 
   test('mcp add --help shows options', async () => {
@@ -2850,6 +2852,48 @@ describe('built-in commands', () => {
     expect(output).toContain('--command')
     expect(output).toContain('--no-global')
     expect(output).toContain('--agent')
+  })
+
+  test('mcp doctor --help shows description', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp', 'doctor', '--help'])
+    expect(output).toContain('test mcp doctor')
+    expect(output).toContain('Validate MCP server startup and tool listing')
+  })
+
+  test('mcp doctor lists tools', async () => {
+    const cli = Cli.create('test', { version: '1.0.0' })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    const result = JSON.parse(output)
+    expect(exitCode).toBeUndefined()
+    expect(result).toEqual({
+      ok: true,
+      toolCount: 1,
+      tools: [{ name: 'ping', description: 'Health check' }],
+      warnings: [],
+      errors: [],
+    })
+  })
+
+  test('mcp doctor exits nonzero when MCP server fails', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockRejectedValue(new Error('boom'))
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toEqual({
+        ok: false,
+        toolCount: 0,
+        tools: [],
+        warnings: [],
+        errors: [{ code: 'MCP_SERVER_FAILED', message: 'boom' }],
+      })
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test('bare skills shows help with subcommands', async () => {
