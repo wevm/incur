@@ -2877,6 +2877,53 @@ describe('built-in commands', () => {
     })
   })
 
+  test('mcp doctor does not call tools', async () => {
+    let calls = 0
+    const cli = Cli.create('test')
+    cli.command('mutate', {
+      run() {
+        calls++
+        return { ok: true }
+      },
+    })
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    expect(exitCode).toBeUndefined()
+    expect(JSON.parse(output)).toMatchObject({ ok: true, toolCount: 1 })
+    expect(calls).toBe(0)
+  })
+
+  test('mcp doctor warns when no tools are exposed', async () => {
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation(async (_name, _version, _commands, options) => {
+        options!.output?.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+          })}\n`,
+        )
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [] } })}\n`,
+        )
+      })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toEqual({
+        ok: true,
+        toolCount: 0,
+        tools: [],
+        warnings: ['No MCP tools exposed.'],
+        errors: [],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp doctor exits nonzero when MCP server fails', async () => {
     const spy = vi.spyOn(Mcp, 'serve').mockRejectedValue(new Error('boom'))
     try {
@@ -2890,6 +2937,65 @@ describe('built-in commands', () => {
         tools: [],
         warnings: [],
         errors: [{ code: 'MCP_SERVER_FAILED', message: 'boom' }],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when MCP response cannot be parsed', async () => {
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation(async (_name, _version, _commands, options) => {
+        options!.output?.write('{bad json}\n')
+      })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toMatchObject({
+        ok: false,
+        toolCount: 0,
+        tools: [],
+        warnings: [],
+        errors: [{ code: 'MCP_RESPONSE_PARSE_FAILED' }],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list fails', async () => {
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation(async (_name, _version, _commands, options) => {
+        options!.output?.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+          })}\n`,
+        )
+        options!.output?.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            error: { code: -32603, message: 'list failed' },
+          })}\n`,
+        )
+      })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toEqual({
+        ok: false,
+        toolCount: 0,
+        tools: [],
+        warnings: [],
+        errors: [{ code: 'MCP_TOOLS_LIST_FAILED', message: 'list failed' }],
       })
     } finally {
       spy.mockRestore()
