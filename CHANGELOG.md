@@ -1,5 +1,13 @@
 # incur
 
+## 0.4.10
+
+### Patch Changes
+
+- a94480c: Added `mcp doctor` command that smoke-tests MCP initialization and tool listing without calling tools.
+- f069769: Added MCP tool name and description metadata overrides for commands, including duplicate exposed-name validation.
+- 309d566: Added support for non-object MCP output schemas by omitting them from tool registration while preserving JSON text output.
+
 ## 0.4.9
 
 ### Patch Changes
