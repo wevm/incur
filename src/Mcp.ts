@@ -1,3 +1,4 @@
+import type { Transport } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
@@ -15,8 +16,10 @@ export async function serve(
   options: serve.Options = {},
 ): Promise<void> {
   // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
-  const { fromJsonSchema, McpServer, StdioServerTransport } =
-    await import('@modelcontextprotocol/server')
+  const stdio = importStdioModule()
+  const mcp = await import('@modelcontextprotocol/server')
+  const { fromJsonSchema, McpServer } = mcp
+  const StdioServerTransport = await importStdioServerTransport(mcp, stdio)
 
   const server = new McpServer(
     { name, version },
@@ -61,6 +64,40 @@ export async function serve(
   const transport = new StdioServerTransport(input as any, output as any)
   await server.connect(transport)
 }
+
+type StdioServerTransport = new (
+  input?: Readable,
+  output?: Writable,
+  options?: { maxBufferSize?: number | undefined },
+) => Transport
+
+type StdioModule = {
+  StdioServerTransport: StdioServerTransport
+}
+
+type StdioImportResult =
+  | { module: unknown; error?: undefined }
+  | { module?: undefined; error: unknown }
+
+async function importStdioServerTransport(
+  mcp: unknown,
+  stdio: Promise<StdioImportResult>,
+): Promise<StdioServerTransport> {
+  const transport = (mcp as Partial<StdioModule>).StdioServerTransport
+  if (transport) return transport
+
+  const result = await stdio
+  if (result.error) throw result.error
+  return (result.module as StdioModule).StdioServerTransport
+}
+
+function importStdioModule(): Promise<StdioImportResult> {
+  return importModule('@modelcontextprotocol/server/stdio')
+    .then((module) => ({ module }))
+    .catch((error: unknown) => ({ error }))
+}
+
+const importModule = (specifier: string): Promise<unknown> => import(specifier)
 
 export declare namespace serve {
   /** Options for the MCP server. */

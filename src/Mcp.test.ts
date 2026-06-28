@@ -84,12 +84,19 @@ async function mcpSession(
     input.write(`${JSON.stringify(rpc)}\n`)
   }
 
-  // Give time for async processing then close
-  await new Promise((r) => setTimeout(r, 20))
+  await waitForResponses(chunks, messages.filter((msg) => msg.id !== undefined).length)
   input.end()
   await done
 
   return chunks.map((c) => JSON.parse(c.trim()))
+}
+
+async function waitForResponses(chunks: string[], expected: number) {
+  const started = Date.now()
+  while (chunks.length < expected) {
+    if (Date.now() - started > 1_000) return
+    await new Promise((r) => setTimeout(r, 5))
+  }
 }
 
 describe('Mcp', () => {
