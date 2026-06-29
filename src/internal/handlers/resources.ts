@@ -1,4 +1,3 @@
-import { stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Cli from '../../Cli.js'
@@ -10,6 +9,7 @@ import * as Mcp from '../../Mcp.js'
 import * as Openapi from '../../Openapi.js'
 import * as Skill from '../../Skill.js'
 import * as RuntimeContext from '../runtime-context.js'
+import * as Yaml from '../yaml.js'
 
 /** Resources failure with protocol code and HTTP status metadata. */
 export class ResourcesError extends BaseError {
@@ -56,7 +56,7 @@ export function createResourcesHandler(ctx: RuntimeContext.RuntimeCliContext) {
       if (parsed.resource === 'openapi') {
         const spec = openapi(ctx)
         if (parsed.format === 'yaml')
-          return { contentType: 'application/yaml', body: yamlStringify(spec) }
+          return { contentType: 'application/yaml', body: (await Yaml.load()).stringify(spec) }
         return { contentType: 'application/json', data: spec }
       }
       if (parsed.resource === 'mcpTools')
@@ -66,6 +66,7 @@ export function createResourcesHandler(ctx: RuntimeContext.RuntimeCliContext) {
         }
 
       if (parsed.resource === 'skillsIndex' || parsed.resource === 'skill') {
+        await Yaml.load()
         const { files } = skills(ctx)
         if (parsed.resource === 'skillsIndex') {
           return {
