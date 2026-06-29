@@ -44,6 +44,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     version,
     envSource = process.env,
     env: envSchema,
+    globals = {},
     vars: varsSchema,
     middlewares = [],
   } = options
@@ -209,6 +210,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
         error: errorFn,
         format: format as any,
         formatExplicit,
+        globals,
         name,
         set(key: string, value: unknown) {
           varsMap[key] = value
@@ -293,6 +295,8 @@ export declare namespace execute {
     format: string
     /** Whether the format was explicitly requested. */
     formatExplicit: boolean
+    /** Parsed global options. Defaults to `{}` when not provided. */
+    globals?: Record<string, unknown> | undefined
     /** Raw parsed options (from query params, JSON body, or MCP params). For CLI, pass `{}`. */
     inputOptions: Record<string, unknown>
     /** Middleware handlers (root + group + command, already collected). */
@@ -423,6 +427,10 @@ export const builtinCommands = [
             .describe('Override the command agents will run (e.g. "pnpm my-cli --mcp")'),
           noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
         }),
+      }),
+      subcommand({
+        name: 'doctor',
+        description: 'Validate MCP server startup and tool listing',
       }),
     ],
   },

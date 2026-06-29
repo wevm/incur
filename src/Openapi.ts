@@ -12,7 +12,17 @@ import { dereference } from './internal/dereference.js'
 import * as Schema from './Schema.js'
 
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
-export type OpenAPISpec = { paths?: {} | undefined }
+export type OpenAPISpec = {
+  components?:
+    | {
+        securitySchemes?: Record<string, SecurityScheme> | undefined
+      }
+    | undefined
+  info?: Record<string, unknown> | undefined
+  openapi?: string | undefined
+  paths?: {} | undefined
+  security?: readonly SecurityRequirement[] | undefined
+}
 
 /** OpenAPI document source accepted by fetch-backed CLI commands. */
 export type OpenAPISource = OpenAPISpec | string | URL
@@ -110,6 +120,7 @@ type Operation = {
   parameters?: readonly Parameter[] | undefined
   requestBody?: RequestBody | undefined
   responses?: Record<string, unknown> | undefined
+  security?: readonly SecurityRequirement[] | undefined
   summary?: string | undefined
 }
 
@@ -124,6 +135,20 @@ type Parameter = {
 type RequestBody = {
   content?: Record<string, { schema?: Record<string, unknown> | undefined }> | undefined
   required?: boolean | undefined
+}
+
+type SecurityRequirement = Record<string, readonly string[]>
+
+type SecurityScheme = {
+  description?: string | undefined
+  in?: 'cookie' | 'header' | 'query' | undefined
+  name?: string | undefined
+  scheme?: string | undefined
+  type?: string | undefined
+}
+
+type HeaderParameter = Parameter & {
+  optionName: string
 }
 
 /** A fetch handler. */
@@ -404,6 +429,10 @@ export function generateCommandsSync(
 
     const pathParams = (op.parameters ?? []).filter((p) => p.in === 'path')
     const queryParams = (op.parameters ?? []).filter((p) => p.in === 'query')
+    const headerParams = headerOptions([
+      ...(op.parameters ?? []).filter((p) => p.in === 'header'),
+      ...securityHeaderParams(resolved, op),
+    ])
 
     const bodySchema = op.requestBody?.content?.['application/json']?.schema
     const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
@@ -425,16 +454,28 @@ export function generateCommandsSync(
 
     // Build options Zod schema from query params + body properties
     const optShape: Record<string, z.ZodType> = {}
+    const usedOptionNames = new Set<string>()
     for (const p of queryParams) {
       let zodType = p.schema ? toZod(p.schema) : z.string()
       if (!p.required) zodType = zodType.optional()
       if (p.description) zodType = zodType.describe(p.description)
       optShape[p.name] = coerceIfNeeded(zodType)
+      usedOptionNames.add(p.name)
     }
     for (const [key, schema] of Object.entries(bodyProps)) {
       let zodType = toZod(schema)
       if (!bodyRequired.has(key)) zodType = zodType.optional()
       optShape[key] = zodType
+      usedOptionNames.add(key)
+    }
+    for (const p of headerParams) {
+      const optionName = resolveHeaderOptionName(p.optionName, usedOptionNames)
+      p.optionName = optionName
+      let zodType = p.schema ? toZod(p.schema) : z.string()
+      if (!p.required) zodType = zodType.optional()
+      zodType = zodType.describe(p.description ?? `${p.name} header`)
+      optShape[optionName] = coerceIfNeeded(zodType)
+      usedOptionNames.add(optionName)
     }
     const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
 
@@ -448,6 +489,7 @@ export function generateCommandsSync(
         fetch,
         httpMethod,
         path,
+        headerParams,
         pathParams,
         queryParams,
         bodyProps,
@@ -486,6 +528,77 @@ function openapiOperations(paths: Record<string, Record<string, unknown>>) {
       if (openapiMethods.has(method))
         operations.push({ method, operation: operation as Operation, path })
   return operations
+}
+
+function securityHeaderParams(spec: OpenAPISpec, operation: Operation): Parameter[] {
+  const schemes = spec.components?.securitySchemes ?? {}
+  const requirements = operation.security ?? spec.security ?? []
+  const headers: Parameter[] = []
+
+  for (const requirement of requirements)
+    for (const name of Object.keys(requirement)) {
+      const scheme = schemes[name]
+      const parameter = securityHeaderParam(name, scheme)
+      if (parameter) headers.push(parameter)
+    }
+
+  return headers
+}
+
+function securityHeaderParam(
+  name: string,
+  scheme: SecurityScheme | undefined,
+): Parameter | undefined {
+  if (!scheme) return undefined
+  // `apiKey` is OpenAPI's generic name for a credential carried in a
+  // header/query/cookie, not an incur- or Cadent-specific API key concept.
+  if (scheme.type === 'apiKey' && scheme.in === 'header' && scheme.name)
+    return {
+      description: scheme.description ?? `${scheme.name} header`,
+      in: 'header',
+      name: scheme.name,
+      required: false,
+      schema: { type: 'string' },
+    }
+
+  if (scheme.type === 'http' && authorizationSchemes.has(scheme.scheme?.toLowerCase() ?? ''))
+    return {
+      description: scheme.description ?? `${name} authorization header`,
+      in: 'header',
+      name: 'authorization',
+      required: false,
+      schema: { type: 'string' },
+    }
+
+  return undefined
+}
+
+const authorizationSchemes = new Set(['basic', 'bearer'])
+
+function headerOptions(parameters: Parameter[]): HeaderParameter[] {
+  const seen = new Set<string>()
+  const headers: HeaderParameter[] = []
+
+  for (const parameter of parameters) {
+    const normalized = parameter.name.toLowerCase()
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    headers.push({ ...parameter, optionName: normalized })
+  }
+
+  return headers
+}
+
+function resolveHeaderOptionName(optionName: string, used: Set<string>) {
+  if (!used.has(optionName)) return optionName
+
+  const prefix = `header-${optionName}`
+  if (!used.has(prefix)) return prefix
+
+  for (let index = 2; ; index++) {
+    const candidate = `${prefix}-${index}`
+    if (!used.has(candidate)) return candidate
+  }
 }
 
 function getNamespaceInfo(operations: OperationEntry[]) {
@@ -615,6 +728,7 @@ function createHandler(config: {
   basePath?: string | undefined
   bodyProps: Record<string, Record<string, unknown>>
   fetch: FetchHandler
+  headerParams: HeaderParameter[]
   httpMethod: string
   path: string
   pathParams: Parameter[]
@@ -654,7 +768,13 @@ function createHandler(config: {
       query,
     }
 
-    if (body) input.headers.set('content-type', 'application/json')
+    for (const p of config.headerParams) {
+      const value = options[p.optionName]
+      if (value !== undefined) input.headers.set(p.name, String(value))
+    }
+
+    if (body && !input.headers.has('content-type'))
+      input.headers.set('content-type', 'application/json')
 
     const request = Fetch.buildRequest(input)
     const response = await config.fetch(request)

@@ -984,7 +984,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -1513,9 +1513,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app auth auth login\` | Log in to the service |
-      | \`app auth auth logout\` | Log out of the service |
-      | \`app auth auth status\` | Show authentication status |
+      | \`app auth login\` | Log in to the service |
+      | \`app auth logout\` | Log out of the service |
+      | \`app auth status\` | Show authentication status |
 
       Run \`app auth --llms-full\` for full manifest. Run \`app auth <command> --schema\` for argument details.
       "
@@ -1531,9 +1531,9 @@ describe('--llms', () => {
 
       | Command | Description |
       |---------|-------------|
-      | \`app project deploy project deploy create <env>\` | Create a deployment |
-      | \`app project deploy project deploy rollback <deployId>\` | Rollback a deployment |
-      | \`app project deploy project deploy status <deployId>\` | Check deployment status |
+      | \`app project deploy create <env>\` | Create a deployment |
+      | \`app project deploy rollback <deployId>\` | Rollback a deployment |
+      | \`app project deploy status <deployId>\` | Check deployment status |
 
       Run \`app project deploy --llms-full\` for full manifest. Run \`app project deploy <command> --schema\` for argument details.
       "
@@ -1766,7 +1766,7 @@ describe('root command with subcommands', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2443,7 +2443,7 @@ describe('hosted OpenAPI CLI', () => {
 
         Integrations:
           completions  Generate shell completion script
-          mcp add      Register as MCP server
+          mcp          Register as MCP server (add, doctor)
           skills       Sync skill files to agents (add, list)
 
         Global Options:
@@ -2524,7 +2524,7 @@ describe('hosted OpenAPI CLI', () => {
 
         Integrations:
           completions  Generate shell completion script
-          mcp add      Register as MCP server
+          mcp          Register as MCP server (add, doctor)
           skills       Sync skill files to agents (add, list)
 
         Global Options:
@@ -2605,7 +2605,7 @@ describe('hosted OpenAPI CLI', () => {
   })
 })
 
-async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
+async function fetchJson(cli: Cli.Cli<any, any, any, any>, req: Request) {
   const res = await cli.fetch(req)
   const body = await res.json()
   if (body.meta?.duration) body.meta.duration = '<stripped>'
@@ -2957,7 +2957,7 @@ describe('fetch api', () => {
           clientInfo: { name: 'test-client', version: '1.0.0' },
         },
       })
-      const sessionId = res.headers.get('mcp-session-id')!
+      const sessionId = res.headers.get('mcp-session-id') ?? undefined
       await mcpRequest(cli, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId)
       return sessionId
     }
@@ -2975,6 +2975,7 @@ describe('fetch api', () => {
         },
       })
       expect(res.status).toBe(200)
+      expect(res.headers.get('mcp-session-id')).toBeNull()
       const body = await res.json()
       expect({
         serverInfo: body.result.serverInfo,
@@ -2988,6 +2989,41 @@ describe('fetch api', () => {
           },
         }
       `)
+    })
+
+    test('tools/list works without session state', async () => {
+      const cli = createApp()
+      await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.result.tools.map((t: any) => t.name).sort()).toContain('ping')
+    })
+
+    test('GET /mcp returns method not allowed in stateless mode', async () => {
+      const cli = createApp()
+      const res = await cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'GET',
+          headers: { accept: 'text/event-stream' },
+        }),
+      )
+      expect(res.status).toBe(405)
+      expect(res.headers.get('allow')).toBe('POST')
     })
 
     test('tools/list → lists all registered tools', async () => {
@@ -3182,6 +3218,71 @@ describe('fetch api', () => {
   })
 })
 
+describe('globals', () => {
+  test('global flags flow through middleware for nested commands', async () => {
+    const { output } = await serve(createGlobalsApp(), [
+      'deploy',
+      'status',
+      '--api-token',
+      'secret',
+      '--profile',
+      'production',
+      '--format',
+      'json',
+    ])
+    expect(json(output)).toEqual({
+      command: 'deploy status',
+      profile: 'production',
+      token: 'secret',
+    })
+  })
+
+  test('informational commands do not require required globals', async () => {
+    const cli = createGlobalsApp()
+
+    const help = await serve(cli, ['--help'])
+    expect(help.exitCode).toBeUndefined()
+    expect(help.output).toContain('Custom Global Options:')
+    expect(help.output).toContain('--api-token')
+
+    const schema = await serve(cli, ['whoami', '--schema', '--format', 'json'])
+    expect(schema.exitCode).toBeUndefined()
+    expect(json(schema.output).globals.properties.apiToken).toBeDefined()
+
+    const llms = await serve(cli, ['--llms', '--format', 'json'])
+    expect(llms.exitCode).toBeUndefined()
+    expect(json(llms.output).globals.properties.apiToken).toBeDefined()
+
+    const version = await serve(cli, ['--version'])
+    expect(version.exitCode).toBeUndefined()
+    expect(version.output).toBe('1.0.0\n')
+  })
+
+  test('fetch requests expose globals to middleware and command query params to handlers', async () => {
+    const result = await fetchJson(
+      createGlobalsApp(),
+      new Request('http://localhost/search?apiToken=secret&profile=staging&limit=2'),
+    )
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "data": {
+            "limit": 2,
+            "profile": "staging",
+            "token": "secret",
+          },
+          "meta": {
+            "command": "search",
+            "duration": "<stripped>",
+          },
+          "ok": true,
+        },
+        "status": 200,
+      }
+    `)
+  })
+})
+
 describe('.well-known/skills', () => {
   async function fetchSkills(cli: Cli.Cli<any, any, any>, path: string) {
     const res = await cli.fetch(new Request(`http://localhost${path}`))
@@ -3366,6 +3467,56 @@ function createMiddlewareApp() {
     .command(admin)
 
   return { cli, order }
+}
+
+const globalsVars = z.object({
+  apiToken: z.string().default(''),
+  profile: z.string().default(''),
+})
+
+function createGlobalsApp() {
+  const deploy = Cli.create('deploy', {
+    description: 'Deployment commands',
+    vars: globalsVars,
+  }).command('status', {
+    description: 'Show deployment status',
+    run(c) {
+      return {
+        command: 'deploy status',
+        profile: c.var.profile,
+        token: c.var.apiToken,
+      }
+    },
+  })
+
+  return Cli.create('global-app', {
+    version: '1.0.0',
+    globals: z.object({
+      apiToken: z.string().describe('API token'),
+      profile: z.string().default('dev').describe('Profile name'),
+    }),
+    globalAlias: { apiToken: 't' },
+    vars: globalsVars,
+  })
+    .use(async (c, next) => {
+      c.set('apiToken', c.globals.apiToken)
+      c.set('profile', c.globals.profile)
+      await next()
+    })
+    .command('whoami', {
+      description: 'Show active profile',
+      run(c) {
+        return { profile: c.var.profile, token: c.var.apiToken }
+      },
+    })
+    .command('search', {
+      description: 'Search resources',
+      options: z.object({ limit: z.coerce.number().default(10) }),
+      run(c) {
+        return { limit: c.options.limit, profile: c.var.profile, token: c.var.apiToken }
+      },
+    })
+    .command(deploy)
 }
 
 function createApp() {

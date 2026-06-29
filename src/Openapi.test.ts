@@ -233,6 +233,69 @@ describe('cli integration', () => {
     })
   }
 
+  function createSecurityHeaderCli() {
+    return Cli.create('test', { description: 'test' }).command('api', {
+      fetch(request) {
+        return Response.json({ apiKey: request.headers.get('x-api-key') })
+      },
+      openapi: {
+        openapi: '3.0.0',
+        info: { title: 'Test API', version: '1.0.0' },
+        components: {
+          securitySchemes: {
+            tokenAuth: {
+              type: 'apiKey',
+              in: 'header',
+              name: 'x-api-key',
+              description: 'Access token',
+            },
+          },
+        },
+        security: [{ tokenAuth: [] }],
+        paths: {
+          '/secret': {
+            get: {
+              operationId: 'getSecret',
+              summary: 'Get secret',
+              responses: { '200': { description: 'OK' } },
+            },
+          },
+        },
+      },
+    })
+  }
+
+  function createBearerAuthCli() {
+    return Cli.create('test', { description: 'test' }).command('api', {
+      fetch(request) {
+        return Response.json({ authorization: request.headers.get('authorization') })
+      },
+      openapi: {
+        openapi: '3.0.0',
+        info: { title: 'Test API', version: '1.0.0' },
+        components: {
+          securitySchemes: {
+            bearerAuth: {
+              type: 'http',
+              scheme: 'bearer',
+              description: 'Bearer credential',
+            },
+          },
+        },
+        security: [{ bearerAuth: [] }],
+        paths: {
+          '/secret': {
+            get: {
+              operationId: 'getSecret',
+              summary: 'Get secret',
+              responses: { '200': { description: 'OK' } },
+            },
+          },
+        },
+      },
+    })
+  }
+
   test('GET /users via operationId', async () => {
     const { output } = await serve(createCli(), ['api', 'listUsers'])
     expect(output).toContain('Alice')
@@ -258,6 +321,122 @@ describe('cli integration', () => {
       'json',
     ])
     expect(json(output).limit).toBe(5)
+  })
+
+  test('security headers become generated command options', async () => {
+    const cli = createSecurityHeaderCli()
+    const { output } = await serve(cli, [
+      'api',
+      'getSecret',
+      '--x-api-key',
+      'secret',
+      '--format',
+      'json',
+    ])
+
+    expect(json(output).apiKey).toMatchInlineSnapshot(`"secret"`)
+  })
+
+  test('security header options appear in generated command help', async () => {
+    const { output } = await serve(createSecurityHeaderCli(), ['api', 'getSecret', '--help'])
+
+    expect(output).toMatchInlineSnapshot(`
+      "test api getSecret — Get secret
+
+      Usage: test api getSecret [options]
+
+      Options:
+        --x-api-key <string>  Access token
+
+      Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
+        --help                              Show help
+        --llms, --llms-full                 Print LLM-readable manifest
+        --schema                            Show JSON Schema for command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
+      "
+    `)
+  })
+
+  test('bearer auth becomes an authorization option', async () => {
+    const { output } = await serve(createBearerAuthCli(), [
+      'api',
+      'getSecret',
+      '--authorization',
+      'Bearer secret',
+      '--format',
+      'json',
+    ])
+
+    expect(json(output).authorization).toMatchInlineSnapshot(`"Bearer secret"`)
+  })
+
+  test('bearer auth option appears in generated command help', async () => {
+    const { output } = await serve(createBearerAuthCli(), ['api', 'getSecret', '--help'])
+
+    expect(output).toMatchInlineSnapshot(`
+      "test api getSecret — Get secret
+
+      Usage: test api getSecret [options]
+
+      Options:
+        --authorization <string>  Bearer credential
+
+      Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
+        --help                              Show help
+        --llms, --llms-full                 Print LLM-readable manifest
+        --schema                            Show JSON Schema for command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
+      "
+    `)
+  })
+
+  test('header parameters become generated command options', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch(request) {
+        return Response.json({ requestId: request.headers.get('x-request-id') })
+      },
+      openapi: {
+        openapi: '3.0.0',
+        info: { title: 'Test API', version: '1.0.0' },
+        paths: {
+          '/secret': {
+            get: {
+              operationId: 'getSecret',
+              summary: 'Get secret',
+              parameters: [
+                {
+                  name: 'x-request-id',
+                  in: 'header',
+                  schema: { type: 'string' },
+                  description: 'Request ID',
+                },
+              ],
+              responses: { '200': { description: 'OK' } },
+            },
+          },
+        },
+      },
+    })
+    const { output } = await serve(cli, [
+      'api',
+      'getSecret',
+      '--x-request-id',
+      'request_test',
+      '--format',
+      'json',
+    ])
+
+    expect(json(output).requestId).toMatchInlineSnapshot(`"request_test"`)
   })
 
   test('loads OpenAPI commands from a spec URL string', async () => {
