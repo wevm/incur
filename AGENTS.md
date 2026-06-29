@@ -41,3 +41,4 @@
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
+- **Changesets for package changes** — user-facing fixes and features require a `.changeset/*.md` entry in the same PR. Use `patch` for fixes, `minor` for additive features, and `major` for breaking changes. Skip only for tests, docs, or internal-only changes that do not affect the published package.

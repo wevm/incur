@@ -373,12 +373,64 @@ test('run() context exposes format metadata', () => {
   })
 })
 
+test('command mcp metadata accepts instructions and annotations', () => {
+  Cli.create('test').command('read', {
+    mcp: {
+      name: 'read_data',
+      description: 'Read data through MCP',
+      annotations: {
+        title: 'Read data',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      instructions: 'Only pass validated input.',
+    },
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create('test', {
+    mcp: {
+      instructions: 'Use this server for test commands.',
+      stateless: false,
+      // @ts-expect-error -- annotations belong on command definitions
+      annotations: { readOnlyHint: true },
+    },
+  })
+})
+
+test('command metadata accepts destructive flag', () => {
+  Cli.create('test').command('destroy', {
+    destructive: true,
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create('destroy', {
+    destructive: true,
+    run: () => ({ ok: true }),
+  })
+})
+
 test('root run() context exposes displayName', () => {
   Cli.create('test', {
     run(c) {
       expectTypeOf(c.displayName).toEqualTypeOf<string>()
       return { pong: true }
     },
+  })
+})
+
+test('create() accepts root command hint', () => {
+  Cli.create('test', {
+    hint: 'Fetch immediately before sending the transaction.',
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create({
+    name: 'test',
+    hint: 'Fetch immediately before sending the transaction.',
+    run: () => ({ ok: true }),
   })
 })
 
@@ -419,4 +471,25 @@ test('create() accepts config-file defaults options', () => {
     // @ts-expect-error — files must be string[]
     config: { files: [42] },
   })
+})
+
+test('globals type flows to middleware context', () => {
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string().optional() }),
+  }).use(async (c, next) => {
+    expectTypeOf(c.globals.apiKey).toEqualTypeOf<string | undefined>()
+    await next()
+  })
+})
+
+test('globalAlias keys are constrained to globals schema keys', () => {
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string() }),
+    globalAlias: { apiKey: 'k' },
+  })
+
+  const globals = z.object({ apiKey: z.string() })
+  // @ts-expect-error — 'foo' is not a key of the globals schema
+  const badAlias: Partial<Record<keyof z.output<typeof globals>, string>> = { foo: 'f' }
+  void badAlias
 })

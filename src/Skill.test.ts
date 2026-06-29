@@ -204,6 +204,12 @@ describe('hash', () => {
     expect(a).not.toBe(b)
   })
 
+  test('changes when hint changes', () => {
+    const a = Skill.hash([{ name: 'ping', hint: 'Read status.' }])
+    const b = Skill.hash([{ name: 'ping', hint: 'Delete status.' }])
+    expect(a).not.toBe(b)
+  })
+
   test('changes when schema changes', () => {
     const a = Skill.hash([{ name: 'greet', args: z.object({ name: z.string() }) }])
     const b = Skill.hash([{ name: 'greet', args: z.object({ name: z.string(), age: z.number() }) }])

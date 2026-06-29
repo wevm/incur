@@ -1,9 +1,10 @@
-import { Cli, Errors, z } from 'incur'
+import { Cli, Errors, Mcp, z } from 'incur'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import * as Command from './internal/command.js'
+import * as SyncMcp from './SyncMcp.js'
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -45,6 +46,15 @@ async function serve(
     output: output.replace(/duration: \d+ms/, 'duration: <stripped>'),
     exitCode,
   }
+}
+
+function mockMcpServeResponses(responses: unknown[]) {
+  return vi.spyOn(Mcp, 'serve').mockImplementation(async (_name, _version, _commands, options) => {
+    for (const response of responses)
+      options!.output?.write(
+        `${typeof response === 'string' ? response : JSON.stringify(response)}\n`,
+      )
+  })
 }
 
 function createConfigCli(flag?: string) {
@@ -1387,8 +1397,9 @@ describe('--llms', () => {
     cli.command('ping', { description: 'Health check', run: () => ({}) })
 
     const { output } = await serve(cli, ['auth', '--llms'])
-    expect(output).toContain('test auth auth login')
-    expect(output).toContain('test auth auth logout')
+    expect(output).toContain('test auth login')
+    expect(output).toContain('test auth logout')
+    expect(output).not.toContain('test auth auth') // no doubled namespace
     expect(output).not.toContain('ping')
   })
 
@@ -1422,6 +1433,18 @@ describe('--llms', () => {
     expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
     expect(output).toContain('# my-cli auth')
     expect(output).not.toContain('# my-cli \n')
+  })
+
+  test('scoped json index keeps full command paths', async () => {
+    const cli = Cli.create('test')
+    const group = Cli.create('auth', { description: 'Authentication' })
+    group.command('login', { description: 'Log in', run: () => ({}) })
+    group.command('logout', { description: 'Log out', run: () => ({}) })
+    cli.command(group)
+
+    const { output } = await serve(cli, ['auth', '--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
   })
 })
 
@@ -2165,7 +2188,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2203,7 +2226,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2220,6 +2243,129 @@ describe('help', () => {
         --version                           Show version
       "
     `)
+  })
+
+  test('banner is printed before root help', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => '  status: all good',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('status: all good')
+    expect(output.indexOf('status: all good')).toBeLessThan(output.indexOf('mycli'))
+  })
+
+  test('async banner is supported', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: async () => '  async banner',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('async banner')
+  })
+
+  test('banner returning undefined shows only help', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => undefined,
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toMatch(/^mycli/)
+  })
+
+  test('banner errors are swallowed', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => {
+        throw new Error('boom')
+      },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toMatch(/^mycli/)
+    expect(output).not.toContain('boom')
+  })
+
+  test('banner is skipped for subcommands', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => 'BANNER',
+    })
+    cli.command('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+      output: z.object({ pong: z.boolean() }),
+    })
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).not.toContain('BANNER')
+  })
+
+  test('banner with mode "agent" shows in non-TTY', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'AGENT BANNER', mode: 'agent' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('AGENT BANNER')
+  })
+
+  test('banner with mode "human" is skipped in non-TTY', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'HUMAN BANNER', mode: 'human' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).not.toContain('HUMAN BANNER')
+  })
+
+  test('banner object with default mode shows for all', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: { render: () => 'ALL BANNER' },
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, [])
+    expect(output).toContain('ALL BANNER')
+  })
+
+  test('banner is skipped for --help flag', async () => {
+    const cli = Cli.create({
+      name: 'mycli',
+      banner: () => 'BANNER',
+    })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--help'])
+    expect(output).not.toContain('BANNER')
+  })
+
+  test('banner is printed before root command help for missing required args', async () => {
+    ;(process.stdout as any).isTTY = true
+    const cli = Cli.create('fetch', {
+      banner: () => 'BANNER',
+      description: 'Fetch a URL',
+      args: z.object({ url: z.string().describe('URL to fetch') }),
+      run: ({ args }) => args.url,
+    })
+
+    const { output, exitCode } = await serve(cli, [])
+    ;(process.stdout as any).isTTY = false
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('BANNER')
+    expect(output.indexOf('BANNER')).toBeLessThan(output.indexOf('fetch — Fetch a URL'))
   })
 
   test('--help on leaf shows command help', async () => {
@@ -2366,7 +2512,7 @@ describe('help', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -2696,6 +2842,7 @@ describe('built-in commands', () => {
     expect(output).toContain('test mcp')
     expect(output).toContain('Register as MCP server')
     expect(output).toContain('add')
+    expect(output).toContain('doctor')
   })
 
   test('mcp --help shows help with subcommands', async () => {
@@ -2704,6 +2851,7 @@ describe('built-in commands', () => {
     const { output } = await serve(cli, ['mcp', '--help'])
     expect(output).toContain('test mcp')
     expect(output).toContain('add')
+    expect(output).toContain('doctor')
   })
 
   test('mcp add --help shows options', async () => {
@@ -2714,6 +2862,364 @@ describe('built-in commands', () => {
     expect(output).toContain('--command')
     expect(output).toContain('--no-global')
     expect(output).toContain('--agent')
+  })
+
+  test('mcp add forwards command, agent, and global flags', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'pnpm test --mcp', agents: ['Cursor'] })
+    try {
+      const cli = Cli.create('test', { sync: { suggestions: ['Check health'] } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, [
+        'mcp',
+        'add',
+        '--no-global',
+        '-c',
+        'pnpm test --mcp',
+        '--agent',
+        'cursor',
+        '--json',
+      ])
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('test', {
+        command: 'pnpm test --mcp',
+        global: false,
+        agents: ['cursor'],
+      })
+      expect(output).toContain('Registered test as MCP server')
+      expect(output).toContain('Try asking:')
+      expect(output).toContain('"Check health"')
+      expect(output).toContain('"command": "pnpm test --mcp"')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp add exits nonzero when registration fails', async () => {
+    const spy = vi.spyOn(SyncMcp, 'register').mockRejectedValue('register failed')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add', '--json'])
+      expect(exitCode).toBe(1)
+      expect(output).toContain('Registering MCP server...')
+      expect(JSON.parse(output.slice(output.indexOf('{')))).toEqual({
+        code: 'MCP_ADD_FAILED',
+        message: 'register failed',
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor --help shows description', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['mcp', 'doctor', '--help'])
+    expect(output).toContain('test mcp doctor')
+    expect(output).toContain('Validate MCP server startup and tool listing')
+  })
+
+  test('mcp doctor lists tools', async () => {
+    const cli = Cli.create('test', { version: '1.0.0' })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    const result = JSON.parse(output)
+    expect(exitCode).toBeUndefined()
+    expect(result).toEqual({
+      ok: true,
+      toolCount: 1,
+      tools: [{ name: 'ping', description: 'Health check' }],
+      warnings: [],
+      errors: [],
+    })
+  })
+
+  test('mcp doctor forwards MCP instructions to the smoke test server', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+    ])
+    try {
+      const cli = Cli.create('test', {
+        version: '2.0.0',
+        mcp: { instructions: 'Use read-only commands first.' },
+      })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        'test',
+        '2.0.0',
+        expect.any(Map),
+        expect.objectContaining({
+          version: '2.0.0',
+          instructions: 'Use read-only commands first.',
+        }),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor does not call tools', async () => {
+    let calls = 0
+    const cli = Cli.create('test')
+    cli.command('mutate', {
+      run() {
+        calls++
+        return { ok: true }
+      },
+    })
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    expect(exitCode).toBeUndefined()
+    expect(JSON.parse(output)).toMatchObject({ ok: true, toolCount: 1 })
+    expect(calls).toBe(0)
+  })
+
+  test('mcp doctor warns when no tools are exposed', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toEqual({
+        ok: true,
+        toolCount: 0,
+        tools: [],
+        warnings: ['No MCP tools exposed.'],
+        errors: [],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor filters malformed tools from tools/list', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          tools: [
+            null,
+            { name: 123, description: 'bad name' },
+            { name: 'without_description', description: 123 },
+            { name: 'with_description', description: 'Useful tool' },
+          ],
+        },
+      },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toEqual({
+        ok: true,
+        toolCount: 2,
+        tools: [
+          { name: 'without_description' },
+          { name: 'with_description', description: 'Useful tool' },
+        ],
+        warnings: [],
+        errors: [],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when MCP server fails', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockRejectedValue(new Error('boom'))
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toEqual({
+        ok: false,
+        toolCount: 0,
+        tools: [],
+        warnings: [],
+        errors: [{ code: 'MCP_SERVER_FAILED', message: 'boom' }],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor stringifies non-error MCP server failures', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockRejectedValue('boom')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([{ code: 'MCP_SERVER_FAILED', message: 'boom' }])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when MCP response cannot be parsed', async () => {
+    const spy = mockMcpServeResponses(['{bad json}'])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toMatchObject({
+        ok: false,
+        toolCount: 0,
+        tools: [],
+        warnings: [],
+        errors: [{ code: 'MCP_RESPONSE_PARSE_FAILED' }],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when an MCP response is not an object', async () => {
+    const spy = mockMcpServeResponses([null])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toMatchObject({
+        ok: false,
+        errors: [
+          {
+            code: 'MCP_RESPONSE_PARSE_FAILED',
+            message: 'Expected JSON-RPC response object.',
+          },
+        ],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when initialize response is missing', async () => {
+    const spy = mockMcpServeResponses([{ jsonrpc: '2.0', id: 2, result: { tools: [] } }])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_INITIALIZE_MISSING', message: 'Missing initialize response.' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when initialize fails', async () => {
+    const spy = mockMcpServeResponses([
+      { jsonrpc: '2.0', id: 1, error: 'initialize failed' },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_INITIALIZE_FAILED', message: '"initialize failed"' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list response is missing', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_TOOLS_LIST_MISSING', message: 'Missing tools/list response.' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list fails', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, error: { code: -32603, message: 'list failed' } },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toEqual({
+        ok: false,
+        toolCount: 0,
+        tools: [],
+        warnings: [],
+        errors: [{ code: 'MCP_TOOLS_LIST_FAILED', message: 'list failed' }],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor exits nonzero when tools/list has an invalid shape', async () => {
+    const spy = mockMcpServeResponses([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} },
+      },
+      { jsonrpc: '2.0', id: 2, result: { tools: 'invalid' } },
+    ])
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output).errors).toEqual([
+        { code: 'MCP_TOOLS_LIST_INVALID', message: 'tools/list did not return a tools array.' },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test('bare skills shows help with subcommands', async () => {
@@ -2750,6 +3256,22 @@ describe('built-in commands', () => {
     expect(exitCode).toBe(1)
     expect(output).toContain("Did you mean 'add'?")
     expect(output).toContain('test mcp add')
+  })
+
+  test('mcp typo shows human suggestions in TTY', async () => {
+    const previous = process.stdout.isTTY
+    ;(process.stdout as any).isTTY = true
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({}) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'zzzz'])
+      expect(exitCode).toBe(1)
+      expect(output).toContain("Error: 'zzzz' is not a command for 'test mcp'.")
+      expect(output).toContain('Suggested command:')
+      expect(output).toContain('test mcp --help')
+    } finally {
+      ;(process.stdout as any).isTTY = previous
+    }
   })
 
   test('skills add --help shows options', async () => {
@@ -3074,12 +3596,14 @@ describe('outputPolicy', () => {
       async *run() {
         yield { step: 1 }
         yield { step: 2 }
+        yield { expiry: 2461152330n }
       },
     })
 
     const { output } = await serve(cli, ['stream'])
     expect(output).toContain('{"type":"chunk","data":{"step":1}}')
     expect(output).toContain('{"type":"chunk","data":{"step":2}}')
+    expect(output).toContain('{"type":"chunk","data":{"expiry":"2461152330"}}')
   })
 
   test('e2e: realistic multi-level CLI with mixed policies', async () => {
@@ -3835,6 +4359,42 @@ test('--llms includes hint in skill output', async () => {
   expect(output).toContain('Always confirm before deploying to production')
 })
 
+test('--llms appends confirmation hint for destructive commands', async () => {
+  const cli = Cli.create('test')
+  cli.command('destroy', {
+    description: 'Destroy the app',
+    destructive: true,
+    hint: 'Deletes production resources.',
+    run: () => ({}),
+  })
+  cli.command('status', {
+    description: 'Show status',
+    hint: 'Read-only status check.',
+    run: () => ({}),
+  })
+
+  const { output } = await serve(cli, ['--llms-full'])
+  expect(output).toContain(
+    'Deletes production resources. Confirm with the user before executing this destructive command.',
+  )
+  expect(output).toContain('Read-only status check.')
+  expect(output).not.toContain(
+    'Read-only status check. Confirm with the user before executing this destructive command.',
+  )
+})
+
+test('--llms treats MCP destructiveHint as destructive', async () => {
+  const cli = Cli.create('test')
+  cli.command('deploy', {
+    description: 'Deploy the app',
+    mcp: { annotations: { destructiveHint: true } },
+    run: () => ({}),
+  })
+
+  const { output } = await serve(cli, ['--llms-full'])
+  expect(output).toContain('Confirm with the user before executing this destructive command.')
+})
+
 describe('fetch', async () => {
   const { app } = await import('../test/fixtures/hono-api.js')
 
@@ -4172,7 +4732,7 @@ describe('Command.execute', () => {
   })
 })
 
-async function fetchJson(cli: Cli.Cli<any, any, any>, req: Request) {
+async function fetchJson(cli: Cli.Cli<any, any, any, any>, req: Request) {
   const res = await cli.fetch(req)
   const body = await res.json()
   expect(body.meta.duration).toMatch(/^\d+ms$/)
@@ -4510,6 +5070,16 @@ describe('fetch', () => {
     `)
   })
 
+  test('serializes bigint values in command responses', async () => {
+    const cli = Cli.create('test')
+    cli.command('whois', {
+      output: z.object({ expiry: z.bigint() }),
+      run: () => ({ expiry: 2461152330n }),
+    })
+    const { body } = await fetchJson(cli, new Request('http://localhost/whois'))
+    expect(body.data).toEqual({ expiry: '2461152330' })
+  })
+
   test('trailing path segments → positional args', async () => {
     const cli = Cli.create('test')
     cli.command('users', {
@@ -4565,6 +5135,61 @@ describe('fetch', () => {
     expect(status).toBe(400)
     expect(body.ok).toBe(false)
     expect(body.error.code).toBe('VALIDATION_ERROR')
+    expect(body.error.fieldErrors).toMatchObject([{ missing: true, path: 'id' }])
+  })
+
+  test('validation error includes fieldErrors for body options', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ name: z.string() }),
+      run: (c) => ({ name: c.options.name }),
+    })
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 123 }),
+      }),
+    )
+    expect(status).toBe(400)
+    expect(body.ok).toBe(false)
+    expect(body.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      fieldErrors: [{ code: 'invalid_type', missing: false, path: 'name' }],
+    })
+  })
+
+  test('object validation error includes fieldErrors', async () => {
+    const cli = Cli.create('test')
+    cli.command('users', {
+      options: z.object({ name: z.string() }),
+      run: (c) => ({ name: c.options.name }),
+    })
+
+    const { status, body } = await fetchJson(
+      cli,
+      new Request('http://localhost/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 123 }),
+      }),
+    )
+
+    expect(status).toBe(400)
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        fieldErrors: [
+          {
+            code: 'invalid_type',
+            missing: false,
+            path: 'name',
+          },
+        ],
+      },
+    })
   })
 
   test('thrown error → 500', async () => {
@@ -4597,7 +5222,7 @@ describe('fetch', () => {
     cli.command('stream', {
       async *run() {
         yield { progress: 1 }
-        yield { progress: 2 }
+        yield { expiry: 2461152330n }
         return { done: true }
       },
     })
@@ -4613,7 +5238,7 @@ describe('fetch', () => {
           },
           {
             "data": {
-              "progress": 2,
+              "expiry": "2461152330",
             },
             "type": "chunk",
           },
@@ -5147,8 +5772,12 @@ describe('fetch', () => {
       const sessionId = res.headers.get('mcp-session-id')
       const body = await res.json()
       // Send initialized notification
-      await mcpRequest(cli, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId!)
-      return { sessionId: sessionId!, body }
+      await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+        sessionId ?? undefined,
+      )
+      return { sessionId: sessionId ?? undefined, body }
     }
 
     test('POST /mcp with initialize → valid MCP response', async () => {
@@ -5164,6 +5793,7 @@ describe('fetch', () => {
         },
       })
       expect(res.status).toBe(200)
+      expect(res.headers.get('mcp-session-id')).toBeNull()
       const body = await res.json()
       expect({
         serverInfo: body.result.serverInfo,
@@ -5176,6 +5806,34 @@ describe('fetch', () => {
             "version": "1.0.0",
           },
         }
+      `)
+    })
+
+    test('POST /mcp with tools/list works without session state', async () => {
+      const cli = mcpCli()
+      await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.result.tools.map((t: any) => t.name)).toMatchInlineSnapshot(`
+        [
+          "greet",
+          "ping",
+        ]
       `)
     })
 
@@ -5208,6 +5866,37 @@ describe('fetch', () => {
           },
         ]
       `)
+    })
+
+    test('GET /mcp returns method not allowed in stateless mode', async () => {
+      const cli = mcpCli()
+      const res = await cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'GET',
+          headers: { accept: 'text/event-stream' },
+        }),
+      )
+      expect(res.status).toBe(405)
+      expect(res.headers.get('allow')).toBe('POST')
+      expect(await res.text()).toBe('')
+    })
+
+    test('mcp.stateless false keeps stateful session handling', async () => {
+      const cli = Cli.create('test', { version: '1.0.0', mcp: { stateless: false } })
+      cli.command('ping', {
+        description: 'Ping',
+        run: () => ({ pong: true }),
+      })
+      const { sessionId } = await initSession(cli)
+      expect(sessionId).toEqual(expect.any(String))
+
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(400)
     })
 
     test('POST /mcp with tools/call → executes command', async () => {
@@ -5337,6 +6026,296 @@ describe('displayName', () => {
   })
 })
 
+describe('globals', () => {
+  test('globals are parsed and available in middleware', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, ['--rpc-url', 'http://example.com', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals aliases work', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      globalAlias: { rpcUrl: 'r' },
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, ['-r', 'http://example.com', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals with defaults work when not provided', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ chain: z.string().default('mainnet') }),
+      vars: z.object({ chain: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('chain', c.globals.chain)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { chain: c.var.chain }
+        },
+      })
+
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ chain: 'mainnet' })
+  })
+
+  test('globals appear in --help output', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({
+        rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+      }),
+      globalAlias: { rpcUrl: 'r' },
+    }).command('ping', { run: () => ({}) })
+
+    const { output } = await serve(cli, ['--help'])
+    expect(output).toContain('Custom Global Options')
+    expect(output).toContain('--rpc-url')
+  })
+
+  test('informational commands do not require globals', async () => {
+    const cli = Cli.create('test', {
+      version: '1.0.0',
+      globals: z.object({
+        rpcUrl: z.string().describe('RPC endpoint URL'),
+      }),
+    }).command('ping', {
+      args: z.object({ target: z.string() }),
+      run: () => ({}),
+    })
+
+    const help = await serve(cli, ['--help'])
+    expect(help.exitCode).toBeUndefined()
+    expect(help.output).toContain('--rpc-url')
+
+    const schema = await serve(cli, ['ping', '--schema', '--format', 'json'])
+    expect(schema.exitCode).toBeUndefined()
+    expect(JSON.parse(schema.output).globals.properties.rpcUrl).toBeDefined()
+
+    const llms = await serve(cli, ['--llms', '--format', 'json'])
+    expect(llms.exitCode).toBeUndefined()
+    expect(JSON.parse(llms.output).globals.properties.rpcUrl).toBeDefined()
+
+    const version = await serve(cli, ['--version'])
+    expect(version.exitCode).toBeUndefined()
+    expect(version.output).toBe('1.0.0\n')
+  })
+
+  test('globals appear in --llms manifest', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({
+        rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+      }),
+    }).command('ping', { description: 'Health check', run: () => ({}) })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.globals).toBeDefined()
+    expect(manifest.globals.properties.rpcUrl).toBeDefined()
+  })
+
+  test('globals validation error shows message and exits 1', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ limit: z.number() }),
+    }).command('ping', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['--limit', 'not-a-number', 'ping'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Invalid input')
+  })
+
+  test('globals position is flexible', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('deploy', {
+        run(c) {
+          return { url: c.var.rpcUrl }
+        },
+      })
+
+    const { output } = await serve(cli, ['deploy', '--rpc-url', 'http://x', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://x' })
+  })
+
+  test('globals conflict with builtins errors at create() time', () => {
+    expect(() =>
+      Cli.create('test', {
+        globals: z.object({ format: z.string() }),
+      }),
+    ).toThrow(/conflicts with a built-in flag/)
+  })
+
+  test('command option conflicting with global errors at command() time', () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    })
+    expect(() =>
+      cli.command('deploy', {
+        options: z.object({ rpcUrl: z.string() }),
+        run: () => ({}),
+      }),
+    ).toThrow(/conflicts with a global option/)
+  })
+
+  test('mounted root command option conflicting with global errors at command() time', () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    })
+    const deploy = Cli.create('deploy', {
+      options: z.object({ rpcUrl: z.string() }),
+      run: () => ({}),
+    })
+
+    expect(() => cli.command(deploy)).toThrow(/conflicts with a global option/)
+  })
+
+  test('mounted subcommand option conflicting with global errors at command() time', () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    })
+    const admin = Cli.create('admin').command('deploy', {
+      options: z.object({ rpcUrl: z.string() }),
+      run: () => ({}),
+    })
+
+    expect(() => cli.command(admin)).toThrow(/conflicts with a global option/)
+  })
+
+  test('boolean globals handle --no- negation', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean().default(true) }),
+      vars: z.object({ dryRun: z.boolean().default(false) }),
+    })
+      .use(async (c, next) => {
+        c.set('dryRun', c.globals.dryRun)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { dryRun: c.var.dryRun }
+        },
+      })
+
+    const { output } = await serve(cli, ['--no-dry-run', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ dryRun: false })
+  })
+
+  test('parseGlobals error produces clean error output with exit code 1', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    }).command('ping', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['--rpc-url'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Missing value for flag')
+  })
+
+  test('global alias collision with -h throws at create() time', () => {
+    expect(() =>
+      Cli.create('test', {
+        globals: z.object({ host: z.string().optional() }),
+        globalAlias: { host: 'h' },
+      }),
+    ).toThrow(/conflicts with a built-in short flag/)
+  })
+
+  test('command alias collision with global alias throws at command() time', () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string().optional() }),
+      globalAlias: { rpcUrl: 'r' },
+    })
+    expect(() =>
+      cli.command('deploy', {
+        options: z.object({ region: z.string().optional() }),
+        alias: { region: 'r' },
+        run: () => ({}),
+      }),
+    ).toThrow(/conflicts with a global alias/)
+  })
+
+  test('globals validation error in agent mode outputs toon format', async () => {
+    ;(process.stdout as any).isTTY = false
+    const cli = Cli.create('test', {
+      globals: z.object({ limit: z.number() }),
+    }).command('ping', { run: () => ({}) })
+
+    const { output, exitCode } = await serve(cli, ['--limit', 'abc', 'ping'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('UNKNOWN')
+    ;(process.stdout as any).isTTY = true
+  })
+
+  test('globals appear in --schema output', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({
+        rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+      }),
+    }).command('ping', {
+      args: z.object({ target: z.string() }),
+      run: () => ({}),
+    })
+
+    const { output } = await serve(cli, ['ping', '--schema', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.globals).toBeDefined()
+    expect(parsed.globals.properties.rpcUrl).toBeDefined()
+  })
+
+  test('globals are available in fetch middleware', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string().default('fallback') }),
+      vars: z.object({ rpcUrl: z.string().default('') }),
+    })
+      .use(async (c, next) => {
+        c.set('rpcUrl', c.globals.rpcUrl)
+        await next()
+      })
+      .command('ping', {
+        options: z.object({ limit: z.coerce.number().default(0) }),
+        run(c) {
+          return { limit: c.options.limit, url: c.var.rpcUrl }
+        },
+      })
+
+    const { body } = await fetchJson(
+      cli,
+      new Request('http://localhost/ping?rpcUrl=http://example.com&limit=3'),
+    )
+    expect(body.data).toEqual({ limit: 3, url: 'http://example.com' })
+  })
+})
+
 test('--format rejects invalid format values', async () => {
   const cli = Cli.create('test').command('hello', {
     run: (c) => c.ok({ message: 'hi' }),
@@ -5433,5 +6412,59 @@ describe('command aliases', () => {
     const cli = Cli.create('pkg').command(update)
     const { output } = await serve(cli, ['upgrade'])
     expect(output).toContain('updated')
+  })
+})
+
+describe('--mcp', () => {
+  test('mcp.instructions from create() is forwarded to Mcp.serve', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const cli = Cli.create('test', { mcp: { instructions: 'Always pass --dry-run first.' } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      await cli.serve(['--mcp'])
+      expect(spy).toHaveBeenCalledOnce()
+      expect(spy.mock.calls[0]![3]).toMatchObject({ instructions: 'Always pass --dry-run first.' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('instructions is omitted from Mcp.serve when not set in create()', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      await cli.serve(['--mcp'])
+      expect(spy).toHaveBeenCalledOnce()
+      expect(spy.mock.calls[0]![3]?.instructions).toBeUndefined()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('command mcp metadata is forwarded through public command definitions', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const cli = Cli.create('test')
+      cli.command('deploy', {
+        mcp: {
+          name: 'deploy_service',
+          description: 'Deploy service through MCP',
+          annotations: { destructiveHint: true, idempotentHint: false },
+          instructions: 'Require confirmation before production deploys.',
+        },
+        run: () => ({ deployed: true }),
+      })
+      await cli.serve(['--mcp'])
+
+      const commands = spy.mock.calls[0]![2] as Map<string, any>
+      const [tool] = Mcp.collectTools(commands, [])
+      expect(tool?.name).toBe('deploy_service')
+      expect(tool?.description).toBe('Deploy service through MCP')
+      expect(tool?.annotations).toEqual({ destructiveHint: true, idempotentHint: false })
+      expect(tool?.instructions).toBe('Require confirmation before production deploys.')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

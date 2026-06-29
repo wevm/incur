@@ -1,5 +1,7 @@
 import { encode } from '@toon-format/toon'
-import { stringify as yamlStringify } from 'yaml'
+
+import * as Json from './internal/json.js'
+import * as Yaml from './internal/yaml.js'
 
 /** Supported output formats. */
 export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl'
@@ -19,13 +21,13 @@ export function format(value: unknown, fmt: Format = defaultFormat): string {
         } catch {}
       }
     }
-    return JSON.stringify(value, null, 2)
+    return Json.stringify(value, 2)
   }
-  if (fmt === 'yaml') return yamlStringify(value)
+  if (fmt === 'yaml') return Yaml.loadSync().stringify(value)
   if (fmt === 'md') return formatMarkdown(value)
   if (fmt === 'jsonl') {
-    if (Array.isArray(value)) return value.map((v) => JSON.stringify(v)).join('\n')
-    return JSON.stringify(value)
+    if (Array.isArray(value)) return value.map((v) => Json.stringify(v)).join('\n')
+    return Json.stringify(value)
   }
   // toon (default)
   if (isScalar(value)) return String(value)
