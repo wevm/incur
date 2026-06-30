@@ -22,9 +22,12 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { formatCtaBlock, type FormattedCta, type FormattedCtaBlock } from './internal/cta.js'
+import { createResourcesHandler, ResourcesError } from './internal/handlers/resources.js'
+import { createRpcHandler, getRpcStatus } from './internal/handlers/rpc.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
+import * as RuntimeContext from './internal/runtime-context.js'
 import type { OneOf } from './internal/types.js'
 import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
@@ -88,17 +91,17 @@ export type Cli<
       globals
     >
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
-    <const name extends string>(
+    <const name extends string, const spec extends Openapi.OpenAPISource | undefined = undefined>(
       name: name,
       definition: {
         basePath?: string | undefined
         description?: string | undefined
         fetch: FetchSource
-        openapi?: Openapi.OpenAPISource | undefined
+        openapi?: spec | undefined
         openapiConfig?: Openapi.Config | undefined
         outputPolicy?: OutputPolicy | undefined
       },
-    ): Cli<commands, vars, env, globals>
+    ): Cli<commands & Openapi.Commands<name, spec>, vars, env, globals>
   }
   /** A short description of the CLI. */
   description?: string | undefined
@@ -250,15 +253,22 @@ export function create(
   })
 
   if (def.openapi && rootFetch) {
-    pending.push(
-      (async () => {
-        const spec = await Openapi.resolve(def.openapi, { baseUrl: rootFetchBaseUrl })
-        const generated = await Openapi.generateCommands(spec, rootFetch, {
-          config: def.openapiConfig,
-        })
-        for (const [name, command] of generated) commands.set(name, command)
-      })(),
-    )
+    if (isResolvedOpenapi(def.openapi)) {
+      const generated = Openapi.generateCommandsSync(def.openapi, rootFetch, {
+        config: def.openapiConfig,
+      })
+      for (const [name, command] of generated) commands.set(name, command)
+    } else {
+      pending.push(
+        (async () => {
+          const spec = await Openapi.resolve(def.openapi, { baseUrl: rootFetchBaseUrl })
+          const generated = await Openapi.generateCommands(spec, rootFetch, {
+            config: def.openapiConfig,
+          })
+          for (const [name, command] of generated) commands.set(name, command)
+        })(),
+      )
+    }
   }
 
   const cli: Cli = {
@@ -273,25 +283,45 @@ export function create(
           const fetch = resolveFetch(def.fetch)
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
           if (def.openapi) {
-            pending.push(
-              (async () => {
-                const spec = await Openapi.resolve(def.openapi, {
-                  baseUrl: fetchBaseUrl(def.fetch),
-                })
-                const generated = await Openapi.generateCommands(spec, fetch, {
+            const setOpenapiGroup = (generated: Map<string, unknown>) => {
+              commands.set(nameOrCli, {
+                _group: true,
+                description: def.description,
+                commands: generated as Map<string, CommandEntry>,
+                ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+              } as InternalGroup)
+            }
+            if (isResolvedOpenapi(def.openapi)) {
+              setOpenapiGroup(
+                Openapi.generateCommandsSync(def.openapi, fetch, {
                   basePath: def.basePath,
                   config: def.openapiConfig,
-                })
-                const entry = {
-                  _group: true,
-                  description: def.description,
-                  commands: generated as Map<string, CommandEntry>,
-                  ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                } as InternalGroup
-                assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
-                commands.set(nameOrCli, entry)
-              })(),
-            )
+                }),
+              )
+              assertNoGlobalOptionConflicts(
+                nameOrCli,
+                commands.get(nameOrCli)!,
+                toGlobals.get(cli),
+              )
+            } else
+              pending.push(
+                (async () => {
+                  const spec = await Openapi.resolve(def.openapi, {
+                    baseUrl: fetchBaseUrl(def.fetch),
+                  })
+                  setOpenapiGroup(
+                    await Openapi.generateCommands(spec, fetch, {
+                      basePath: def.basePath,
+                      config: def.openapiConfig,
+                    }),
+                  )
+                  assertNoGlobalOptionConflicts(
+                    nameOrCli,
+                    commands.get(nameOrCli)!,
+                    toGlobals.get(cli),
+                  )
+                })(),
+              )
             return cli
           }
           commands.set(nameOrCli, {
@@ -383,7 +413,10 @@ export function create(
   if (rootDef && def.aliases) toRootAliases.set(cli as unknown as Root, def.aliases)
   if (def.options) toRootOptions.set(cli, def.options)
   if (def.config !== undefined) toConfigEnabled.set(cli, true)
+  if (def.mcp) toMcpOptions.set(cli, def.mcp)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
+  if (def.sync) toSyncOptions.set(cli, def.sync)
+  if (def.version !== undefined) toVersion.set(cli, def.version)
   if (def.globals) {
     toGlobals.set(cli, { schema: def.globals, alias: def.globalAlias as any })
     const builtinNames = [
@@ -634,7 +667,7 @@ async function serveImpl(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
-    else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+    else writeln(Formatter.format({ code: 'UNKNOWN', message }, Formatter.defaultFormat))
     exit(1)
     return
   }
@@ -886,7 +919,10 @@ async function serveImpl(
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
-      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+      } else
+        writeln(
+          Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, Formatter.defaultFormat),
+        )
       exit(1)
       return
     }
@@ -933,7 +969,7 @@ async function serveImpl(
               code: 'LIST_SKILLS_FAILED',
               message: err instanceof Error ? err.message : String(err),
             },
-            formatExplicit ? formatFlag : 'toon',
+            formatExplicit ? formatFlag : Formatter.defaultFormat,
           ),
         )
         exit(1)
@@ -989,13 +1025,13 @@ async function serveImpl(
       if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
         if (fullOutput && result.agents.length > 0) output.agents = result.agents
-        writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
+        writeln(Formatter.format(output, formatExplicit ? formatFlag : Formatter.defaultFormat))
       }
     } catch (err) {
       writeln(
         Formatter.format(
           { code: 'SYNC_SKILLS_FAILED', message: err instanceof Error ? err.message : String(err) },
-          formatExplicit ? formatFlag : 'toon',
+          formatExplicit ? formatFlag : Formatter.defaultFormat,
         ),
       )
       exit(1)
@@ -1028,7 +1064,10 @@ async function serveImpl(
       if (human) {
         writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
         writeln(formatHumanCta(cta))
-      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+      } else
+        writeln(
+          Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, Formatter.defaultFormat),
+        )
       exit(1)
       return
     }
@@ -1081,14 +1120,14 @@ async function serveImpl(
         writeln(
           Formatter.format(
             { name, command: result.command, agents: result.agents },
-            formatExplicit ? formatFlag : 'toon',
+            formatExplicit ? formatFlag : Formatter.defaultFormat,
           ),
         )
     } catch (err) {
       writeln(
         Formatter.format(
           { code: 'MCP_ADD_FAILED', message: err instanceof Error ? err.message : String(err) },
-          formatExplicit ? formatFlag : 'toon',
+          formatExplicit ? formatFlag : Formatter.defaultFormat,
         ),
       )
       exit(1)
@@ -1286,13 +1325,8 @@ async function serveImpl(
       exit(1)
       return
     }
-    const cmd = resolved.command
-    const format = formatExplicit ? formatFlag : 'toon'
-    const result: Record<string, unknown> = {}
-    if (cmd.args) result.args = Schema.toJsonSchema(cmd.args)
-    if (cmd.env) result.env = Schema.toJsonSchema(cmd.env)
-    if (cmd.options) result.options = Schema.toJsonSchema(cmd.options)
-    if (cmd.output) result.output = Schema.toJsonSchema(cmd.output)
+    const format = formatExplicit ? formatFlag : Formatter.defaultFormat
+    const result: Record<string, unknown> = buildCommandSchema(resolved.command) ?? {}
     if (options.globals?.schema) result.globals = Schema.toJsonSchema(options.globals.schema)
     writeln(Formatter.format(result, format))
     return
@@ -1312,9 +1346,11 @@ async function serveImpl(
 
   const start = performance.now()
 
-  // Resolve effective format: explicit --format/--json → command default → CLI default → toon
+  // Resolve effective format: explicit --format/--json → command default → CLI default → Formatter.defaultFormat
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
-  const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
+  const format = formatExplicit
+    ? formatFlag
+    : resolvedFormat || options.format || Formatter.defaultFormat
   if (format === 'yaml') await Yaml.load()
 
   // Fall back to root fetch/command when no subcommand matches,
@@ -1893,6 +1929,112 @@ async function fetchImpl(
   const url = new URL(req.url)
   const segments = url.pathname.split('/').filter(Boolean)
 
+  if (segments[0] === '_incur') {
+    const ctx: RuntimeContext.RuntimeCliContext = {
+      commands,
+      ...(options.description ? { description: options.description } : undefined),
+      ...(options.envSchema ? { env: options.envSchema } : undefined),
+      middlewares: options.middlewares ?? [],
+      name,
+      ...(options.rootCommand ? { rootCommand: options.rootCommand as any } : undefined),
+      ...(options.vars ? { vars: options.vars } : undefined),
+      ...(options.version ? { version: options.version } : undefined),
+    }
+
+    if (segments[1] === 'rpc' && segments.length === 2 && req.method === 'POST') {
+      const client = createRpcHandler(ctx)
+      let body: unknown
+      try {
+        body = await req.json()
+      } catch {
+        const response = await client.request({})
+        return new Response(JSON.stringify(response), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      const response = await client.request(body)
+      if ('stream' in response) {
+        const records = response.records()
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              for await (const record of records)
+                controller.enqueue(encoder.encode(`${JSON.stringify(record)}\n`))
+            } finally {
+              controller.close()
+            }
+          },
+          async cancel() {
+            await records.return(undefined as any)
+          },
+        })
+        return new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/x-ndjson' },
+        })
+      }
+      return new Response(JSON.stringify(response), {
+        status: response.ok ? 200 : getRpcStatus(response.error.code),
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    if (req.method === 'GET') {
+      const resource = (() => {
+        if (segments[1] === 'llms') return 'llms'
+        if (segments[1] === 'llms-full') return 'llmsFull'
+        if (segments[1] === 'schema') return 'schema'
+        if (segments[1] === 'help') return 'help'
+        if (segments[1] === 'openapi') return 'openapi'
+        if (segments[1] === 'skills') return 'skillsIndex'
+        if (segments[1] === 'skill') return 'skill'
+        if (segments[1] === 'mcp' && segments[2] === 'tools') return 'mcpTools'
+        return undefined
+      })()
+      if (resource) {
+        try {
+          const client = createResourcesHandler(ctx)
+          const discovery = await client.discover({
+            resource,
+            ...(url.searchParams.get('command')
+              ? { command: url.searchParams.get('command')! }
+              : undefined),
+            ...(url.searchParams.get('format')
+              ? { format: url.searchParams.get('format')! }
+              : undefined),
+            ...(url.searchParams.get('name') ? { name: url.searchParams.get('name')! } : undefined),
+          })
+          return new Response(
+            'body' in discovery ? discovery.body : JSON.stringify(discovery.data),
+            {
+              status: 200,
+              headers: { 'content-type': discovery.contentType },
+            },
+          )
+        } catch (error) {
+          const status = error instanceof ResourcesError ? error.status : 500
+          const code = error instanceof ResourcesError ? error.code : 'DISCOVERY_ERROR'
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error: {
+                code,
+                message: error instanceof Error ? error.message : String(error),
+              },
+              meta: {
+                resource,
+                duration: `${Math.round(performance.now() - start)}ms`,
+              },
+            }),
+            { status, headers: { 'content-type': 'application/json' } },
+          )
+        }
+      }
+    }
+  }
+
   // OpenAPI discovery: route /openapi.json, /openapi.yml, /openapi.yaml, and /.well-known/openapi.json
   if (req.method === 'GET' && isOpenapiRoute(segments)) {
     const spec = generatedOpenapi(name, commands, options)
@@ -1930,8 +2072,7 @@ async function fetchImpl(
     if (segments[2] === 'index.json' && segments.length === 3) {
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
-        const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
-        const meta = fmMatch ? (Yaml.loadSync().parse(fmMatch[1]!) as Record<string, string>) : {}
+        const meta = parseSkillFrontmatter(f.content)
         return {
           name: f.dir || name,
           description: meta.description ?? '',
@@ -2447,7 +2588,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   let help = false
   let version = false
   let schema = false
-  let format: Formatter.Format = 'toon'
+  let format: Formatter.Format = Formatter.defaultFormat
   let formatExplicit = false
   let configPath: string | undefined
   let configDisabled = false
@@ -2740,7 +2881,6 @@ async function runMcpDoctor(
   const input = new PassThrough()
   const output = new PassThrough()
   const chunks: string[] = []
-  output.on('data', (chunk) => chunks.push(chunk.toString()))
 
   let serveError: unknown
   const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
@@ -2768,7 +2908,28 @@ async function runMcpDoctor(
     })}\n`,
   )
   input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Wait for both responses instead of a fixed 20ms delay, which raced the
+  // in-process server under CI load and dropped the tools/list response. The
+  // stream-end branch terminates the mocked negative cases; the serve-failure
+  // branch terminates when the server itself rejects before responding.
+  await new Promise<void>((resolve) => {
+    let seen = 0
+    output.on('data', (chunk) => {
+      chunks.push(chunk.toString())
+      try {
+        const { id } = JSON.parse(chunk.toString()) as { id?: number }
+        if (id === 1) seen |= 1
+        if (id === 2) seen |= 2
+        if (seen === 3) resolve()
+      } catch {
+        // Malformed entries are validated when chunks are parsed below.
+      }
+    })
+    output.once('end', resolve)
+    done.then(() => {
+      if (serveError !== undefined) resolve()
+    })
+  })
   input.end()
   await done
 
@@ -2878,8 +3039,8 @@ export type CommandsMap = Record<
 >
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry =
-  | CommandDefinition<any, any, any>
+export type CommandEntry =
+  | CommandDefinition<any, any, any, any>
   | InternalGroup
   | InternalFetchGateway
   | InternalAlias
@@ -2894,7 +3055,7 @@ export type FetchHandler = Fetch.Handler
 export type FetchSource = Fetch.Source
 
 /** @internal A command group's internal storage. */
-type InternalGroup = {
+export type InternalGroup = {
   _group: true
   description?: string | undefined
   middlewares?: MiddlewareHandler[] | undefined
@@ -2903,7 +3064,7 @@ type InternalGroup = {
 }
 
 /** @internal A fetch gateway entry. */
-type InternalFetchGateway = {
+export type InternalFetchGateway = {
   _fetch: true
   basePath?: string | undefined
   description?: string | undefined
@@ -2928,30 +3089,34 @@ function fetchBaseUrl(source: FetchSource) {
   return typeof source === 'function' ? undefined : source.url
 }
 
+function isResolvedOpenapi(source: Openapi.OpenAPISource): source is Openapi.OpenAPISpec {
+  return typeof source !== 'string' && !(source instanceof URL)
+}
+
 /** @internal Type guard for command groups. */
-function isGroup(entry: CommandEntry): entry is InternalGroup {
+export function isGroup(entry: CommandEntry): entry is InternalGroup {
   return '_group' in entry
 }
 
 /** @internal Type guard for fetch gateways. */
-function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
+export function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
   return '_fetch' in entry
 }
 
 /** @internal An alias entry that points to another command by name. */
-type InternalAlias = {
+export type InternalAlias = {
   _alias: true
   /** The canonical command name this alias resolves to. */
   target: string
 }
 
 /** @internal Type guard for alias entries. */
-function isAlias(entry: CommandEntry): entry is InternalAlias {
+export function isAlias(entry: CommandEntry): entry is InternalAlias {
   return '_alias' in entry
 }
 
 /** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
-function resolveAlias(
+export function resolveAlias(
   commands: Map<string, CommandEntry>,
   entry: CommandEntry,
 ): Exclude<CommandEntry, InternalAlias> {
@@ -2998,7 +3163,7 @@ function assertNoGlobalOptionConflicts(
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
 /** @internal Maps CLI instances to their middleware arrays. */
-const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
+export const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
 
 /** @internal Maps root CLI instances to their command definitions. */
 export const toRootDefinition = new WeakMap<Root, CommandDefinition<any, any, any>>()
@@ -3011,6 +3176,26 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
+
+/** @internal Maps CLI instances to MCP setup options. */
+export const toMcpOptions = new WeakMap<
+  Cli,
+  { agents?: string[] | undefined; command?: string | undefined; stateless?: boolean | undefined }
+>()
+
+/** @internal Maps CLI instances to skill sync options. */
+export const toSyncOptions = new WeakMap<
+  Cli,
+  {
+    cwd?: string | undefined
+    depth?: number | undefined
+    include?: string[] | undefined
+    suggestions?: string[] | undefined
+  }
+>()
+
+/** @internal Maps CLI instances to their version strings. */
+export const toVersion = new WeakMap<Cli, string>()
 
 /** Descriptor for a CLI's custom global options schema and aliases. */
 export type GlobalsDescriptor = {
@@ -3108,7 +3293,7 @@ async function handleStreaming(
   // Incremental: no explicit format (default toon), or explicit jsonl
   // Buffered: explicit json/yaml/toon/md
   const useJsonl = ctx.format === 'jsonl'
-  const incremental = useJsonl || (!ctx.formatExplicit && ctx.format === 'toon')
+  const incremental = useJsonl || (!ctx.formatExplicit && ctx.format === Formatter.defaultFormat)
 
   if (incremental) {
     // Incremental output: write each chunk as it arrives
@@ -3291,7 +3476,7 @@ async function handleStreaming(
 }
 
 /** @internal Builds the `--llms` index manifest (name + description only) from the command tree. */
-function buildIndexManifest(
+export function buildIndexManifest(
   commands: Map<string, CommandEntry>,
   prefix: string[] = [],
   globalsSchema?: z.ZodObject<any>,
@@ -3326,7 +3511,7 @@ function collectIndexCommands(
 }
 
 /** @internal Builds the `--llms` manifest from the command tree. */
-function buildManifest(
+export function buildManifest(
   commands: Map<string, CommandEntry>,
   prefix: string[] = [],
   globalsSchema?: z.ZodObject<any>,
@@ -3362,14 +3547,13 @@ function collectCommands(
       const cmd: (typeof result)[number] = { name: path.join(' ') }
       if (entry.description) cmd.description = entry.description
 
-      const inputSchema = buildInputSchema(entry.args, entry.env, entry.options)
-      const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
-      if (inputSchema || outputSchema) {
+      const schema = buildCommandSchema(entry)
+      if (schema) {
         cmd.schema = {}
-        if (inputSchema?.args) cmd.schema.args = inputSchema.args
-        if (inputSchema?.env) cmd.schema.env = inputSchema.env
-        if (inputSchema?.options) cmd.schema.options = inputSchema.options
-        if (outputSchema) cmd.schema.output = outputSchema
+        if (schema.args) cmd.schema.args = schema.args
+        if (schema.env) cmd.schema.env = schema.env
+        if (schema.options) cmd.schema.options = schema.options
+        if (schema.output) cmd.schema.output = schema.output
       }
 
       const examples = formatExamples(entry.examples)
@@ -3463,7 +3647,6 @@ function appendDestructiveHint(hint: string | undefined): string {
   if (hint.includes(destructiveCommandHint)) return hint
   return `${hint} ${destructiveCommandHint}`
 }
-
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
 export function formatExamples(
   examples: Example<any, any>[] | undefined,
@@ -3492,32 +3675,37 @@ export function parseSkillFrontmatter(content: string): {
   return meta as { description?: string | undefined; name?: string | undefined }
 }
 
-/** @internal Builds separate args, env, and options JSON Schemas. */
-function buildInputSchema(
-  args: z.ZodObject<any> | undefined,
-  env: z.ZodObject<any> | undefined,
-  options: z.ZodObject<any> | undefined,
+/** @internal Builds separate command JSON Schemas. */
+export function buildCommandSchema(
+  command: Pick<
+    CommandDefinition<any, any, any, any, any, any>,
+    'args' | 'env' | 'options' | 'output'
+  >,
 ):
   | {
       args?: Record<string, unknown> | undefined
       env?: Record<string, unknown> | undefined
       options?: Record<string, unknown> | undefined
+      output?: Record<string, unknown> | undefined
     }
   | undefined {
-  if (!args && !env && !options) return undefined
+  const { args, env, options, output } = command
+  if (!args && !env && !options && !output) return undefined
   const result: {
     args?: Record<string, unknown> | undefined
     env?: Record<string, unknown> | undefined
     options?: Record<string, unknown> | undefined
+    output?: Record<string, unknown> | undefined
   } = {}
   if (args) result.args = Schema.toJsonSchema(args)
   if (env) result.env = Schema.toJsonSchema(env)
   if (options) result.options = Schema.toJsonSchema(options)
+  if (output) result.output = Schema.toJsonSchema(output)
   return result
 }
 
 /** @internal A usage example for a command, typed against its args and options schemas. */
-type Example<
+export type Example<
   args extends z.ZodObject<any> | undefined,
   options extends z.ZodObject<any> | undefined,
 > = {
@@ -3530,7 +3718,7 @@ type Example<
 }
 
 /** @internal A usage pattern shown in help output. */
-type Usage<
+export type Usage<
   args extends z.ZodObject<any> | undefined,
   options extends z.ZodObject<any> | undefined,
 > = {
@@ -3606,7 +3794,7 @@ declare namespace Output {
 }
 
 /** @internal Defines a command's schema, handler, and metadata. */
-type CommandDefinition<
+export type CommandDefinition<
   args extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
   options extends z.ZodObject<any> | undefined = undefined,

@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> · <a href="#quickprompt">Quickprompt</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
+  <a href="#features">Features</a> · <a href="#quickprompt">Quickprompt</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#typescript-client">TypeScript Client</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
 </p>
 
 ## Features
@@ -410,6 +410,189 @@ POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "user
 ```
 
 Non-`/mcp` paths continue routing to the command API as usual.
+
+## TypeScript Client
+
+Use the TypeScript client when another TypeScript program needs to call an incur CLI with typed commands, structured data, streaming, CTAs, and discovery resources. Use the CLI directly for shell workflows, Skills for agent discovery, and MCP when the caller is an MCP-capable agent.
+
+### Generate Command Types
+
+Export the CLI instance from your entrypoint:
+
+```ts
+import { Cli, z } from 'incur'
+
+const cli = Cli.create('acme', {
+  description: 'Acme operations CLI',
+}).command('project status', {
+  args: z.object({ projectId: z.string() }),
+  output: z.object({ status: z.enum(['ok', 'blocked']) }),
+  run(c) {
+    return { status: 'ok' as const }
+  },
+})
+
+cli.serve()
+
+export default cli
+```
+
+Generate the command map:
+
+```sh
+npx incur gen --entry ./src/cli.ts --output ./src/incur.generated.ts
+```
+
+Import the generated type where you create clients:
+
+```ts
+import { HttpClient, MemoryClient } from 'incur/client'
+import type { Commands } from './incur.generated.js'
+```
+
+`incur gen` also augments `incur` and `incur/client`, so clients can use registered command types without explicit generics after the generated file is included by TypeScript.
+
+### HTTP Client
+
+Serve the CLI with `cli.fetch`, then call it with `HttpClient.create<Commands>()`:
+
+```ts
+import { HttpClient } from 'incur/client'
+import type { Commands } from './incur.generated.js'
+
+const client = HttpClient.create<Commands>({
+  baseUrl: 'https://ops.acme.test',
+  headers: { authorization: `Bearer ${token}` },
+  outputFormat: 'toon',
+})
+
+const status = await client.run('project status', {
+  args: { projectId: 'proj_web_2026' },
+})
+
+status.data.status
+//          ^? 'ok' | 'blocked'
+```
+
+`HttpClient` talks to the served CLI's `/_incur/rpc` endpoint for command runs and `/_incur/*` resource endpoints for discovery. You normally should not call those lower-level endpoints directly.
+
+### Memory Client
+
+Use `MemoryClient.create(cli)` for in-process callers, tests, local automation, and tools that need local-only actions:
+
+```ts
+import { MemoryClient } from 'incur/client'
+import cli from './cli.js'
+
+const client = MemoryClient.create(cli, {
+  env: { ACME_TOKEN: 'dev_secret_123' },
+})
+
+const result = await client.run('project status', {
+  args: { projectId: 'proj_web_2026' },
+})
+```
+
+Memory clients infer commands directly from a concrete CLI. They also expose filesystem actions that HTTP clients intentionally do not expose:
+
+```ts
+await client.skills.list()
+await client.skills.add({ global: true })
+await client.mcp.add({ agents: ['codex'] })
+```
+
+### Running Commands
+
+`client.run(command, input)` mirrors CLI invocation:
+
+```ts
+const report = await client.run('project report', {
+  args: { projectId: 'proj_web_2026' },
+  options: { includeClosed: false },
+  selection: ['summary', 'items[0:3]', 'nextCursor'],
+  outputFormat: 'md',
+  outputTokenCount: true,
+  outputTokenLimit: 128,
+})
+```
+
+The result contains typed structured data, optional rendered output text, and metadata:
+
+```ts
+report.ok
+report.data
+report.output?.text
+report.output?.next
+report.meta.cta
+```
+
+`selection` is equivalent to `--filter-output`. Because it changes the shape of `data`, selected results are typed as `unknown`. Pass `selection: undefined` on a call to clear a client-level default and recover the full output type.
+
+### Streaming
+
+Commands implemented with `async *run` return a stream wrapper:
+
+```ts
+const stream = await client.run('logs tail', {
+  args: { service: 'checkout-api' },
+})
+
+for await (const line of stream) {
+  console.log(line)
+}
+
+const final = await stream.final
+```
+
+Use `stream.records()` when you need raw chunk, done, and error records. A stream can be consumed once: either chunks, records, or final-only consumption.
+
+### CTAs and Errors
+
+CTAs returned by commands are runnable from the client:
+
+```ts
+const cta = report.meta.cta?.commands[0]
+if (cta) {
+  console.log(cta.cliCommand)
+  const next = await cta.run({ outputFormat: 'toon' })
+}
+```
+
+Failed command runs throw `Client.ClientError`:
+
+```ts
+import { Client } from 'incur/client'
+
+try {
+  await client.run('project deploy', {
+    args: { projectId: 'proj_web_2026' },
+    options: { environment: 'production' },
+  })
+} catch (error) {
+  if (error instanceof Client.ClientError) {
+    console.error(error.code, error.status, error.retryable)
+    console.error(error.meta?.cta)
+  }
+}
+```
+
+### Discovery Resources
+
+Clients can read the same discovery surfaces agents use:
+
+```ts
+await client.llms()
+await client.llms({ command: 'project', format: 'md' })
+await client.llmsFull()
+await client.schema('project report')
+await client.help('project report')
+await client.openapi()
+await client.skills.index()
+await client.skills.get('deploy')
+await client.mcp.tools()
+```
+
+Use these resource actions for documentation, SDK tooling, agent setup, tests, and UI generation. Use `client.run()` for actual command execution.
 
 ## Walkthrough
 

@@ -43,6 +43,7 @@
     "examples",
     "dist",
     "src",
+    "skills",
     "SKILL.md"
   ],
   "dependencies": {
@@ -70,6 +71,11 @@
       "types": "./dist/index.d.ts",
       "src": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "src": "./src/client/index.ts",
+      "default": "./dist/client/index.js"
     }
   }
 }
