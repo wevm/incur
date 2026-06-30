@@ -54,6 +54,7 @@ function mockMcpServeResponses(responses: unknown[]) {
       options!.output?.write(
         `${typeof response === 'string' ? response : JSON.stringify(response)}\n`,
       )
+    options!.output?.end()
   })
 }
 

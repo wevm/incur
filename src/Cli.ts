@@ -2740,7 +2740,6 @@ async function runMcpDoctor(
   const input = new PassThrough()
   const output = new PassThrough()
   const chunks: string[] = []
-  output.on('data', (chunk) => chunks.push(chunk.toString()))
 
   let serveError: unknown
   const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
@@ -2768,7 +2767,19 @@ async function runMcpDoctor(
     })}\n`,
   )
   input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await new Promise<void>((resolve) => {
+    let lines = 0
+    output.on('data', (chunk) => {
+      const text = chunk.toString()
+      chunks.push(text)
+      lines += text.split('\n').length - 1
+      if (lines >= 2) resolve()
+    })
+    output.once('end', resolve)
+    done.then(() => {
+      if (serveError !== undefined) resolve()
+    })
+  })
   input.end()
   await done
 
