@@ -2881,7 +2881,6 @@ async function runMcpDoctor(
   const input = new PassThrough()
   const output = new PassThrough()
   const chunks: string[] = []
-  output.on('data', (chunk) => chunks.push(chunk.toString()))
 
   let serveError: unknown
   const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
@@ -2909,7 +2908,28 @@ async function runMcpDoctor(
     })}\n`,
   )
   input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Wait for both responses instead of a fixed 20ms delay, which raced the
+  // in-process server under CI load and dropped the tools/list response. The
+  // stream-end branch terminates the mocked negative cases; the serve-failure
+  // branch terminates when the server itself rejects before responding.
+  await new Promise<void>((resolve) => {
+    let seen = 0
+    output.on('data', (chunk) => {
+      chunks.push(chunk.toString())
+      try {
+        const { id } = JSON.parse(chunk.toString()) as { id?: number }
+        if (id === 1) seen |= 1
+        if (id === 2) seen |= 2
+        if (seen === 3) resolve()
+      } catch {
+        // Malformed entries are validated when chunks are parsed below.
+      }
+    })
+    output.once('end', resolve)
+    done.then(() => {
+      if (serveError !== undefined) resolve()
+    })
+  })
   input.end()
   await done
 
