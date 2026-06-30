@@ -50,10 +50,10 @@ async function serve(
 
 function mockMcpServeResponses(responses: unknown[]) {
   return vi.spyOn(Mcp, 'serve').mockImplementation(async (_name, _version, _commands, options) => {
+    const output = options!.output
     for (const response of responses)
-      options!.output?.write(
-        `${typeof response === 'string' ? response : JSON.stringify(response)}\n`,
-      )
+      output?.write(`${typeof response === 'string' ? response : JSON.stringify(response)}\n`)
+    output?.end()
   })
 }
 
