@@ -162,6 +162,36 @@ describe('generateCommands', () => {
     expect(limitSchema.description).toBe('Max results')
   })
 
+  test('infers output from JSON response schemas', async () => {
+    const commands = await Openapi.generateCommands(
+      {
+        paths: {
+          '/users/posts': {
+            get: {
+              operationId: 'listPosts',
+              responses: {
+                '200': {
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        properties: { ok: { type: 'boolean' } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      () => new Response(JSON.stringify({ ok: true })),
+    )
+    const command = commands.get('listPosts')!
+    if ('_group' in command) throw new Error('expected listPosts command')
+    expect(command.output).toBeDefined()
+  })
+
   test('generates namespace command groups from paths', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch, {
       config: { mode: 'namespace' },
