@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.11
+
+### Patch Changes
+
+- 4de8518: Fixed `--mcp` stdio transport loading against `@modelcontextprotocol/server` prereleases that export it from `./stdio`.
+
 ## 0.4.10
 
 ### Patch Changes
