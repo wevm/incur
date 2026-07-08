@@ -605,7 +605,8 @@ async function serveImpl(
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
-  const human = process.stdout.isTTY === true
+  const tty = process.stdout.isTTY === true
+  let human = tty
   const configEnabled = options.config !== undefined
   const configFlag = options.config?.flag
   const displayName = resolveDisplayName(name, options.aliases)
@@ -657,6 +658,7 @@ async function serveImpl(
     configDisabled,
     rest,
   } = builtinFlags
+  human = tty && !formatExplicit
 
   let globals: Record<string, unknown> = {}
   let filtered = rest

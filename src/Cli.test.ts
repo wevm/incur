@@ -2088,6 +2088,37 @@ describe('leaf cli', () => {
     expect(JSON.parse(output)).toEqual({ pong: true })
   })
 
+  test('--format json remains parseable in TTY output with CTAs', async () => {
+    const previous = process.stdout.isTTY
+    ;(process.stdout as any).isTTY = true
+    try {
+      const cli = Cli.create('ping', {
+        run(c) {
+          return c.ok(
+            { pong: true },
+            {
+              cta: {
+                description: 'Suggested command:',
+                commands: ['next'],
+              },
+            },
+          )
+        },
+      })
+      const { output } = await serve(cli, ['--format', 'json'])
+
+      expect(JSON.parse(output)).toEqual({
+        pong: true,
+        cta: {
+          description: 'Suggested command:',
+          commands: [{ command: 'ping next' }],
+        },
+      })
+    } finally {
+      ;(process.stdout as any).isTTY = previous
+    }
+  })
+
   test('errors wrap in error envelope', async () => {
     const cli = Cli.create('fail', {
       run() {
