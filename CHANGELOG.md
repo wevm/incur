@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.12
+
+### Patch Changes
+
+- c37c5f7: Respect explicit output formats when stdout is a TTY so `--format` and `--json` output remains machine-readable.
+
 ## 0.4.11
 
 ### Patch Changes
