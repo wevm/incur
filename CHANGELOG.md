@@ -1,5 +1,13 @@
 # incur
 
+## 0.4.13
+
+### Patch Changes
+
+- 20a6f42: Added MCP tool filtering via `mcp: false` on commands and root-level `mcp.tools` include/exclude patterns.
+- 3fecb7c: Added remote MCP servers as command sources via `cli.command(name, { mcp })`.
+- 11b7406: Added `context.request` for HTTP and MCP invocations and `openapiConfig.forwardHeaders` for propagating caller headers to upstream APIs.
+
 ## 0.4.12
 
 ### Patch Changes
