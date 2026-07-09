@@ -16,8 +16,8 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'get': { args: { id: number }; options: {} }
-            'list': { args: {}; options: { limit: number } }
+            get: { args: { id: number }; options: {} }
+            list: { args: {}; options: { limit: number } }
           }
         }
       }
@@ -32,7 +32,7 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'ping': { args: {}; options: {} }
+            ping: { args: {}; options: {} }
           }
         }
       }
@@ -57,8 +57,8 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'pr create': { args: { title: string }; options: {} }
-            'pr list': { args: {}; options: { state: string } }
+            "pr create": { args: { title: string }; options: {} }
+            "pr list": { args: {}; options: { state: string } }
           }
         }
       }
@@ -80,7 +80,7 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'pr review approve': { args: { id: number }; options: {} }
+            "pr review approve": { args: { id: number }; options: {} }
           }
         }
       }
@@ -118,6 +118,38 @@ describe('fromCli', () => {
     expect(output).toContain('tags: string[]')
   })
 
+  test('emits scalar and array output schemas', () => {
+    const cli = Cli.create('test')
+      .command('read', {
+        output: z.string(),
+        run: () => 'content',
+      })
+      .command('list', {
+        output: z.array(z.object({ id: z.string(), active: z.boolean() })),
+        run: () => [{ id: 'one', active: true }],
+      })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('read: { args: {}; options: {}; output: string }')
+    expect(output).toContain(
+      'list: { args: {}; options: {}; output: { id: string; active: boolean }[] }',
+    )
+  })
+
+  test('marks async generator commands as streams', () => {
+    const cli = Cli.create('test').command('tail', {
+      output: z.object({ line: z.string() }),
+      async *run() {
+        yield { line: 'ok' }
+      },
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain(
+      'tail: { args: {}; options: {}; output: { line: string }; stream: true }',
+    )
+  })
+
   test('commands are sorted alphabetically', () => {
     const cli = Cli.create('test')
       .command('zebra', { run: () => ({}) })
@@ -125,7 +157,7 @@ describe('fromCli', () => {
       .command('middle', { run: () => ({}) })
 
     const output = Typegen.fromCli(cli)
-    const commandOrder = [...output.matchAll(/^ {6}'(\w+)':/gm)].map((m) => m[1])
+    const commandOrder = [...output.matchAll(/^ {6}(\w+):/gm)].map((m) => m[1])
     expect(commandOrder).toEqual(['alpha', 'middle', 'zebra'])
   })
 
@@ -169,7 +201,7 @@ describe('fromCli', () => {
     expect(output).toContain('config: { host: string; port: number }')
   })
 
-  test('optional properties use optional modifier', () => {
+  test('optional properties include undefined for exact optional property types', () => {
     const cli = Cli.create('test').command('create', {
       args: z.object({ name: z.string() }),
       options: z.object({
@@ -180,7 +212,7 @@ describe('fromCli', () => {
     })
 
     const output = Typegen.fromCli(cli)
-    expect(output).toContain('verbose?: boolean')
+    expect(output).toContain('verbose?: boolean | undefined')
     expect(output).toContain('output: string')
   })
 
@@ -194,12 +226,41 @@ describe('fromCli', () => {
       "declare module 'incur' {
         interface Register {
           commands: {
-            'ping': { args: {}; options: {} }
-            'pr list': { args: {}; options: {} }
+            ping: { args: {}; options: {} }
+            "pr list": { args: {}; options: {} }
           }
         }
       }
       "
     `)
+  })
+
+  test('includes root commands and excludes raw fetch gateways', () => {
+    const cli = Cli.create('status', {
+      run: () => ({ ok: true }),
+    }).command('raw', {
+      fetch: () => new Response('{}'),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('status: { args: {}; options: {} }')
+    expect(output).not.toContain("'raw'")
+  })
+
+  test('escapes command and property keys', () => {
+    const cli = Cli.create('test').command('bad key "quoted"', {
+      options: z.object({
+        'bad-key': z.string().optional(),
+        'quote"key': z.number(),
+        nested: z.object({ 'child-key': z.string().optional() }),
+      }),
+      run: () => ({}),
+    })
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain('"bad key \\"quoted\\""')
+    expect(output).toContain('"bad-key"?: string | undefined')
+    expect(output).toContain('"quote\\"key": number')
+    expect(output).toContain('nested: { "child-key"?: string | undefined }')
   })
 })
