@@ -71,13 +71,14 @@ const initParams = {
 async function mcpSession(
   commands: Map<string, any>,
   messages: { method: string; params?: unknown; id?: number }[],
+  options: Omit<Mcp.serve.Options, 'input' | 'output'> = {},
 ) {
   const input = new PassThrough()
   const output = new PassThrough()
   const chunks: string[] = []
   output.on('data', (chunk) => chunks.push(chunk.toString()))
 
-  const done = Mcp.serve('test-cli', '1.0.0', commands, { input, output })
+  const done = Mcp.serve('test-cli', '1.0.0', commands, { input, output, ...options })
 
   for (const msg of messages) {
     const rpc = { jsonrpc: '2.0', ...msg }
@@ -139,6 +140,65 @@ describe('Mcp', () => {
     expect(echoTool.inputSchema.properties.message).toBeDefined()
     expect(echoTool.inputSchema.properties.upper).toBeDefined()
     expect(echoTool.inputSchema.required).toContain('message')
+  })
+
+  test('collectTools hides commands and groups with mcp false', () => {
+    const commands = createTestCommands()
+    commands.set('secret', { mcp: false, run: () => ({ ok: true }) })
+    commands.set('hidden', {
+      _group: true,
+      mcp: false,
+      commands: new Map([['inside', { run: () => ({ ok: true }) }]]),
+    })
+
+    expect(Mcp.collectTools(commands, []).map((tool) => tool.name)).toMatchInlineSnapshot(`
+      [
+        "echo",
+        "fail",
+        "greet_hello",
+        "ping",
+        "stream",
+      ]
+    `)
+  })
+
+  test('collectTools filters tools by include and exclude patterns', () => {
+    const commands = new Map<string, any>([
+      ['docs_list', { run: () => null }],
+      ['docs_secret', { run: () => null }],
+      ['users_list', { run: () => null }],
+    ])
+
+    expect(
+      Mcp.collectTools(commands, [], [], { include: ['docs_*'], exclude: ['*_secret'] }).map(
+        (tool) => tool.name,
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        "docs_list",
+      ]
+    `)
+  })
+
+  test('stdio serve filters tools/list by configured patterns', async () => {
+    const commands = new Map<string, any>([
+      ['docs_list', { run: () => null }],
+      ['secret_list', { run: () => null }],
+    ])
+    const [, res] = await mcpSession(
+      commands,
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/list', params: {} },
+      ],
+      { tools: { exclude: ['secret_*'] } },
+    )
+
+    expect(res.result.tools.map((tool: any) => tool.name)).toMatchInlineSnapshot(`
+      [
+        "docs_list",
+      ]
+    `)
   })
 
   test('tools/list uses command MCP name and description overrides', async () => {

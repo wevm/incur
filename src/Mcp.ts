@@ -26,7 +26,7 @@ export async function serve(
     options.instructions ? { instructions: options.instructions } : undefined,
   )
 
-  for (const tool of collectTools(commands, [])) {
+  for (const tool of collectTools(commands, [], [], options.tools)) {
     const mergedShape: Record<string, any> = {
       ...tool.command.args?.shape,
       ...tool.command.options?.shape,
@@ -116,6 +116,8 @@ export declare namespace serve {
     version?: string | undefined
     /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
+    /** Filters which command tools are exposed to MCP clients. */
+    tools?: ToolFilter | undefined
   }
 }
 
@@ -241,8 +243,27 @@ export type ToolAnnotations = {
   openWorldHint?: boolean | undefined
 }
 
+/** MCP tool name filtering options. */
+export type ToolFilter = {
+  /** Tool name patterns to expose. Omitted means all tools. `*` matches any characters. */
+  include?: string[] | undefined
+  /** Tool name patterns to hide. Excludes win over includes. `*` matches any characters. */
+  exclude?: string[] | undefined
+}
+
 /** @internal Recursively collects leaf commands as tool entries. */
 export function collectTools(
+  commands: Map<string, any>,
+  prefix: string[],
+  parentMiddlewares: MiddlewareHandler[] = [],
+  filter?: ToolFilter | undefined,
+): ToolEntry[] {
+  const tools = filterTools(collectToolEntries(commands, prefix, parentMiddlewares), filter)
+  assertUniqueToolNames(tools)
+  return tools.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function collectToolEntries(
   commands: Map<string, any>,
   prefix: string[],
   parentMiddlewares: MiddlewareHandler[] = [],
@@ -250,29 +271,47 @@ export function collectTools(
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
     if ('_alias' in entry) continue
+    if (entry.mcp === false) continue
     const path = [...prefix, name]
     if ('_group' in entry && entry._group) {
       const groupMw = [
         ...parentMiddlewares,
         ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
       ]
-      result.push(...collectTools(entry.commands, path, groupMw))
+      result.push(...collectToolEntries(entry.commands, path, groupMw))
     } else {
+      const mcp = entry.mcp === false ? undefined : entry.mcp
       const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
       result.push({
-        name: entry.mcp?.name ?? path.join('_'),
-        description: entry.mcp?.description ?? entry.description,
+        name: mcp?.name ?? path.join('_'),
+        description: mcp?.description ?? entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
         ...(outputSchema ? { outputSchema } : undefined),
-        ...(entry.mcp?.annotations ? { annotations: entry.mcp.annotations } : undefined),
-        ...(entry.mcp?.instructions ? { instructions: entry.mcp.instructions } : undefined),
+        ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
+        ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
         command: entry,
         ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })
     }
   }
-  assertUniqueToolNames(result)
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+  return result
+}
+
+/** Filters MCP tools by include and exclude patterns. */
+export function filterTools(tools: ToolEntry[], filter?: ToolFilter | undefined): ToolEntry[] {
+  if (!filter) return tools
+  const includes = filter.include?.map(patternToRegExp)
+  const excludes = filter.exclude?.map(patternToRegExp) ?? []
+  return tools.filter((tool) => {
+    if (excludes.some((pattern) => pattern.test(tool.name))) return false
+    if (!includes || includes.length === 0) return true
+    return includes.some((pattern) => pattern.test(tool.name))
+  })
+}
+
+function patternToRegExp(pattern: string) {
+  const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replace(/\*/g, '.*')
+  return new RegExp(`^${escaped}$`)
 }
 
 function assertUniqueToolNames(tools: ToolEntry[]) {

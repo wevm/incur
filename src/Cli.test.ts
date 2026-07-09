@@ -2967,6 +2967,28 @@ describe('built-in commands', () => {
     })
   })
 
+  test('mcp doctor applies root MCP tool filters', async () => {
+    const cli = Cli.create('test', {
+      version: '1.0.0',
+      mcp: { tools: { exclude: ['secret_*'] } },
+    })
+    cli.command('docs_list', { description: 'Docs', run: () => ({ ok: true }) })
+    cli.command('secret_list', { description: 'Secret', run: () => ({ ok: true }) })
+
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    const result = JSON.parse(output)
+
+    expect(exitCode).toBeUndefined()
+    expect(result.tools).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "Docs",
+          "name": "docs_list",
+        },
+      ]
+    `)
+  })
+
   test('mcp doctor forwards MCP instructions to the smoke test server', async () => {
     const spy = mockMcpServeResponses([
       {
@@ -5721,6 +5743,62 @@ describe('fetch', () => {
             "hasInputSchema": false,
             "name": "ping",
           },
+        ]
+      `)
+    })
+
+    test('POST /mcp omits commands with mcp false while command routes still work', async () => {
+      const cli = Cli.create('test', { version: '1.0.0' })
+      cli.command('public', { run: () => ({ public: true }) })
+      cli.command('secret', { mcp: false, run: () => ({ secret: true }) })
+
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      const body = await res.json()
+      const route = await fetchJson(cli, new Request('http://localhost/secret'))
+      const argv = await serve(cli, ['secret', '--json'])
+
+      expect(body.result.tools.map((tool: any) => tool.name)).toMatchInlineSnapshot(`
+        [
+          "public",
+        ]
+      `)
+      expect(route.body.data).toMatchInlineSnapshot(`
+        {
+          "secret": true,
+        }
+      `)
+      expect(JSON.parse(argv.output)).toMatchInlineSnapshot(`
+        {
+          "secret": true,
+        }
+      `)
+    })
+
+    test('POST /mcp filters tools with root include and exclude patterns', async () => {
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { include: ['docs_*'], exclude: ['*_secret'] } },
+      })
+      cli.command('docs_list', { run: () => null })
+      cli.command('docs_secret', { run: () => null })
+      cli.command('users_list', { run: () => null })
+
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      const body = await res.json()
+
+      expect(body.result.tools.map((tool: any) => tool.name)).toMatchInlineSnapshot(`
+        [
+          "docs_list",
         ]
       `)
     })

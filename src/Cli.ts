@@ -97,6 +97,8 @@ export type Cli<
         openapi?: Openapi.OpenAPISource | undefined
         openapiConfig?: Openapi.Config | undefined
         outputPolicy?: OutputPolicy | undefined
+        /** Set to `false` to hide this command group from MCP clients. */
+        mcp?: false | undefined
       },
     ): Cli<commands, vars, env, globals>
   }
@@ -247,6 +249,7 @@ export function create(
   const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
     stateless: def.mcp?.stateless,
+    tools: def.mcp?.tools,
   })
 
   if (def.openapi && rootFetch) {
@@ -287,6 +290,7 @@ export function create(
                   description: def.description,
                   commands: generated as Map<string, CommandEntry>,
                   ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                  ...(def.mcp === false ? { mcp: false } : undefined),
                 } as InternalGroup
                 assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
                 commands.set(nameOrCli, entry)
@@ -563,6 +567,8 @@ export declare namespace create {
           instructions?: string | undefined
           /** Disable HTTP MCP session management. Defaults to `true`. */
           stateless?: boolean | undefined
+          /** Filters which command tools are exposed to MCP clients. */
+          tools?: Mcp.ToolFilter | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -694,6 +700,7 @@ async function serveImpl(
       vars: options.vars,
       version: options.version,
       ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+      ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
     })
     return
   }
@@ -1809,7 +1816,7 @@ function createMcpHttpHandler(
 
       const server = new McpServer({ name, version })
 
-      for (const tool of Mcp.collectTools(commands, [])) {
+      for (const tool of Mcp.collectTools(commands, [], [], options.tools)) {
         const mergedShape: Record<string, any> = {
           ...tool.command.args?.shape,
           ...tool.command.options?.shape,
@@ -1855,6 +1862,8 @@ declare namespace createMcpHttpHandler {
   type Options = {
     /** Disable HTTP MCP session management. Defaults to `true`. */
     stateless?: boolean | undefined
+    /** Filters which command tools are exposed to MCP clients. */
+    tools?: Mcp.ToolFilter | undefined
   }
 }
 
@@ -2410,6 +2419,7 @@ declare namespace serveImpl {
           command?: string | undefined
           instructions?: string | undefined
           stateless?: boolean | undefined
+          tools?: Mcp.ToolFilter | undefined
         }
       | undefined
     /** Banner config, called before root help. */
@@ -2753,6 +2763,7 @@ async function runMcpDoctor(
     vars: options.vars,
     version: options.version,
     ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+    ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
   }).catch((error) => {
     serveError = error
   })
@@ -2899,6 +2910,7 @@ export type FetchSource = Fetch.Source
 type InternalGroup = {
   _group: true
   description?: string | undefined
+  mcp?: false | undefined
   middlewares?: MiddlewareHandler[] | undefined
   outputPolicy?: OutputPolicy | undefined
   commands: Map<string, CommandEntry>
@@ -3457,7 +3469,10 @@ type SkillCommandSource = Pick<
 >
 
 function isDestructive(command: SkillCommandSource): boolean {
-  return command.destructive === true || command.mcp?.annotations?.destructiveHint === true
+  return (
+    command.destructive === true ||
+    (command.mcp !== false && command.mcp?.annotations?.destructiveHint === true)
+  )
 }
 
 function appendDestructiveHint(hint: string | undefined): string {
@@ -3632,6 +3647,8 @@ type CommandDefinition<
   hint?: string | undefined
   /** MCP-specific metadata exposed when this command is served as a tool. */
   mcp?:
+    /** Set to `false` to hide this command from MCP clients. */
+    | false
     | {
         /** Override the command name exposed to MCP clients. */
         name?: string | undefined
