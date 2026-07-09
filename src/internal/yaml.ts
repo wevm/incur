@@ -1,11 +1,15 @@
 import { createRequire } from 'node:module'
-import type * as yaml from 'yaml'
+
+type Yaml = {
+  parse(value: string): unknown
+  stringify(value: unknown, options?: { lineWidth?: number | undefined } | undefined): string
+}
 
 /** @internal Cached `yaml` module, shared by `load()` and `loadSync()`. */
-let cached: typeof yaml | undefined
+let cached: Yaml | undefined
 
 /** Loads the `yaml` module on demand, so runs that never touch YAML don't pay its startup cost. */
-export async function load(): Promise<typeof yaml> {
+export async function load(): Promise<Yaml> {
   cached ??= await import('yaml')
   return cached
 }
@@ -17,7 +21,7 @@ export async function load(): Promise<typeof yaml> {
  * first so environments without synchronous module resolution (e.g. compiled binaries,
  * bundled workers) never hit the fallback.
  */
-export function loadSync(): typeof yaml {
-  cached ??= createRequire(import.meta.url)('yaml') as typeof yaml
+export function loadSync(): Yaml {
+  cached ??= createRequire(import.meta.url)('yaml') as Yaml
   return cached
 }

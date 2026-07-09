@@ -965,13 +965,45 @@ async *run({ ok }) {
 
 ## Type Generation
 
-Generate type definitions for your CLI's command map to get typed CTAs:
+Generate type definitions for your CLI's command map:
 
 ```sh
 incur gen
 ```
 
-This creates a `incur.generated.ts` file that registers your commands on the `Cli.Commands` type, enabling autocomplete on CTA command names, args, and options.
+The CLI entrypoint must `export default cli` so `incur gen` can import it. The generated file exports `Commands` and augments both `incur` and `incur/client`, enabling typed CTAs while authoring a CLI and typed TypeScript clients when consuming one.
+
+```ts
+import { HttpClient } from 'incur/client'
+import type { Commands } from './incur.generated.js'
+
+const client = HttpClient.create<Commands>({ baseUrl: 'https://ops.acme.test' })
+```
+
+## TypeScript Client
+
+Use `incur/client` when TypeScript code needs to consume an incur CLI programmatically. Prefer normal CLI commands for shell workflows, Skills for agent usage, and MCP for MCP-capable agents.
+
+```ts
+import { HttpClient, MemoryClient } from 'incur/client'
+import cli from './cli.js'
+import type { Commands } from './incur.generated.js'
+
+const http = HttpClient.create<Commands>({
+  baseUrl: 'https://ops.acme.test',
+  outputFormat: 'toon',
+})
+
+const memory = MemoryClient.create(cli, {
+  env: { ACME_TOKEN: 'dev_secret_123' },
+})
+
+const result = await http.run('project status', {
+  args: { projectId: 'proj_web_2026' },
+})
+```
+
+Use the dedicated `incur-typescript-client` skill for exhaustive client usage: `HttpClient`, `MemoryClient`, lower-level transports, `client.run`, streaming, CTAs, `ClientError`, discovery resources, and memory-only local actions.
 
 ## Full Example
 

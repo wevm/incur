@@ -12,7 +12,7 @@ const cli = Cli.create('incur', {
   description: 'CLI for incur',
   sync: {
     depth: 1,
-    include: ['_root'],
+    include: ['_root', 'skills/*'],
     suggestions: ['build a cli with incur', 'generate incur types'],
   },
 }).command('gen', {
