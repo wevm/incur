@@ -358,6 +358,29 @@ $ my-cli api users get --limit 5
 
 When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
 
+#### MCP command sources
+
+Pass a remote MCP streamable-HTTP endpoint to generate a command group from its tools:
+
+```ts
+import { Cli } from 'incur'
+
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('docs', { mcp: 'https://mcp.tempo.xyz/mcp' })
+  .serve()
+```
+
+```sh
+$ my-cli docs --help
+# Commands:
+#   search  Search docs
+
+$ my-cli docs search --query tempo
+# → results: ...
+```
+
+Each MCP tool becomes a plain incur subcommand, so it is also available through `cli.fetch` and through incur's own MCP server as `<group>_<tool>`.
+
 ### Serve CLIs as APIs
 
 The inverse of mounting — expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.

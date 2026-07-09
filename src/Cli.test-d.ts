@@ -70,6 +70,28 @@ test('fetch command accepts OpenAPI object and URL sources', () => {
   })
 })
 
+test('command accepts MCP string URL and object sources', () => {
+  const cli = Cli.create('test')
+  const fetch = () => new Response()
+
+  cli.command('docsString', {
+    mcp: 'https://mcp.example.com/mcp',
+  })
+
+  cli.command('docsUrl', {
+    mcp: new URL('https://mcp.example.com/mcp'),
+  })
+
+  cli.command('docsObject', {
+    mcp: {
+      url: new URL('https://mcp.example.com/mcp'),
+      headers: { authorization: 'Bearer token' },
+      fetch,
+    },
+    outputPolicy: 'agent-only',
+  })
+})
+
 test('root fetch accepts hosted request sources with OpenAPI paths', () => {
   Cli.create('test', {
     fetch: Fetch.fromRequest('https://api.example.com'),

@@ -746,12 +746,12 @@ function createHandler(config: {
 }
 
 /** Converts a JSON Schema object to a Zod schema. */
-function toZod(schema: Record<string, unknown>): z.ZodType {
+export function toZod(schema: Record<string, unknown>): z.ZodType {
   return z.fromJSONSchema(schema)
 }
 
 /** Wraps a Zod schema with coercion if the base type is number or boolean (argv is always strings). */
-function coerceIfNeeded(schema: z.ZodType): z.ZodType {
+export function coerceIfNeeded(schema: z.ZodType): z.ZodType {
   const isOptional = schema instanceof z.ZodOptional
   const inner = isOptional ? schema.unwrap() : schema
 
