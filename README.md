@@ -411,28 +411,6 @@ POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "user
 
 Non-`/mcp` paths continue routing to the command API as usual.
 
-#### MCP tool filtering
-
-Hide a command from MCP clients without removing its CLI or HTTP route by setting `mcp: false` on its definition. Fetch-backed OpenAPI command groups can also be hidden with `mcp: false` on the mount definition.
-
-Root MCP options can trim exposed tools by name. `include` allows matching tools, omitted `include` means all tools, and `exclude` wins. Patterns support `*` wildcards:
-
-```ts
-const cli = create('docs', {
-  mcp: {
-    tools: {
-      include: ['docs_*'],
-      exclude: ['docs_secret_*'],
-    },
-  },
-})
-
-cli.command('internal', {
-  mcp: false,
-  run: () => ({ ok: true }),
-})
-```
-
 ## Walkthrough
 
 ### Agent discovery
