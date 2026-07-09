@@ -224,6 +224,7 @@ describe('remote MCP command sources', () => {
       {
         "session": {
           "fetch": [Function],
+          "initialized": true,
           "url": "https://example.com/mcp",
         },
         "tools": [

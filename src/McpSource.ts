@@ -34,6 +34,8 @@ export type Session = {
   headers?: HeadersInit | undefined
   /** Last captured MCP session ID. */
   id?: string | undefined
+  /** Whether the server completed initialization. */
+  initialized?: boolean | undefined
   /** Streamable-HTTP MCP endpoint URL. */
   url: URL
 }
@@ -61,6 +63,7 @@ export async function resolve(source: Source, options: resolve.Options = {}): Pr
     capabilities: {},
     clientInfo: { name: 'incur', version: options.version ?? '1.0.0' },
   })
+  session.initialized = true
   await request(session, 'notifications/initialized')
   const result = await request(session, 'tools/list')
   return { tools: (result.tools ?? []) as Tool[], session }
@@ -76,10 +79,8 @@ export declare namespace resolve {
 }
 
 /** Generates incur command entries from remote MCP tools. */
-export function generateCommands(source: Source, resolved: Resolved): Map<string, GeneratedEntry> {
+export function generateCommands(resolved: Resolved): Map<string, GeneratedEntry> {
   const commands = new Map<string, GeneratedEntry>()
-  let initialized: Promise<Resolved> | undefined
-  const getResolved = () => (initialized ??= Promise.resolve(resolved))
 
   for (const tool of resolved.tools) {
     const options = tool.inputSchema ? inputOptions(tool.inputSchema) : undefined
@@ -89,8 +90,7 @@ export function generateCommands(source: Source, resolved: Resolved): Map<string
       ...(options ? { options } : undefined),
       ...(output ? { output } : undefined),
       async run(context) {
-        const current = await getResolved()
-        const result = await request(current.session, 'tools/call', {
+        const result = await request(resolved.session, 'tools/call', {
           name: tool.name,
           arguments: { ...context.args, ...context.options },
         })
@@ -101,7 +101,6 @@ export function generateCommands(source: Source, resolved: Resolved): Map<string
     })
   }
 
-  void source
   return commands
 }
 
@@ -134,7 +133,7 @@ async function request(session: Session, method: string, params?: unknown) {
   headers.set('content-type', 'application/json')
   headers.set('accept', 'application/json, text/event-stream')
   if (session.id) headers.set('mcp-session-id', session.id)
-  if (session.id) headers.set('MCP-Protocol-Version', protocolVersion)
+  if (session.initialized) headers.set('MCP-Protocol-Version', protocolVersion)
 
   const body = JSON.stringify({ jsonrpc: '2.0', ...(id ? { id } : undefined), method, params })
   const response = await session.fetch(new Request(session.url, { method: 'POST', headers, body }))

@@ -283,7 +283,7 @@ export function create(
           pending.push(
             (async () => {
               const resolved = await McpSource.resolve(def.mcp)
-              const generated = McpSource.generateCommands(def.mcp, resolved)
+              const generated = McpSource.generateCommands(resolved)
               const entry = {
                 _group: true,
                 description: def.description,
