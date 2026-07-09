@@ -59,6 +59,8 @@ export type Context<
   globals: InferGlobals<globals>
   /** The CLI name. */
   name: string
+  /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+  request?: Request | undefined
   /** Set a typed variable for downstream middleware and handlers. */
   set<key extends string & keyof InferVars<vars>>(key: key, value: InferVars<vars>[key]): void
   /** Variables set by upstream middleware. */

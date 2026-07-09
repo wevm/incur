@@ -33,6 +33,7 @@ test('without schemas, run receives empty objects', () => {
     run(c) {
       expectTypeOf(c.args).toEqualTypeOf<{}>()
       expectTypeOf(c.options).toEqualTypeOf<{}>()
+      expectTypeOf(c.request).toEqualTypeOf<Request | undefined>()
       return { pong: true }
     },
   })

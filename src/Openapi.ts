@@ -32,6 +32,8 @@ export type Mode = 'namespace' | 'operation'
 
 /** Configuration for generating commands from an OpenAPI document. */
 export type Config = {
+  /** Header names copied from the inbound request onto upstream requests when not explicitly set. */
+  forwardHeaders?: string[] | undefined
   /** Command naming strategy. Defaults to `'operation'`. */
   mode?: Mode | undefined
 }
@@ -437,6 +439,7 @@ export async function generateCommands(
       run: createHandler({
         basePath: options.basePath,
         fetch,
+        forwardHeaders: config?.forwardHeaders,
         httpMethod,
         path,
         headerParams,
@@ -678,6 +681,7 @@ function createHandler(config: {
   basePath?: string | undefined
   bodyProps: Record<string, Record<string, unknown>>
   fetch: FetchHandler
+  forwardHeaders?: string[] | undefined
   headerParams: HeaderParameter[]
   httpMethod: string
   path: string
@@ -721,6 +725,12 @@ function createHandler(config: {
     for (const p of config.headerParams) {
       const value = options[p.optionName]
       if (value !== undefined) input.headers.set(p.name, String(value))
+    }
+
+    for (const name of config.forwardHeaders ?? []) {
+      const value = context.request?.headers.get(name)
+      if (!input.headers.has(name) && value !== null && value !== undefined)
+        input.headers.set(name, value)
     }
 
     if (body && !input.headers.has('content-type'))

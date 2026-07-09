@@ -47,6 +47,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     globals = {},
     vars: varsSchema,
     middlewares = [],
+    request,
   } = options
   const displayName = options.displayName ?? name
   const parseMode = options.parseMode ?? 'argv'
@@ -115,6 +116,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       name,
       ok: okFn,
       options: parsedOptions,
+      request,
       var: varsMap,
       version,
     })
@@ -204,6 +206,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
         formatExplicit,
         globals,
         name,
+        request,
         set(key: string, value: unknown) {
           varsMap[key] = value
         },
@@ -304,6 +307,8 @@ export declare namespace execute {
     parseMode?: 'argv' | 'split' | 'flat' | undefined
     /** The resolved command path. */
     path: string
+    /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+    request?: Request | undefined
     /** Vars schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */

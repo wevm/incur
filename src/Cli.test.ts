@@ -4761,6 +4761,28 @@ describe('Command.execute', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
     expect(result).not.toHaveProperty('error.fieldErrors')
   })
+
+  test('CLI invocation leaves request undefined', async () => {
+    const result = await Command.execute(
+      {
+        run(c: any) {
+          return { hasRequest: c.request !== undefined }
+        },
+      },
+      {
+        agent: true,
+        argv: [],
+        format: 'json',
+        formatExplicit: false,
+        inputOptions: {},
+        name: 'test',
+        path: 'users',
+        version: undefined,
+      },
+    )
+
+    expect(result).toMatchObject({ ok: true, data: { hasRequest: false } })
+  })
 })
 
 async function fetchJson(cli: Cli.Cli<any, any, any, any>, req: Request) {
@@ -4894,6 +4916,22 @@ describe('fetch', () => {
           "ok": true,
         },
         "status": 200,
+      }
+    `)
+  })
+
+  test('HTTP route exposes inbound request to command context', async () => {
+    const cli = Cli.create('test')
+    cli.command('auth', {
+      run: (c) => ({ authorization: c.request?.headers.get('authorization') }),
+    })
+    const req = new Request('http://localhost/auth', {
+      headers: { authorization: 'Bearer t' },
+    })
+    const { body } = await fetchJson(cli, req)
+    expect(body.data).toMatchInlineSnapshot(`
+      {
+        "authorization": "Bearer t",
       }
     `)
   })
@@ -5600,10 +5638,16 @@ describe('fetch', () => {
       return cli
     }
 
-    async function mcpRequest(cli: Cli.Cli<any, any, any>, body: unknown, sessionId?: string) {
+    async function mcpRequest(
+      cli: Cli.Cli<any, any, any>,
+      body: unknown,
+      sessionId?: string,
+      extraHeaders: Record<string, string> = {},
+    ) {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
+        ...extraHeaders,
       }
       if (sessionId) headers['mcp-session-id'] = sessionId
       return cli.fetch(
@@ -5780,6 +5824,41 @@ describe('fetch', () => {
             "message": "hello world",
           },
           "isError": undefined,
+        }
+      `)
+    })
+
+    test('POST /mcp exposes per-request headers to command context', async () => {
+      const cli = Cli.create('test', { version: '1.0.0' })
+      cli.command('auth', {
+        description: 'Auth',
+        run: (c) => ({ authorization: c.request?.headers.get('authorization') }),
+      })
+
+      const call = async (authorization: string) => {
+        const res = await mcpRequest(
+          cli,
+          {
+            jsonrpc: '2.0',
+            id: authorization,
+            method: 'tools/call',
+            params: { name: 'auth', arguments: {} },
+          },
+          undefined,
+          { authorization },
+        )
+        const body = await res.json()
+        return JSON.parse(body.result.content[0].text)
+      }
+
+      expect(await call('Bearer one')).toMatchInlineSnapshot(`
+        {
+          "authorization": "Bearer one",
+        }
+      `)
+      expect(await call('Bearer two')).toMatchInlineSnapshot(`
+        {
+          "authorization": "Bearer two",
         }
       `)
     })

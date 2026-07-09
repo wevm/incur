@@ -356,6 +356,18 @@ $ my-cli api users get --limit 5
 # → users: ...
 ```
 
+Set `openapiConfig.forwardHeaders` to copy selected caller headers from HTTP and MCP requests to generated upstream requests unless an explicit header option is provided:
+
+```ts
+Cli.create('my-cli')
+  .command('api', {
+    fetch: app.fetch,
+    openapi: spec,
+    openapiConfig: { forwardHeaders: ['authorization'] },
+  })
+  .serve()
+```
+
 When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
 
 ### Serve CLIs as APIs

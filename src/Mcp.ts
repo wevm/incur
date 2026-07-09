@@ -127,6 +127,8 @@ export async function callTool(
     extra?: {
       mcpReq?: { _meta?: { progressToken?: string | number } }
     }
+    /** The inbound HTTP request when invoked via HTTP MCP. */
+    request?: Request | undefined
     sendNotification?: (n: ProgressNotification) => Promise<void>
     name?: string | undefined
     version?: string | undefined
@@ -157,6 +159,7 @@ export async function callTool(
     name: options.name ?? tool.name,
     parseMode: 'flat',
     path: tool.name,
+    request: options.request,
     vars: options.vars,
     version: options.version,
   })

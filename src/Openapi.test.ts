@@ -266,6 +266,35 @@ describe('cli integration', () => {
     })
   }
 
+  function createForwardHeadersCli(forwardHeaders?: string[] | undefined) {
+    return Cli.create('test', { description: 'test' }).command('api', {
+      fetch(request) {
+        return Response.json({ authorization: request.headers.get('authorization') })
+      },
+      openapi: {
+        openapi: '3.0.0',
+        info: { title: 'Test API', version: '1.0.0' },
+        paths: {
+          '/secret': {
+            get: {
+              operationId: 'getSecret',
+              parameters: [
+                {
+                  name: 'authorization',
+                  in: 'header',
+                  required: false,
+                  schema: { type: 'string' },
+                },
+              ],
+              responses: { '200': { description: 'OK' } },
+            },
+          },
+        },
+      },
+      ...(forwardHeaders ? { openapiConfig: { forwardHeaders } } : undefined),
+    })
+  }
+
   test('GET /users via operationId', async () => {
     const { output } = await serve(createCli(), ['api', 'listUsers'])
     expect(output).toContain('Alice')
@@ -343,6 +372,77 @@ describe('cli integration', () => {
     ])
 
     expect(json(output).authorization).toMatchInlineSnapshot(`"Bearer secret"`)
+  })
+
+  test('forwardHeaders copies caller headers for HTTP routes', async () => {
+    const res = await createForwardHeadersCli(['authorization']).fetch(
+      new Request('http://localhost/api/getSecret', {
+        headers: { authorization: 'Bearer caller' },
+      }),
+    )
+    const body = await res.json()
+
+    expect(body.data).toMatchInlineSnapshot(`
+      {
+        "authorization": "Bearer caller",
+      }
+    `)
+  })
+
+  test('forwardHeaders defaults to no caller header forwarding', async () => {
+    const res = await createForwardHeadersCli().fetch(
+      new Request('http://localhost/api/getSecret', {
+        headers: { authorization: 'Bearer caller' },
+      }),
+    )
+    const body = await res.json()
+
+    expect(body.data).toMatchInlineSnapshot(`
+      {
+        "authorization": null,
+      }
+    `)
+  })
+
+  test('explicit header options beat forwarded caller headers', async () => {
+    const res = await createForwardHeadersCli(['authorization']).fetch(
+      new Request('http://localhost/api/getSecret?authorization=Bearer%20explicit', {
+        headers: { authorization: 'Bearer caller' },
+      }),
+    )
+    const body = await res.json()
+
+    expect(body.data).toMatchInlineSnapshot(`
+      {
+        "authorization": "Bearer explicit",
+      }
+    `)
+  })
+
+  test('forwardHeaders copies caller headers for HTTP MCP calls', async () => {
+    const res = await createForwardHeadersCli(['authorization']).fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json, text/event-stream',
+          authorization: 'Bearer caller',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'api_getSecret', arguments: {} },
+        }),
+      }),
+    )
+    const body = await res.json()
+
+    expect(JSON.parse(body.result.content[0].text)).toMatchInlineSnapshot(`
+      {
+        "authorization": "Bearer caller",
+      }
+    `)
   })
 
   test('bearer auth option appears in generated command help', async () => {
