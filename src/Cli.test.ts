@@ -6099,6 +6099,25 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ chain: 'mainnet' })
   })
 
+  test('required (nonoptional) vars populated by middleware do not throw pre-middleware (#188)', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ chain: z.string().default('ethereum') }),
+      vars: z.object({ chain: z.string().nonoptional() }),
+    })
+      .use(async (c, next) => {
+        c.set('chain', c.globals.chain)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { chain: c.var.chain }
+        },
+      })
+
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ chain: 'ethereum' })
+  })
+
   test('globals appear in --help output', async () => {
     const cli = Cli.create('test', {
       globals: z.object({
