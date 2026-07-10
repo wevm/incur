@@ -7,6 +7,7 @@ export const spec = {
       get: {
         operationId: 'listUsers',
         summary: 'List users',
+        description: 'Returns users ordered by creation date. Use `limit` to cap the page size.',
         parameters: [
           {
             name: 'limit',

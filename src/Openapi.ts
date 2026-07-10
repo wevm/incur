@@ -122,6 +122,7 @@ type FetchHandler = (req: Request) => Response | Promise<Response>
 type GeneratedCommand = {
   args?: z.ZodObject<any> | undefined
   description?: string | undefined
+  mcp?: { description: string } | undefined
   options?: z.ZodObject<any> | undefined
   run: (context: any) => any
 }
@@ -434,6 +435,10 @@ export async function generateCommands(
 
     setCommand(commands, segments, {
       description: op.summary ?? op.description,
+      // Help keeps the short summary; MCP tools surface the full prose.
+      ...(op.summary && op.description && op.summary !== op.description
+        ? { mcp: { description: `${op.summary}\n\n${op.description}` } }
+        : undefined),
       args: argsSchema,
       options: optionsSchema,
       run: createHandler({

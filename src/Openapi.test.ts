@@ -154,6 +154,19 @@ describe('generateCommands', () => {
     expect(cmd.description).toBe('List users')
   })
 
+  test('command concatenates summary and description for MCP', async () => {
+    const commands = await Openapi.generateCommands(spec, app.fetch)
+    const cmd = commands.get('listUsers')!
+    if ('_group' in cmd) throw new Error('expected listUsers command')
+    expect(cmd.mcp?.description).toBe(
+      'List users\n\nReturns users ordered by creation date. Use `limit` to cap the page size.',
+    )
+    // Summary-only operations get no MCP override.
+    const summaryOnly = commands.get('createUser')!
+    if ('_group' in summaryOnly) throw new Error('expected createUser command')
+    expect(summaryOnly.mcp).toBeUndefined()
+  })
+
   test('coerced number params preserve description', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch)
     const cmd = commands.get('listUsers')!
