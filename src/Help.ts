@@ -407,7 +407,7 @@ function globalOptionsLines(
       flag: '--filter-output <keys>',
       desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])',
     },
-    { flag: '--format <toon|json|yaml|md|jsonl>', desc: 'Output format' },
+    { flag: '--format <toon|json|yaml|md|jsonl|gcf>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),

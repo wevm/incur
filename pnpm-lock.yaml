@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      '@blackwell-systems/gcf':
+        specifier: ^2.4.0
+        version: 2.4.0
       '@cfworker/json-schema':
         specifier: ^4.1.1
         version: 4.1.1
@@ -111,6 +114,10 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@blackwell-systems/gcf@2.4.0':
+    resolution: {integrity: sha512-lLEZCzNMYVk630iaVVPPhcQtmCjhPRETRlwk/JAptGE0SEL6ZMHfA9HZPornuMvvpGeyrimRjj9Yb2nYQNS1og==}
+    hasBin: true
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
@@ -1503,6 +1510,8 @@ snapshots:
       '@babel/helper-validator-identifier': 7.28.5
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@blackwell-systems/gcf@2.4.0': {}
 
   '@cfworker/json-schema@4.1.1': {}
 

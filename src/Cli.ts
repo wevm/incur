@@ -2480,7 +2480,7 @@ declare namespace serveImpl {
 }
 
 /** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
-const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'] as const)
+const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl', 'gcf'] as const)
 
 function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
   let fullOutput = false
