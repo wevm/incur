@@ -2967,6 +2967,31 @@ describe('built-in commands', () => {
     })
   })
 
+  test('mcp doctor waits for delayed tool listings', async () => {
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation(async (_name, _version, _commands, options) => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { serverInfo: {} } })}\n`,
+        )
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'ping' }] } })}\n`,
+        )
+      })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toMatchObject({ ok: true, toolCount: 1 })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp doctor applies root MCP tool filters', async () => {
     const cli = Cli.create('test', {
       version: '1.0.0',

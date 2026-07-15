@@ -2778,6 +2778,10 @@ async function runMcpDoctor(
   }).catch((error) => {
     serveError = error
   })
+  let serveFinished = false
+  void done.finally(() => {
+    serveFinished = true
+  })
 
   input.write(
     `${Json.stringify({
@@ -2792,7 +2796,7 @@ async function runMcpDoctor(
     })}\n`,
   )
   input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await waitForMcpDoctorResponses(chunks, () => serveFinished)
   input.end()
   await done
 
@@ -2852,6 +2856,14 @@ async function runMcpDoctor(
     tools,
     warnings,
     errors,
+  }
+}
+
+async function waitForMcpDoctorResponses(chunks: string[], finished: () => boolean) {
+  const started = Date.now()
+  while (!finished() && (chunks.join('').match(/\n/g)?.length ?? 0) < 2) {
+    if (Date.now() - started >= 1_000) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
   }
 }
 
