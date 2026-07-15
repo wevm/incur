@@ -255,7 +255,7 @@ export declare namespace registerTools {
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
     /** Converts JSON Schema output definitions for the MCP SDK. */
-    fromJsonSchema: (schema: Record<string, unknown>) => unknown
+    fromJsonSchema: typeof import('@modelcontextprotocol/server').fromJsonSchema
     /** Middleware handlers registered on the root CLI. */
     middlewares?: MiddlewareHandler[] | undefined
     /** MCP server name. */
