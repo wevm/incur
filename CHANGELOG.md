@@ -1,5 +1,12 @@
 # incur
 
+## 0.4.14
+
+### Patch Changes
+
+- 539d0ac: Added `compact` and `security` OpenAPI config options for trimming generated command schemas and skipping credential option injection.
+- 4c0fc4b: Included OpenAPI operation descriptions in MCP tool descriptions by concatenating summary and description; CLI help keeps the short summary.
+
 ## 0.4.13
 
 ### Patch Changes
