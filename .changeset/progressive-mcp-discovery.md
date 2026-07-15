@@ -1,10 +1,5 @@
 ---
-'incur': major
+'incur': patch
 ---
 
 Changed MCP servers to expose progressive tool discovery by default.
-
-```diff
-- mcp: { tools: {} }
-+ mcp: { tools: { discovery: 'direct' } }
-```
