@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.15
+
+### Patch Changes
+
+- e6f51cd: Changed MCP servers to expose progressive tool discovery by default.
+
 ## 0.4.14
 
 ### Patch Changes
