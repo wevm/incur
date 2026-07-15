@@ -78,7 +78,13 @@ async function mcpSession(
   const chunks: string[] = []
   output.on('data', (chunk) => chunks.push(chunk.toString()))
 
-  const done = Mcp.serve('test-cli', '1.0.0', commands, { input, output, ...options })
+  const { tools, ...rest } = options
+  const done = Mcp.serve('test-cli', '1.0.0', commands, {
+    input,
+    output,
+    ...rest,
+    tools: { discovery: 'direct', ...tools },
+  })
 
   for (const msg of messages) {
     const rpc = { jsonrpc: '2.0', ...msg }
@@ -140,6 +146,139 @@ describe('Mcp', () => {
     expect(echoTool.inputSchema.properties.message).toBeDefined()
     expect(echoTool.inputSchema.properties.upper).toBeDefined()
     expect(echoTool.inputSchema.required).toContain('message')
+  })
+
+  test('tools/list defaults to progressive discovery', async () => {
+    const [, res] = await mcpSession(
+      createTestCommands(),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/list', params: {} },
+      ],
+      { tools: { discovery: undefined } },
+    )
+
+    expect(res.result.tools.map((tool: any) => tool.name)).toEqual([
+      'search_tools',
+      'get_tool_details',
+      'call_read_tool',
+      'call_write_tool',
+    ])
+    expect(res.result.tools.some((tool: any) => tool.name === 'echo')).toBe(false)
+  })
+
+  test('progressive discovery searches, inspects, and gates execution', async () => {
+    const commands = new Map<string, any>([
+      [
+        'read-user',
+        {
+          description: 'Read a user profile',
+          args: z.object({ id: z.string() }),
+          mcp: { annotations: { readOnlyHint: true } },
+          run: (c: any) => ({ id: c.args.id }),
+        },
+      ],
+      [
+        'delete-user',
+        {
+          description: 'Delete a user profile',
+          args: z.object({ id: z.string() }),
+          mcp: { annotations: { destructiveHint: true, readOnlyHint: false } },
+          run: (c: any) => ({ deleted: c.args.id }),
+        },
+      ],
+    ])
+    const responses = await mcpSession(
+      commands,
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        {
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'search_tools', arguments: { query: 'user', limit: 1 } },
+        },
+        {
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'get_tool_details', arguments: { name: 'read-user' } },
+        },
+        {
+          id: 4,
+          method: 'tools/call',
+          params: {
+            name: 'call_read_tool',
+            arguments: { name: 'read-user', arguments: { id: '1' } },
+          },
+        },
+        {
+          id: 5,
+          method: 'tools/call',
+          params: {
+            name: 'call_read_tool',
+            arguments: { name: 'delete-user', arguments: { id: '1' } },
+          },
+        },
+        {
+          id: 6,
+          method: 'tools/call',
+          params: {
+            name: 'call_write_tool',
+            arguments: { name: 'delete-user', arguments: { id: '1' } },
+          },
+        },
+        {
+          id: 7,
+          method: 'tools/call',
+          params: {
+            name: 'call_write_tool',
+            arguments: { name: 'read-user', arguments: { id: '1' } },
+          },
+        },
+      ],
+      { tools: { discovery: 'progressive' } },
+    )
+
+    const byId = new Map(responses.map((response) => [response.id, response]))
+    const search = JSON.parse(byId.get(2).result.content[0].text)
+    expect(search.tools).toHaveLength(1)
+    expect(search.tools[0]).toMatchObject({ name: 'delete-user' })
+    expect(search.tools[0]).not.toHaveProperty('inputSchema')
+
+    const details = JSON.parse(byId.get(3).result.content[0].text)
+    expect(details.name).toBe('read-user')
+    expect(details.inputSchema.properties.id).toBeDefined()
+    expect(JSON.parse(byId.get(4).result.content[0].text)).toEqual({ id: '1' })
+    expect(byId.get(5).result).toMatchObject({ isError: true })
+    expect(JSON.parse(byId.get(5).result.content[0].text)).toEqual({
+      error: 'Tool is not read-only: delete-user',
+    })
+    expect(JSON.parse(byId.get(6).result.content[0].text)).toEqual({ deleted: '1' })
+    expect(byId.get(7).result).toMatchObject({ isError: true })
+    expect(JSON.parse(byId.get(7).result.content[0].text)).toEqual({
+      error: 'Tool is read-only: read-user',
+    })
+  })
+
+  test('progressive discovery applies tool filters before search', async () => {
+    const [, res] = await mcpSession(
+      new Map<string, any>([
+        ['docs-list', { description: 'List docs', run: () => null }],
+        ['secret-list', { description: 'List secrets', run: () => null }],
+      ]),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        {
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'search_tools', arguments: { query: 'list' } },
+        },
+      ],
+      { tools: { discovery: 'progressive', exclude: ['secret-*'] } },
+    )
+
+    expect(JSON.parse(res.result.content[0].text).tools.map((tool: any) => tool.name)).toEqual([
+      'docs-list',
+    ])
   })
 
   test('collectTools hides commands and groups with mcp false', () => {
@@ -528,6 +667,7 @@ describe('Mcp', () => {
       input,
       output,
       middlewares,
+      tools: { discovery: 'direct' },
       vars: z.object({ ran: z.boolean().default(false) }),
     })
 
@@ -567,6 +707,7 @@ describe('Mcp', () => {
       input,
       output,
       middlewares,
+      tools: { discovery: 'direct' },
     })
 
     input.write(
@@ -615,6 +756,7 @@ describe('Mcp', () => {
     const done = Mcp.serve('test-cli', '1.0.0', commands, {
       input,
       output,
+      tools: { discovery: 'direct' },
       vars: z.object({ group: z.string().default('none') }),
     })
 
@@ -656,7 +798,11 @@ describe('Mcp', () => {
     const chunks: any[] = []
     output.on('data', (chunk) => chunks.push(JSON.parse(chunk.toString().trim())))
 
-    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), { input, output })
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      tools: { discovery: 'direct' },
+    })
 
     // Initialize
     input.write(

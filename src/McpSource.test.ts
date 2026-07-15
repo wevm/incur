@@ -39,7 +39,7 @@ function createRemoteCli() {
 }
 
 function mountRemote(remote = createRemoteCli()) {
-  return Cli.create('local').command('docs', {
+  return Cli.create('local', { mcp: { tools: { discovery: 'direct' } } }).command('docs', {
     description: 'Docs tools',
     mcp: { url: new URL('http://mcp.local/mcp'), fetch: (request) => remote.fetch(request) },
   })
@@ -108,6 +108,20 @@ describe('remote MCP command sources', () => {
     expect(result.output).toMatchInlineSnapshot(`
       "local docs search — Search docs\n\nUsage: local docs search [options]\n\nOptions:\n  --query <string>  Search query\n  --limit <number>  Result limit\n\nGlobal Options:\n  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])\n  --format <toon|json|yaml|md|jsonl>  Output format\n  --full-output                       Show full output envelope\n  --help                              Show help\n  --llms, --llms-full                 Print LLM-readable manifest\n  --schema                            Show JSON Schema for command\n  --token-count                       Print token count of output (instead of output)\n  --token-limit <n>                   Limit output to n tokens\n  --token-offset <n>                  Skip first n tokens of output\n"
     `)
+  })
+
+  test('pages through progressive remote tool catalogs', async () => {
+    const remote = Cli.create('remote')
+    for (let index = 0; index < 21; index++)
+      remote.command(`tool-${index}`, { run: () => ({ index }) })
+    const cli = mountRemote(remote)
+
+    const result = await serve(cli, ['docs', 'tool-20', '--json'])
+
+    expect({ exitCode: result.exitCode, body: json(result.output) }).toEqual({
+      body: { index: 20 },
+      exitCode: undefined,
+    })
   })
 
   test('propagates remote MCP tool errors', async () => {

@@ -3715,6 +3715,7 @@ function createApp() {
   const cli = Cli.create('app', {
     version: '3.5.0',
     description: 'A comprehensive CLI application for testing.',
+    mcp: { tools: { discovery: 'direct' } },
   })
 
   cli.command('ping', {

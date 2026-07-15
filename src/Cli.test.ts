@@ -2967,6 +2967,31 @@ describe('built-in commands', () => {
     })
   })
 
+  test('mcp doctor waits for delayed tool listings', async () => {
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation(async (_name, _version, _commands, options) => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { serverInfo: {} } })}\n`,
+        )
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'ping' }] } })}\n`,
+        )
+      })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toMatchObject({ ok: true, toolCount: 1 })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp doctor applies root MCP tool filters', async () => {
     const cli = Cli.create('test', {
       version: '1.0.0',
@@ -5647,7 +5672,10 @@ describe('fetch', () => {
 
   describe('mcp over http', () => {
     function mcpCli() {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('greet', {
         description: 'Greet someone',
         args: z.object({ name: z.string() }),
@@ -5792,7 +5820,10 @@ describe('fetch', () => {
     })
 
     test('POST /mcp omits commands with mcp false while command routes still work', async () => {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('public', { run: () => ({ public: true }) })
       cli.command('secret', { mcp: false, run: () => ({ secret: true }) })
 
@@ -5826,7 +5857,13 @@ describe('fetch', () => {
     test('POST /mcp filters tools with root include and exclude patterns', async () => {
       const cli = Cli.create('test', {
         version: '1.0.0',
-        mcp: { tools: { include: ['docs_*'], exclude: ['*_secret'] } },
+        mcp: {
+          tools: {
+            discovery: 'direct',
+            include: ['docs_*'],
+            exclude: ['*_secret'],
+          },
+        },
       })
       cli.command('docs_list', { run: () => null })
       cli.command('docs_secret', { run: () => null })
@@ -5907,7 +5944,10 @@ describe('fetch', () => {
     })
 
     test('POST /mcp exposes per-request headers to command context', async () => {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('auth', {
         description: 'Auth',
         run: (c) => ({ authorization: c.request?.headers.get('authorization') }),

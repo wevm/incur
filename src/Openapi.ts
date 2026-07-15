@@ -9,6 +9,7 @@ import { z } from 'zod'
 import * as Cli from './Cli.js'
 import * as Fetch from './Fetch.js'
 import { dereference } from './internal/dereference.js'
+import type * as Mcp from './Mcp.js'
 import * as Schema from './Schema.js'
 
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
@@ -126,7 +127,12 @@ type FetchHandler = (req: Request) => Response | Promise<Response>
 type GeneratedCommand = {
   args?: z.ZodObject<any> | undefined
   description?: string | undefined
-  mcp?: { description: string } | undefined
+  mcp?:
+    | {
+        annotations: Mcp.ToolAnnotations
+        description?: string | undefined
+      }
+    | undefined
   options?: z.ZodObject<any> | undefined
   run: (context: any) => any
 }
@@ -440,10 +446,13 @@ export async function generateCommands(
 
     setCommand(commands, segments, {
       description: op.summary ?? op.description,
-      // Help keeps the short summary; MCP tools surface the full prose.
-      ...(op.summary && op.description && op.summary !== op.description
-        ? { mcp: { description: `${op.summary}\n\n${op.description}` } }
-        : undefined),
+      mcp: {
+        annotations: mcpAnnotations(method),
+        // Help keeps the short summary; MCP tools surface the full prose.
+        ...(op.summary && op.description && op.summary !== op.description
+          ? { description: `${op.summary}\n\n${op.description}` }
+          : undefined),
+      },
       args: argsSchema,
       options: optionsSchema,
       run: createHandler({
@@ -461,6 +470,16 @@ export async function generateCommands(
   }
 
   return commands
+}
+
+function mcpAnnotations(method: string) {
+  const readOnly = ['get', 'head', 'options', 'trace'].includes(method)
+  return {
+    destructiveHint: !readOnly,
+    idempotentHint: readOnly || method === 'delete' || method === 'put',
+    openWorldHint: true,
+    readOnlyHint: readOnly,
+  }
 }
 
 export declare namespace generateCommands {

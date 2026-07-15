@@ -379,7 +379,7 @@ $ my-cli docs search --query tempo
 # → results: ...
 ```
 
-Each MCP tool becomes a plain incur subcommand, so it is also available through `cli.fetch` and through incur's own MCP server as `<group>_<tool>`.
+Each MCP tool becomes a plain incur subcommand, so it is also available through `cli.fetch` and through incur's own MCP server as `<group>_<tool>`. Progressive remote catalogs are resolved automatically.
 
 ### Serve CLIs as APIs
 
@@ -424,12 +424,20 @@ Async generator commands stream as NDJSON (`application/x-ndjson`). Middleware r
 
 #### MCP over HTTP
 
-The `fetch` handler automatically exposes an MCP endpoint at `/mcp`. Agents can discover and call your CLI's commands as MCP tools over HTTP — no stdio required:
+The `fetch` handler automatically exposes an MCP endpoint at `/mcp`. Agents can discover and call your CLI's commands over HTTP, with no stdio required:
 
 ```
 POST /mcp  { "jsonrpc": "2.0", "method": "initialize", ... }
 POST /mcp  { "jsonrpc": "2.0", "method": "tools/list", ... }
-POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "users", ... } }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "search_tools", ... } }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "get_tool_details", ... } }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "call_read_tool", ... } }
+```
+
+MCP servers use progressive discovery by default: clients search a compact catalog, inspect one full schema, then execute through a read or write gate. This keeps command schemas out of `tools/list`. Set `mcp.tools.discovery` to `'direct'` for clients that require every command as a top-level tool:
+
+```ts
+Cli.create('my-cli', { mcp: { tools: { discovery: 'direct' } } })
 ```
 
 Non-`/mcp` paths continue routing to the command API as usual.
@@ -457,7 +465,7 @@ Most CLIs expose tools via MCP or a single monolithic skill file. incur combines
 
 The table below models a session with a 20-command CLI producing full output envelopes.
 
-- **Session start** – tokens consumed just by having the tool available. _MCP injects all tool schemas into every turn; skills only load frontmatter (name + description)._
+- **Session start** – tokens consumed just by having the tool available. _Traditional MCP servers inject all tool schemas into every turn; skills only load frontmatter (name + description)._
 - **Discovery** – tokens to learn what commands exist and how to call them. _MCP gets this at session start; skills load the full skill file on demand; incur splits by command group so only relevant commands are loaded._
 - **Invocation (×5)** – tokens per tool call.
 - **Response (×5)** – tokens in CLI output. _MCP and skills return JSON; incur defaults to TOON which strips braces, quotes, and keys._
