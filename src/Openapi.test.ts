@@ -175,6 +175,98 @@ describe('generateCommands', () => {
     expect(limitSchema.description).toBe('Max results')
   })
 
+  test('compact strips examples and oversized patterns', async () => {
+    const longPattern = `^${'(?:x|y)'.repeat(60)}$`
+    const compactSpec = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/items': {
+          get: {
+            operationId: 'listItems',
+            parameters: [
+              {
+                name: 'address',
+                in: 'query',
+                schema: {
+                  type: 'string',
+                  pattern: '^0x[0-9a-fA-F]{40}$',
+                  examples: ['0xbe058e1c4df8a4366a387bf595b284246a93039e'],
+                },
+              },
+              {
+                name: 'timestamp',
+                in: 'query',
+                schema: {
+                  type: 'string',
+                  description: 'ISO 8601 timestamp',
+                  allOf: [{ pattern: longPattern }, { pattern: longPattern }],
+                },
+              },
+              {
+                name: 'created',
+                in: 'query',
+                schema: { type: 'string', format: 'date-time', description: 'Creation time' },
+              },
+            ],
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+    } as const
+
+    const commands = await Openapi.generateCommands(compactSpec, app.fetch, {
+      config: { compact: true },
+    })
+    const cmd = commands.get('listItems')!
+    if ('_group' in cmd) throw new Error('expected listItems command')
+    const schema = z.toJSONSchema(cmd.options!, { io: 'input' }) as {
+      properties: Record<string, Record<string, unknown>>
+    }
+
+    // Short patterns survive; examples and oversized patterns are stripped.
+    expect(schema.properties.address).toMatchObject({ pattern: '^0x[0-9a-fA-F]{40}$' })
+    expect(schema.properties.address!.examples).toBeUndefined()
+    expect(schema.properties.timestamp).toMatchObject({ description: 'ISO 8601 timestamp' })
+    expect(JSON.stringify(schema)).not.toContain('(?:x|y)')
+    // Date/time formats are dropped so zod cannot re-derive its oversized ISO regex.
+    expect(schema.properties.created).toEqual({ type: 'string', description: 'Creation time' })
+  })
+
+  test('security: false skips credential options', async () => {
+    const securedSpec = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      components: {
+        securitySchemes: {
+          tokenAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
+          bearerAuth: { type: 'http', scheme: 'bearer' },
+        },
+      },
+      security: [{ tokenAuth: [] }, { bearerAuth: [] }],
+      paths: {
+        '/secret': {
+          get: {
+            operationId: 'getSecret',
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+    } as const
+
+    const generated = await Openapi.generateCommands(securedSpec, app.fetch)
+    const secured = generated.get('getSecret')!
+    if ('_group' in secured) throw new Error('expected getSecret command')
+    expect(Object.keys(secured.options!.shape)).toEqual(['x-api-key', 'authorization'])
+
+    const skipped = await Openapi.generateCommands(securedSpec, app.fetch, {
+      config: { security: false },
+    })
+    const bare = skipped.get('getSecret')!
+    if ('_group' in bare) throw new Error('expected getSecret command')
+    expect(bare.options).toBeUndefined()
+  })
+
   test('generates namespace command groups from paths', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch, {
       config: { mode: 'namespace' },

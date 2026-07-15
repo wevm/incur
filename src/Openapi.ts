@@ -32,10 +32,14 @@ export type Mode = 'namespace' | 'operation'
 
 /** Configuration for generating commands from an OpenAPI document. */
 export type Config = {
+  /** Strips `examples`, oversized `pattern` regexes, and regex-deriving date/time formats from generated schemas, shrinking MCP tool listings. Defaults to `false`. */
+  compact?: boolean | undefined
   /** Header names copied from the inbound request onto upstream requests when not explicitly set. */
   forwardHeaders?: string[] | undefined
   /** Command naming strategy. Defaults to `'operation'`. */
   mode?: Mode | undefined
+  /** Generates credential options from the document's `security` requirements. Defaults to `true`. */
+  security?: boolean | undefined
 }
 
 /** Options for generating an OpenAPI document from an incur CLI. */
@@ -371,6 +375,7 @@ export async function generateCommands(
   const operations = openapiOperations(paths)
   const namespaceInfo = getNamespaceInfo(operations)
   const { config } = options
+  if (config?.compact) compactOperations(operations)
 
   for (const { method, operation: op, path } of operations) {
     const segments = commandSegments({
@@ -386,7 +391,7 @@ export async function generateCommands(
     const queryParams = (op.parameters ?? []).filter((p) => p.in === 'query')
     const headerParams = headerOptions([
       ...(op.parameters ?? []).filter((p) => p.in === 'header'),
-      ...securityHeaderParams(resolved, op),
+      ...(config?.security === false ? [] : securityHeaderParams(resolved, op)),
     ])
 
     const bodySchema = op.requestBody?.content?.['application/json']?.schema
@@ -532,6 +537,70 @@ function securityHeaderParam(
 }
 
 const authorizationSchemes = new Set(['basic', 'bearer'])
+
+/** Patterns longer than this are dropped by `compact`; oversized regexes add schema bytes without helping callers. */
+const compactPatternLimit = 100
+
+/** String formats zod serializes back into oversized regex patterns. */
+const dateTimeFormats = new Set(['date', 'date-time', 'duration', 'time'])
+
+/** Rewrites operation parameter and request-body schemas with `compactSchema` in place. */
+function compactOperations(operations: OperationEntry[]) {
+  for (const { operation } of operations) {
+    for (const parameter of operation.parameters ?? [])
+      if (parameter.schema) parameter.schema = compactSchema(parameter.schema)
+    const body = operation.requestBody?.content?.['application/json']
+    if (body?.schema) body.schema = compactSchema(body.schema)
+  }
+}
+
+/** Returns a copy stripped of `example(s)` and oversized `pattern` regexes; drops subschemas emptied by stripping. */
+function compactSchema(
+  schema: Record<string, unknown>,
+  seen = new Map<object, Record<string, unknown>>(),
+): Record<string, unknown> {
+  // Dereferenced documents may share or cycle subschemas; reuse the copy.
+  const cached = seen.get(schema)
+  if (cached) return cached
+  const out = { ...schema }
+  seen.set(schema, out)
+
+  delete out.example
+  delete out.examples
+  if (typeof out.pattern === 'string' && out.pattern.length > compactPatternLimit)
+    delete out.pattern
+  // Zod re-derives oversized ISO regexes from date/time formats when tools serialize; the description carries the shape.
+  if (typeof out.format === 'string' && dateTimeFormats.has(out.format)) delete out.format
+
+  for (const key of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) {
+    if (!Array.isArray(out[key])) continue
+    const entries = (out[key] as Record<string, unknown>[])
+      .map((entry) => compactSchema(entry, seen))
+      .filter((entry) => Object.keys(entry).length > 0)
+    if (entries.length > 0) out[key] = entries
+    else delete out[key]
+  }
+
+  for (const key of ['additionalProperties', 'contains', 'items', 'not', 'propertyNames']) {
+    const value = out[key]
+    if (isSchemaObject(value)) out[key] = compactSchema(value, seen)
+  }
+
+  for (const key of ['$defs', 'patternProperties', 'properties']) {
+    const value = out[key]
+    if (!isSchemaObject(value)) continue
+    const map: Record<string, unknown> = {}
+    for (const [name, entry] of Object.entries(value))
+      map[name] = isSchemaObject(entry) ? compactSchema(entry, seen) : entry
+    out[key] = map
+  }
+
+  return out
+}
+
+function isSchemaObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 function headerOptions(parameters: Parameter[]): HeaderParameter[] {
   const seen = new Set<string>()
