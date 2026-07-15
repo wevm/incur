@@ -161,10 +161,22 @@ describe('generateCommands', () => {
     expect(cmd.mcp?.description).toBe(
       'List users\n\nReturns users ordered by creation date. Use `limit` to cap the page size.',
     )
-    // Summary-only operations get no MCP override.
     const summaryOnly = commands.get('createUser')!
     if ('_group' in summaryOnly) throw new Error('expected createUser command')
-    expect(summaryOnly.mcp).toBeUndefined()
+    expect(summaryOnly.mcp).toEqual({
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+        readOnlyHint: false,
+      },
+    })
+    expect(cmd.mcp?.annotations).toEqual({
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+      readOnlyHint: true,
+    })
   })
 
   test('coerced number params preserve description', async () => {
@@ -537,7 +549,10 @@ describe('cli integration', () => {
           jsonrpc: '2.0',
           id: 1,
           method: 'tools/call',
-          params: { name: 'api_getSecret', arguments: {} },
+          params: {
+            name: 'call_read_tool',
+            arguments: { name: 'api_getSecret', arguments: {} },
+          },
         }),
       }),
     )

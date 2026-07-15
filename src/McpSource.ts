@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type * as Fetch from './Fetch.js'
+import type * as Mcp from './Mcp.js'
 import * as Openapi from './Openapi.js'
 
 const protocolVersion = '2025-06-18'
@@ -20,6 +21,8 @@ export type Source =
 
 /** A resolved remote MCP server. */
 export type Resolved = {
+  /** Tool discovery strategy exposed by the remote server. */
+  discovery?: 'direct' | 'progressive' | undefined
   /** Tools returned by `tools/list`. */
   tools: Tool[]
   /** Session state reused for later MCP calls. */
@@ -50,6 +53,8 @@ export type Tool = {
   inputSchema?: Record<string, unknown> | undefined
   /** JSON Schema for tool output. */
   outputSchema?: Record<string, unknown> | undefined
+  /** Behavioral hints advertised by the remote tool. */
+  annotations?: Mcp.ToolAnnotations | undefined
 }
 
 type Message = { id?: number | string; result?: any; error?: { message?: string; code?: unknown } }
@@ -66,7 +71,10 @@ export async function resolve(source: Source, options: resolve.Options = {}): Pr
   session.initialized = true
   await request(session, 'notifications/initialized')
   const result = await request(session, 'tools/list')
-  return { tools: (result.tools ?? []) as Tool[], session }
+  const listed = (result.tools ?? []) as Tool[]
+  if (isProgressiveCatalog(listed))
+    return { discovery: 'progressive', tools: await discoverTools(session), session }
+  return { tools: listed, session }
 }
 
 /** Options for resolving a remote MCP server. */
@@ -87,13 +95,22 @@ export function generateCommands(resolved: Resolved): Map<string, GeneratedEntry
     const output = outputSchema(tool.outputSchema)
     commands.set(tool.name, {
       description: tool.description,
+      ...(tool.annotations ? { mcp: { annotations: tool.annotations } } : undefined),
       ...(options ? { options } : undefined),
       ...(output ? { output } : undefined),
       async run(context) {
-        const result = await request(resolved.session, 'tools/call', {
-          name: tool.name,
-          arguments: { ...context.args, ...context.options },
-        })
+        const parameters = { name: tool.name, arguments: { ...context.args, ...context.options } }
+        const result = await request(
+          resolved.session,
+          'tools/call',
+          resolved.discovery === 'progressive'
+            ? {
+                name:
+                  tool.annotations?.readOnlyHint === true ? 'call_read_tool' : 'call_write_tool',
+                arguments: parameters,
+              }
+            : parameters,
+        )
         if (result.isError)
           return context.error({ code: 'MCP_TOOL_ERROR', message: resultText(result) })
         return resultValue(result)
@@ -112,8 +129,54 @@ export type GeneratedEntry = {
   options?: z.ZodObject<any> | undefined
   /** Output schema generated from the MCP tool output schema. */
   output?: z.ZodType | undefined
+  /** MCP annotations preserved from the remote tool. */
+  mcp?: { annotations: Mcp.ToolAnnotations } | undefined
   /** Proxies a command invocation to `tools/call`. */
   run(context: any): Promise<unknown>
+}
+
+function isProgressiveCatalog(tools: Tool[]) {
+  if (tools.length !== 4) return false
+  const names = new Set(tools.map((tool) => tool.name))
+  return (
+    names.has('search_tools') &&
+    names.has('get_tool_details') &&
+    names.has('call_read_tool') &&
+    names.has('call_write_tool')
+  )
+}
+
+async function discoverTools(session: Session) {
+  const tools: Tool[] = []
+  let offset: number | undefined = 0
+  while (offset !== undefined) {
+    const search = (await callRemoteTool(session, 'search_tools', {
+      query: '',
+      limit: 20,
+      offset,
+    })) as { tools?: { name?: string }[]; nextOffset?: number }
+    for (const match of search.tools ?? []) {
+      if (!match.name) continue
+      const tool = (await callRemoteTool(session, 'get_tool_details', {
+        name: match.name,
+      })) as Tool
+      if (tool.name) tools.push(tool)
+    }
+    if (search.nextOffset !== undefined && search.nextOffset <= offset)
+      throw new Error('MCP tool catalog returned a non-advancing offset')
+    offset = search.nextOffset
+  }
+  return tools
+}
+
+async function callRemoteTool(
+  session: Session,
+  name: string,
+  arguments_: Record<string, unknown>,
+) {
+  const result = await request(session, 'tools/call', { name, arguments: arguments_ })
+  if (result.isError) throw new Error(resultText(result) || `MCP tool failed: ${name}`)
+  return resultValue(result)
 }
 
 function sourceSession(source: Source): Session {

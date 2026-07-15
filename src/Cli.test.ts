@@ -5647,7 +5647,10 @@ describe('fetch', () => {
 
   describe('mcp over http', () => {
     function mcpCli() {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('greet', {
         description: 'Greet someone',
         args: z.object({ name: z.string() }),
@@ -5792,7 +5795,10 @@ describe('fetch', () => {
     })
 
     test('POST /mcp omits commands with mcp false while command routes still work', async () => {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('public', { run: () => ({ public: true }) })
       cli.command('secret', { mcp: false, run: () => ({ secret: true }) })
 
@@ -5826,7 +5832,13 @@ describe('fetch', () => {
     test('POST /mcp filters tools with root include and exclude patterns', async () => {
       const cli = Cli.create('test', {
         version: '1.0.0',
-        mcp: { tools: { include: ['docs_*'], exclude: ['*_secret'] } },
+        mcp: {
+          tools: {
+            discovery: 'direct',
+            include: ['docs_*'],
+            exclude: ['*_secret'],
+          },
+        },
       })
       cli.command('docs_list', { run: () => null })
       cli.command('docs_secret', { run: () => null })
@@ -5907,7 +5919,10 @@ describe('fetch', () => {
     })
 
     test('POST /mcp exposes per-request headers to command context', async () => {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('auth', {
         description: 'Auth',
         run: (c) => ({ authorization: c.request?.headers.get('authorization') }),

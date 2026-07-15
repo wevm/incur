@@ -594,7 +594,7 @@ export declare namespace create {
           instructions?: string | undefined
           /** Disable HTTP MCP session management. Defaults to `true`. */
           stateless?: boolean | undefined
-          /** Filters which command tools are exposed to MCP clients. */
+          /** Controls how command tools are exposed to MCP clients. */
           tools?: Mcp.ToolFilter | undefined
         }
       | undefined
@@ -1842,37 +1842,17 @@ function createMcpHttpHandler(
         await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
-
-      for (const tool of Mcp.collectTools(commands, [], [], options.tools)) {
-        const mergedShape: Record<string, any> = {
-          ...tool.command.args?.shape,
-          ...tool.command.options?.shape,
-        }
-        const hasInput = Object.keys(mergedShape).length > 0
-
-        server.registerTool(
-          tool.name,
-          {
-            ...(tool.description ? { description: tool.description } : undefined),
-            ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
-            ...(tool.outputSchema
-              ? { outputSchema: fromJsonSchema(tool.outputSchema) }
-              : undefined),
-          },
-          async (...callArgs: any[]) => {
-            const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            const extra = hasInput ? callArgs[1] : callArgs[0]
-            return Mcp.callTool(tool, params, {
-              name,
-              version,
-              middlewares: mcpOptions?.middlewares,
-              env: mcpOptions?.env,
-              vars: mcpOptions?.vars,
-              request: extra?.http?.req,
-            })
-          },
-        )
-      }
+      Mcp.registerTools(server, commands, {
+        env: mcpOptions?.env,
+        fromJsonSchema,
+        middlewares: mcpOptions?.middlewares,
+        name,
+        request: (extra) => extra?.http?.req,
+        sendNotification: (notification) => server.server.notification(notification),
+        tools: options.tools,
+        vars: mcpOptions?.vars,
+        version,
+      })
 
       const transportOptions = stateless
         ? { enableJsonResponse: true }
@@ -2794,7 +2774,7 @@ async function runMcpDoctor(
     vars: options.vars,
     version: options.version,
     ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
-    ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
+    tools: { ...options.mcp?.tools, discovery: 'direct' },
   }).catch((error) => {
     serveError = error
   })

@@ -400,9 +400,20 @@ test('command mcp metadata accepts instructions and annotations', () => {
     mcp: {
       instructions: 'Use this server for test commands.',
       stateless: false,
-      tools: { include: ['read_*'], exclude: ['*_secret'] },
+      tools: {
+        discovery: 'progressive',
+        include: ['read_*'],
+        exclude: ['*_secret'],
+      },
       // @ts-expect-error -- annotations belong on command definitions
       annotations: { readOnlyHint: true },
+    },
+  })
+
+  Cli.create('test', {
+    mcp: {
+      // @ts-expect-error -- discovery only accepts supported strategies
+      tools: { discovery: 'lazy' },
     },
   })
 })
