@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.16
+
+### Patch Changes
+
+- 8da2cfc: Fixed parsed global options missing from command handler contexts.
+
 ## 0.4.15
 
 ### Patch Changes
