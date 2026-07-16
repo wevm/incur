@@ -6081,6 +6081,31 @@ describe('displayName', () => {
 })
 
 describe('globals', () => {
+  test('globals are parsed and available in command handlers', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    }).command('ping', {
+      run(c) {
+        return { url: c.globals.rpcUrl }
+      },
+    })
+
+    const { output } = await serve(cli, ['--rpc-url', 'http://example.com', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals are parsed and available in root handlers', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      run(c) {
+        return { url: c.globals.rpcUrl }
+      },
+    })
+
+    const { output } = await serve(cli, ['--rpc-url', 'http://example.com', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
   test('globals are parsed and available in middleware', async () => {
     const cli = Cli.create('test', {
       globals: z.object({ rpcUrl: z.string() }),

@@ -500,6 +500,31 @@ test('globals type flows to middleware context', () => {
   })
 })
 
+test('globals type flows to command contexts', () => {
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string().optional() }),
+  }).command('ping', {
+    middleware: [
+      (c, next) => {
+        expectTypeOf(c.globals.apiKey).toEqualTypeOf<string | undefined>()
+        return next()
+      },
+    ],
+    run(c) {
+      expectTypeOf(c.globals.apiKey).toEqualTypeOf<string | undefined>()
+      return {}
+    },
+  })
+
+  Cli.create('test', {
+    globals: z.object({ apiKey: z.string().optional() }),
+    run(c) {
+      expectTypeOf(c.globals.apiKey).toEqualTypeOf<string | undefined>()
+      return {}
+    },
+  })
+})
+
 test('globalAlias keys are constrained to globals schema keys', () => {
   Cli.create('test', {
     globals: z.object({ apiKey: z.string() }),

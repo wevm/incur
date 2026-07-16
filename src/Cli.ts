@@ -59,7 +59,7 @@ export type Cli<
       const output extends z.ZodType | undefined = undefined,
     >(
       name: name,
-      definition: CommandDefinition<args, cmdEnv, options, output, vars, env>,
+      definition: CommandDefinition<args, cmdEnv, options, output, vars, env, globals>,
     ): Cli<
       commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<options> } },
       vars,
@@ -571,6 +571,8 @@ export declare namespace create {
           format: Formatter.Format
           /** Whether the user explicitly passed `--format` or `--json`. */
           formatExplicit: boolean
+          /** Parsed global options from the CLI-level globals schema. */
+          globals: InferOutput<globals>
           /** The CLI name. */
           name: string
           /** Return a success result with optional metadata (e.g. CTAs). */
@@ -3664,6 +3666,7 @@ type CommandDefinition<
   output extends z.ZodType | undefined = undefined,
   vars extends z.ZodObject<any> | undefined = undefined,
   cliEnv extends z.ZodObject<any> | undefined = undefined,
+  globals extends z.ZodObject<any> | undefined = undefined,
 > = CommandMeta<options> & {
   /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
   aliases?: string[] | undefined
@@ -3706,7 +3709,7 @@ type CommandDefinition<
    */
   outputPolicy?: OutputPolicy | undefined
   /** Middleware that runs only for this command, after root and group middleware. */
-  middleware?: MiddlewareHandler<vars, cliEnv>[] | undefined
+  middleware?: MiddlewareHandler<vars, cliEnv, globals>[] | undefined
   /** Alternative usage patterns shown in help output. */
   usage?: Usage<args, options>[] | undefined
   /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
@@ -3731,6 +3734,8 @@ type CommandDefinition<
     format: Formatter.Format
     /** Whether the user explicitly passed `--format` or `--json`. */
     formatExplicit: boolean
+    /** Parsed global options from the CLI-level globals schema. */
+    globals: InferOutput<globals>
     /** The CLI name. */
     name: string
     /** Return a success result with optional metadata (e.g. CTAs). */
