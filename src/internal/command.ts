@@ -113,6 +113,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       error: errorFn,
       format,
       formatExplicit,
+      globals,
       name,
       ok: okFn,
       options: parsedOptions,
