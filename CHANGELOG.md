@@ -1,5 +1,19 @@
 # incur
 
+## 0.4.17
+
+### Patch Changes
+
+- 5b9647a: Delivered CTA suggestions in MCP tool result and error text, keeping `_meta.cta` for structured consumers.
+- eacc238: Added variadic positional arguments: a final `z.array(...)` args key collects all remaining positionals.
+
+  ```ts
+  Cli.create("my-cli").command("lint", {
+    args: z.object({ paths: z.array(z.string()).describe("Files to lint") }),
+    run: (c) => ({ count: c.args.paths.length }),
+  });
+  ```
+
 ## 0.4.16
 
 ### Patch Changes
