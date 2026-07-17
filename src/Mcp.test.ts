@@ -510,7 +510,7 @@ describe('Mcp', () => {
     expect(callRes.result.structuredContent).toBeUndefined()
   })
 
-  test('tools/call surfaces cta metadata without changing structured content', async () => {
+  test('tools/call appends cta suggestions to result text', async () => {
     const commands = new Map<string, any>()
     commands.set('show', {
       description: 'Show a record',
@@ -533,11 +533,50 @@ describe('Mcp', () => {
       { id: 2, method: 'tools/call', params: { name: 'show', arguments: {} } },
     ])
 
-    expect(res.result.content).toEqual([{ type: 'text', text: '{"id":"foo"}' }])
+    expect(res.result.content[0].text).toMatchInlineSnapshot(`
+      "{"id":"foo"}
+
+      Next:
+        test-cli list - List all"
+    `)
     expect(res.result.structuredContent).toEqual({ id: 'foo' })
     expect(res.result._meta?.cta).toEqual({
       description: 'Next:',
       commands: [{ command: 'test-cli list', description: 'List all' }],
+    })
+  })
+
+  test('tools/call appends cta suggestions to error text', async () => {
+    const commands = new Map<string, any>()
+    commands.set('deploy', {
+      description: 'Deploy a thing',
+      run(c: any) {
+        return c.error({
+          code: 'NOT_AUTHENTICATED',
+          message: 'not signed in',
+          cta: {
+            description: 'Next:',
+            commands: [{ command: 'login', description: 'Sign in' }],
+          },
+        })
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'deploy', arguments: {} } },
+    ])
+
+    expect(res.result.isError).toBe(true)
+    expect(res.result.content[0].text).toMatchInlineSnapshot(`
+      "not signed in
+
+      Next:
+        test-cli login - Sign in"
+    `)
+    expect(res.result._meta?.cta).toEqual({
+      description: 'Next:',
+      commands: [{ command: 'test-cli login', description: 'Sign in' }],
     })
   })
 

@@ -43,6 +43,14 @@ export function formatCtaBlock(
   }
 }
 
+/** @internal Renders a formatted CTA block as plain text for inline tool output. */
+export function renderCtaText(block: FormattedCtaBlock): string {
+  const lines = [block.description]
+  for (const c of block.commands)
+    lines.push(`  ${c.command}${c.description ? ` - ${c.description}` : ''}`)
+  return lines.join('\n')
+}
+
 /** @internal Formats a CTA by prefixing the CLI name. */
 function formatCta(name: string, cta: Cta): FormattedCta {
   if (typeof cta === 'string') return { command: `${name} ${cta}` }
