@@ -55,7 +55,11 @@ function buildSignature(cli: string, cmd: CommandInfo): string {
   const shape = cmd.args.shape as Record<string, z.ZodType>
   const json = Schema.toJsonSchema(cmd.args)
   const required = new Set((json.required as string[] | undefined) ?? [])
-  const argNames = Object.keys(shape).map((k) => (required.has(k) ? `<${k}>` : `[${k}]`))
+  const properties = json.properties as Record<string, Record<string, unknown>> | undefined
+  const argNames = Object.keys(shape).map((k) => {
+    const label = properties?.[k]?.type === 'array' ? `${k}...` : k
+    return required.has(k) ? `<${label}>` : `[${label}]`
+  })
   return `${base} ${argNames.join(' ')}`
 }
 

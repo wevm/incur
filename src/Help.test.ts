@@ -137,6 +137,25 @@ describe('formatCommand', () => {
     expect(result).toContain('Usage: tool run <port> [verbose] <fast|slow>')
   })
 
+  test('synopsis renders variadic args with ellipsis', () => {
+    const result = Help.formatCommand('tool copy', {
+      args: z.object({
+        target: z.string().describe('Destination'),
+        paths: z.array(z.string()).describe('Files to copy'),
+      }),
+    })
+    expect(result).toContain('Usage: tool copy <target> <paths...>')
+  })
+
+  test('synopsis renders optional variadic args in brackets', () => {
+    const result = Help.formatCommand('tool lint', {
+      args: z.object({
+        paths: z.array(z.string()).optional().describe('Files to lint'),
+      }),
+    })
+    expect(result).toContain('Usage: tool lint [paths...]')
+  })
+
   test('shows count type in help for meta count', () => {
     const result = Help.formatCommand('tool run', {
       options: z.object({

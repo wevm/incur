@@ -244,13 +244,13 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   return lines.join('\n')
 }
 
-/** Builds the synopsis string with `<required>` and `[optional]` placeholders. */
+/** Builds the synopsis string with `<required>`, `[optional]`, and `<variadic...>` placeholders. */
 function buildSynopsis(name: string, args?: z.ZodObject<any>): string {
   if (!args) return name
   const parts = [name]
   for (const [key, schema] of Object.entries(args.shape)) {
     const type = resolveTypeName(schema)
-    const label = type.includes('|') ? type : key
+    const label = (type.includes('|') ? type : key) + (type === 'array' ? '...' : '')
     parts.push((schema as z.ZodType)._zod.optout === 'optional' ? `[${label}]` : `<${label}>`)
   }
   return parts.join(' ')
