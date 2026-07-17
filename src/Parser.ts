@@ -91,13 +91,18 @@ export function parse<
     }
   }
 
-  // Assign positionals to args schema keys in order
-  const rawArgs: Record<string, string> = {}
+  // Assign positionals to args schema keys in order; a final array key collects the rest
+  const rawArgs: Record<string, unknown> = {}
   if (argsSchema) {
     const keys = Object.keys(argsSchema.shape)
     for (let j = 0; j < keys.length; j++) {
       const key = keys[j]!
-      if (positionals[j] !== undefined) {
+      if (isArrayField(key, argsSchema)) {
+        if (j !== keys.length - 1)
+          throw new Error(`Variadic arg "${key}" must be the last key in the args schema`)
+        const rest = positionals.slice(j)
+        if (rest.length > 0) rawArgs[key] = rest
+      } else if (positionals[j] !== undefined) {
         rawArgs[key] = positionals[j]!
       }
     }
@@ -229,8 +234,8 @@ function isCountOption(name: string, schema: z.ZodObject<any> | undefined): bool
   return typeof field.meta === 'function' && field.meta()?.count === true
 }
 
-/** Checks if an option's inner type is an array. */
-function isArrayOption(name: string, schema: z.ZodObject<any> | undefined): boolean {
+/** Checks if a field's inner type is an array. */
+function isArrayField(name: string, schema: z.ZodObject<any> | undefined): boolean {
   if (!schema) return false
   const field = schema.shape[name]
   if (!field) return false
@@ -244,7 +249,7 @@ function setOption(
   value: string,
   schema: z.ZodObject<any> | undefined,
 ) {
-  if (isArrayOption(name, schema)) {
+  if (isArrayField(name, schema)) {
     const existing = raw[name]
     if (Array.isArray(existing)) {
       existing.push(value)

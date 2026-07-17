@@ -12,6 +12,67 @@ describe('parse', () => {
     expect(result.args).toEqual({ greeting: 'hello', name: 'world' })
   })
 
+  test('collects remaining positionals into a final array arg', () => {
+    const result = Parser.parse(['a.ts', 'b.ts', 'c.ts'], {
+      args: z.object({ paths: z.array(z.string()) }),
+    })
+    expect(result.args).toEqual({ paths: ['a.ts', 'b.ts', 'c.ts'] })
+  })
+
+  test('assigns scalar args before a final array arg', () => {
+    const result = Parser.parse(['dest', 'a.ts', 'b.ts'], {
+      args: z.object({ target: z.string(), paths: z.array(z.string()) }),
+    })
+    expect(result.args).toEqual({ target: 'dest', paths: ['a.ts', 'b.ts'] })
+  })
+
+  test('collects variadic positionals interleaved with options', () => {
+    const result = Parser.parse(['a.ts', '--verbose', 'b.ts'], {
+      args: z.object({ paths: z.array(z.string()) }),
+      options: z.object({ verbose: z.boolean().default(false) }),
+    })
+    expect(result.args).toEqual({ paths: ['a.ts', 'b.ts'] })
+    expect(result.options).toEqual({ verbose: true })
+  })
+
+  test('validates each element of a variadic arg', () => {
+    expect(() =>
+      Parser.parse(['open', 'invalid'], {
+        args: z.object({ states: z.array(z.enum(['open', 'closed'])) }),
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ValidationError' }))
+  })
+
+  test('throws ValidationError on missing required variadic arg', () => {
+    expect(() =>
+      Parser.parse([], {
+        args: z.object({ paths: z.array(z.string()) }),
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ValidationError' }))
+  })
+
+  test('optional variadic arg may be omitted', () => {
+    const result = Parser.parse([], {
+      args: z.object({ paths: z.array(z.string()).optional() }),
+    })
+    expect(result.args).toEqual({})
+  })
+
+  test('variadic arg with default applies when omitted', () => {
+    const result = Parser.parse([], {
+      args: z.object({ paths: z.array(z.string()).default(['.']) }),
+    })
+    expect(result.args).toEqual({ paths: ['.'] })
+  })
+
+  test('throws on non-final array arg', () => {
+    expect(() =>
+      Parser.parse(['a', 'b'], {
+        args: z.object({ paths: z.array(z.string()), target: z.string() }),
+      }),
+    ).toThrow('Variadic arg "paths" must be the last key in the args schema')
+  })
+
   test('parses --flag value options', () => {
     const result = Parser.parse(['--state', 'open'], {
       options: z.object({ state: z.string() }),

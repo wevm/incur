@@ -419,6 +419,28 @@ describe('Mcp', () => {
     expect(res.result.content).toEqual([{ type: 'text', text: '{"result":"HELLO"}' }])
   })
 
+  test('tools/list and tools/call handle variadic array args', async () => {
+    const commands = new Map<string, any>()
+    commands.set('lint', {
+      description: 'Lint files',
+      args: z.object({ paths: z.array(z.string()).describe('Files to lint') }),
+      run: (c: any) => ({ count: c.args.paths.length }),
+    })
+
+    const [, listRes, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+      {
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'lint', arguments: { paths: ['a.ts', 'b.ts'] } },
+      },
+    ])
+
+    expect(listRes.result.tools[0].inputSchema.properties.paths).toMatchObject({ type: 'array' })
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"count":2}' }])
+  })
+
   test('tools/call validation error includes fieldErrors', async () => {
     const tool = Mcp.collectTools(createTestCommands(), []).find((tool) => tool.name === 'echo')!
     const result = await Mcp.callTool(tool, { message: 123 })

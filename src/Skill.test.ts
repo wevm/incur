@@ -174,6 +174,17 @@ describe('index', () => {
     expect(result).toContain('`test install [package]`')
   })
 
+  test('renders variadic args with ellipsis', () => {
+    const result = Skill.index('test', [
+      {
+        name: 'lint',
+        description: 'Lint files',
+        args: z.object({ paths: z.array(z.string()) }),
+      },
+    ])
+    expect(result).toContain('`test lint <paths...>`')
+  })
+
   test('handles commands without descriptions', () => {
     const result = Skill.index('test', [{ name: 'ping' }])
     expect(result).toContain('| `test ping` |  |')
