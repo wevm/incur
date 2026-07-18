@@ -160,9 +160,6 @@ describe('remote MCP command sources', () => {
         "result": {
           "tools": [
             {
-              "execution": {
-                "taskSupport": "forbidden",
-              },
               "inputSchema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "properties": {
@@ -179,9 +176,6 @@ describe('remote MCP command sources', () => {
             },
             {
               "description": "Search docs",
-              "execution": {
-                "taskSupport": "forbidden",
-              },
               "inputSchema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "properties": {

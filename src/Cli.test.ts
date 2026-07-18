@@ -1,4 +1,5 @@
 import { Cli, Errors, Mcp, z } from 'incur'
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -54,6 +55,20 @@ function mockMcpServeResponses(responses: unknown[]) {
       options!.output?.write(
         `${typeof response === 'string' ? response : JSON.stringify(response)}\n`,
       )
+  })
+}
+
+function countRetainedMcpResponses() {
+  return new Promise<number>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      ['--expose-gc', '--import', 'tsx', 'test/fixtures/mcp-memory.ts'],
+      { cwd: join(import.meta.dirname, '..'), timeout: 30_000 },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(stderr.trim() || stdout.trim() || error.message))
+        else resolve(Number(stdout.trim()))
+      },
+    )
   })
 }
 
@@ -5786,6 +5801,10 @@ describe('fetch', () => {
           "ping",
         ]
       `)
+    })
+
+    test('completed JSON responses are released', async () => {
+      expect(await countRetainedMcpResponses()).toBe(0)
     })
 
     test('POST /mcp with tools/list → returns registered tools', async () => {
