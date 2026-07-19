@@ -257,8 +257,10 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
-  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+  const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, def.version ?? '0.0.0', {
+    instructions: def.mcp?.instructions,
     stateless: def.mcp?.stateless,
+    title: def.mcp?.title,
     tools: def.mcp?.tools,
   })
 
@@ -594,8 +596,12 @@ export declare namespace create {
           command?: string | undefined
           /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
+          /** MCP server and registration name. Defaults to the CLI name. */
+          name?: string | undefined
           /** Disable HTTP MCP session management. Defaults to `true`. */
           stateless?: boolean | undefined
+          /** Human-readable MCP server title. */
+          title?: string | undefined
           /** Controls how command tools are exposed to MCP clients. */
           tools?: Mcp.ToolFilter | undefined
         }
@@ -723,12 +729,13 @@ async function serveImpl(
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
-    await Mcp.serve(name, options.version ?? '0.0.0', commands, {
+    await Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
       middlewares: options.middlewares,
       env: options.envSchema,
       vars: options.vars,
       version: options.version,
       ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+      ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
       ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
     })
     return
@@ -1096,18 +1103,20 @@ async function serveImpl(
     }
 
     try {
+      const mcpName = options.mcp?.name ?? name
       stdout('Registering MCP server...')
-      const result = await SyncMcp.register(name, {
+      const result = await SyncMcp.register(mcpName, {
+        ...(mcpName === name ? undefined : { cli: name }),
         command,
         global,
         agents,
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
-      lines.push(`✓ Registered ${name} as MCP server`)
+      lines.push(`✓ Registered ${mcpName} as MCP server`)
       if (result.agents.length > 0) lines.push(`  Agents: ${result.agents.join(', ')}`)
       lines.push('')
-      lines.push(`Agents can now use ${name} tools.`)
+      lines.push(`Agents can now use ${mcpName} tools.`)
       const suggestions = options.sync?.suggestions
       if (suggestions && suggestions.length > 0) {
         lines.push('')
@@ -1118,7 +1127,7 @@ async function serveImpl(
       if (fullOutput || formatExplicit)
         writeln(
           Formatter.format(
-            { name, command: result.command, agents: result.agents },
+            { name: mcpName, command: result.command, agents: result.agents },
             formatExplicit ? formatFlag : 'toon',
           ),
         )
@@ -1840,7 +1849,10 @@ function createMcpHttpHandler(
     const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
       await import('@modelcontextprotocol/server')
 
-    const server = new McpServer({ name, version })
+    const server = new McpServer(
+      { name, ...(options.title ? { title: options.title } : undefined), version },
+      options.instructions ? { instructions: options.instructions } : undefined,
+    )
     Mcp.registerTools(server, commands, {
       env: mcpOptions?.env,
       fromJsonSchema,
@@ -1920,8 +1932,12 @@ function createMcpHttpHandler(
 
 declare namespace createMcpHttpHandler {
   type Options = {
+    /** Instructions describing how to use the server and its features. */
+    instructions?: string | undefined
     /** Disable HTTP MCP session management. Defaults to `true`. */
     stateless?: boolean | undefined
+    /** Human-readable MCP server title. */
+    title?: string | undefined
     /** Filters which command tools are exposed to MCP clients. */
     tools?: Mcp.ToolFilter | undefined
   }
@@ -2480,7 +2496,9 @@ declare namespace serveImpl {
           agents?: string[] | undefined
           command?: string | undefined
           instructions?: string | undefined
+          name?: string | undefined
           stateless?: boolean | undefined
+          title?: string | undefined
           tools?: Mcp.ToolFilter | undefined
         }
       | undefined
@@ -2817,7 +2835,7 @@ async function runMcpDoctor(
   output.on('data', (chunk) => chunks.push(chunk.toString()))
 
   let serveError: unknown
-  const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
+  const done = Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
     input,
     output,
     middlewares: options.middlewares,
@@ -2825,6 +2843,7 @@ async function runMcpDoctor(
     vars: options.vars,
     version: options.version,
     ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+    ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
     tools: { ...options.mcp?.tools, discovery: 'direct' },
   }).catch((error) => {
     serveError = error
