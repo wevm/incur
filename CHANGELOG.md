@@ -1,5 +1,12 @@
 # incur
 
+## 0.4.18
+
+### Patch Changes
+
+- 1cc5c95: Prevented completed MCP JSON responses from retaining transport stream state.
+- 9f11871: Isolated stateless MCP requests, preventing cross-client response collisions and retained aborted requests.
+
 ## 0.4.17
 
 ### Patch Changes
