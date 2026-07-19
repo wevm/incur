@@ -1824,7 +1824,46 @@ function createMcpHttpHandler(
   version: string,
   options: createMcpHttpHandler.Options = {},
 ) {
-  let transport: any
+  let session: ReturnType<typeof createServer> | undefined
+
+  async function createServer(
+    commands: Map<string, CommandEntry>,
+    mcpOptions:
+      | {
+          middlewares?: MiddlewareHandler[] | undefined
+          env?: z.ZodObject<any> | undefined
+          vars?: z.ZodObject<any> | undefined
+        }
+      | undefined,
+    stateless: boolean,
+  ) {
+    const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
+      await import('@modelcontextprotocol/server')
+
+    const server = new McpServer({ name, version })
+    Mcp.registerTools(server, commands, {
+      env: mcpOptions?.env,
+      fromJsonSchema,
+      middlewares: mcpOptions?.middlewares,
+      name,
+      request: (extra) => extra?.http?.req,
+      sendNotification: (notification) => server.server.notification(notification),
+      tools: options.tools,
+      vars: mcpOptions?.vars,
+      version,
+    })
+
+    const transport = new WebStandardStreamableHTTPServerTransport(
+      stateless
+        ? { enableJsonResponse: true }
+        : {
+            sessionIdGenerator: () => crypto.randomUUID(),
+            enableJsonResponse: true,
+          },
+    )
+    await server.connect(transport)
+    return { server, transport }
+  }
 
   return async (
     req: Request,
@@ -1839,33 +1878,43 @@ function createMcpHttpHandler(
     if (stateless && req.method !== 'POST')
       return new Response(null, { status: 405, headers: { Allow: 'POST' } })
 
-    if (!transport) {
-      const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
-        await import('@modelcontextprotocol/server')
-
-      const server = new McpServer({ name, version })
-      Mcp.registerTools(server, commands, {
-        env: mcpOptions?.env,
-        fromJsonSchema,
-        middlewares: mcpOptions?.middlewares,
-        name,
-        request: (extra) => extra?.http?.req,
-        sendNotification: (notification) => server.server.notification(notification),
-        tools: options.tools,
-        vars: mcpOptions?.vars,
-        version,
+    if (!stateless) {
+      session ??= createServer(commands, mcpOptions, false).catch((error) => {
+        session = undefined
+        throw error
       })
-
-      const transportOptions = stateless
-        ? { enableJsonResponse: true }
-        : {
-            sessionIdGenerator: () => crypto.randomUUID(),
-            enableJsonResponse: true,
-          }
-      transport = new WebStandardStreamableHTTPServerTransport(transportOptions)
-      await server.connect(transport)
+      return (await session).transport.handleRequest(req)
     }
-    return transport.handleRequest(req)
+
+    const abortReason = () =>
+      req.signal.reason ?? new DOMException('This operation was aborted', 'AbortError')
+    if (req.signal.aborted) throw abortReason()
+
+    const { server, transport } = await createServer(commands, mcpOptions, true)
+    let closing: Promise<void> | undefined
+    const close = () => (closing ??= server.close())
+    // Transport closure does not settle `handleRequest`; reject the public fetch separately.
+    let rejectAbort!: (reason?: unknown) => void
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject
+    })
+    let didAbort = false
+    const abort = () => {
+      if (didAbort) return
+      didAbort = true
+      rejectAbort(abortReason())
+      void close()
+    }
+    req.signal.addEventListener('abort', abort, { once: true })
+    // Catch aborts that happened during asynchronous server creation.
+    if (req.signal.aborted) abort()
+    try {
+      if (req.signal.aborted) return await aborted
+      return await Promise.race([transport.handleRequest(req), aborted])
+    } finally {
+      req.signal.removeEventListener('abort', abort)
+      await close()
+    }
   }
 }
 
