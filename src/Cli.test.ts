@@ -2944,6 +2944,29 @@ describe('built-in commands', () => {
     }
   })
 
+  test('mcp add registers an overridden MCP name with the CLI command', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'pnpm test --mcp', agents: ['Cursor'] })
+    try {
+      const cli = Cli.create('test', { mcp: { name: 'example' } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add'])
+
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('example', {
+        agents: [],
+        cli: 'test',
+        command: undefined,
+        global: true,
+      })
+      expect(output).toContain('Registered example as MCP server')
+      expect(output).toContain('Agents can now use example tools.')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp add exits nonzero when registration fails', async () => {
     const spy = vi.spyOn(SyncMcp, 'register').mockRejectedValue('register failed')
     try {
@@ -5691,7 +5714,12 @@ describe('fetch', () => {
     function mcpCli() {
       const cli = Cli.create('test', {
         version: '1.0.0',
-        mcp: { tools: { discovery: 'direct' } },
+        mcp: {
+          instructions: 'Use the example MCP.',
+          name: 'example',
+          title: 'Example MCP',
+          tools: { discovery: 'direct' },
+        },
       })
       cli.command('greet', {
         description: 'Greet someone',
@@ -5766,13 +5794,16 @@ describe('fetch', () => {
       expect(res.headers.get('mcp-session-id')).toBeNull()
       const body = await res.json()
       expect({
+        instructions: body.result.instructions,
         serverInfo: body.result.serverInfo,
         hasTools: 'tools' in (body.result.capabilities ?? {}),
       }).toMatchInlineSnapshot(`
         {
           "hasTools": true,
+          "instructions": "Use the example MCP.",
           "serverInfo": {
-            "name": "test",
+            "name": "example",
+            "title": "Example MCP",
             "version": "1.0.0",
           },
         }

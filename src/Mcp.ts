@@ -22,7 +22,7 @@ export async function serve(
   const StdioServerTransport = await importStdioServerTransport(mcp, stdio)
 
   const server = new McpServer(
-    { name, version },
+    { name, ...(options.title ? { title: options.title } : undefined), version },
     options.instructions ? { instructions: options.instructions } : undefined,
   )
 
@@ -94,6 +94,8 @@ export declare namespace serve {
     version?: string | undefined
     /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
+    /** Human-readable MCP server title. */
+    title?: string | undefined
     /** Filters which command tools are exposed to MCP clients. */
     tools?: ToolFilter | undefined
   }

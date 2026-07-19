@@ -172,6 +172,22 @@ test('register uses runner for source entrypoints outside node_modules', async (
   expect(result.command).toContain('my-cli --mcp')
 })
 
+test('register derives the command from a different CLI name', async () => {
+  process.argv[1] = join(tmp, 'dist', 'bin.js')
+
+  const result = await register('example', { agents: ['amp'], cli: 'my-cli' })
+
+  expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
+  expect(result.command).toContain('my-cli --mcp')
+
+  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  expect(config['amp.mcpServers']['example']).toEqual({
+    command: result.command.split(' ')[0],
+    args: ['my-cli', '--mcp'],
+  })
+})
+
 test('register uses bare name for global package entrypoints under node_modules', async () => {
   process.argv[1] = join(tmp, 'global', 'node_modules', 'my-cli', 'dist', 'bin.js')
 

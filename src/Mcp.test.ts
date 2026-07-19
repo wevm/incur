@@ -117,6 +117,33 @@ describe('Mcp', () => {
     expect(res.result.capabilities.tools).toBeDefined()
   })
 
+  test('initialize includes the server title', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      title: 'Test MCP',
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const [res] = chunks.map((chunk) => JSON.parse(chunk.trim()))
+    expect(res.result.serverInfo).toEqual({
+      name: 'test-cli',
+      title: 'Test MCP',
+      version: '1.0.0',
+    })
+  })
+
   test('initialize with 2025-03-26 protocol version', async () => {
     const [res] = await mcpSession(createTestCommands(), [
       {

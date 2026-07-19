@@ -11,7 +11,7 @@ export async function register(
   options: register.Options = {},
 ): Promise<register.Result> {
   const runner = detectRunner()
-  const command = options.command ?? defaultCommand(name, runner)
+  const command = options.command ?? defaultCommand(options.cli ?? name, runner)
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
@@ -83,6 +83,8 @@ export declare namespace register {
   type Options = {
     /** Target specific agents (e.g. `'claude-code'`, `'cursor'`). */
     agents?: string[] | undefined
+    /** CLI name used to derive the default command. Defaults to the MCP server name. */
+    cli?: string | undefined
     /** Override the command agents will run. Defaults to `<runner> <name> --mcp`. */
     command?: string | undefined
     /** Install globally. Defaults to `true`. */
