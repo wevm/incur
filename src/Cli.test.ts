@@ -58,18 +58,20 @@ function mockMcpServeResponses(responses: unknown[]) {
   })
 }
 
-function countRetainedMcpResponses() {
-  return new Promise<number>((resolve, reject) => {
-    execFile(
-      process.execPath,
-      ['--expose-gc', '--import', 'tsx', 'test/fixtures/mcp-memory.ts'],
-      { cwd: join(import.meta.dirname, '..'), timeout: 30_000 },
-      (error, stdout, stderr) => {
-        if (error) reject(new Error(stderr.trim() || stdout.trim() || error.message))
-        else resolve(Number(stdout.trim()))
-      },
-    )
-  })
+function countRetainedMcpExchanges() {
+  return new Promise<{ aborted: number; requests: number; responses: number }>(
+    (resolve, reject) => {
+      execFile(
+        process.execPath,
+        ['--expose-gc', '--import', 'tsx', 'test/fixtures/mcp-memory.ts'],
+        { cwd: join(import.meta.dirname, '..'), timeout: 30_000 },
+        (error, stdout, stderr) => {
+          if (error) reject(new Error(stderr.trim() || stdout.trim() || error.message))
+          else resolve(JSON.parse(stdout.trim()))
+        },
+      )
+    },
+  )
 }
 
 function createConfigCli(flag?: string) {
@@ -5708,6 +5710,7 @@ describe('fetch', () => {
       body: unknown,
       sessionId?: string,
       extraHeaders: Record<string, string> = {},
+      signal?: AbortSignal,
     ) {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
@@ -5720,6 +5723,7 @@ describe('fetch', () => {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
+          ...(signal ? { signal } : {}),
         }),
       )
     }
@@ -5803,8 +5807,76 @@ describe('fetch', () => {
       `)
     })
 
-    test('completed JSON responses are released', async () => {
-      expect(await countRetainedMcpResponses()).toBe(0)
+    test('completed and aborted MCP exchanges are released', async () => {
+      expect(await countRetainedMcpExchanges()).toMatchInlineSnapshot(`
+        {
+          "aborted": 50,
+          "requests": 0,
+          "responses": 0,
+        }
+      `)
+    })
+
+    test('concurrent clients may reuse JSON-RPC ids', async () => {
+      let startFirst!: () => void
+      let startSecond!: () => void
+      let releaseFirst!: () => void
+      let releaseSecond!: () => void
+      const firstStarted = new Promise<void>((resolve) => (startFirst = resolve))
+      const secondStarted = new Promise<void>((resolve) => (startSecond = resolve))
+      const firstReleased = new Promise<void>((resolve) => (releaseFirst = resolve))
+      const secondReleased = new Promise<void>((resolve) => (releaseSecond = resolve))
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      }).command('identify', {
+        run: async (c) => {
+          const authorization = c.request?.headers.get('authorization')
+          if (authorization === 'Bearer first') {
+            startFirst()
+            await firstReleased
+          } else {
+            startSecond()
+            await secondReleased
+          }
+          return { authorization }
+        },
+      })
+
+      const call = async (authorization: string) => {
+        const response = await mcpRequest(
+          cli,
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'identify', arguments: {} },
+          },
+          undefined,
+          { authorization },
+        )
+        const body = await response.json()
+        return JSON.parse(body.result.content[0].text)
+      }
+
+      const first = call('Bearer first')
+      await firstStarted
+      const second = call('Bearer second')
+      await secondStarted
+      releaseFirst()
+      await new Promise(setImmediate)
+      releaseSecond()
+
+      expect(await Promise.all([first, second])).toMatchInlineSnapshot(`
+        [
+          {
+            "authorization": "Bearer first",
+          },
+          {
+            "authorization": "Bearer second",
+          },
+        ]
+      `)
     })
 
     test('POST /mcp with tools/list → returns registered tools', async () => {
@@ -5914,6 +5986,51 @@ describe('fetch', () => {
       expect(res.status).toBe(405)
       expect(res.headers.get('allow')).toBe('POST')
       expect(await res.text()).toBe('')
+    })
+
+    test('POST /mcp rejects pre-aborted requests', async () => {
+      const controller = new AbortController()
+      controller.abort()
+      await expect(
+        mcpRequest(
+          mcpCli(),
+          { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+          undefined,
+          {},
+          controller.signal,
+        ),
+      ).rejects.toThrowErrorMatchingInlineSnapshot(`[AbortError: This operation was aborted]`)
+    })
+
+    test('POST /mcp rejects requests aborted during server startup', async () => {
+      let runs = 0
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      }).command('run', {
+        run: () => {
+          runs++
+          return { ok: true }
+        },
+      })
+      const controller = new AbortController()
+      const response = mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'run', arguments: {} },
+        },
+        undefined,
+        {},
+        controller.signal,
+      )
+      controller.abort()
+      await expect(response).rejects.toThrowErrorMatchingInlineSnapshot(
+        `[AbortError: This operation was aborted]`,
+      )
+      expect(runs).toMatchInlineSnapshot(`0`)
     })
 
     test('mcp.stateless false keeps stateful session handling', async () => {
