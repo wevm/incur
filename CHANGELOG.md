@@ -1,5 +1,15 @@
 # incur
 
+## 0.4.19
+
+### Patch Changes
+
+- 6c6bc6c: Added configurable MCP server names and titles.
+
+  ```ts
+  Cli.create("tapimo", { mcp: { name: "tempo", title: "Tempo MCP" } });
+  ```
+
 ## 0.4.18
 
 ### Patch Changes
