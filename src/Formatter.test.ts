@@ -1,3 +1,4 @@
+import { decodeGeneric } from '@blackwell-systems/gcf'
 import { decode } from '@toon-format/toon'
 import { Formatter } from 'incur'
 
@@ -51,6 +52,41 @@ describe('format', () => {
   test('formats as TOON (explicit)', () => {
     const result = Formatter.format({ message: 'hello' }, 'toon')
     expect(result).toMatchInlineSnapshot(`"message: hello"`)
+  })
+
+  test('formats as GCF (explicit)', () => {
+    const result = Formatter.format({ message: 'hello' }, 'gcf')
+    expect(result).toBe('GCF profile=generic\nmessage=hello\n')
+  })
+
+  test('formats an array of records as a GCF table', () => {
+    const result = Formatter.format(
+      {
+        ok: true,
+        data: {
+          users: [
+            { id: 1, name: 'a' },
+            { id: 2, name: 'b' },
+          ],
+        },
+        meta: { command: 'users' },
+      },
+      'gcf',
+    )
+    expect(result).toBe(
+      'GCF profile=generic\nok=true\n## data\n  ## users [2]{id,name}\n  1|a\n  2|b\n## meta\n  command=users\n',
+    )
+  })
+
+  test('round-trips through GCF decode', () => {
+    const envelope = {
+      ok: true,
+      data: { items: [1, 2, 3] },
+      meta: { command: 'list', duration: '5ms' },
+    }
+
+    const result = decodeGeneric(Formatter.format(envelope, 'gcf'))
+    expect(result).toMatchObject(envelope)
   })
 
   test('formats as JSON', () => {

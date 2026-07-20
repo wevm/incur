@@ -46,6 +46,7 @@
     "SKILL.md"
   ],
   "dependencies": {
+    "@blackwell-systems/gcf": "2.4.0",
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/server": "2.0.0-alpha.4",
     "@scalar/openapi-types": "^0.8.0",

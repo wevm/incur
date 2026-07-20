@@ -1,10 +1,11 @@
+import { encodeGeneric } from '@blackwell-systems/gcf'
 import { encode } from '@toon-format/toon'
 
 import * as Json from './internal/json.js'
 import * as Yaml from './internal/yaml.js'
 
 /** Supported output formats. */
-export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl'
+export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl' | 'gcf'
 
 /** Serializes a value to the specified format. Defaults to TOON. */
 export function format(value: unknown, fmt: Format = 'toon'): string {
@@ -25,6 +26,10 @@ export function format(value: unknown, fmt: Format = 'toon'): string {
   if (fmt === 'jsonl') {
     if (Array.isArray(value)) return value.map((v) => Json.stringify(v)).join('\n')
     return Json.stringify(value)
+  }
+  if (fmt === 'gcf') {
+    if (isScalar(value)) return String(value)
+    return encodeGeneric(value)
   }
   // toon (default)
   if (isScalar(value)) return String(value)
