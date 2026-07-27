@@ -3401,15 +3401,12 @@ describe('built-in commands', () => {
     expect(output).toContain('--no-global')
   })
 
-  test('skills add lists required actions before the suggestions', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'clac-actions-'))
+  test('skills add prints the sync body before the suggestions', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-body-'))
     try {
       const cli = Cli.create('test', {
         sync: {
-          actions: [
-            'Authorize the app at https://example.com/install',
-            'Add the line to AGENTS.md',
-          ],
+          body: 'Steps to finish:\n  1. Authorize the app\n  2. Add the line to AGENTS.md',
           cwd: tmp,
           suggestions: ['do the thing'],
         },
@@ -3417,26 +3414,25 @@ describe('built-in commands', () => {
       cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
       const { output } = await serve(cli, ['skills', 'add', '--no-global'])
 
-      expect(output).toContain('Steps to finish setting up test:')
-      expect(output).toContain('1. Authorize the app at https://example.com/install')
+      // Verbatim: the CLI owns the wording, including any heading.
+      expect(output).toContain('Steps to finish:\n  1. Authorize the app')
       expect(output).toContain('2. Add the line to AGENTS.md')
-      // The suggestions do not work until the actions are done, so they come after them.
       expect(output.indexOf('Steps to finish')).toBeLessThan(output.indexOf('Try asking'))
     } finally {
       await rm(tmp, { force: true, recursive: true })
     }
   })
 
-  test('skills add carries required actions in the structured output', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'clac-actions-json-'))
+  test('skills add carries the sync body in the structured output', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-body-json-'))
     try {
       const cli = Cli.create('test', {
-        sync: { actions: ['Authorize the app'], cwd: tmp },
+        sync: { body: 'Authorize the app', cwd: tmp },
       })
       cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
       const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
 
-      expect(output).toContain('"actions"')
+      expect(output).toContain('"body"')
       expect(output).toContain('Authorize the app')
     } finally {
       await rm(tmp, { force: true, recursive: true })
