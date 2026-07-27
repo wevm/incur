@@ -1028,7 +1028,7 @@ async function serveImpl(
       const actions = options.sync?.actions
       if (actions && actions.length > 0) {
         lines.push('')
-        lines.push(`Required to finish setting up ${name}:`)
+        lines.push(`Steps to finish setting up ${name}:`)
         for (const [i, action] of actions.entries()) lines.push(`  ${i + 1}. ${action}`)
       }
       const suggestions = options.sync?.suggestions

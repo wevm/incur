@@ -3417,11 +3417,11 @@ describe('built-in commands', () => {
       cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
       const { output } = await serve(cli, ['skills', 'add', '--no-global'])
 
-      expect(output).toContain('Required to finish setting up test:')
+      expect(output).toContain('Steps to finish setting up test:')
       expect(output).toContain('1. Authorize the app at https://example.com/install')
       expect(output).toContain('2. Add the line to AGENTS.md')
       // The suggestions do not work until the actions are done, so they come after them.
-      expect(output.indexOf('Required to finish')).toBeLessThan(output.indexOf('Try asking'))
+      expect(output.indexOf('Steps to finish')).toBeLessThan(output.indexOf('Try asking'))
     } finally {
       await rm(tmp, { force: true, recursive: true })
     }
