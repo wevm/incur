@@ -1,5 +1,5 @@
 ---
-'incur': minor
+'incur': patch
 ---
 
 Added `sync.body`, printed verbatim after the synced skills, for setup `skills add` cannot perform itself.
