@@ -609,6 +609,8 @@ export declare namespace create {
     /** Options for the built-in `skills add` command. */
     sync?:
       | {
+          /** Setup steps the user must still complete, shown after sync as a numbered checklist. For anything installing skills cannot do itself, such as authorizing an app. */
+          actions?: string[] | undefined
           /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
           cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
@@ -1022,6 +1024,13 @@ async function serveImpl(
       }
       lines.push('')
       lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`)
+      // Before the suggestions: these are the steps without which the suggestions do not work.
+      const actions = options.sync?.actions
+      if (actions && actions.length > 0) {
+        lines.push('')
+        lines.push(`Required to finish setting up ${name}:`)
+        for (const [i, action] of actions.entries()) lines.push(`  ${i + 1}. ${action}`)
+      }
       const suggestions = options.sync?.suggestions
       if (suggestions && suggestions.length > 0) {
         lines.push('')
@@ -1033,6 +1042,8 @@ async function serveImpl(
       writeln(lines.join('\n'))
       if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
+        // Structured too, so an agent reading the envelope sees them as data rather than parsing prose.
+        if (actions && actions.length > 0) output.actions = actions
         if (fullOutput && result.agents.length > 0) output.agents = result.agents
         writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
       }
@@ -2516,6 +2527,7 @@ declare namespace serveImpl {
     rootFetch?: FetchHandler | undefined
     sync?:
       | {
+          actions?: string[] | undefined
           cwd?: string | undefined
           depth?: number | undefined
           include?: string[] | undefined

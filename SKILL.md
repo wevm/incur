@@ -654,6 +654,7 @@ It is also possible to configure `skills add`:
 ```ts
 const cli = Cli.create('my-cli', {
   sync: {
+    actions: ['Authorize the app at https://github.com/apps/my-cli/installations/new'],
     depth: 1,
     include: ['_root'],
     suggestions: ['install react as a dependency', 'check for outdated packages'],
@@ -663,6 +664,7 @@ const cli = Cli.create('my-cli', {
 
 | Option        | Type       | Description                                                                                          |
 | ------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
+| `actions`     | `string[]` | Setup steps the user must still complete, shown after sync as a numbered checklist                   |
 | `depth`       | `number`   | Grouping depth for skill files. `0` = single file, `1` = one per top-level command. Default: `1`     |
 | `include`     | `string[]` | Glob patterns for additional SKILL.md files to include. Use `'_root'` for the project-level SKILL.md |
 | `suggestions` | `string[]` | Example prompts shown after sync to help users get started                                           |

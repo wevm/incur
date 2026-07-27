@@ -3401,6 +3401,48 @@ describe('built-in commands', () => {
     expect(output).toContain('--no-global')
   })
 
+  test('skills add lists required actions before the suggestions', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-actions-'))
+    try {
+      const cli = Cli.create('test', {
+        sync: {
+          actions: [
+            'Authorize the app at https://example.com/install',
+            'Add the line to AGENTS.md',
+          ],
+          cwd: tmp,
+          suggestions: ['do the thing'],
+        },
+      })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+      const { output } = await serve(cli, ['skills', 'add', '--no-global'])
+
+      expect(output).toContain('Required to finish setting up test:')
+      expect(output).toContain('1. Authorize the app at https://example.com/install')
+      expect(output).toContain('2. Add the line to AGENTS.md')
+      // The suggestions do not work until the actions are done, so they come after them.
+      expect(output.indexOf('Required to finish')).toBeLessThan(output.indexOf('Try asking'))
+    } finally {
+      await rm(tmp, { force: true, recursive: true })
+    }
+  })
+
+  test('skills add carries required actions in the structured output', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-actions-json-'))
+    try {
+      const cli = Cli.create('test', {
+        sync: { actions: ['Authorize the app'], cwd: tmp },
+      })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+      const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
+
+      expect(output).toContain('"actions"')
+      expect(output).toContain('Authorize the app')
+    } finally {
+      await rm(tmp, { force: true, recursive: true })
+    }
+  })
+
   test('skills list --help shows description', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
