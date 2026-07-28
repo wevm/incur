@@ -419,6 +419,7 @@ function globalOptionsLines(
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
     { flag: '--full-output', desc: 'Show full output envelope' },
+    ...(root ? [{ flag: '--update', desc: 'Update to latest version' }] : []),
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ].sort((a, b) => a.flag.localeCompare(b.flag))
   const maxLen = Math.max(...flags.map((f) => f.flag.length))

@@ -38,6 +38,12 @@
 
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
 
+## Binary Build Conventions
+
+- **Compile through a wrapper** — Bun treats a CLI default export with `fetch` as a server, so standalone builds import the entry through a side-effect-only wrapper.
+- **Keep release sets coherent** — remove stale managed artifacts before publishing a completed build while preserving unrelated output files.
+- **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
+
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).

@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import * as Command from './internal/command.js'
+import * as Update from './internal/update.js'
 import * as SyncMcp from './SyncMcp.js'
 
 const originalIsTTY = process.stdout.isTTY
@@ -17,6 +18,10 @@ afterAll(() => {
 
 let __mockSkillsHash: string | undefined
 let __mockSkillsInstalled = true
+let __mockInstall: Error | Update.install.Result | undefined
+let __mockInstallCalls = 0
+let __mockRefreshCalls = 0
+let __mockUpdate: Update.check.Result | undefined
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
@@ -24,6 +29,22 @@ vi.mock('./SyncSkills.js', async (importOriginal) => {
     ...actual,
     hasInstalledSkills: () => __mockSkillsInstalled,
     readHash: () => __mockSkillsHash,
+  }
+})
+
+vi.mock('./internal/update.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./internal/update.js')>()
+  return {
+    ...actual,
+    check: () => __mockUpdate,
+    install: async () => {
+      __mockInstallCalls++
+      if (__mockInstall instanceof Error) throw __mockInstall
+      return __mockInstall ?? { name: 'frog' }
+    },
+    refresh: async () => {
+      __mockRefreshCalls++
+    },
   }
 })
 
@@ -2250,6 +2271,7 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version
       "
     `)
@@ -2288,6 +2310,7 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version
       "
     `)
@@ -2545,6 +2568,18 @@ describe('help', () => {
     `)
   })
 
+  test('passes --version values to command options', async () => {
+    const cli = Cli.create('tool', { version: '1.2.3' })
+    cli.command('build', {
+      options: z.object({ version: z.string() }),
+      run: (context) => context.options,
+    })
+
+    const { output } = await serve(cli, ['build', '--version', '9.8.7', '--format', 'json'])
+
+    expect(JSON.parse(output)).toEqual({ version: '9.8.7' })
+  })
+
   test('--help takes precedence over --version', async () => {
     const cli = Cli.create('tool', { version: '1.2.3' })
     cli.command('ping', { description: 'Ping', run: () => ({}) })
@@ -2574,6 +2609,7 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version
       "
     `)
@@ -3578,6 +3614,129 @@ describe('skills staleness', () => {
 
     const { output } = await serve(cli, ['--help'])
     expect(output).not.toContain('Skills are out of date')
+  })
+})
+
+describe('update notices', () => {
+  beforeEach(() => {
+    ;(process.stdout as any).isTTY = true
+    __mockInstall = undefined
+    __mockInstallCalls = 0
+    __mockRefreshCalls = 0
+    __mockUpdate = {
+      current: '1.0.0',
+      latest: '1.1.0',
+      name: 'frog',
+    }
+  })
+
+  afterEach(() => {
+    ;(process.stdout as any).isTTY = false
+    __mockUpdate = undefined
+  })
+
+  test('shows the root update CTA in human output', async () => {
+    const cli = Cli.create('frog')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+
+    expect(output).toContain('Update available for frog:')
+    expect(output).toContain('frog --update')
+    expect(output).toContain('upgrade from 1.0.0 to 1.1.0')
+  })
+
+  test('allows update checks to be disabled', async () => {
+    const cli = Cli.create('frog', { update: false })
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+
+    expect(output).not.toContain('Update available')
+  })
+
+  test('omits update notices from structured agent output', async () => {
+    ;(process.stdout as any).isTTY = false
+    const cli = Cli.create('frog')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping', '--format', 'json'])
+
+    expect(output).not.toContain('Update available')
+    expect(output).not.toContain('pnpm add')
+  })
+
+  test('updates through the configured installer', async () => {
+    __mockInstall = {
+      command: 'pnpm add --global frog@latest',
+      name: 'frog',
+    }
+    const cli = Cli.create('frog')
+
+    const { exitCode, output } = await serve(cli, ['--update'])
+
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('✓ Updated frog')
+    expect(output).toContain('pnpm add --global frog@latest')
+    expect(__mockInstallCalls).toBe(1)
+  })
+
+  test('formats update results for agents', async () => {
+    ;(process.stdout as any).isTTY = false
+    __mockInstall = { name: 'frog' }
+    const cli = Cli.create('frog')
+
+    const { output } = await serve(cli, ['--update', '--format', 'json'])
+
+    expect(JSON.parse(output)).toEqual({ name: 'frog' })
+  })
+
+  test('reports deferred binary updates as staged', async () => {
+    __mockInstall = { deferred: true, name: 'frog' }
+    const cli = Cli.create('frog')
+
+    const { output } = await serve(cli, ['--update'])
+
+    expect(output).toContain('✓ Update staged for frog')
+    expect(output).toContain('Installation will finish after this process exits.')
+    expect(output).not.toContain('✓ Updated frog')
+  })
+
+  test('reports update failures', async () => {
+    __mockInstall = new Error('binary installer failed')
+    const cli = Cli.create('frog')
+
+    const { exitCode, output } = await serve(cli, ['--update'])
+
+    expect(exitCode).toBe(1)
+    expect(output).toContain('UPDATE_FAILED')
+    expect(output).toContain('binary installer failed')
+  })
+
+  test('--help takes precedence over --update', async () => {
+    const cli = Cli.create('frog')
+    cli.command('ping', { description: 'Ping', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--help', '--update'])
+
+    expect(output).toContain('Usage: frog <command>')
+    expect(__mockInstallCalls).toBe(0)
+  })
+
+  test('runs hidden detached checks without output', async () => {
+    const cli = Cli.create('frog', {
+      update: {
+        check: () => '1.1.0',
+        install: () => {},
+      },
+      version: '1.0.0',
+    })
+
+    const { exitCode, output } = await serve(cli, [Update.checkFlag])
+
+    expect(exitCode).toBeUndefined()
+    expect(output).toBe('')
+    expect(__mockRefreshCalls).toBe(1)
   })
 })
 
@@ -6452,13 +6611,16 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ url: 'http://x' })
   })
 
-  test('globals conflict with builtins errors at create() time', () => {
-    expect(() =>
-      Cli.create('test', {
-        globals: z.object({ format: z.string() }),
-      }),
-    ).toThrow(/conflicts with a built-in flag/)
-  })
+  test.each(['format', 'incurBinaryApply'])(
+    'global %s conflicts with builtins at create() time',
+    (name) => {
+      expect(() =>
+        Cli.create('test', {
+          globals: z.object({ [name]: z.string() }),
+        }),
+      ).toThrow(/conflicts with a built-in flag/)
+    },
+  )
 
   test('command option conflicting with global errors at command() time', () => {
     const cli = Cli.create('test', {

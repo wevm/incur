@@ -5,6 +5,7 @@ import { PassThrough } from 'node:stream'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { z } from 'zod'
 
+import * as Binary from './Binary.js'
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ParseError, ValidationError } from './Errors.js'
@@ -26,6 +27,7 @@ import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
+import * as Update from './internal/update.js'
 import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
 import * as McpSource from './McpSource.js'
@@ -248,6 +250,7 @@ export function create(
 ): Cli | Root {
   const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name
   const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition
+  const version = def.version ?? Binary.version
   const rootDef = 'run' in def ? (def as CommandDefinition<any, any, any>) : undefined
   const rootFetchSource =
     'fetch' in def && def.fetch !== undefined ? (def.fetch as FetchSource) : undefined
@@ -257,7 +260,7 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
-  const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, def.version ?? '0.0.0', {
+  const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
     instructions: def.mcp?.instructions,
     stateless: def.mcp?.stateless,
     title: def.mcp?.title,
@@ -379,11 +382,12 @@ export function create(
         name,
         rootCommand: rootDef,
         vars: def.vars,
-        version: def.version,
+        version,
       })
     },
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
+      if (await Binary.handleArgv(argv)) return
       if (pending.length > 0) await Promise.all(pending)
       const globalsDesc = toGlobals.get(cli)
       return serveImpl(name, commands, argv, {
@@ -401,8 +405,9 @@ export function create(
         rootCommand: rootDef,
         rootFetch,
         sync: def.sync,
+        update: def.update,
         vars: def.vars,
-        version: def.version,
+        version,
       })
     },
 
@@ -427,6 +432,9 @@ export function create(
       'llmsFull',
       'mcp',
       'help',
+      'incurBinaryApply',
+      'incurUpdateCheck',
+      'update',
       'version',
       'schema',
       'filterOutput',
@@ -621,8 +629,48 @@ export declare namespace create {
           suggestions?: string[] | undefined
         }
       | undefined
+    /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks. */
+    update?: false | UpdateOptions | undefined
     /** The CLI version string. */
     version?: string | undefined
+  }
+
+  /** Options for update checks and installation. */
+  type UpdateOptions = {
+    /** Custom latest-version checker for non-package distributions. */
+    check?:
+      | ((context: UpdateCheckContext) => Promise<string | undefined> | string | undefined)
+      | undefined
+    /** Whether installation finishes after the updating process exits. */
+    deferred?: boolean | undefined
+    /** Custom installer for non-package distributions. */
+    install?: ((context: UpdateInstallContext) => Promise<void> | void) | undefined
+    /** Minimum time between update checks in milliseconds. Defaults to one day. */
+    interval?: number | undefined
+    /** Registry package name. Defaults to the package containing the executing binary. */
+    package?: string | undefined
+  }
+
+  /** Context passed to a custom update checker. */
+  type UpdateCheckContext = {
+    /** Current CLI version. */
+    current: string
+    /** CLI name. */
+    name: string
+    /** Registry package name when one is configured or inferred. */
+    package?: string | undefined
+  }
+
+  /** Context passed to a custom update installer. */
+  type UpdateInstallContext = {
+    /** Current CLI version when available. */
+    current?: string | undefined
+    /** Latest cached version when available. */
+    latest?: string | undefined
+    /** CLI name. */
+    name: string
+    /** Registry package name when one is configured or inferred. */
+    package?: string | undefined
   }
 }
 
@@ -695,6 +743,8 @@ async function serveImpl(
     llmsFull,
     mcp: mcpFlag,
     help,
+    update,
+    updateCheck,
     version,
     schema,
     configPath,
@@ -702,6 +752,11 @@ async function serveImpl(
     rest,
   } = builtinFlags
   human = tty && !formatExplicit
+  const updateOptions = {
+    ...(typeof options.update === 'object' ? options.update : undefined),
+    binary: Binary.target !== undefined,
+    version: options.version,
+  }
 
   let globals: Record<string, unknown> = {}
   let filtered = rest
@@ -728,6 +783,38 @@ async function serveImpl(
 
   // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
   if (formatFlag === 'yaml') await Yaml.load()
+
+  if (updateCheck) {
+    if (options.update !== false)
+      try {
+        await Update.refresh(name, updateOptions)
+      } catch {}
+    return
+  }
+
+  // --help takes precedence over --update.
+  if (update && !help) {
+    try {
+      const result = await Update.install(name, updateOptions)
+      if (human) {
+        const lines = [
+          result.deferred ? `✓ Update staged for ${result.name}` : `✓ Updated ${result.name}`,
+        ]
+        if (result.command) lines.push(`  ${result.command}`)
+        if (result.deferred) lines.push('  Installation will finish after this process exits.')
+        writeln(lines.join('\n'))
+      } else writeln(Formatter.format(result, formatFlag))
+    } catch (error) {
+      const output = {
+        code: 'UPDATE_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+      }
+      if (human) writeln(formatHumanError(output))
+      else writeln(Formatter.format(output, formatFlag))
+      exit(1)
+    }
+    return
+  }
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -793,7 +880,7 @@ async function serveImpl(
 
   // Skills staleness check (skip for built-in commands)
   let skillsCta: FormattedCtaBlock | undefined
-  if (!llms && !llmsFull && !schema && !help && !version) {
+  if (!llms && !llmsFull && !schema && !help && !update && !updateCheck && !version) {
     const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
     const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
@@ -1152,7 +1239,7 @@ async function serveImpl(
     return
   }
 
-  // --help takes precedence over --version
+  // --help takes precedence over --version.
   if (version && !help && options.version) {
     writeln(options.version)
     return
@@ -1366,6 +1453,22 @@ async function serveImpl(
     return
   }
 
+  let updateCta: FormattedCtaBlock | undefined
+  if (human && options.update !== false) {
+    const update = Update.check(name, updateOptions)
+    if (update)
+      updateCta = {
+        description: `Update available for ${update.name}:`,
+        commands: [
+          {
+            command: `${displayName} --update`,
+            description: `upgrade from ${update.current} to ${update.latest}`,
+          },
+        ],
+      }
+  }
+  const noticeCta = mergeFormattedCtas(skillsCta, updateCta)
+
   const start = performance.now()
 
   // Resolve effective format: explicit --format/--json → command default → CLI default → toon
@@ -1429,7 +1532,7 @@ async function serveImpl(
   function write(output: Output) {
     if (filterPaths && output.ok && output.data != null)
       output = { ...output, data: Filter.apply(output.data, filterPaths) }
-    if (skillsCta) {
+    if (noticeCta) {
       const existing = output.meta.cta
       output = {
         ...output,
@@ -1438,9 +1541,9 @@ async function serveImpl(
           cta: existing
             ? {
                 description: existing.description,
-                commands: [...existing.commands, ...skillsCta.commands],
+                commands: [...existing.commands, ...noticeCta.commands],
               }
-            : skillsCta,
+            : noticeCta,
         },
       }
     }
@@ -1511,8 +1614,8 @@ async function serveImpl(
     }
     if (human && !fullOutput) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-      const mergedCta = skillsCta
-        ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
+      const mergedCta = noticeCta
+        ? { ...cta, commands: [...cta.commands, ...noticeCta.commands] }
         : cta
       writeln(formatHumanCta(mergedCta))
       exit(1)
@@ -2532,13 +2635,14 @@ declare namespace serveImpl {
           suggestions?: string[] | undefined
         }
       | undefined
+    update?: false | create.UpdateOptions | undefined
     /** Zod schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
     version?: string | undefined
   }
 }
 
-/** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags from argv. */
 const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'] as const)
 
 function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
@@ -2547,6 +2651,8 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   let llmsFull = false
   let mcp = false
   let help = false
+  let update = false
+  let updateCheck = false
   let version = false
   let schema = false
   let format: Formatter.Format = 'toon'
@@ -2570,7 +2676,11 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
     else if (token === '--help' || token === '-h') help = true
-    else if (token === '--version') version = true
+    else if (token === '--update') update = true
+    else if (token === Update.checkFlag) updateCheck = true
+    // A following value belongs to a command-local `--version` option.
+    else if (token === '--version' && (argv[i + 1] === undefined || argv[i + 1]!.startsWith('-')))
+      version = true
     else if (token === '--schema') schema = true
     else if (token === '--json') {
       format = 'json'
@@ -2632,6 +2742,8 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     llmsFull,
     mcp,
     help,
+    update,
+    updateCheck,
     version,
     schema,
     rest,
@@ -3204,6 +3316,18 @@ function formatHumanCta(cta: FormattedCtaBlock): string {
     lines.push(`  ${c.command}${desc}`)
   }
   return lines.join('\n')
+}
+
+/** @internal Merges framework-generated CTA blocks while preserving the first description. */
+function mergeFormattedCtas(
+  ...blocks: (FormattedCtaBlock | undefined)[]
+): FormattedCtaBlock | undefined {
+  const defined = blocks.filter((block): block is FormattedCtaBlock => block !== undefined)
+  if (defined.length === 0) return undefined
+  return {
+    description: defined[0]!.description,
+    commands: defined.flatMap((block) => block.commands),
+  }
 }
 
 /** @internal Type guard for sentinel results. */

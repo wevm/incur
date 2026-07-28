@@ -427,6 +427,7 @@ describe('formatRoot', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version"
     `)
   })

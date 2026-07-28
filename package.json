@@ -40,6 +40,7 @@
     "url": "https://github.com/wevm/incur"
   },
   "files": [
+    "docs",
     "examples",
     "dist",
     "src",
