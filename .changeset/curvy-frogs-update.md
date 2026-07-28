@@ -1,5 +1,5 @@
 ---
-'incur': minor
+'incur': patch
 ---
 
 Added cross-platform binary distribution, and update notices
