@@ -44,7 +44,10 @@
 - **Keep release sets coherent** — remove stale managed artifacts before publishing a completed build while preserving unrelated output files.
 - **Mark generated installers** — replace or clean `install.sh` and `install.ps1` only when their Incur marker is present; reject collisions with unmanaged files.
 - **Pin generated installers** — a mutable latest-release URL may select an installer, but the generated script must download binary assets from its embedded exact release tag.
-- **Reuse multi-job releases as workflows** — distribute the cross-platform release pipeline with `workflow_call`; composite actions cannot own its runner matrix, jobs, or permissions.
+- **Release from one Linux action** — run `release@v1` as a step on `ubuntu-latest` with `contents: write`; it cross-compiles unsigned assets for every target.
+- **Infer release action inputs** — default to `./src/bin.ts`, derive the CLI name and stable version, and treat `entry`, `name`, and `release_tag` as overrides.
+- **Trust action release inputs** — install, build, and upload share one job's write permission; `persist-credentials: false` does not create a permission boundary.
+- **Limit smoke tests to the runner** — test only matching-architecture Linux glibc and musl assets; native macOS and Windows tests and signing stay out of scope.
 - **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
 
 ## Git Conventions

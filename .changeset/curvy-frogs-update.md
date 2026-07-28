@@ -2,7 +2,7 @@
 'incur': minor
 ---
 
-Added cached update notices, root `--update`, cross-platform binaries, verified GitHub updates, generated initial installers, and a reusable release workflow.
+Added cached update notices, root `--update`, cross-platform binaries, verified GitHub updates, generated initial installers, and an unsigned Linux-runner release action.
 
 ```ts
 import { Binary, Cli } from 'incur'

@@ -1,0 +1,140 @@
+name: 'Incur binary release'
+description: 'Build and upload unsigned standalone binaries to an existing draft release'
+
+inputs:
+  bun_version:
+    description: 'Bun compiler version'
+    required: false
+    default: '1.3.10'
+  entry:
+    description: 'TypeScript entrypoint in the caller repository'
+    required: false
+    default: './src/bin.ts'
+  name:
+    description: 'Binary and release asset name override'
+    required: false
+    default: ''
+  package_manager:
+    description: 'Dependency package manager (auto, npm, pnpm, or bun)'
+    required: false
+    default: 'auto'
+  pnpm_version:
+    description: 'pnpm fallback version when packageManager does not declare one'
+    required: false
+    default: '10.30.2'
+  release_tag:
+    description: 'Existing stable release tag override matching v<package version>'
+    required: false
+    default: ''
+  smoke_command:
+    description: 'Optional single command passed to each smoke-tested binary'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check out release metadata
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        clean: true
+        persist-credentials: false
+        ref: ${{ inputs.release_tag || github.ref }}
+
+    - name: Set up Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: '24'
+
+    - name: Validate existing release
+      id: release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/validate-release.sh"
+
+    - name: Check out validated release commit
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        clean: true
+        persist-credentials: false
+        ref: ${{ steps.release.outputs.commit }}
+
+    - name: Validate checked-out source
+      env:
+        EXPECTED_COMMIT: ${{ steps.release.outputs.commit }}
+        EXPECTED_RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/validate-source.sh"
+
+    - name: Set up Bun compiler
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version: ${{ inputs.bun_version }}
+
+    - name: Resolve package manager
+      id: package-manager
+      env:
+        REQUESTED_PACKAGE_MANAGER: ${{ inputs.package_manager }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/resolve-package-manager.sh"
+
+    - name: Set up declared pnpm
+      if: >-
+        ${{ steps.package-manager.outputs.name == 'pnpm' &&
+        steps.package-manager.outputs.pnpm_declared == 'true' }}
+      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+    - name: Set up fallback pnpm
+      if: >-
+        ${{ steps.package-manager.outputs.name == 'pnpm' &&
+        steps.package-manager.outputs.pnpm_declared != 'true' }}
+      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      with:
+        version: ${{ inputs.pnpm_version }}
+
+    - name: Install dependencies
+      env:
+        PACKAGE_MANAGER: ${{ steps.package-manager.outputs.name }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/install-dependencies.sh"
+
+    - name: Build all targets
+      id: build
+      env:
+        BINARY_ENTRY: ${{ inputs.entry }}
+        BINARY_NAME: ${{ inputs.name }}
+        BINARY_OUTPUT: 'dist/binaries'
+        PACKAGE_MANAGER: ${{ steps.package-manager.outputs.name }}
+        VERSION: ${{ steps.release.outputs.version }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/build.sh"
+
+    - name: Verify release assets
+      env:
+        BINARY_NAME: ${{ steps.build.outputs.name }}
+        BINARY_OUTPUT: 'dist/binaries'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/verify-assets.sh"
+
+    - name: Smoke-test Linux binaries
+      env:
+        BINARY_NAME: ${{ steps.build.outputs.name }}
+        BINARY_OUTPUT: 'dist/binaries'
+        EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        SMOKE_COMMAND: ${{ inputs.smoke_command }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/smoke-linux.sh"
+
+    - name: Revalidate and upload release assets
+      env:
+        BINARY_NAME: ${{ steps.build.outputs.name }}
+        BINARY_OUTPUT: 'dist/binaries'
+        EXPECTED_COMMIT: ${{ steps.release.outputs.commit }}
+        EXPECTED_RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/upload.sh"

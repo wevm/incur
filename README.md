@@ -861,9 +861,31 @@ Build standalone macOS, Linux, and Windows executables with Bun:
 pnpm exec incur build ./src/bin.ts --installer
 ```
 
-The default build creates release-ready binaries for every supported platform. Add `--installer` to include shell and PowerShell installation scripts.
+The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell and PowerShell installation scripts.
 
-After the reusable release workflow uploads and publishes those assets, users can install without a package manager:
+Copy this workflow to `.github/workflows/binary-release.yml` to cross-compile and upload the unsigned assets to an existing draft release:
+
+```yaml
+name: Binary Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: binary-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: wevm/incur/release@v1
+```
+
+The action defaults to `./src/bin.ts`, reads the name and version from `package.json`, and targets the matching `v<version>` draft release. Inputs remain available as overrides. Run it only with trusted source and locked dependencies because build and upload share the job's write permission.
+
+After publishing the draft, users can install without a package manager:
 
 ```sh
 curl -fsSL https://github.com/example/my-cli/releases/latest/download/install.sh | sh
@@ -879,7 +901,7 @@ const cli = Cli.create('my-cli', {
 })
 ```
 
-The provider activates only inside an Incur-built executable. Source and package installations continue to use their inferred npm, pnpm, or Bun updater. See the [standalone binary guide](./docs/binaries.md) for installer behavior, the target matrix, signing hooks, and the distributed release workflow.
+The provider activates only inside an Incur-built executable. Source and package installations continue to use their inferred npm, pnpm, or Bun updater. See the [standalone binary guide](./docs/binaries.md) for installer behavior, the target matrix, and the release action.
 
 ### Update notices
 

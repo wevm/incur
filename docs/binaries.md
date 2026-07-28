@@ -228,128 +228,74 @@ same-directory backup. Detached handoff failures preserve recovery details in
 backup. Follow that marker, resolve the filesystem error, and run `--update`
 again. Never work around an update failure by disabling digest verification.
 
-## Release pipeline
+## Release action
 
-[The example release workflow](../examples/binary-release.yml) is a small caller
-for Incur's reusable workflow. A caller file is still required because a remote
-workflow cannot subscribe directly to another repository's release events, but
-the cross-platform jobs and signing logic stay maintained in Incur.
+Copy this workflow into the CLI project's
+`.github/workflows/binary-release.yml`:
 
-Copy the caller into the CLI project's `.github/workflows/` directory, then
-customize the entrypoint, binary name, and representative smoke command. The
-example uses `@main` so it works after this workflow is merged; pin the reusable
-workflow to a full commit SHA or a released Incur tag before production use.
-GitHub documents the
-[`workflow_call` syntax and ref behavior](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+```yaml
+name: Binary Release
 
-The reusable workflow:
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: binary-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: wevm/incur/release@v1
+```
+
+The action defaults to `./src/bin.ts`, reads the name and stable version from the
+root `package.json`, and selects the matching `v<version>` draft release. It
+resolves that tag to a commit before installing dependencies or running caller
+code, then builds from the validated commit.
+
+The job grants `contents: write` so the action can upload assets. Composite
+actions cannot isolate job permissions, so treat the tagged source and locked
+dependencies as trusted. Checkout does not persist the GitHub credentials in
+the worktree, but install, build, and upload still share one job.
+
+The action:
 
 1. Requires a public repository, an existing `v<package version>` tag, and a
    draft release for that exact tag.
-2. Detects npm, pnpm, or Bun from `packageManager` or a single lockfile, installs
-   dependencies, and builds the canonical target matrix with one pinned Bun
-   version.
-3. Transfers compressed binaries between platform jobs and restores Unix
-   executable mode after decompression.
-4. Verifies checksums and smoke-tests all eight targets on native-architecture
-   Linux, macOS, and Windows runners, using Alpine containers for musl.
-5. Exposes optional macOS and Windows signing hooks backed by caller-managed
-   secrets.
-6. Repeats native ARM64 and x64 smoke tests on the final macOS and Windows
-   assets after the optional signing hooks.
-7. Optionally attests the final release assets.
-8. Uploads compressed binaries, `SHA256SUMS`, `install.sh`, and `install.ps1`
-   without `--clobber` to the existing, version-matched release.
+2. Detects npm, pnpm, or Bun, installs dependencies, and cross-compiles all eight
+   unsigned targets with one pinned Bun version on the Linux runner.
+3. Verifies the release assets and their checksums.
+4. Smoke-tests the matching-architecture Linux glibc asset natively and the
+   matching musl asset in Alpine.
+5. Uploads compressed binaries, `SHA256SUMS`, `install.sh`, and `install.ps1`
+   without replacing existing assets.
 
-The workflow requires the release to remain a draft until every asset is
-uploaded. It deliberately does not create a release, publish a draft, move or
-create a tag, or replace existing assets. A common release flow is to create the
-version tag and matching draft through an existing release process, run the
-binary workflow, review its assets, then publish the draft separately.
+The action cannot natively execute the opposite-architecture Linux, macOS, or
+Windows binaries from its runner. Native macOS and Windows tests, plus platform
+signing, are outside its scope.
 
-The hosted Windows ARM64 runner is a public preview. Replace preview labels with
-equivalent self-hosted runners if the release requires a runner covered by a
-different support policy. Cross-compilation alone is not a substitute for
-native execution before a high-impact release.
+The release must remain a draft until every asset is uploaded. The action does
+not create or publish a release, create or move a tag, or replace existing
+assets. Create the version tag and matching draft first, run the action, review
+its assets, then publish the draft separately.
 
-GitHub Actions does not retain the executable bit when transferring a raw file
-as a workflow artifact. The workflow transfers compressed assets, decompresses
-them on the native runner, and applies `chmod +x` before execution.
+Use `entry`, `name`, or `release_tag` to override the inferred values for
+nonstandard layouts, renamed executables, or backfills. Set `package_manager`
+when inference would be ambiguous. `pnpm_version` provides the fallback for
+lockfile-only pnpm projects, and `bun_version` selects the compiler.
 
-Set the caller's `package_manager` input when inference would be ambiguous.
-For pnpm, `packageManager` remains authoritative; `pnpm_version` is the fallback
-for lockfile-only projects. The Bun compiler version is configurable with
-`bun_version`.
+The action cannot set workflow-level concurrency. If release dispatches may
+overlap, keep a caller concurrency group such as the one above.
 
-Signing secrets must be repository or organization secrets in the caller.
-GitHub environment secrets cannot be forwarded through `workflow_call`. Keep
-the explicit secret mapping in the caller when signing is enabled.
+### Unsigned builds
 
-### Unsigned development builds
-
-`incur build` produces unsigned executables. They are suitable for local
-development and native smoke testing. Publicly distributed unsigned macOS and
-Windows builds can trigger Gatekeeper, SmartScreen, or enterprise policy
-warnings, so production releases should use the project owner's signing
-identity.
-
-Signing modifies executable bytes. Always sign the raw executable first, then
-recompress it and regenerate `SHA256SUMS`. The GitHub Release digest will then
-cover the final signed asset selected by `Binary.github`.
-
-### macOS signing and notarization
-
-The macOS hook in the reusable workflow imports a caller-provided Developer ID
-Application certificate, signs both binaries with the hardened runtime and
-Bun's runtime entitlements, verifies each signature, and submits a ZIP container
-to Apple's notary service with `notarytool`.
-
-Review the entitlements against the pinned Bun version before every release.
-The workflow follows [Bun's compiled-executable signing guidance](https://bun.sh/docs/guides/runtime/codesign-macos-executable).
-Apple requires `--options runtime` for a Developer ID main executable and
-documents the notarization flow in
-[Customizing the notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
-
-Apple can issue a ticket for a standalone executable but cannot staple that
-ticket to the executable. Gatekeeper retrieves it online. If offline stapling
-is required, distribute a supported signed container instead and adapt the
-asset contract deliberately.
-
-The workflow expects these GitHub Actions secrets when macOS signing is enabled:
-
-- `APPLE_CERTIFICATE_P12_BASE64`
-- `APPLE_CERTIFICATE_PASSWORD`
-- `APPLE_SIGNING_IDENTITY`
-- `APPLE_API_KEY_P8_BASE64`
-- `APPLE_API_KEY_ID`
-- `APPLE_API_ISSUER`
-
-### Windows signing
-
-The Windows hook imports a caller-provided PFX only for the signing step. It
-uses Authenticode with SHA-256, requests an RFC 3161 SHA-256 timestamp, verifies
-the resulting signature, then recompresses the executable.
-
-The workflow expects these secrets when Windows signing is enabled:
-
-- `WINDOWS_CERTIFICATE_PFX_BASE64`
-- `WINDOWS_CERTIFICATE_PASSWORD`
-- `WINDOWS_TIMESTAMP_URL`
-
-Review the commands against Microsoft's
-[SignTool documentation](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool).
-Signing keys, certificate procurement, hardware-backed signing services, and
-timestamp-service availability remain the caller's responsibility.
-
-### Attestations
-
-The optional attestation step uses `actions/attest` on the final release assets
-after signing and checksum regeneration. It requires `id-token: write`,
-`attestations: write`, and `artifact-metadata: write`. GitHub Free, Pro, and
-Team plans support artifact attestations for public repositories;
-private-repository support has different plan requirements.
-
-See [GitHub's artifact attestation guide](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
+`incur build` and the release action produce unsigned executables. Publicly
+distributed unsigned macOS and Windows builds can trigger Gatekeeper,
+SmartScreen, or enterprise policy warnings. Projects requiring signed binaries
+need a separate platform-specific release process.
 
 ## Scope
 
