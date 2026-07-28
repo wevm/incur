@@ -1,5 +1,29 @@
 # incur
 
+## 0.4.21
+
+### Patch Changes
+
+- 452578e: Added cross-platform binary distribution, and update notices
+
+  ```ts
+  import { Binary, Cli } from "incur";
+
+  const cli = Cli.create("my-cli", {
+    update: Binary.github({ repository: "example/my-cli" }),
+  });
+  ```
+
+- 630815a: Added `sync.body`, printed verbatim after the synced skills, for setup `skills add` cannot perform itself.
+
+  ```ts
+  const cli = Cli.create("my-cli", {
+    sync: {
+      body: "Authorize the app at https://github.com/apps/my-cli/installations/new",
+    },
+  });
+  ```
+
 ## 0.4.20
 
 ### Patch Changes
