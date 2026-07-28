@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.22
+
+### Patch Changes
+
+- 5b5103d: Made the binary release action create missing drafts and upload to existing published releases.
+
 ## 0.4.21
 
 ### Patch Changes
