@@ -1,5 +1,5 @@
 name: 'Incur binary release'
-description: 'Build and upload unsigned standalone binaries to an existing draft release'
+description: 'Build and upload unsigned standalone binaries to a GitHub release'
 
 inputs:
   bun_version:
@@ -31,28 +31,34 @@ inputs:
     required: false
     default: ''
 
+outputs:
+  release_tag:
+    description: 'Stable release tag receiving the binary assets'
+    value: ${{ steps.release.outputs.release_tag }}
+
 runs:
   using: 'composite'
   steps:
-    - name: Check out release metadata
+    - name: Check out release source
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         clean: true
         persist-credentials: false
-        ref: ${{ inputs.release_tag || github.ref }}
+        ref: ${{ inputs.release_tag || github.sha }}
 
     - name: Set up Node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: '24'
 
-    - name: Validate existing release
+    - name: Prepare release
       id: release
       env:
         GH_TOKEN: ${{ github.token }}
         REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+        SOURCE_REF: ${{ github.ref }}
       shell: bash
-      run: bash "$GITHUB_ACTION_PATH/scripts/validate-release.sh"
+      run: bash "$GITHUB_ACTION_PATH/scripts/prepare-release.sh"
 
     - name: Check out validated release commit
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

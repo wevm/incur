@@ -863,7 +863,7 @@ pnpm exec incur build ./src/bin.ts --installer
 
 The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell and PowerShell installation scripts.
 
-Copy this workflow to `.github/workflows/binary-release.yml` to cross-compile and upload the unsigned assets to an existing draft release:
+Copy this workflow to `.github/workflows/binary-release.yml` to prepare a release and upload its unsigned binaries:
 
 ```yaml
 name: Binary Release
@@ -880,10 +880,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: wevm/incur/release@v1
+      - id: release
+        uses: wevm/incur/release@v1
 ```
 
-The action defaults to `./src/bin.ts`, reads the name and version from `package.json`, and targets the matching `v<version>` draft release. Inputs remain available as overrides. Run it only with trusted source and locked dependencies because build and upload share the job's write permission.
+The action defaults to `./src/bin.ts`, reads the name and version from `package.json`, and creates a missing `v<version>` draft or reuses its existing release. Inputs remain available as overrides. Run it only with trusted source and locked dependencies because release preparation, build, and upload share the job's write permission.
 
 After publishing the draft, users can install without a package manager:
 

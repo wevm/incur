@@ -17,7 +17,7 @@ fail() {
 release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
 
 if [[ "$(jq -r '.id' <<< "$release")" != "$EXPECTED_RELEASE_ID" ]]; then
-  fail 'The draft release was replaced after validation.'
+  fail 'The release was replaced after validation.'
 fi
 if [[ "$(jq -r '.tag_name' <<< "$release")" != "$RELEASE_TAG" ]]; then
   fail 'The release tag changed before upload.'
@@ -25,8 +25,12 @@ fi
 if [[ "$(jq -r '.prerelease' <<< "$release")" != 'false' ]]; then
   fail 'The release became a prerelease before upload.'
 fi
-if [[ "$(jq -r '.draft' <<< "$release")" != 'true' ]]; then
-  fail 'The release was published before every binary asset was ready.'
+draft="$(jq -r '.draft' <<< "$release")"
+if [[ "$draft" != 'true' && "$draft" != 'false' ]]; then
+  fail 'The release has an invalid draft state.'
+fi
+if [[ "$(jq -r '.immutable // false' <<< "$release")" == 'true' ]]; then
+  fail 'The release became immutable before upload.'
 fi
 
 gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" > /dev/null

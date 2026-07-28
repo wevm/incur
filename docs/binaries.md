@@ -92,7 +92,7 @@ installer contains the exact `v<version>` release tag. A latest-release URL
 selects only the installer. The installer downloads its executable and
 `SHA256SUMS` from the tagged release.
 
-After the action uploads the assets, publish the draft release. Users can then
+If the action created a draft, publish it after the asset upload. Users can then
 install the latest stable release:
 
 ```sh
@@ -265,7 +265,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: wevm/incur/release@v1
+      - id: release
+        uses: wevm/incur/release@v1
 ```
 
 The action uses these defaults:
@@ -275,52 +276,73 @@ The action uses these defaults:
 - The version is the stable version in the root `package.json`.
 - The release tag is `v<version>`.
 
-Before the action runs project code, it resolves the tag to a commit. It checks
-out that commit. It then checks the package version, installs dependencies, and
-builds the executables.
+Before the action runs project code, it reads the package version from the
+triggering commit. It creates a missing inferred tag and draft release at that
+commit. If the tag exists, the action reuses its draft or published release. It
+then checks out the tagged commit, checks the package version, installs
+dependencies, and builds the executables.
 
 The job gives `contents: write` to all steps. Composite action steps share the
-job permissions. Use only trusted tags and lockfiles.
+job permissions. Use only trusted source and lockfiles.
 
 `persist-credentials: false` prevents checkout from storing credentials in the
 worktree. This setting does not restrict permissions for later steps.
 
+Run the action from a trusted push or manual workflow. The action rejects pull
+request merge refs.
+
 The action:
 
-1. Requires a public repository, an existing `v<package version>` tag, and a matching non-prerelease draft release.
-2. Detects npm, pnpm, or Bun.
-3. Installs the project dependencies.
-4. Uses the pinned Bun version to compile all eight unsigned targets on Linux.
-5. Verifies all eight `.gz` release assets against `SHA256SUMS`.
-6. Checks the syntax of both installer scripts.
-7. Tests the matching Linux glibc executable on the runner.
-8. Tests the matching Linux musl executable in Alpine.
-9. Uploads the `.gz` release assets, `SHA256SUMS`, `install.sh`, and `install.ps1`.
-10. Stops if an upload would replace an existing release asset.
+1. Requires a public repository and a stable package version.
+2. Creates a missing inferred version tag and draft release, or reuses its mutable release.
+3. Detects npm, pnpm, or Bun.
+4. Installs the project dependencies.
+5. Uses the pinned Bun version to compile all eight unsigned targets on Linux.
+6. Verifies all eight `.gz` release assets against `SHA256SUMS`.
+7. Checks the syntax of both installer scripts.
+8. Tests the matching Linux glibc executable on the runner.
+9. Tests the matching Linux musl executable in Alpine.
+10. Uploads the `.gz` release assets, `SHA256SUMS`, `install.sh`, and `install.ps1`.
+11. Stops if an upload would replace an existing release asset.
 
 The action tests only Linux executables for the runner architecture. It does not
 test other architectures, macOS, or Windows. It does not sign executables.
 
-Keep the release as a draft until the action uploads all release assets. Use this
-release procedure:
+If Incur creates the release, it leaves the release as a draft. Use this release
+procedure:
 
-1. Create the version tag and its matching draft release.
-2. Run the action.
-3. Review the release assets.
-4. Publish the draft release.
+1. Run the action from the release commit.
+2. Review the release assets.
+3. Publish the draft release.
 
-The action does not create or publish a release. It does not create or move a
-tag. It does not replace existing assets.
+The action does not publish a release. It does not move an existing tag or
+replace existing assets.
+
+With `changesets/action@v1`, keep the default `createGithubReleases: true`. Run
+Incur after Changesets reports a publication. Incur reuses the published release
+and uploads its binary assets.
+
+This flow supports one root package, where Changesets uses `v<version>`.
+Changesets workspaces use `<package>@<version>`, which does not match Incur's
+release tag format.
+
+A published release is visible before its binaries are ready. A failed build can
+leave the release incomplete. Published immutable releases cannot accept new
+assets; use the draft-first procedure when release immutability is enabled.
 
 Use these inputs only when you must override a default:
 
 - Use `entry` for a different entry point.
 - Use `name` for a different executable and asset name.
-- Use `release_tag` to select a different version tag.
+- Use `release_tag` to select an existing version tag.
 - Use `package_manager` if Incur cannot detect the package manager.
 - Use `pnpm_version` if `package.json` does not specify the pnpm version.
 - Use `bun_version` to select the compiler version.
 - Use `smoke_command` to pass one safe argument to each tested Linux executable.
+
+For the draft-first procedure, the action exposes `release_tag` for later steps.
+For example, publish the completed draft with
+`gh release edit "${{ steps.release.outputs.release_tag }}" --draft=false`.
 
 A composite action cannot set workflow concurrency. If release jobs can overlap,
 set concurrency in the caller workflow. This example runs one binary release at
@@ -340,7 +362,7 @@ Standalone executable support does not include:
 - Private-repository authentication for `Binary.github` or the release action.
 - Prerelease or named update channels.
 - Packages for Homebrew, Scoop, Winget, or other package managers.
-- GitHub Release creation, publication, retagging, or versioning.
+- GitHub Release publication, retagging, or package version management.
 - Signing identities, notarization credentials, secret storage, or a signing
   service.
 - Automatic upload from `incur build`.
