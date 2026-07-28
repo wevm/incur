@@ -861,7 +861,7 @@ Build standalone macOS, Linux, and Windows executables with Bun:
 pnpm exec incur build ./src/bin.ts --installer
 ```
 
-The default build produces raw executables, compressed release assets, and `SHA256SUMS` for eight supported platform, architecture, and libc targets. `--installer` also generates release-pinned `install.sh` and `install.ps1` scripts, using the GitHub repository in `package.json` or an explicit `--repository owner/name`.
+The default build creates release-ready binaries for every supported platform. Add `--installer` to include shell and PowerShell installation scripts.
 
 After the reusable release workflow uploads and publishes those assets, users can install without a package manager:
 
