@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.23
+
+### Patch Changes
+
+- 32c2fdf: Fixed Alpine smoke tests for Bun musl binaries.
+
 ## 0.4.22
 
 ### Patch Changes
