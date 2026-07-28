@@ -42,6 +42,9 @@
 
 - **Compile through a wrapper** — Bun treats a CLI default export with `fetch` as a server, so standalone builds import the entry through a side-effect-only wrapper.
 - **Keep release sets coherent** — remove stale managed artifacts before publishing a completed build while preserving unrelated output files.
+- **Mark generated installers** — replace or clean `install.sh` and `install.ps1` only when their Incur marker is present; reject collisions with unmanaged files.
+- **Pin generated installers** — a mutable latest-release URL may select an installer, but the generated script must download binary assets from its embedded exact release tag.
+- **Reuse multi-job releases as workflows** — distribute the cross-platform release pipeline with `workflow_call`; composite actions cannot own its runner matrix, jobs, or permissions.
 - **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
 
 ## Git Conventions

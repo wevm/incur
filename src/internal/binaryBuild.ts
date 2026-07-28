@@ -6,6 +6,8 @@ import * as path from 'node:path'
 import * as stream from 'node:stream/promises'
 import * as zlib from 'node:zlib'
 
+import * as BinaryInstaller from './binaryInstaller.js'
+
 /** Canonical standalone-binary targets supported by Incur. */
 export const targets = [
   'darwin-arm64',
@@ -43,6 +45,23 @@ export async function build(options: build.Options): Promise<build.Result> {
     ? path.resolve(cwd, options.output)
     : path.join(metadata?.directory ?? path.dirname(resolved.entry), 'dist', 'binaries')
   const selected = normalizeTargets(options.targets)
+  if (options.installer && selected.length !== targets.length)
+    throw new Error('Installers require the full target matrix. Omit --target with --installer.')
+  const repository = options.installer
+    ? normalizeRepository(options.repository ?? metadata?.value.repository)
+    : undefined
+  if (options.installer && !repository)
+    throw new Error(
+      'Could not resolve a public GitHub repository. Add package.json `repository` or pass --repository owner/name.',
+    )
+  if (repository)
+    BinaryInstaller.generate({
+      name,
+      repository,
+      tag: `v${version}`,
+      version,
+    })
+  if (repository) await assertInstallerOutput(output)
   const execute = options.execute ?? executeCommand
   const bun = options.bun ?? 'bun'
 
@@ -112,6 +131,15 @@ export async function build(options: build.Options): Promise<build.Result> {
         .map((artifact) => `${artifact.sha256}  ${path.basename(artifact.asset)}`)
         .join('\n') + '\n'
     await fsPromises.writeFile(path.join(staging, 'SHA256SUMS'), checksumContents)
+    const generated = repository
+      ? await BinaryInstaller.write({
+          name,
+          output: staging,
+          repository,
+          tag: `v${version}`,
+          version,
+        })
+      : undefined
     await fsPromises.mkdir(output, { recursive: true })
     await cleanOutput(output, name)
 
@@ -124,11 +152,23 @@ export async function build(options: build.Options): Promise<build.Result> {
       if (!definitions[artifact.target].windows) await fsPromises.chmod(artifact.executable, 0o755)
     }
     await fsPromises.copyFile(path.join(staging, 'SHA256SUMS'), checksums)
+    const installers = generated
+      ? {
+          powershell: path.join(output, path.basename(generated.powershellPath)),
+          shell: path.join(output, path.basename(generated.shellPath)),
+        }
+      : undefined
+    if (generated && installers) {
+      await fsPromises.copyFile(generated.powershellPath, installers.powershell)
+      await fsPromises.copyFile(generated.shellPath, installers.shell)
+      await fsPromises.chmod(installers.shell, 0o755)
+    }
 
     return {
       artifacts,
       checksums,
       entry: resolved.entry,
+      ...(installers ? { installers } : {}),
       name,
       output,
       version,
@@ -172,10 +212,14 @@ export declare namespace build {
     entry: string
     /** Command executor override used by tests and build integrations. */
     execute?: Execute | undefined
+    /** Generate release-pinned shell and PowerShell installers. */
+    installer?: boolean | undefined
     /** CLI name override. */
     name?: string | undefined
     /** Output directory, relative to `cwd` by default. */
     output?: string | undefined
+    /** Public GitHub repository used by generated installers. */
+    repository?: string | undefined
     /** Canonical targets to build. Defaults to the full supported matrix. */
     targets?: string[] | undefined
     /** CLI version override. */
@@ -190,6 +234,15 @@ export declare namespace build {
     checksums: string
     /** Absolute resolved entrypoint path. */
     entry: string
+    /** Generated initial-install scripts. */
+    installers?:
+      | {
+          /** Absolute path to `install.ps1`. */
+          powershell: string
+          /** Absolute path to `install.sh`. */
+          shell: string
+        }
+      | undefined
     /** Resolved CLI name. */
     name: string
     /** Absolute output directory. */
@@ -202,6 +255,7 @@ export declare namespace build {
 type Package = {
   bin?: Record<string, string> | string | undefined
   name?: string | undefined
+  repository?: { url?: string | undefined } | string | undefined
   version?: string | undefined
 }
 
@@ -306,6 +360,28 @@ function normalizeVersion(value: string | undefined): string {
   return version
 }
 
+function normalizeRepository(
+  value: { url?: string | undefined } | string | undefined,
+): string | undefined {
+  const input = (typeof value === 'string' ? value : value?.url)?.trim()
+  if (!input) return undefined
+  const repository = input
+    .replace(/^github:/, '')
+    .replace(/^git\+https?:\/\/github\.com\//, '')
+    .replace(/^https?:\/\/github\.com\//, '')
+    .replace(/^git:\/\/github\.com\//, '')
+    .replace(/^git\+ssh:\/\/git@github\.com[/:]/, '')
+    .replace(/^ssh:\/\/git@github\.com\//, '')
+    .replace(/^git@github\.com:/, '')
+    .replace(/\/$/, '')
+    .replace(/\.git$/, '')
+  const [owner, name, extra] = repository.split('/')
+  if (!owner || !name || extra) return undefined
+  if (owner === '.' || owner === '..' || name === '.' || name === '..') return undefined
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(name)) return undefined
+  return repository
+}
+
 function normalizeTargets(values: string[] | undefined): Target[] {
   if (!values?.length) return [...targets]
   const selected = [
@@ -322,6 +398,8 @@ function normalizeTargets(values: string[] | undefined): Target[] {
 /** Removes managed artifacts without disturbing unrelated output files. */
 async function cleanOutput(directory: string, name: string): Promise<void> {
   const files = new Set(['SHA256SUMS'])
+  for (const file of ['install.ps1', 'install.sh'])
+    if (await installerState(path.join(directory, file))) files.add(file)
   for (const target of targets) {
     const extension = definitions[target].windows ? '.exe' : ''
     const executable = `${name}-${target}${extension}`
@@ -342,6 +420,30 @@ async function cleanOutput(directory: string, name: string): Promise<void> {
   await Promise.all(
     [...files].map((file) => fsPromises.rm(path.join(directory, file), { force: true })),
   )
+}
+
+async function assertInstallerOutput(directory: string): Promise<void> {
+  for (const file of ['install.ps1', 'install.sh']) {
+    const destination = path.join(directory, file)
+    if ((await installerState(destination)) === false)
+      throw new Error(`Refusing to replace unmanaged installer file: ${destination}`)
+  }
+}
+
+async function installerState(file: string): Promise<boolean | undefined> {
+  const stat = await fsPromises.lstat(file).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (stat === undefined) return undefined
+  if (!stat.isFile() && !stat.isSymbolicLink()) return false
+  const contents = await fsPromises.readFile(file, 'utf8').catch((error: unknown) => {
+    if (isNodeError(error) && (error.code === 'EISDIR' || error.code === 'ENOENT')) return undefined
+    throw error
+  })
+  if (contents === undefined) return false
+  const header = `# ${BinaryInstaller.marker}\n`
+  return contents.startsWith(header) || contents.startsWith(`#!/bin/sh\n${header}`)
 }
 
 function isBinaryAsset(file: string): boolean {

@@ -41,7 +41,7 @@
 - [**Well-formed I/O**](#well-formed-io): Schemas schemas for arguments, options, environment variables, and output
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
 - [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
-- [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified GitHub Release updates
+- [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `.command()`, `.serve()` – that's it
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 
@@ -858,10 +858,16 @@ $ my-cli whoami
 Build standalone macOS, Linux, and Windows executables with Bun:
 
 ```sh
-pnpm exec incur build ./src/bin.ts
+pnpm exec incur build ./src/bin.ts --installer
 ```
 
-The default build produces raw executables, compressed release assets, and `SHA256SUMS` for eight supported platform, architecture, and libc targets. Select a subset with repeated `--target` options.
+The default build produces raw executables, compressed release assets, and `SHA256SUMS` for eight supported platform, architecture, and libc targets. `--installer` also generates release-pinned `install.sh` and `install.ps1` scripts, using the GitHub repository in `package.json` or an explicit `--repository owner/name`.
+
+After the reusable release workflow uploads and publishes those assets, users can install without a package manager:
+
+```sh
+curl -fsSL https://github.com/example/my-cli/releases/latest/download/install.sh | sh
+```
 
 Connect those assets to a public GitHub repository:
 
@@ -873,7 +879,7 @@ const cli = Cli.create('my-cli', {
 })
 ```
 
-The provider activates only inside an Incur-built executable. Source and package installations continue to use their inferred npm, pnpm, or Bun updater. See the [standalone binary guide](./docs/binaries.md) for the target matrix, release asset contract, signing hooks, and example release workflow.
+The provider activates only inside an Incur-built executable. Source and package installations continue to use their inferred npm, pnpm, or Bun updater. See the [standalone binary guide](./docs/binaries.md) for installer behavior, the target matrix, signing hooks, and the distributed release workflow.
 
 ### Update notices
 

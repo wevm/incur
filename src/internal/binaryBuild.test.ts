@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { gunzip } from 'node:zlib'
 
 import { build, type Target, targets } from './binaryBuild.js'
+import { marker as installerMarker } from './binaryInstaller.js'
 
 const decompress = promisify(gunzip)
 const exec = promisify(execFile)
@@ -151,6 +152,40 @@ describe('build', () => {
     ])
   })
 
+  test('generates release-pinned installers from package metadata', async () => {
+    await writeFile(
+      join(directory, 'package.json'),
+      JSON.stringify({
+        name: 'frog',
+        repository: { type: 'git', url: 'git+https://github.com/wevm/frog.git' },
+        version: '1.2.3',
+      }),
+    )
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    const result = await build({ entry, execute, installer: true })
+
+    expect(result.installers).toEqual({
+      powershell: join(directory, 'dist', 'binaries', 'install.ps1'),
+      shell: join(directory, 'dist', 'binaries', 'install.sh'),
+    })
+    await expect(readFile(result.installers!.shell, 'utf8')).resolves.toContain(
+      'base_url="https://github.com/$repository/releases/download/$tag"',
+    )
+    await expect(readFile(result.installers!.powershell, 'utf8')).resolves.toContain(
+      '$baseUrl = "https://github.com/$repository/releases/download/$tag"',
+    )
+    await expect(readFile(result.installers!.shell, 'utf8')).resolves.toContain(
+      "repository='wevm/frog'",
+    )
+    await expect(readFile(result.installers!.shell, 'utf8')).resolves.toContain("tag='v1.2.3'")
+    expect((await stat(result.installers!.shell)).mode & 0o111).not.toBe(0)
+  })
+
   test('removes stale managed artifacts and preserves unrelated output files', async () => {
     const execute: build.Execute = async (_command, args) => {
       if (args[0] === '--version') return
@@ -171,6 +206,8 @@ describe('build', () => {
       version: '1.0.0',
     })
     const output = join(directory, 'release')
+    await writeFile(join(output, 'install.ps1'), `# ${installerMarker}\nstale`)
+    await writeFile(join(output, 'install.sh'), `#!/bin/sh\n# ${installerMarker}\nstale`)
     await writeFile(join(output, 'notes.txt'), 'keep')
 
     await build({
@@ -189,6 +226,48 @@ describe('build', () => {
     await expect(readFile(join(output, 'SHA256SUMS'), 'utf8')).resolves.not.toContain(
       'darwin-arm64',
     )
+    await expect(readFile(join(output, 'install.sh'))).rejects.toThrow()
+    await expect(readFile(join(output, 'install.ps1'))).rejects.toThrow()
+  })
+
+  test('preserves unmanaged installer files and refuses to overwrite them', async () => {
+    const output = join(directory, 'release')
+    await mkdir(output)
+    await writeFile(join(output, 'install.ps1'), 'user PowerShell installer')
+    await writeFile(join(output, 'install.sh'), 'user shell installer')
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({
+      entry,
+      execute,
+      name: 'frog',
+      output,
+      targets: ['darwin-arm64'],
+      version: '1.0.0',
+    })
+
+    await expect(readFile(join(output, 'install.ps1'), 'utf8')).resolves.toBe(
+      'user PowerShell installer',
+    )
+    await expect(readFile(join(output, 'install.sh'), 'utf8')).resolves.toBe('user shell installer')
+
+    const compile = vi.fn<build.Execute>()
+    await expect(
+      build({
+        entry,
+        execute: compile,
+        installer: true,
+        name: 'frog',
+        output,
+        repository: 'wevm/frog',
+        version: '1.0.0',
+      }),
+    ).rejects.toThrow('Refusing to replace unmanaged installer file')
+    expect(compile).not.toHaveBeenCalled()
   })
 
   test('resolves a package binary from a project directory', async () => {
@@ -240,6 +319,36 @@ describe('build', () => {
         version: '1.0.0',
       }),
     ).rejects.toThrow('Unsupported target: freebsd-x64')
+    await expect(
+      build({
+        entry,
+        execute,
+        installer: true,
+        name: 'frog',
+        repository: 'wevm/frog',
+        targets: ['darwin-arm64'],
+        version: '1.0.0',
+      }),
+    ).rejects.toThrow('Installers require the full target matrix')
+    await expect(
+      build({
+        entry,
+        execute,
+        installer: true,
+        name: 'frog',
+        version: '1.0.0',
+      }),
+    ).rejects.toThrow('Could not resolve a public GitHub repository')
+    await expect(
+      build({
+        entry,
+        execute,
+        installer: true,
+        name: 'frog',
+        repository: 'wevm/frog',
+        version: '1.0.0-beta.1',
+      }),
+    ).rejects.toThrow('Invalid stable version')
     expect(execute).not.toHaveBeenCalled()
   })
 
