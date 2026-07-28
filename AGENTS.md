@@ -49,6 +49,7 @@
 - **Prepare release targets** — create a missing inferred `v<version>` tag and draft release, or reuse a matching mutable release; reject pull request refs and never move tags or replace assets.
 - **Trust action release inputs** — install, build, and upload share one job's write permission; `persist-credentials: false` does not create a permission boundary.
 - **Limit smoke tests to the runner** — test only matching-architecture Linux glibc and musl assets; native macOS and Windows tests and signing stay out of scope.
+- **Install musl runtime libraries** — Bun musl executables require `libstdc++` and `libgcc`; install both before Alpine smoke tests.
 - **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
 
 ## Git Conventions

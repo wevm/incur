@@ -56,32 +56,26 @@ smoke_native() {
 
 smoke_alpine() {
   local binary="$1"
-  local actual_version
   local command
 
   command="/smoke/$(basename "$binary")"
-
   docker run --rm \
+    --env EXPECTED_VERSION \
+    --env "SMOKE_COMMAND=${SMOKE_COMMAND:-}" \
     --volume "$temporary:/smoke:ro" \
     alpine:3.22 \
-    "$command" --help > /dev/null
-  actual_version="$(
-    docker run --rm \
-      --volume "$temporary:/smoke:ro" \
-      alpine:3.22 \
-      "$command" --version
-  )"
-  if [[ "$actual_version" != "$EXPECTED_VERSION" ]]; then
-    printf 'Expected version %s, received %s.\n' \
-      "$EXPECTED_VERSION" "$actual_version" >&2
-    exit 1
-  fi
-  if [[ -n "${SMOKE_COMMAND:-}" ]]; then
-    docker run --rm \
-      --volume "$temporary:/smoke:ro" \
-      alpine:3.22 \
-      "$command" "$SMOKE_COMMAND"
-  fi
+    sh -eu -c '
+      apk add --no-cache libstdc++ libgcc > /dev/null
+      command="$1"
+      "$command" --help > /dev/null
+      actual_version="$("$command" --version)"
+      if [ "$actual_version" != "$EXPECTED_VERSION" ]; then
+        printf "Expected version %s, received %s.\n" \
+          "$EXPECTED_VERSION" "$actual_version" >&2
+        exit 1
+      fi
+      if [ -n "$SMOKE_COMMAND" ]; then "$command" "$SMOKE_COMMAND"; fi
+    ' sh "$command"
 }
 
 command -v docker > /dev/null 2>&1 || {
