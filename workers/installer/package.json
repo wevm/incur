@@ -1,0 +1,22 @@
+{
+  "name": "@incur/installer-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run types:check && tsc --noEmit && node --check scripts/smoke.mjs && wrangler deploy --dry-run --strict --outdir dist",
+    "deploy": "wrangler deploy --strict",
+    "dev": "wrangler dev",
+    "smoke": "node scripts/smoke.mjs",
+    "test": "vitest run",
+    "types": "wrangler types worker-configuration.d.ts",
+    "types:check": "wrangler types worker-configuration.d.ts --check"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.19.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "typescript": "5.9.3",
+    "vite": "7.3.5",
+    "vitest": "4.1.10",
+    "wrangler": "4.115.0"
+  }
+}

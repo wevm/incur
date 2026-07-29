@@ -3,12 +3,17 @@
     "build": "zile",
     "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
     "changeset:version": "changeset version",
-    "check": "oxlint --fix --ignore-pattern package.json && oxfmt",
+    "check": "oxlint --fix --ignore-pattern package.json --ignore-pattern workers/installer/worker-configuration.d.ts && oxfmt",
     "check:types": "tsc -b",
+    "check:worker": "pnpm --filter @incur/installer-worker check",
     "incur": "node --import tsx src/bin.ts",
     "cli:skills": "pnpm incur skills add",
     "dev": "zile dev",
-    "test": "vitest"
+    "test": "vitest",
+    "test:worker": "pnpm --filter @incur/installer-worker test",
+    "worker:deploy": "pnpm --filter @incur/installer-worker deploy",
+    "worker:smoke": "pnpm --filter @incur/installer-worker smoke",
+    "worker:types": "pnpm --filter @incur/installer-worker types"
   },
   "devDependencies": {
     "@changesets/cli": "latest",
@@ -26,7 +31,9 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "bun"
+      "bun",
+      "esbuild",
+      "workerd"
     ]
   },
   "packageManager": "pnpm@10.30.2",

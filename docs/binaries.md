@@ -101,35 +101,113 @@ installer contains the exact release tag. A latest-release URL selects only the
 installer. The installer downloads its executable and `SHA256SUMS` from the
 tagged release.
 
-After the release action appends the assets, users can install the latest stable
-release:
+After the release action appends the assets and the `incur.app` service is
+enabled, users can install the latest stable release through the short URLs:
 
 ```sh
-curl -fsSL https://github.com/wevm/frog/releases/latest/download/install.sh | sh
+curl -fsSL https://incur.app/wevm/frog | bash
+```
+
+```powershell
+irm https://incur.app/wevm/frog/install.ps1 | iex
+```
+
+For a repository whose release uses the conventional `v<version>` tag, append
+an unprefixed stable semantic version to install that exact release:
+
+```sh
+curl -fsSL https://incur.app/example/my-cli@1.2.3 | bash
+```
+
+```powershell
+irm https://incur.app/example/my-cli@1.2.3/install.ps1 | iex
+```
+
+The exact-version route accepts only `x.y.z`. Do not include the tag's `v`
+prefix. It maps directly to `v<version>` and does not search releases by package
+version. Prerelease versions, build metadata, and ranges are not supported.
+
+`incur.app` returns a temporary redirect to the named repository's fixed
+`install.sh` or `install.ps1` asset. A bare repository selects GitHub's latest
+release; `@1.2.3` selects the exact `v1.2.3` release. The service does not proxy
+or inspect the script.
+
+When a repository uses another tag format, use that exact GitHub tag directly.
+For example, the `frog@1.2.3` tag uses:
+
+```sh
+curl -fsSL https://github.com/wevm/frog/releases/download/frog@1.2.3/install.sh | bash
+```
+
+```powershell
+irm https://github.com/wevm/frog/releases/download/frog@1.2.3/install.ps1 | iex
+```
+
+The redirect is open to any syntactically valid GitHub repository path. Incur
+does not verify that the repository uses Incur, certify its publisher, or
+endorse its contents.
+
+Use the direct GitHub URLs if the shortcut is unavailable:
+
+```sh
+curl -fsSL https://github.com/wevm/frog/releases/latest/download/install.sh | bash
 ```
 
 ```powershell
 irm https://github.com/wevm/frog/releases/latest/download/install.ps1 | iex
 ```
 
-Use an exact tag URL if you do not want a newer release:
+The equivalent direct exact-tag URLs are:
 
 ```sh
-curl -fsSL https://github.com/wevm/frog/releases/download/v1.2.3/install.sh | sh
+curl -fsSL https://github.com/example/my-cli/releases/download/v1.2.3/install.sh | bash
 ```
 
-A repository owner can replace a tag, its assets, and its checksum file
-together. Enable
+```powershell
+irm https://github.com/example/my-cli/releases/download/v1.2.3/install.ps1 | iex
+```
+
+An exact-version alias pins the tag name, not immutable bytes. A repository
+owner can replace a tag, its assets, and its checksum file together. Enable
 [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
 to prevent changes after publication. Without this setting, the checksum
 verifies only the current release asset. It does not prove that the asset never
 changed.
 
-A project URL can make the install command shorter. For example, redirect
-`https://frog.dev/install.sh` to
-`https://github.com/wevm/frog/releases/latest/download/install.sh`. The
-installer still uses its embedded tag for all later downloads. GitHub documents
-the stable
+Both latest and exact-version URLs select an installer script. That script is
+not covered by `SHA256SUMS` before execution. The generated installer uses its
+embedded exact tag and verifies the binary archive that it downloads afterward.
+
+Download and inspect the shell installer before execution when the repository
+or release is not already trusted:
+
+```sh
+(
+  installer="$(mktemp)"
+  trap 'rm -f "$installer"' EXIT
+  curl -fsSL https://incur.app/wevm/frog -o "$installer" &&
+    less "$installer" &&
+    bash "$installer"
+)
+```
+
+Use the equivalent PowerShell flow on Windows:
+
+```powershell
+$installer = Join-Path ([IO.Path]::GetTempPath()) "frog-install-$([guid]::NewGuid()).ps1"
+try {
+  irm https://incur.app/wevm/frog/install.ps1 -OutFile $installer -ErrorAction Stop
+  Get-Content $installer
+  & $installer
+} finally {
+  Remove-Item $installer -ErrorAction SilentlyContinue
+}
+```
+
+Do not use a piped installer command as a CI success check. A pipeline can hide
+the downloader's failure status, and it executes network content before review.
+
+GitHub documents the stable
 [`/releases/latest/download/<asset>` URL](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases).
 
 The Unix installer supports macOS and Linux with glibc or musl. It supports

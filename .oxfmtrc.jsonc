@@ -4,7 +4,7 @@
   "trailingComma": "all",
   "tabWidth": 2,
   "printWidth": 100,
-  "ignorePatterns": ["package.json"],
+  "ignorePatterns": ["package.json", "workers/installer/worker-configuration.d.ts"],
   "experimentalSortImports": {
     "groups": [
       ["value-builtin", "value-external", "type-import", "value-internal", "type-internal"],

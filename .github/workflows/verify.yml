@@ -38,3 +38,20 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4
+
+  installer:
+    name: Installer Worker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Check installer Worker
+        run: pnpm check:worker
+
+      - name: Test installer Worker
+        run: pnpm test:worker
