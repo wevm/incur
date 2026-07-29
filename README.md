@@ -1099,6 +1099,61 @@ Completions are dynamic — subcommands, `--options`, short aliases, and enum va
 
 Run `my-cli completions --help` for setup instructions.
 
+## Examples
+
+### You.com Web Search CLI
+
+The `examples/search/` directory contains a complete example of integrating web search capabilities using You.com's Search API:
+
+```ts
+import { Cli, z } from 'incur'
+
+const cli = Cli.create('search', {
+  description: 'Web search powered by You.com',
+})
+
+cli.command('web', {
+  description: 'Search the web using You.com',
+  args: z.object({
+    query: z.string().describe('Search query'),
+  }),
+  options: z.object({
+    count: z.coerce.number().default(10).describe('Number of results (1-20)'),
+    safesearch: z.enum(['strict', 'moderate', 'off']).default('moderate'),
+  }),
+  env: z.object({
+    YDC_API_KEY: z.string().optional().describe('You.com API key for enhanced quotas'),
+  }),
+  async run(c) {
+    // Implementation handles both keyless and authenticated operation
+    // See examples/search/cli.ts for full code
+  },
+})
+```
+
+**Features:**
+- 🔍 Web search with You.com's Search API
+- 🔑 Dual operation modes: keyless (100 free searches/day) and authenticated
+- 🎛️ Flexible search options (count, safe search, freshness, localization)
+- 🤖 Agent-friendly with automatic MCP and skill file generation
+- 📊 Multiple output formats (TOON, JSON, YAML, Markdown)
+
+**Usage:**
+```bash
+# Basic search (no API key required)
+search web "TypeScript CLI frameworks"
+
+# With enhanced quotas
+export YDC_API_KEY=your_api_key
+search web "Node.js tutorials" --count 15 --format json
+
+# Agent discovery
+search mcp add      # Register as MCP server
+search skills add   # Generate skill files
+```
+
+See `examples/search/README.md` for complete documentation and integration patterns.
+
 ## API Reference
 
 > TODO

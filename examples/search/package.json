@@ -1,0 +1,21 @@
+{
+  "name": "incur-youcom-search-example",
+  "version": "1.0.0",
+  "description": "Example CLI demonstrating You.com search integration with incur",
+  "type": "module",
+  "main": "cli.ts",
+  "scripts": {
+    "dev": "node --import tsx cli.ts",
+    "build": "tsc cli.ts --outDir dist --target ES2022 --module ESNext --moduleResolution node",
+    "search": "node --import tsx cli.ts"
+  },
+  "keywords": ["youcom", "search", "cli", "incur", "agents"],
+  "license": "MIT",
+  "dependencies": {
+    "incur": "^0.4.22"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "latest"
+  }
+}
