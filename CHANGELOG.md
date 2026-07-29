@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.26
+
+### Patch Changes
+
+- 0b4df91: Added GitHub action tag.
+
 ## 0.4.25
 
 ### Patch Changes
