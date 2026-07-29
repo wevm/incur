@@ -59,7 +59,8 @@ test('selects the highest stable release with an exact target asset', async () =
     release('2.0.0-beta.1'),
     release('8.0.0', { prerelease: true }),
     release('9.0.0', { draft: true }),
-    release('1.4.0'),
+    release('frog@1.4.0'),
+    release("frog'@1.5.0"),
   ]
   vi.stubGlobal(
     'fetch',

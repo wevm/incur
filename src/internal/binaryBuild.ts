@@ -54,11 +54,12 @@ export async function build(options: build.Options): Promise<build.Result> {
     throw new Error(
       'Could not resolve a public GitHub repository. Add package.json `repository` or pass --repository owner/name.',
     )
+  const tag = options.tag ?? `v${version}`
   if (repository)
     BinaryInstaller.generate({
       name,
       repository,
-      tag: `v${version}`,
+      tag,
       version,
     })
   if (repository) await assertInstallerOutput(output)
@@ -136,7 +137,7 @@ export async function build(options: build.Options): Promise<build.Result> {
           name,
           output: staging,
           repository,
-          tag: `v${version}`,
+          tag,
           version,
         })
       : undefined
@@ -220,6 +221,8 @@ export declare namespace build {
     output?: string | undefined
     /** Public GitHub repository used by generated installers. */
     repository?: string | undefined
+    /** Exact GitHub release tag used by generated installers. */
+    tag?: string | undefined
     /** Canonical targets to build. Defaults to the full supported matrix. */
     targets?: string[] | undefined
     /** CLI version override. */

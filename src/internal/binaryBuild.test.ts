@@ -167,7 +167,12 @@ describe('build', () => {
       await writeFile(file, args.join('\n'))
     }
 
-    const result = await build({ entry, execute, installer: true })
+    const result = await build({
+      entry,
+      execute,
+      installer: true,
+      tag: 'frog@1.2.3',
+    })
 
     expect(result.installers).toEqual({
       powershell: join(directory, 'dist', 'binaries', 'install.ps1'),
@@ -182,7 +187,7 @@ describe('build', () => {
     await expect(readFile(result.installers!.shell, 'utf8')).resolves.toContain(
       "repository='wevm/frog'",
     )
-    await expect(readFile(result.installers!.shell, 'utf8')).resolves.toContain("tag='v1.2.3'")
+    await expect(readFile(result.installers!.shell, 'utf8')).resolves.toContain("tag='frog@1.2.3'")
     expect((await stat(result.installers!.shell)).mode & 0o111).not.toBe(0)
   })
 

@@ -45,48 +45,40 @@ afterEach(async () => {
 })
 
 describe.skipIf(process.platform === 'win32')('prepare-release.sh', () => {
-  test('creates the inferred tag and draft release at the source commit', async () => {
+  test('uses the latest published release for the package version', async () => {
+    await writeFile(join(state, 'tag-commit'), commit)
+    await writeRelease({ draft: false })
+
     await run()
 
     await expect(outputs()).resolves.toEqual({
       commit,
       release_id: '17',
-      release_tag: 'v1.2.3',
+      release_tag: '@example/demo@1.2.3',
       version: '1.2.3',
     })
-    await expect(calls()).resolves.toContainEqual([
-      'release',
-      'create',
-      'v1.2.3',
-      '--draft',
-      '--generate-notes',
-      '--repo',
-      'wevm/demo',
-      '--target',
-      commit,
-      '--title',
-      'v1.2.3',
-    ])
+    await expect(calls()).resolves.toContainEqual(['api', 'repos/wevm/demo/releases/latest'])
+    await expect(calls()).resolves.not.toContainEqual(expect.arrayContaining(['release', 'create']))
   })
 
-  test('reuses an existing matching draft without moving its tag', async () => {
+  test('uses an explicit matching release tag', async () => {
     await writeFile(join(state, 'tag-commit'), commit)
-    await writeRelease({ draft: true })
+    await writeRelease({ draft: true, tag: 'v1.2.3' })
 
-    await run()
+    await run({ REQUESTED_RELEASE_TAG: 'v1.2.3' })
 
     await expect(outputs()).resolves.toMatchObject({
       commit,
       release_id: '17',
       release_tag: 'v1.2.3',
     })
-    await expect(calls()).resolves.not.toContainEqual(expect.arrayContaining(['release', 'create']))
+    await expect(calls()).resolves.toContainEqual(['api', 'repos/wevm/demo/releases/tags/v1.2.3'])
   })
 
   test('resolves an existing tag instead of requiring the source commit', async () => {
     const taggedCommit = commit
     await writeFile(join(state, 'tag-commit'), taggedCommit)
-    await writeRelease({ draft: true })
+    await writeRelease({ draft: false })
     await writeFile(join(repository, 'README.md'), 'fixture\n')
     await exec('git', ['add', 'README.md'], { cwd: repository })
     await exec('git', ['commit', '--quiet', '--message', 'new source'], { cwd: repository })
@@ -96,41 +88,13 @@ describe.skipIf(process.platform === 'win32')('prepare-release.sh', () => {
     await expect(outputs()).resolves.toMatchObject({ commit: taggedCommit })
   })
 
-  test('does not create a missing explicit release tag', async () => {
-    await expect(run({ REQUESTED_RELEASE_TAG: 'v1.2.3' })).rejects.toMatchObject({
-      stderr: 'Release tag v1.2.3 does not exist.\n',
-    })
-    await expect(calls()).resolves.not.toContainEqual(expect.arrayContaining(['release', 'create']))
-  })
-
-  test('creates a missing draft for an existing explicit release tag', async () => {
+  test('rejects a release for another package version', async () => {
     await writeFile(join(state, 'tag-commit'), commit)
+    await writeRelease({ draft: false, tag: '@example/demo@1.2.4' })
 
-    await run({ REQUESTED_RELEASE_TAG: 'v1.2.3' })
-
-    await expect(outputs()).resolves.toMatchObject({
-      commit,
-      release_id: '17',
-      release_tag: 'v1.2.3',
+    await expect(run()).rejects.toMatchObject({
+      stderr: 'Release tag @example/demo@1.2.4 does not identify @example/demo 1.2.3.\n',
     })
-    await expect(calls()).resolves.toContainEqual(
-      expect.arrayContaining(['release', 'create', 'v1.2.3']),
-    )
-    await expect(calls()).resolves.toContainEqual(expect.arrayContaining(['--verify-tag']))
-  })
-
-  test('reuses an existing published release', async () => {
-    await writeFile(join(state, 'tag-commit'), commit)
-    await writeRelease({ draft: false })
-
-    await run()
-
-    await expect(outputs()).resolves.toMatchObject({
-      commit,
-      release_id: '17',
-      release_tag: 'v1.2.3',
-    })
-    await expect(calls()).resolves.not.toContainEqual(expect.arrayContaining(['release', 'create']))
   })
 
   test('rejects an immutable published release', async () => {
@@ -144,7 +108,7 @@ describe.skipIf(process.platform === 'win32')('prepare-release.sh', () => {
   })
 
   test('does not treat GitHub API failures as missing resources', async () => {
-    await writeFile(join(state, 'tag-error'), '')
+    await writeFile(join(state, 'release-error'), '')
 
     await expect(run()).rejects.toMatchObject({
       stderr: 'gh: Service Unavailable (HTTP 503)\n',
@@ -164,47 +128,22 @@ describe.skipIf(process.platform === 'win32')('upload.sh', () => {
   test.each([
     { draft: true, state: 'draft' },
     { draft: false, state: 'published' },
-  ])('leaves a $state release unpublished when opted out', async ({ draft }) => {
+  ])('appends assets without changing the $state release state', async ({ draft }) => {
     await writeFile(join(state, 'tag-commit'), commit)
     await writeRelease({ draft })
     const assets = await writeAssets()
 
-    await runUpload({ PUBLISH_RELEASE: 'false' })
+    await runUpload()
 
     await expect(calls()).resolves.toContainEqual([
       'release',
       'upload',
-      'v1.2.3',
+      '@example/demo@1.2.3',
       ...assets,
       '--repo',
       'wevm/demo',
     ])
     await expect(calls()).resolves.not.toContainEqual(expect.arrayContaining(['release', 'edit']))
-  })
-
-  test('publishes the completed release as latest by default', async () => {
-    await writeFile(join(state, 'tag-commit'), commit)
-    await writeRelease({ draft: true })
-    const assets = await writeAssets()
-
-    await runUpload()
-
-    const calls_ = await calls()
-    expect(calls_.slice(-2)).toEqual([
-      ['release', 'upload', 'v1.2.3', ...assets, '--repo', 'wevm/demo'],
-      ['release', 'edit', 'v1.2.3', '--draft=false', '--latest', '--repo', 'wevm/demo'],
-    ])
-  })
-
-  test('rejects an invalid publish input before uploading assets', async () => {
-    await writeFile(join(state, 'tag-commit'), commit)
-    await writeRelease({ draft: true })
-    await writeAssets()
-
-    await expect(runUpload({ PUBLISH_RELEASE: 'yes' })).rejects.toMatchObject({
-      stderr: 'publish must be true or false.\n',
-    })
-    await expect(readFile(join(state, 'calls'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   test('does not upload to a release that became immutable', async () => {
@@ -266,7 +205,7 @@ function runUpload(env: NodeJS.ProcessEnv = {}) {
       GH_TOKEN: 'test',
       GITHUB_REPOSITORY: 'wevm/demo',
       PATH: `${bin}${delimiter}${process.env.PATH}`,
-      RELEASE_TAG: 'v1.2.3',
+      RELEASE_TAG: '@example/demo@1.2.3',
       ...env,
     },
   })
@@ -292,7 +231,11 @@ async function writeAssets() {
   return names.map((name) => join(directory_, name))
 }
 
-function writeRelease(options: { draft: boolean; immutable?: boolean | undefined }) {
+function writeRelease(options: {
+  draft: boolean
+  immutable?: boolean | undefined
+  tag?: string | undefined
+}) {
   return writeFile(
     join(state, 'release.json'),
     JSON.stringify({
@@ -301,7 +244,7 @@ function writeRelease(options: { draft: boolean; immutable?: boolean | undefined
       id: 17,
       immutable: options.immutable ?? false,
       prerelease: false,
-      tag_name: 'v1.2.3',
+      tag_name: options.tag ?? '@example/demo@1.2.3',
     }),
   )
 }
@@ -323,7 +266,32 @@ if (args[0] === 'api' && args[1] === 'repos/wevm/demo') {
   process.exit(0)
 }
 
-if (args[0] === 'api' && args[1] === 'repos/wevm/demo/git/ref/tags/v1.2.3') {
+if (
+  args[0] === 'api' &&
+  (args[1] === 'repos/wevm/demo/releases/latest' ||
+    args[1].startsWith('repos/wevm/demo/releases/tags/'))
+) {
+  if (fs.existsSync(path.join(state, 'release-error'))) {
+    process.stderr.write('gh: Service Unavailable (HTTP 503)\\n')
+    process.exit(1)
+  }
+  if (!fs.existsSync(release)) {
+    process.stderr.write('gh: Not Found (HTTP 404)\\n')
+    process.exit(1)
+  }
+  const value = JSON.parse(fs.readFileSync(release, 'utf8'))
+  if (
+    args[1].startsWith('repos/wevm/demo/releases/tags/') &&
+    args[1].slice('repos/wevm/demo/releases/tags/'.length) !== value.tag_name
+  ) {
+    process.stderr.write('gh: Not Found (HTTP 404)\\n')
+    process.exit(1)
+  }
+  process.stdout.write(JSON.stringify(value) + '\\n')
+  process.exit(0)
+}
+
+if (args[0] === 'api' && args[1].startsWith('repos/wevm/demo/git/ref/tags/')) {
   if (fs.existsSync(path.join(state, 'tag-error'))) {
     process.stderr.write('gh: Service Unavailable (HTTP 503)\\n')
     process.exit(1)
@@ -336,39 +304,13 @@ if (args[0] === 'api' && args[1] === 'repos/wevm/demo/git/ref/tags/v1.2.3') {
   process.exit(0)
 }
 
-if (args[0] === 'api' && args[1] === 'repos/wevm/demo/commits/v1.2.3') {
+if (args[0] === 'api' && args[1].startsWith('repos/wevm/demo/commits/')) {
   if (!fs.existsSync(tagCommit)) process.exit(1)
   process.stdout.write(fs.readFileSync(tagCommit, 'utf8') + '\\n')
   process.exit(0)
 }
 
-if (args[0] === 'api' && args[1] === 'repos/wevm/demo/releases/tags/v1.2.3') {
-  if (!fs.existsSync(release)) {
-    process.stderr.write('gh: Not Found (HTTP 404)\\n')
-    process.exit(1)
-  }
-  process.stdout.write(fs.readFileSync(release, 'utf8') + '\\n')
-  process.exit(0)
-}
-
-if (args[0] === 'release' && args[1] === 'create') {
-  const target = args[args.indexOf('--target') + 1]
-  if (!fs.existsSync(tagCommit)) fs.writeFileSync(tagCommit, target)
-  fs.writeFileSync(
-    release,
-    JSON.stringify({
-      draft: true,
-      id: 17,
-      prerelease: false,
-      tag_name: args[2],
-    }),
-  )
-  process.exit(0)
-}
-
 if (args[0] === 'release' && args[1] === 'upload') process.exit(0)
-
-if (args[0] === 'release' && args[1] === 'edit') process.exit(0)
 
 process.stderr.write('Unexpected gh call: ' + JSON.stringify(args) + '\\n')
 process.exit(1)

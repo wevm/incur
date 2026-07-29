@@ -218,7 +218,9 @@ function selectRelease(
 
 /** Returns a stable semantic version from a release tag. */
 function stableVersion(tag: string): string | undefined {
-  const match = tag.match(/^[vV]?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
+  const match = tag.match(
+    /^(?:[vV]?|(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*@)(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
+  )
   if (!match) return undefined
   return `${match[1]}.${match[2]}.${match[3]}`
 }

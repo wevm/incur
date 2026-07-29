@@ -14,11 +14,6 @@ fail() {
   exit 1
 }
 
-publish="${PUBLISH_RELEASE:-true}"
-if [[ "$publish" != 'true' && "$publish" != 'false' ]]; then
-  fail 'publish must be true or false.'
-fi
-
 release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
 
 if [[ "$(jq -r '.id' <<< "$release")" != "$EXPECTED_RELEASE_ID" ]]; then
@@ -73,10 +68,3 @@ for file in "${assets[@]}"; do
 done
 
 gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
-
-if [[ "$publish" == 'true' ]]; then
-  gh release edit "$RELEASE_TAG" \
-    --draft=false \
-    --latest \
-    --repo "$GITHUB_REPOSITORY"
-fi

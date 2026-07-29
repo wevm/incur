@@ -6,6 +6,7 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?}"
 : "${GITHUB_REPOSITORY:?}"
 : "${PACKAGE_MANAGER:?}"
+: "${RELEASE_TAG:?}"
 : "${VERSION:?}"
 
 case "$PACKAGE_MANAGER" in
@@ -25,6 +26,7 @@ args=(
   --installer
   --output "$BINARY_OUTPUT"
   --repository "$GITHUB_REPOSITORY"
+  --tag "$RELEASE_TAG"
   --version "$VERSION"
 )
 if [[ -n "${BINARY_NAME:-}" ]]; then args+=(--name "$BINARY_NAME"); fi

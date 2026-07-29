@@ -91,7 +91,7 @@ function normalize(options: generate.Options): Release {
     throw new Error(`Invalid GitHub repository '${options.repository}'. Expected 'owner/name'.`)
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))
     throw new Error(`Invalid stable version: ${options.version}`)
-  if (tag !== version && tag !== `v${version}` && tag !== `V${version}`)
+  if (stableVersion(tag) !== version)
     throw new Error(`Release tag '${options.tag}' does not identify version ${version}.`)
 
   const installVariable = `${name.toUpperCase().replaceAll(/[^A-Z0-9]/g, '_')}_INSTALL_DIR`
@@ -102,6 +102,14 @@ function normalize(options: generate.Options): Release {
     tag,
     version,
   }
+}
+
+function stableVersion(tag: string): string | undefined {
+  const match = tag.match(
+    /^(?:[vV]?|(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*@)(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
+  )
+  if (!match) return undefined
+  return `${match[1]}.${match[2]}.${match[3]}`
 }
 
 function isRepository(repository: string): boolean {

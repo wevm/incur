@@ -108,6 +108,12 @@ describe('generate', () => {
     expect(() => generate({ ...options, tag: 'v1.2.4' })).toThrow(
       "Release tag 'v1.2.4' does not identify version 1.2.3.",
     )
+    expect(() => generate({ ...options, tag: "frog'@1.2.3" })).toThrow(
+      "Release tag 'frog'@1.2.3' does not identify version 1.2.3.",
+    )
+    expect(generate({ ...options, tag: '@example/frog@1.2.3' }).shell).toContain(
+      "tag='@example/frog@1.2.3'",
+    )
     expect(generate({ ...options, name: '7zip' }).shell).toContain(
       'install_dir="${_7ZIP_INSTALL_DIR:-${INSTALL_DIR:-}}"',
     )

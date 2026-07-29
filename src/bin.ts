@@ -27,6 +27,7 @@ const cli = Cli.create('incur', {
       name: z.string().optional().describe('CLI name override'),
       output: z.string().optional().describe('Output directory'),
       repository: z.string().optional().describe('Public GitHub repository (owner/name)'),
+      tag: z.string().optional().describe('Exact GitHub release tag for generated installers'),
       target: z.array(z.string()).optional().describe('Target to build (repeatable)'),
       version: z.string().optional().describe('CLI version override'),
     }),
@@ -37,6 +38,7 @@ const cli = Cli.create('incur', {
         name: c.options.name,
         output: c.options.output,
         repository: c.options.repository,
+        tag: c.options.tag,
         targets: c.options.target,
         version: c.options.version,
       })
