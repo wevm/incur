@@ -1,5 +1,5 @@
 {
-  "name": "@incur/installer-worker",
+  "name": "@incur/installer",
   "private": true,
   "type": "module",
   "scripts": {

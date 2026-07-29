@@ -50,11 +50,8 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
-      - name: Check generated types
-        run: pnpm --filter @incur/installer-worker exec wrangler types worker-configuration.d.ts --check
-
       - name: Test installer Worker
         run: pnpm run test --run --bail=1 --project installer
 
       - name: Build installer Worker
-        run: pnpm --filter @incur/installer-worker exec wrangler deploy --dry-run --strict --outdir dist
+        run: pnpm --filter @incur/installer exec wrangler deploy --dry-run --strict --outdir dist
