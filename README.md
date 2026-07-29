@@ -884,11 +884,37 @@ jobs:
         uses: wevm/incur/release@v1
 ```
 
-After the release is published, users can install without a package manager:
+After the release is published and the `incur.app` service is enabled, users
+can install without a package manager:
 
 ```sh
-curl -fsSL https://github.com/example/my-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://incur.app/example/my-cli | bash
 ```
+
+```powershell
+irm https://incur.app/example/my-cli/install.ps1 | iex
+```
+
+Append a stable version to select its exact `v<version>` release:
+
+```sh
+curl -fsSL https://incur.app/example/my-cli@1.2.3 | bash
+```
+
+```powershell
+irm https://incur.app/example/my-cli@1.2.3/install.ps1 | iex
+```
+
+The `@1.2.3` shorthand targets the conventional tag `v1.2.3`. Use the direct
+GitHub release URL when a repository uses another tag format.
+
+`incur.app` is an open convenience redirect to the named repository's latest or
+exact installer asset. It does not verify that a repository uses Incur or
+endorse its contents.
+
+The direct GitHub URLs remain available when you want to inspect the source or
+avoid the shortcut. The [standalone binary guide](./docs/binaries.md) explains
+the trust boundary and download-inspect-execute alternatives.
 
 Connect those assets to a public GitHub repository:
 

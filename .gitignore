@@ -1,6 +1,7 @@
 coverage
 dist
 node_modules
+.wrangler
 clac.generated.ts
 tasks
 *.tsbuildinfo

@@ -40,3 +40,33 @@ jobs:
           version: pnpm run changeset:version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-installer:
+    name: Deploy Installer
+    needs: verify
+    if: github.repository == 'wevm/incur' && vars.INCUR_INSTALLER_DEPLOY_ENABLED == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: incur.app
+      url: https://incur.app
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Deploy installer Worker
+        run: pnpm --filter @incur/installer deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Smoke-test installer Worker
+        run: pnpm --filter @incur/installer smoke
+        env:
+          INCUR_INSTALLER_SMOKE_REPOSITORY: ${{ vars.INCUR_INSTALLER_SMOKE_REPOSITORY }}

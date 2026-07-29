@@ -2,6 +2,7 @@ packages:
   - .
   - examples/*
   - playgrounds/*
+  - workers/*
 
 overrides:
   incur: workspace:*
