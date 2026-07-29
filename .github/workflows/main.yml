@@ -40,3 +40,9 @@ jobs:
           version: pnpm run changeset:version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Action tag
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          git tag --annotate --force v1 "$GITHUB_SHA" --message v1
+          git push --force origin refs/tags/v1
