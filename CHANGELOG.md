@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.25
+
+### Patch Changes
+
+- 8e9dd67: Appended standalone binary assets to the latest matching GitHub release, including Changesets workspace releases.
+
 ## 0.4.24
 
 ### Patch Changes
