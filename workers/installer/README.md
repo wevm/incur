@@ -32,14 +32,14 @@ generated, reviewed, certified, or endorsed the selected installer.
 Install workspace dependencies, then run:
 
 ```sh
-pnpm worker:types
-pnpm check:worker
-pnpm test:worker
+pnpm --filter @incur/installer-worker gen:types
+pnpm check:types
+pnpm test --run --project installer
+pnpm --filter @incur/installer-worker exec wrangler deploy --dry-run --strict --outdir dist
 ```
 
 Regenerate `worker-configuration.d.ts` after any Wrangler configuration change.
-The check command rejects stale types and builds the deployment bundle without
-uploading it.
+CI rejects stale types and builds the deployment bundle without uploading it.
 
 Start a local Worker with:
 
@@ -91,7 +91,7 @@ structure, equality, and shell syntax without executing either installer.
 Run it manually with:
 
 ```sh
-INCUR_INSTALLER_SMOKE_REPOSITORY=org/repo pnpm worker:smoke
+INCUR_INSTALLER_SMOKE_REPOSITORY=org/repo pnpm --filter @incur/installer-worker smoke
 ```
 
 Set `INCUR_INSTALLER_SMOKE_ORIGIN` only when checking another HTTPS hostname.
@@ -110,7 +110,7 @@ Inspect deployments and roll back with the pinned Wrangler version:
 ```sh
 pnpm --filter @incur/installer-worker exec wrangler deployments list
 pnpm --filter @incur/installer-worker exec wrangler rollback <VERSION_ID>
-INCUR_INSTALLER_SMOKE_REPOSITORY=org/repo pnpm worker:smoke
+INCUR_INSTALLER_SMOKE_REPOSITORY=org/repo pnpm --filter @incur/installer-worker smoke
 ```
 
 The Worker has no runtime denylist. To stop an abusive path immediately, use a

@@ -32,7 +32,7 @@ jobs:
         uses: ./.github/actions/install-dependencies
 
       - name: Run tests
-        run: pnpm run test --bail=1 --coverage
+        run: pnpm run test --bail=1 --coverage --project core
         env:
           CI: true
 
@@ -50,8 +50,11 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
-      - name: Check installer Worker
-        run: pnpm check:worker
+      - name: Check generated types
+        run: pnpm --filter @incur/installer-worker exec wrangler types worker-configuration.d.ts --check
 
       - name: Test installer Worker
-        run: pnpm test:worker
+        run: pnpm run test --run --bail=1 --project installer
+
+      - name: Build installer Worker
+        run: pnpm --filter @incur/installer-worker exec wrangler deploy --dry-run --strict --outdir dist

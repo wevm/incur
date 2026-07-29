@@ -1,7 +1,7 @@
 import { cloudflareTest } from '@cloudflare/vitest-pool-workers'
-import { defineConfig } from 'vitest/config'
+import { defineProject } from 'vitest/config'
 
-export default defineConfig({
+export default defineProject({
   plugins: [
     cloudflareTest({
       wrangler: {
@@ -11,5 +11,6 @@ export default defineConfig({
   ],
   test: {
     include: ['test/**/*.test.ts'],
+    name: 'installer',
   },
 })

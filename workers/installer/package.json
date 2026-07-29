@@ -3,17 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "pnpm run types:check && tsc --noEmit && node --check scripts/smoke.mjs && wrangler deploy --dry-run --strict --outdir dist",
+    "check:types": "tsc --noEmit",
     "deploy": "wrangler deploy --strict",
     "dev": "wrangler dev",
-    "smoke": "node scripts/smoke.mjs",
-    "test": "vitest run",
-    "types": "wrangler types worker-configuration.d.ts",
-    "types:check": "wrangler types worker-configuration.d.ts --check"
+    "gen:types": "wrangler types worker-configuration.d.ts",
+    "smoke": "node --import tsx scripts/smoke.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.19.0",
+    "@types/node": "25.5.0",
     "@vitest/coverage-v8": "4.1.10",
+    "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vite": "7.3.5",
     "vitest": "4.1.10",

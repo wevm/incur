@@ -61,12 +61,12 @@ jobs:
         uses: ./.github/actions/install-dependencies
 
       - name: Deploy installer Worker
-        run: pnpm worker:deploy
+        run: pnpm --filter @incur/installer-worker deploy
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Smoke-test installer Worker
-        run: pnpm worker:smoke
+        run: pnpm --filter @incur/installer-worker smoke
         env:
           INCUR_INSTALLER_SMOKE_REPOSITORY: ${{ vars.INCUR_INSTALLER_SMOKE_REPOSITORY }}

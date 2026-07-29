@@ -32,6 +32,7 @@ export default defineConfig({
           },
         },
       },
+      './workers/installer/vitest.config.ts',
     ],
   },
 })
