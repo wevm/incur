@@ -1,5 +1,11 @@
 # incur
 
+## 0.4.24
+
+### Patch Changes
+
+- 6ff275f: Published completed standalone binary releases by default and added a `publish` input for draft-first workflows.
+
 ## 0.4.23
 
 ### Patch Changes
