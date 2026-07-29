@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check:types": "tsc --noEmit",
+    "check:types": "pnpm gen:types && tsc --noEmit",
     "deploy": "wrangler deploy --strict",
     "dev": "wrangler dev",
     "gen:types": "wrangler types worker-configuration.d.ts",

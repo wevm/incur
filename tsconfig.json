@@ -5,5 +5,5 @@
     "strict": true
   },
   "files": [],
-  "references": [{ "path": "./src" }, { "path": "./test" }, { "path": "./workers/installer" }]
+  "references": [{ "path": "./src" }, { "path": "./test" }, { "path": "./installer" }]
 }

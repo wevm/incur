@@ -2,7 +2,7 @@ packages:
   - .
   - examples/*
   - playgrounds/*
-  - workers/*
+  - installer
 
 overrides:
   incur: workspace:*

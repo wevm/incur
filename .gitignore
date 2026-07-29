@@ -5,3 +5,4 @@ node_modules
 clac.generated.ts
 tasks
 *.tsbuildinfo
+/installer/worker-configuration.d.ts
