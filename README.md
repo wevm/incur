@@ -884,9 +884,9 @@ jobs:
         uses: wevm/incur/release@v1
 ```
 
-The action defaults to `./src/bin.ts`, reads the name and version from `package.json`, and creates a missing `v<version>` draft or reuses its existing release. Inputs remain available as overrides. Run it only with trusted source and locked dependencies because release preparation, build, and upload share the job's write permission.
+The action defaults to `./src/bin.ts`, reads the name and version from `package.json`, creates or reuses the matching release, uploads verified assets, and publishes it as the latest release. Set `publish: false` for a draft-first workflow. Run it only with trusted source and locked dependencies because release preparation, build, and publication share the job's write permission.
 
-After publishing the draft, users can install without a package manager:
+After the release is published, users can install without a package manager:
 
 ```sh
 curl -fsSL https://github.com/example/my-cli/releases/latest/download/install.sh | sh

@@ -303,20 +303,22 @@ The action:
 8. Tests the matching Linux glibc executable on the runner.
 9. Tests the matching Linux musl executable in Alpine.
 10. Uploads the `.gz` release assets, `SHA256SUMS`, `install.sh`, and `install.ps1`.
-11. Stops if an upload would replace an existing release asset.
+11. Publishes the completed release and marks it as latest unless `publish` is `false`.
+12. Stops if an upload would replace an existing release asset.
 
 The action tests only Linux executables for the runner architecture. It does not
 test other architectures, macOS, or Windows. It does not sign executables.
 
-If Incur creates the release, it leaves the release as a draft. Use this release
-procedure:
+Set `publish: false` to keep a release that Incur creates as a draft. Use this
+release procedure when you want to review its assets:
 
 1. Run the action from the release commit.
 2. Review the release assets.
 3. Publish the draft release.
 
-The action does not publish a release. It does not move an existing tag or
-replace existing assets.
+By default, the action publishes the release after every asset uploads and marks
+it as the latest release. The action does not move an existing tag or replace
+existing assets.
 
 With `changesets/action@v1`, keep the default `createGithubReleases: true`. Run
 Incur after Changesets reports a publication. Incur reuses the published release
@@ -339,6 +341,7 @@ Use these inputs only when you must override a default:
 - Use `pnpm_version` if `package.json` does not specify the pnpm version.
 - Use `bun_version` to select the compiler version.
 - Use `smoke_command` to pass one safe argument to each tested Linux executable.
+- Use `publish: false` to leave the completed release as a draft.
 
 For the draft-first procedure, the action exposes `release_tag` for later steps.
 For example, publish the completed draft with

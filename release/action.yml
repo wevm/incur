@@ -1,5 +1,5 @@
 name: 'Incur binary release'
-description: 'Build and upload unsigned standalone binaries to a GitHub release'
+description: 'Build and release unsigned standalone binaries on GitHub'
 
 inputs:
   bun_version:
@@ -22,6 +22,10 @@ inputs:
     description: 'pnpm fallback version when packageManager does not declare one'
     required: false
     default: '10.30.2'
+  publish:
+    description: 'Publish the completed release and mark it as latest'
+    required: false
+    default: 'true'
   release_tag:
     description: 'Existing stable release tag override matching v<package version>'
     required: false
@@ -134,13 +138,14 @@ runs:
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/scripts/smoke-linux.sh"
 
-    - name: Revalidate and upload release assets
+    - name: Upload release assets
       env:
         BINARY_NAME: ${{ steps.build.outputs.name }}
         BINARY_OUTPUT: 'dist/binaries'
         EXPECTED_COMMIT: ${{ steps.release.outputs.commit }}
         EXPECTED_RELEASE_ID: ${{ steps.release.outputs.release_id }}
         GH_TOKEN: ${{ github.token }}
+        PUBLISH_RELEASE: ${{ inputs.publish }}
         RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/scripts/upload.sh"

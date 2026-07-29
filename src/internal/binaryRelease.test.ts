@@ -164,12 +164,12 @@ describe.skipIf(process.platform === 'win32')('upload.sh', () => {
   test.each([
     { draft: true, state: 'draft' },
     { draft: false, state: 'published' },
-  ])('uploads binary assets to a $state release', async ({ draft }) => {
+  ])('leaves a $state release unpublished when opted out', async ({ draft }) => {
     await writeFile(join(state, 'tag-commit'), commit)
     await writeRelease({ draft })
     const assets = await writeAssets()
 
-    await runUpload()
+    await runUpload({ PUBLISH_RELEASE: 'false' })
 
     await expect(calls()).resolves.toContainEqual([
       'release',
@@ -179,6 +179,32 @@ describe.skipIf(process.platform === 'win32')('upload.sh', () => {
       '--repo',
       'wevm/demo',
     ])
+    await expect(calls()).resolves.not.toContainEqual(expect.arrayContaining(['release', 'edit']))
+  })
+
+  test('publishes the completed release as latest by default', async () => {
+    await writeFile(join(state, 'tag-commit'), commit)
+    await writeRelease({ draft: true })
+    const assets = await writeAssets()
+
+    await runUpload()
+
+    const calls_ = await calls()
+    expect(calls_.slice(-2)).toEqual([
+      ['release', 'upload', 'v1.2.3', ...assets, '--repo', 'wevm/demo'],
+      ['release', 'edit', 'v1.2.3', '--draft=false', '--latest', '--repo', 'wevm/demo'],
+    ])
+  })
+
+  test('rejects an invalid publish input before uploading assets', async () => {
+    await writeFile(join(state, 'tag-commit'), commit)
+    await writeRelease({ draft: true })
+    await writeAssets()
+
+    await expect(runUpload({ PUBLISH_RELEASE: 'yes' })).rejects.toMatchObject({
+      stderr: 'publish must be true or false.\n',
+    })
+    await expect(readFile(join(state, 'calls'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   test('does not upload to a release that became immutable', async () => {
@@ -227,7 +253,7 @@ function run(env: NodeJS.ProcessEnv = {}) {
   })
 }
 
-function runUpload() {
+function runUpload(env: NodeJS.ProcessEnv = {}) {
   return exec('bash', [uploadScript], {
     cwd: repository,
     env: {
@@ -241,6 +267,7 @@ function runUpload() {
       GITHUB_REPOSITORY: 'wevm/demo',
       PATH: `${bin}${delimiter}${process.env.PATH}`,
       RELEASE_TAG: 'v1.2.3',
+      ...env,
     },
   })
 }
@@ -340,6 +367,8 @@ if (args[0] === 'release' && args[1] === 'create') {
 }
 
 if (args[0] === 'release' && args[1] === 'upload') process.exit(0)
+
+if (args[0] === 'release' && args[1] === 'edit') process.exit(0)
 
 process.stderr.write('Unexpected gh call: ' + JSON.stringify(args) + '\\n')
 process.exit(1)
