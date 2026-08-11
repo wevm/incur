@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import * as Elicitation from '../Elicitation.js'
 import type { FieldError } from '../Errors.js'
 import { IncurError, ValidationError } from '../Errors.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from '../middleware.js'
@@ -111,6 +112,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       displayName,
       env: commandEnv,
       error: errorFn,
+      elicit: Elicitation.create(options.elicitation),
       format,
       formatExplicit,
       globals,
@@ -233,6 +235,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       await runCommand()
     }
   } catch (error) {
+    if (options.rethrowErrors?.(error)) throw error
     if (error instanceof ValidationError)
       return {
         ok: false,
@@ -285,6 +288,8 @@ export declare namespace execute {
     displayName?: string | undefined
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
+    /** MCP elicitation adapter. */
+    elicitation?: Elicitation.Adapter | undefined
     /** Source for environment variables. Defaults to `process.env`. */
     envSource?: Record<string, string | undefined> | undefined
     /** The resolved output format. */
@@ -312,6 +317,8 @@ export declare namespace execute {
     request?: Request | undefined
     /** Vars schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
+    /** Returns true when an error should propagate instead of becoming an incur result. */
+    rethrowErrors?: ((error: unknown) => boolean) | undefined
     /** CLI version string. */
     version: string | undefined
   }

@@ -1,10 +1,15 @@
 import type { McpServer, Transport } from '@modelcontextprotocol/server'
-import type { Readable, Writable } from 'node:stream'
+import { PassThrough, type Readable, type Writable } from 'node:stream'
 import { z } from 'zod'
 
+import * as Elicitation from './Elicitation.js'
 import * as Command from './internal/command.js'
 import { formatCtaBlock, type FormattedCtaBlock, renderCtaText } from './internal/cta.js'
 import * as Json from './internal/json.js'
+import * as Mcp2026 from './Mcp2026.js'
+import type { JsonRpcRequest } from './Mcp2026.js'
+import { draftProtocolVersion } from './Mcp2026Types.js'
+import type { ToolAnnotations } from './Mcp2026Types.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
 
@@ -18,7 +23,7 @@ export async function serve(
   // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
   const stdio = importStdioModule()
   const mcp = await import('@modelcontextprotocol/server')
-  const { fromJsonSchema, McpServer } = mcp
+  const { fromJsonSchema, McpServer, UrlElicitationRequiredError } = mcp
   const StdioServerTransport = await importStdioServerTransport(mcp, stdio)
 
   const server = new McpServer(
@@ -27,19 +32,26 @@ export async function serve(
   )
 
   registerTools(server, commands, {
+    clientCapabilities: () => server.server.getClientCapabilities(),
     env: options.env,
     fromJsonSchema,
     middlewares: options.middlewares,
     name,
     sendNotification: (notification) => server.server.notification(notification),
     tools: options.tools,
+    urlElicitationRequiredError: UrlElicitationRequiredError,
     vars: options.vars,
     version,
   })
 
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
-  const transport = new StdioServerTransport(input as any, output as any)
+  const routed = await routeStdio(input as Readable)
+  if (routed.modern) {
+    await serve2026Stdio(routed.input, output as Writable, name, version, commands, options)
+    return
+  }
+  const transport = new StdioServerTransport(routed.input as any, output as any)
   await server.connect(transport)
 }
 
@@ -101,17 +113,117 @@ export declare namespace serve {
   }
 }
 
+async function routeStdio(input: Readable): Promise<{ input: Readable; modern: boolean }> {
+  const routed = await replayFirstLine(input)
+  let message: JsonRpcRequest | undefined
+  try {
+    message = JSON.parse(routed.firstLine) as JsonRpcRequest
+  } catch {
+    return { input: routed.input, modern: false }
+  }
+  return { input: routed.input, modern: Mcp2026.is2026Message(message) }
+}
+
+async function replayFirstLine(input: Readable) {
+  return new Promise<{ firstLine: string; input: Readable }>((resolve) => {
+    const buffers: Buffer[] = []
+    const replay = new PassThrough()
+
+    function done(buffer: Buffer, newline: number) {
+      input.off('data', onData)
+      input.off('end', onEnd)
+      const first = newline === -1 ? buffer : buffer.subarray(0, newline + 1)
+      const rest = newline === -1 ? Buffer.alloc(0) : buffer.subarray(newline + 1)
+      replay.write(first)
+      if (rest.length > 0) replay.write(rest)
+      input.pipe(replay)
+      resolve({ firstLine: first.toString('utf8').trim(), input: replay })
+    }
+
+    function onData(chunk: Buffer | string) {
+      buffers.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      const buffer = Buffer.concat(buffers)
+      const newline = buffer.indexOf('\n')
+      if (newline !== -1) done(buffer, newline)
+    }
+
+    function onEnd() {
+      const buffer = Buffer.concat(buffers)
+      replay.end(buffer)
+      resolve({ firstLine: buffer.toString('utf8').trim(), input: replay })
+    }
+
+    input.on('data', onData)
+    input.on('end', onEnd)
+  })
+}
+
+async function serve2026Stdio(
+  input: Readable,
+  output: Writable,
+  name: string,
+  version: string,
+  commands: Map<string, any>,
+  options: serve.Options,
+) {
+  let buffer = ''
+  for await (const chunk of input) {
+    buffer += chunk.toString()
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines)
+      await handle2026StdioLine(line, output, name, version, commands, options)
+  }
+  if (buffer.trim()) await handle2026StdioLine(buffer, output, name, version, commands, options)
+}
+
+async function handle2026StdioLine(
+  line: string,
+  output: Writable,
+  name: string,
+  version: string,
+  commands: Map<string, any>,
+  options: serve.Options,
+) {
+  if (!line.trim()) return
+  const message = JSON.parse(line) as JsonRpcRequest
+  const protocolVersion =
+    message.method === 'server/discover'
+      ? draftProtocolVersion
+      : String(
+          Mcp2026.metaFrom(message)?.['io.modelcontextprotocol/protocolVersion'] ??
+            draftProtocolVersion,
+        )
+  const response = await handle2026Http(
+    new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'MCP-Protocol-Version': protocolVersion,
+      },
+      body: JSON.stringify(message),
+    }),
+    name,
+    version,
+    commands,
+    { env: options.env, middlewares: options.middlewares, vars: options.vars },
+  )
+  const text = await response.text()
+  if (text) output.write(`${text}\n`)
+}
+
 /** @internal Executes a tool call and returns a CallToolResult. */
 export async function callTool(
   tool: ToolEntry,
   params: Record<string, unknown>,
   options: {
-    extra?: {
-      mcpReq?: { _meta?: { progressToken?: string | number } }
-    }
+    clientCapabilities?: ClientCapabilities | undefined
+    elicitation?: Elicitation.Adapter | undefined
+    extra?: Extra | undefined
+    sendNotification?: ((n: ProgressNotification) => Promise<void>) | undefined
+    urlElicitationRequiredError?: UrlElicitationRequiredErrorConstructor | undefined
     /** The inbound HTTP request when invoked via HTTP MCP. */
     request?: Request | undefined
-    sendNotification?: (n: ProgressNotification) => Promise<void>
     name?: string | undefined
     version?: string | undefined
     middlewares?: MiddlewareHandler[] | undefined
@@ -134,6 +246,13 @@ export async function callTool(
     agent: true,
     argv: [],
     env: options.env,
+    elicitation:
+      options.elicitation ??
+      createElicitationAdapter(
+        options.extra,
+        options.clientCapabilities,
+        options.urlElicitationRequiredError,
+      ),
     format: 'json',
     formatExplicit: true,
     inputOptions: params,
@@ -141,6 +260,8 @@ export async function callTool(
     name: options.name ?? tool.name,
     parseMode: 'flat',
     path: tool.name,
+    rethrowErrors: (error) =>
+      isUrlElicitationRequiredError(error) || Mcp2026.isInputRequiredError(error),
     request: options.request,
     vars: options.vars,
     version: options.version,
@@ -195,11 +316,87 @@ export async function callTool(
   }
 }
 
+/** Handles a stateless MCP 2026 Streamable HTTP request. */
+export async function handle2026Http(
+  req: Request,
+  name: string,
+  version: string,
+  commands: Map<string, any>,
+  options: handle2026Http.Options = {},
+): Promise<Response> {
+  return Mcp2026.handle2026Http(req, name, version, commands, {
+    ...options,
+    runtime: { callTool, collectTools },
+  })
+}
+
+/** Returns true when a request should use incur's stateless MCP 2026 dispatcher. */
+export const is2026HttpRequest = Mcp2026.is2026HttpRequest
+
+export declare namespace handle2026Http {
+  /** Options passed to the stateless MCP 2026 handler. */
+  type Options = Omit<Mcp2026.handle2026Http.Options, 'runtime'>
+}
+
+export * from './Mcp2026Types.js'
+
+function createElicitationAdapter(
+  extra: Extra | undefined,
+  clientCapabilities: ClientCapabilities | undefined,
+  UrlElicitationRequiredError: UrlElicitationRequiredErrorConstructor | undefined,
+): Elicitation.Adapter | undefined {
+  const elicitInput = extra?.mcpReq?.elicitInput
+  if (!elicitInput) return undefined
+  return {
+    form(params) {
+      return elicitInput(params) as Promise<any>
+    },
+    requireUrl(params) {
+      if (!clientCapabilities?.elicitation?.url)
+        throw new Error('Client does not support url elicitation.')
+      if (!UrlElicitationRequiredError)
+        throw new Error('URL elicitation requires MCP server support.')
+      throw new UrlElicitationRequiredError([params])
+    },
+    url(params) {
+      return elicitInput(params) as Promise<any>
+    },
+  }
+}
+
+function isUrlElicitationRequiredError(error: unknown) {
+  return (error as { code?: unknown })?.code === -32042
+}
+
 /** @internal A progress notification sent during streaming tool calls. */
 type ProgressNotification = {
   method: 'notifications/progress'
   params: { progressToken: string | number; progress: number; message: string }
 }
+
+/** @internal MCP SDK callback context fields used by incur. */
+type Extra = {
+  mcpReq?:
+    | {
+        _meta?: { progressToken?: string | number } | undefined
+        elicitInput?: ((params: unknown) => Promise<unknown>) | undefined
+      }
+    | undefined
+}
+
+/** @internal Client capability subset used by elicitation. */
+type ClientCapabilities = {
+  elicitation?:
+    | {
+        form?: object | undefined
+        url?: object | undefined
+      }
+    | undefined
+}
+
+type UrlElicitationRequiredErrorConstructor = new (
+  elicitations: Elicitation.UrlRequestParams[],
+) => Error
 
 /** @internal A resolved tool entry from the command tree. */
 export type ToolEntry = {
@@ -213,18 +410,14 @@ export type ToolEntry = {
   middlewares?: MiddlewareHandler[] | undefined
 }
 
-/** MCP tool annotations that describe tool behavior to clients. */
-export type ToolAnnotations = {
-  /** A human-readable title for the tool. */
-  title?: string | undefined
-  /** If true, the tool does not modify its environment. Default: false. */
-  readOnlyHint?: boolean | undefined
-  /** If true, the tool may perform destructive updates to its environment. Meaningful only when readOnlyHint is false. Default: true. */
-  destructiveHint?: boolean | undefined
-  /** If true, calling the tool repeatedly with the same arguments has no additional effect. Meaningful only when readOnlyHint is false. Default: false. */
-  idempotentHint?: boolean | undefined
-  /** If true, the tool may interact with an open world of external entities. Default: true. */
-  openWorldHint?: boolean | undefined
+export declare namespace callTool {
+  /** Options passed through from MCP tool callbacks. */
+  type Options = {
+    /** MCP client capability subset. */
+    clientCapabilities?: ClientCapabilities | undefined
+    /** MCP SDK callback context. */
+    extra?: Extra | undefined
+  }
 }
 
 /** MCP tool exposure options. */
@@ -257,6 +450,8 @@ export declare namespace registerTools {
   type Options = {
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
+    /** Resolves the current MCP client capabilities. */
+    clientCapabilities?: (() => ClientCapabilities | undefined) | undefined
     /** Converts JSON Schema output definitions for the MCP SDK. */
     fromJsonSchema: typeof import('@modelcontextprotocol/server').fromJsonSchema
     /** Middleware handlers registered on the root CLI. */
@@ -269,6 +464,8 @@ export declare namespace registerTools {
     sendNotification?: ((notification: ProgressNotification) => Promise<void>) | undefined
     /** Tool exposure options. */
     tools?: ToolFilter | undefined
+    /** SDK error constructor for URL elicitation responses. */
+    urlElicitationRequiredError?: UrlElicitationRequiredErrorConstructor | undefined
     /** Vars schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
     /** MCP server version. */
@@ -432,12 +629,14 @@ const writeAnnotations = {
 
 function callOptions(options: registerTools.Options, extra: any) {
   return {
+    clientCapabilities: options.clientCapabilities?.(),
     env: options.env,
     extra,
     middlewares: options.middlewares,
     name: options.name,
     request: options.request?.(extra),
     ...(options.sendNotification ? { sendNotification: options.sendNotification } : undefined),
+    urlElicitationRequiredError: options.urlElicitationRequiredError,
     vars: options.vars,
     version: options.version,
   }

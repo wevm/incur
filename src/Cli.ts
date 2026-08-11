@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import * as Binary from './Binary.js'
 import * as Completions from './Completions.js'
+import type * as Elicitation from './Elicitation.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ParseError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
@@ -122,6 +123,26 @@ export type Cli<
   name: string
   /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
   fetch(req: Request): Promise<Response>
+  /** Registers an MCP resource exposed by the `/mcp` endpoint. */
+  resource(
+    nameOrDefinition: string | Mcp.ResourceDefinition,
+    definition?: Omit<Mcp.ResourceDefinition, 'name'>,
+  ): Cli<commands, vars, env>
+  /** Registers an MCP resource template exposed by the `/mcp` endpoint. */
+  resourceTemplate(
+    nameOrDefinition: string | Mcp.ResourceTemplateDefinition,
+    definition?: Omit<Mcp.ResourceTemplateDefinition, 'name'>,
+  ): Cli<commands, vars, env>
+  /** Registers an MCP prompt exposed by the `/mcp` endpoint. */
+  prompt(
+    nameOrDefinition: string | Mcp.PromptDefinition,
+    definition?: Omit<Mcp.PromptDefinition, 'name'>,
+  ): Cli<commands, vars, env>
+  /** Registers an MCP App UI resource exposed by the `/mcp` endpoint. */
+  app(
+    nameOrDefinition: string | Mcp.AppDefinition,
+    definition?: Omit<Mcp.AppDefinition, 'name'>,
+  ): Cli<commands, vars, env>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
@@ -258,6 +279,10 @@ export function create(
   const rootFetchBaseUrl = rootFetchSource === undefined ? undefined : fetchBaseUrl(rootFetchSource)
 
   const commands = new Map<string, CommandEntry>()
+  const resources: Mcp.ResourceDefinition[] = []
+  const resourceTemplates: Mcp.ResourceTemplateDefinition[] = []
+  const prompts: Mcp.PromptDefinition[] = []
+  const apps: Mcp.AppDefinition[] = []
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
@@ -378,6 +403,11 @@ export function create(
         envSchema: def.env,
         globals: globalsDesc,
         mcpHandler,
+        mcpResources: resources,
+        mcpResourceTemplates: resourceTemplates,
+        mcpPrompts: prompts,
+        mcpApps: apps,
+        mcpServer: def.mcpServer,
         middlewares,
         name,
         rootCommand: rootDef,
@@ -413,6 +443,38 @@ export function create(
 
     use(handler: MiddlewareHandler): any {
       middlewares.push(handler)
+      return cli
+    },
+
+    resource(
+      nameOrDefinition: string | Mcp.ResourceDefinition,
+      definition?: Omit<Mcp.ResourceDefinition, 'name'>,
+    ) {
+      resources.push(named(nameOrDefinition, definition) as Mcp.ResourceDefinition)
+      return cli
+    },
+
+    resourceTemplate(
+      nameOrDefinition: string | Mcp.ResourceTemplateDefinition,
+      definition?: Omit<Mcp.ResourceTemplateDefinition, 'name'>,
+    ) {
+      resourceTemplates.push(named(nameOrDefinition, definition) as Mcp.ResourceTemplateDefinition)
+      return cli
+    },
+
+    prompt(
+      nameOrDefinition: string | Mcp.PromptDefinition,
+      definition?: Omit<Mcp.PromptDefinition, 'name'>,
+    ) {
+      prompts.push(named(nameOrDefinition, definition) as Mcp.PromptDefinition)
+      return cli
+    },
+
+    app(
+      nameOrDefinition: string | Mcp.AppDefinition,
+      definition?: Omit<Mcp.AppDefinition, 'name'>,
+    ) {
+      apps.push(named(nameOrDefinition, definition) as Mcp.AppDefinition)
       return cli
     },
   }
@@ -466,6 +528,15 @@ export function create(
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
   return cli
+}
+
+function named<definition extends { name: string }>(
+  nameOrDefinition: string | definition,
+  definition?: Omit<definition, 'name'>,
+): definition {
+  if (typeof nameOrDefinition === 'string')
+    return { name: nameOrDefinition, ...definition } as definition
+  return nameOrDefinition
 }
 
 export declare namespace create {
@@ -569,6 +640,8 @@ export declare namespace create {
           displayName: string
           /** Parsed environment variables. */
           env: InferOutput<env>
+          /** Request additional user input through MCP elicitation. */
+          elicit: Elicitation.Client
           /** Return an error result with optional CTAs. */
           error: (options: {
             code: string
@@ -612,6 +685,13 @@ export declare namespace create {
           title?: string | undefined
           /** Controls how command tools are exposed to MCP clients. */
           tools?: Mcp.ToolFilter | undefined
+        }
+      | undefined
+    /** Options for the built-in MCP server endpoint. */
+    mcpServer?:
+      | {
+          authorization?: Mcp.AuthorizationOptions | undefined
+          cache?: Mcp.CacheOptions | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -1923,11 +2003,27 @@ declare namespace fetchImpl {
           req: Request,
           commands: Map<string, CommandEntry>,
           mcpOptions?: {
+            apps?: Mcp.AppDefinition[] | undefined
+            authorization?: Mcp.AuthorizationOptions | undefined
+            cache?: Mcp.CacheOptions | undefined
             middlewares?: MiddlewareHandler[] | undefined
             env?: z.ZodObject<any> | undefined
+            prompts?: Mcp.PromptDefinition[] | undefined
+            resources?: Mcp.ResourceDefinition[] | undefined
+            resourceTemplates?: Mcp.ResourceTemplateDefinition[] | undefined
             vars?: z.ZodObject<any> | undefined
           },
         ) => Promise<Response>)
+      | undefined
+    mcpApps?: Mcp.AppDefinition[] | undefined
+    mcpPrompts?: Mcp.PromptDefinition[] | undefined
+    mcpResources?: Mcp.ResourceDefinition[] | undefined
+    mcpResourceTemplates?: Mcp.ResourceTemplateDefinition[] | undefined
+    mcpServer?:
+      | {
+          authorization?: Mcp.AuthorizationOptions | undefined
+          cache?: Mcp.CacheOptions | undefined
+        }
       | undefined
     middlewares?: MiddlewareHandler[] | undefined
     /** CLI name. */
@@ -1958,14 +2054,19 @@ function createMcpHttpHandler(
       | undefined,
     stateless: boolean,
   ) {
-    const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
-      await import('@modelcontextprotocol/server')
+    const {
+      fromJsonSchema,
+      McpServer,
+      UrlElicitationRequiredError,
+      WebStandardStreamableHTTPServerTransport,
+    } = await import('@modelcontextprotocol/server')
 
     const server = new McpServer(
       { name, ...(options.title ? { title: options.title } : undefined), version },
       options.instructions ? { instructions: options.instructions } : undefined,
     )
     Mcp.registerTools(server, commands, {
+      clientCapabilities: () => server.server.getClientCapabilities(),
       env: mcpOptions?.env,
       fromJsonSchema,
       middlewares: mcpOptions?.middlewares,
@@ -1973,6 +2074,7 @@ function createMcpHttpHandler(
       request: (extra) => extra?.http?.req,
       sendNotification: (notification) => server.server.notification(notification),
       tools: options.tools,
+      urlElicitationRequiredError: UrlElicitationRequiredError,
       vars: mcpOptions?.vars,
       version,
     })
@@ -1993,11 +2095,30 @@ function createMcpHttpHandler(
     req: Request,
     commands: Map<string, CommandEntry>,
     mcpOptions?: {
+      apps?: Mcp.AppDefinition[] | undefined
+      authorization?: Mcp.AuthorizationOptions | undefined
+      cache?: Mcp.CacheOptions | undefined
       middlewares?: MiddlewareHandler[] | undefined
       env?: z.ZodObject<any> | undefined
+      prompts?: Mcp.PromptDefinition[] | undefined
+      resources?: Mcp.ResourceDefinition[] | undefined
+      resourceTemplates?: Mcp.ResourceTemplateDefinition[] | undefined
       vars?: z.ZodObject<any> | undefined
     },
   ): Promise<Response> => {
+    if (await Mcp.is2026HttpRequest(req))
+      return Mcp.handle2026Http(req, name, version, commands, {
+        apps: mcpOptions?.apps,
+        authorization: mcpOptions?.authorization,
+        cache: mcpOptions?.cache,
+        env: mcpOptions?.env,
+        middlewares: mcpOptions?.middlewares,
+        prompts: mcpOptions?.prompts,
+        resources: mcpOptions?.resources,
+        resourceTemplates: mcpOptions?.resourceTemplates,
+        vars: mcpOptions?.vars,
+      })
+
     const stateless = options.stateless ?? true
     if (stateless && req.method !== 'POST')
       return new Response(null, { status: 405, headers: { Allow: 'POST' } })
@@ -2108,8 +2229,14 @@ async function fetchImpl(
   // MCP over HTTP: route /mcp to the MCP transport
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
     return options.mcpHandler(req, commands, {
+      apps: options.mcpApps,
+      authorization: options.mcpServer?.authorization,
+      cache: options.mcpServer?.cache,
       middlewares: options.middlewares,
       env: options.envSchema,
+      prompts: options.mcpPrompts,
+      resources: options.mcpResources,
+      resourceTemplates: options.mcpResourceTemplates,
       vars: options.vars,
     })
 
@@ -3912,6 +4039,8 @@ type CommandDefinition<
   outputPolicy?: OutputPolicy | undefined
   /** Middleware that runs only for this command, after root and group middleware. */
   middleware?: MiddlewareHandler<vars, cliEnv, globals>[] | undefined
+  /** MCP metadata for this command when exposed as a task-capable tool. */
+  mcpTool?: Mcp.ToolMetadata | undefined
   /** Alternative usage patterns shown in help output. */
   usage?: Usage<args, options>[] | undefined
   /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
@@ -3924,6 +4053,8 @@ type CommandDefinition<
     displayName: string
     /** Parsed environment variables. */
     env: InferOutput<env>
+    /** Request additional user input through MCP elicitation. */
+    elicit: Elicitation.Client
     /** Return an error result with optional CTAs. */
     error: (options: {
       code: string

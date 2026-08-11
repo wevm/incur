@@ -273,6 +273,74 @@ POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "user
 
 The MCP server is initialized lazily on the first `/mcp` request. Non-`/mcp` paths route to the command API as usual.
 
+`/mcp` also supports the MCP 2026 release-candidate stateless flow. Clients can call `server/discover` without initialization, then send each request with `MCP-Protocol-Version: DRAFT-2026-v1` or `_meta.io.modelcontextprotocol/protocolVersion`. Legacy initialized sessions still work.
+
+```ts
+import { Cli, Mcp, z } from 'incur'
+
+const cli = Cli.create('ops', {
+  mcpServer: {
+    cache: { ttlMs: 300000, cacheScope: 'public' },
+  },
+})
+
+cli
+  .command('deploy', {
+    description: 'Deploy the app',
+    mcpTool: {
+      title: 'Deploy',
+      annotations: { destructiveHint: true, openWorldHint: true },
+      headers: { token: 'Authorization' },
+      task: { required: true, pollIntervalMs: 5000 },
+    },
+    args: z.object({ token: z.string() }),
+    run() {
+      return { ok: true }
+    },
+  })
+  .resource('config', {
+    uri: 'file:///config.json',
+    read: () => ({ uri: 'file:///config.json', text: '{"ok":true}' }),
+  })
+  .prompt('review', {
+    args: z.object({ language: z.string().describe('Language') }),
+    get: (args) => [{ role: 'user', content: Mcp.text(`Review this ${args.language} code`) }],
+  })
+  .app('panel', { resourceUri: 'ui://panel', html: '<main>panel</main>' })
+```
+
+The stateless handler advertises tool metadata, output schemas, `x-mcp-header`, cache hints, resources, resource templates, prompts, completion, MCP Apps UI resources, MRTR elicitation, `subscriptions/listen`, task-backed tools, and authorization extensions. Apps are served as `text/html;profile=mcp-app` resources. Task-backed tools return `resultType: "task"` only when the client declares `io.modelcontextprotocol/tasks`.
+
+#### MCP elicitation
+
+Commands running as MCP tools can request additional user input through `c.elicit`:
+
+```ts
+cli.command('connect', {
+  async run(c) {
+    const profile = await c.elicit.form({
+      message: 'Choose the workspace to connect.',
+      schema: z.object({
+        workspace: z.string().describe('Workspace slug'),
+      }),
+    })
+
+    if (profile.action !== 'accept') return { connected: false }
+
+    const consent = await c.elicit.url({
+      message: 'Authorize access in your browser.',
+      url: 'https://example.com/oauth/start',
+    })
+
+    return { connected: consent.action === 'accept', workspace: profile.content.workspace }
+  },
+})
+```
+
+Pass `key` to `form()` or `url()` when a command may request multiple inputs and needs a stable MCP 2026 MRTR response key.
+
+Use form mode only for non-sensitive structured input. Use URL mode for secrets, API keys, OAuth, payment, and other interactions that must not pass through the MCP client. Outside MCP, `c.elicit` returns an `ELICITATION_UNSUPPORTED` command error.
+
 ## Arguments & Options
 
 All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.
