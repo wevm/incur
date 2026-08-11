@@ -137,6 +137,25 @@ describe('formatCommand', () => {
     expect(result).toContain('Usage: tool run <port> [verbose] <fast|slow>')
   })
 
+  test('synopsis renders variadic args with ellipsis', () => {
+    const result = Help.formatCommand('tool copy', {
+      args: z.object({
+        target: z.string().describe('Destination'),
+        paths: z.array(z.string()).describe('Files to copy'),
+      }),
+    })
+    expect(result).toContain('Usage: tool copy <target> <paths...>')
+  })
+
+  test('synopsis renders optional variadic args in brackets', () => {
+    const result = Help.formatCommand('tool lint', {
+      args: z.object({
+        paths: z.array(z.string()).optional().describe('Files to lint'),
+      }),
+    })
+    expect(result).toContain('Usage: tool lint [paths...]')
+  })
+
   test('shows count type in help for meta count', () => {
     const result = Help.formatCommand('tool run', {
       options: z.object({
@@ -392,7 +411,7 @@ describe('formatRoot', () => {
 
       Integrations:
         completions  Generate shell completion script
-        mcp add      Register as MCP server
+        mcp          Register as MCP server (add, doctor)
         skills       Sync skill files to agents (add, list)
 
       Global Options:
@@ -408,7 +427,39 @@ describe('formatRoot', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version"
     `)
+  })
+
+  test('formatCommand shows custom global options with deprecated flag', () => {
+    const result = Help.formatCommand('tool deploy', {
+      description: 'Deploy app',
+      globals: {
+        schema: z.object({
+          rpcUrl: z.string().optional().describe('RPC endpoint URL'),
+          oldRpc: z.string().optional().describe('Old RPC endpoint').meta({ deprecated: true }),
+        }),
+        alias: { rpcUrl: 'r' },
+      },
+    })
+    expect(result).toContain('Custom Global Options:')
+    expect(result).toContain('--rpc-url, -r <string>')
+    expect(result).toContain('RPC endpoint URL')
+    expect(result).toContain('[deprecated] Old RPC endpoint')
+  })
+
+  test('formatRoot shows custom global options', () => {
+    const result = Help.formatRoot('tool', {
+      globals: {
+        schema: z.object({
+          chain: z.string().default('mainnet').describe('Target chain'),
+        }),
+      },
+      commands: [{ name: 'deploy', description: 'Deploy' }],
+    })
+    expect(result).toContain('Custom Global Options:')
+    expect(result).toContain('--chain <string>')
+    expect(result).toContain('Target chain (default: mainnet)')
   })
 })

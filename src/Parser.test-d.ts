@@ -8,6 +8,20 @@ test('narrows args from schema', () => {
   expectTypeOf(result.args).toEqualTypeOf<{ name: string }>()
 })
 
+test('variadic array arg infers as array', () => {
+  const result = Parser.parse(['a.ts', 'b.ts'], {
+    args: z.object({ paths: z.array(z.string()) }),
+  })
+  expectTypeOf(result.args).toEqualTypeOf<{ paths: string[] }>()
+})
+
+test('scalar and variadic args infer together', () => {
+  const result = Parser.parse(['dest', 'a.ts'], {
+    args: z.object({ target: z.string(), paths: z.array(z.string()).default([]) }),
+  })
+  expectTypeOf(result.args).toEqualTypeOf<{ target: string; paths: string[] }>()
+})
+
 test('narrows options from schema', () => {
   const result = Parser.parse(['--state', 'open'], {
     options: z.object({ state: z.string() }),

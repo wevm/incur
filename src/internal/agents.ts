@@ -217,8 +217,11 @@ export function install(sourceDir: string, options: install.Options = {}): insta
         : path.join(cwd, agent.projectSkillsDir)
       const agentDir = path.join(agentSkillsDir, skill.name)
 
-      // Skip if agent dir resolves to canonical (no symlink needed)
-      if (agentDir === canonicalDir) continue
+      // Skip if agent dir resolves to canonical (no symlink needed). Compared after resolving, because
+      // an agent whose skills directory is a symlink to the canonical one names the same directory by a
+      // different path. Removing it there would delete the skill just written, and the replacement link
+      // would point at itself.
+      if (resolveParent(agentDir) === resolveParent(canonicalDir)) continue
 
       try {
         rmForce(agentDir)

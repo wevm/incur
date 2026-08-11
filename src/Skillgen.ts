@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import * as Cli from './Cli.js'
 import { importCli } from './internal/utils.js'
+import * as Yaml from './internal/yaml.js'
 import * as Skill from './Skill.js'
 
 /** Imports a CLI from `input`, generates Markdown skill files, and writes them to `output`. */
@@ -13,7 +14,14 @@ export async function generate(input: string, output: string, depth = 1): Promis
 
   const groups = new Map<string, string>()
   if (cli.description) groups.set(cli.name, cli.description)
-  const entries = collectEntries(commands, [], groups)
+  const entries = Cli.collectSkillCommands(
+    commands,
+    [],
+    groups,
+    Cli.toRootDefinition.get(cli as unknown as Cli.Root),
+  )
+  // Pre-load yaml for `Skill.split`'s sync call path.
+  await Yaml.load()
   const files = Skill.split(cli.name, entries, depth, groups)
 
   if (depth > 0) await fs.rm(output, { recursive: true, force: true })
@@ -29,38 +37,4 @@ export async function generate(input: string, output: string, depth = 1): Promis
   }
 
   return written
-}
-
-/** Recursively collects leaf commands as `Skill.CommandInfo` and group descriptions. */
-function collectEntries(
-  commands: Map<string, any>,
-  prefix: string[],
-  groups: Map<string, string> = new Map(),
-): Skill.CommandInfo[] {
-  const result: Skill.CommandInfo[] = []
-  for (const [name, entry] of commands) {
-    const path = [...prefix, name]
-    if ('_group' in entry && entry._group) {
-      if (entry.description) groups.set(path.join(' '), entry.description)
-      result.push(...collectEntries(entry.commands, path, groups))
-    } else {
-      const cmd: Skill.CommandInfo = { name: path.join(' ') }
-      if (entry.description) cmd.description = entry.description
-      if (entry.args) cmd.args = entry.args
-      if (entry.env) cmd.env = entry.env
-      if (entry.hint) cmd.hint = entry.hint
-      if (entry.options) cmd.options = entry.options
-      if (entry.output) cmd.output = entry.output
-      const examples = Cli.formatExamples(entry.examples)
-      if (examples) {
-        const cmdName = path.join(' ')
-        cmd.examples = examples.map((e) => ({
-          ...e,
-          command: e.command ? `${cmdName} ${e.command}` : cmdName,
-        }))
-      }
-      result.push(cmd)
-    }
-  }
-  return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 }

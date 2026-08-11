@@ -194,21 +194,27 @@ const initParams = {
 async function mcpSession(
   commands: Map<string, any>,
   messages: { method: string; params?: unknown; id?: number }[],
+  options: Omit<Mcp.serve.Options, 'input' | 'output'> = {},
 ) {
   const input = new PassThrough()
   const output = new PassThrough()
   const chunks: string[] = []
   output.on('data', (chunk) => chunks.push(chunk.toString()))
 
-  const done = Mcp.serve('test-cli', '1.0.0', commands, { input, output })
+  const { tools, ...rest } = options
+  const done = Mcp.serve('test-cli', '1.0.0', commands, {
+    input,
+    output,
+    ...rest,
+    tools: { discovery: 'direct', ...tools },
+  })
 
   for (const msg of messages) {
     const rpc = { jsonrpc: '2.0', ...msg }
     input.write(`${JSON.stringify(rpc)}\n`)
   }
 
-  // Give time for async processing then close
-  await new Promise((r) => setTimeout(r, 20))
+  await waitForResponses(chunks, messages.filter((msg) => msg.id !== undefined).length)
   input.end()
   await done
 
@@ -235,7 +241,11 @@ function mcpHarness(commands: Map<string, any>) {
     }
   })
 
-  const done = Mcp.serve('test-cli', '1.0.0', commands, { input, output })
+  const done = Mcp.serve('test-cli', '1.0.0', commands, {
+    input,
+    output,
+    tools: { discovery: 'direct' },
+  })
 
   return {
     async close() {
@@ -272,6 +282,14 @@ async function mcp2026(
   return { res, body: text ? JSON.parse(text) : undefined }
 }
 
+async function waitForResponses(chunks: string[], expected: number) {
+  const started = Date.now()
+  while (chunks.length < expected) {
+    if (Date.now() - started > 1_000) return
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
+
 describe('Mcp', () => {
   test('initialize responds with server info', async () => {
     const [res] = await mcpSession(createTestCommands(), [
@@ -281,6 +299,33 @@ describe('Mcp', () => {
     expect(res.result.protocolVersion).toBe('2024-11-05')
     expect(res.result.serverInfo).toEqual({ name: 'test-cli', version: '1.0.0' })
     expect(res.result.capabilities.tools).toBeDefined()
+  })
+
+  test('initialize includes the server title', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      title: 'Test MCP',
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const [res] = chunks.map((chunk) => JSON.parse(chunk.trim()))
+    expect(res.result.serverInfo).toEqual({
+      name: 'test-cli',
+      title: 'Test MCP',
+      version: '1.0.0',
+    })
   })
 
   test('initialize with 2025-03-26 protocol version', async () => {
@@ -314,6 +359,246 @@ describe('Mcp', () => {
     expect(echoTool.inputSchema.required).toContain('message')
   })
 
+  test('tools/list defaults to progressive discovery', async () => {
+    const [, res] = await mcpSession(
+      createTestCommands(),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/list', params: {} },
+      ],
+      { tools: { discovery: undefined } },
+    )
+
+    expect(res.result.tools.map((tool: any) => tool.name)).toEqual([
+      'search_tools',
+      'get_tool_details',
+      'call_read_tool',
+      'call_write_tool',
+    ])
+    expect(res.result.tools.some((tool: any) => tool.name === 'echo')).toBe(false)
+  })
+
+  test('progressive discovery searches, inspects, and gates execution', async () => {
+    const commands = new Map<string, any>([
+      [
+        'read-user',
+        {
+          description: 'Read a user profile',
+          args: z.object({ id: z.string() }),
+          mcp: { annotations: { readOnlyHint: true } },
+          run: (c: any) => ({ id: c.args.id }),
+        },
+      ],
+      [
+        'delete-user',
+        {
+          description: 'Delete a user profile',
+          args: z.object({ id: z.string() }),
+          mcp: { annotations: { destructiveHint: true, readOnlyHint: false } },
+          run: (c: any) => ({ deleted: c.args.id }),
+        },
+      ],
+    ])
+    const responses = await mcpSession(
+      commands,
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        {
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'search_tools', arguments: { query: 'user', limit: 1 } },
+        },
+        {
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'get_tool_details', arguments: { name: 'read-user' } },
+        },
+        {
+          id: 4,
+          method: 'tools/call',
+          params: {
+            name: 'call_read_tool',
+            arguments: { name: 'read-user', arguments: { id: '1' } },
+          },
+        },
+        {
+          id: 5,
+          method: 'tools/call',
+          params: {
+            name: 'call_read_tool',
+            arguments: { name: 'delete-user', arguments: { id: '1' } },
+          },
+        },
+        {
+          id: 6,
+          method: 'tools/call',
+          params: {
+            name: 'call_write_tool',
+            arguments: { name: 'delete-user', arguments: { id: '1' } },
+          },
+        },
+        {
+          id: 7,
+          method: 'tools/call',
+          params: {
+            name: 'call_write_tool',
+            arguments: { name: 'read-user', arguments: { id: '1' } },
+          },
+        },
+      ],
+      { tools: { discovery: 'progressive' } },
+    )
+
+    const byId = new Map(responses.map((response) => [response.id, response]))
+    const search = JSON.parse(byId.get(2).result.content[0].text)
+    expect(search.tools).toHaveLength(1)
+    expect(search.tools[0]).toMatchObject({ name: 'delete-user' })
+    expect(search.tools[0]).not.toHaveProperty('inputSchema')
+
+    const details = JSON.parse(byId.get(3).result.content[0].text)
+    expect(details.name).toBe('read-user')
+    expect(details.inputSchema.properties.id).toBeDefined()
+    expect(JSON.parse(byId.get(4).result.content[0].text)).toEqual({ id: '1' })
+    expect(byId.get(5).result).toMatchObject({ isError: true })
+    expect(JSON.parse(byId.get(5).result.content[0].text)).toEqual({
+      error: 'Tool is not read-only: delete-user',
+    })
+    expect(JSON.parse(byId.get(6).result.content[0].text)).toEqual({ deleted: '1' })
+    expect(byId.get(7).result).toMatchObject({ isError: true })
+    expect(JSON.parse(byId.get(7).result.content[0].text)).toEqual({
+      error: 'Tool is read-only: read-user',
+    })
+  })
+
+  test('progressive discovery applies tool filters before search', async () => {
+    const [, res] = await mcpSession(
+      new Map<string, any>([
+        ['docs-list', { description: 'List docs', run: () => null }],
+        ['secret-list', { description: 'List secrets', run: () => null }],
+      ]),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        {
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'search_tools', arguments: { query: 'list' } },
+        },
+      ],
+      { tools: { discovery: 'progressive', exclude: ['secret-*'] } },
+    )
+
+    expect(JSON.parse(res.result.content[0].text).tools.map((tool: any) => tool.name)).toEqual([
+      'docs-list',
+    ])
+  })
+
+  test('collectTools hides commands and groups with mcp false', () => {
+    const commands = createTestCommands()
+    commands.set('secret', { mcp: false, run: () => ({ ok: true }) })
+    commands.set('hidden', {
+      _group: true,
+      mcp: false,
+      commands: new Map([['inside', { run: () => ({ ok: true }) }]]),
+    })
+
+    expect(Mcp.collectTools(commands, []).map((tool) => tool.name)).toMatchInlineSnapshot(`
+      [
+        "echo",
+        "fail",
+        "greet_hello",
+        "ping",
+        "stream",
+      ]
+    `)
+  })
+
+  test('collectTools filters tools by include and exclude patterns', () => {
+    const commands = new Map<string, any>([
+      ['docs_list', { run: () => null }],
+      ['docs_secret', { run: () => null }],
+      ['users_list', { run: () => null }],
+    ])
+
+    expect(
+      Mcp.collectTools(commands, [], [], { include: ['docs_*'], exclude: ['*_secret'] }).map(
+        (tool) => tool.name,
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        "docs_list",
+      ]
+    `)
+  })
+
+  test('stdio serve filters tools/list by configured patterns', async () => {
+    const commands = new Map<string, any>([
+      ['docs_list', { run: () => null }],
+      ['secret_list', { run: () => null }],
+    ])
+    const [, res] = await mcpSession(
+      commands,
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/list', params: {} },
+      ],
+      { tools: { exclude: ['secret_*'] } },
+    )
+
+    expect(res.result.tools.map((tool: any) => tool.name)).toMatchInlineSnapshot(`
+      [
+        "docs_list",
+      ]
+    `)
+  })
+
+  test('tools/list uses command MCP name and description overrides', async () => {
+    const commands = new Map<string, any>()
+    commands.set('whoami', {
+      description: 'Show wallet identity',
+      mcp: {
+        name: 'get_balance',
+        description: 'Get wallet balance',
+      },
+      run() {
+        return { balance: '1.00' }
+      },
+    })
+
+    const [, listRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    const names = listRes.result.tools.map((tool: any) => tool.name)
+    expect(names).toEqual(['get_balance'])
+    expect(listRes.result.tools[0].description).toBe('Get wallet balance')
+
+    const [, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'get_balance', arguments: {} } },
+    ])
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"balance":"1.00"}' }])
+  })
+
+  test('collectTools rejects duplicate MCP tool names', () => {
+    const commands = new Map<string, any>()
+    commands.set('whoami', {
+      mcp: { name: 'get_balance' },
+      run() {
+        return { balance: '1.00' }
+      },
+    })
+    commands.set('balance', {
+      mcp: { name: 'get_balance' },
+      run() {
+        return { balance: '1.00' }
+      },
+    })
+
+    expect(() => Mcp.collectTools(commands, [])).toThrowError(
+      'Duplicate MCP tool name: get_balance',
+    )
+  })
+
   test('notifications are ignored (no response)', async () => {
     const responses = await mcpSession(createTestCommands(), [
       { id: 1, method: 'initialize', params: initParams },
@@ -345,6 +630,40 @@ describe('Mcp', () => {
     expect(res.result.content).toEqual([{ type: 'text', text: '{"result":"HELLO"}' }])
   })
 
+  test('tools/list and tools/call handle variadic array args', async () => {
+    const commands = new Map<string, any>()
+    commands.set('lint', {
+      description: 'Lint files',
+      args: z.object({ paths: z.array(z.string()).describe('Files to lint') }),
+      run: (c: any) => ({ count: c.args.paths.length }),
+    })
+
+    const [, listRes, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+      {
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'lint', arguments: { paths: ['a.ts', 'b.ts'] } },
+      },
+    ])
+
+    expect(listRes.result.tools[0].inputSchema.properties.paths).toMatchObject({ type: 'array' })
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"count":2}' }])
+  })
+
+  test('tools/call validation error includes fieldErrors', async () => {
+    const tool = Mcp.collectTools(createTestCommands(), []).find((tool) => tool.name === 'echo')!
+    const result = await Mcp.callTool(tool, { message: 123 })
+    expect(result.isError).toBe(true)
+    const [content] = result.content
+    expect(content).toBeDefined()
+    expect(JSON.parse(content!.text)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      fieldErrors: [{ code: 'invalid_type', missing: false, path: 'message' }],
+    })
+  })
+
   test('tools/call with nested group command', async () => {
     const [, res] = await mcpSession(createTestCommands(), [
       { id: 1, method: 'initialize', params: initParams },
@@ -355,6 +674,193 @@ describe('Mcp', () => {
       },
     ])
     expect(res.result.content).toEqual([{ type: 'text', text: '{"greeting":"hello world"}' }])
+  })
+
+  test('tools/call serializes bigint values as strings', async () => {
+    const commands = new Map<string, any>()
+    commands.set('whois', {
+      description: 'Return ENS data',
+      output: z.object({ expiry: z.bigint() }),
+      run() {
+        return { expiry: 2461152330n }
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'whois', arguments: {} } },
+    ])
+    expect(res.result.isError).toBeUndefined()
+    expect(res.result.content).toEqual([{ type: 'text', text: '{"expiry":"2461152330"}' }])
+    expect(res.result.structuredContent).toEqual({ expiry: '2461152330' })
+  })
+
+  test('tools/list tolerates non-object output schemas', async () => {
+    const commands = new Map<string, any>()
+    commands.set('list', {
+      description: 'List records',
+      output: z.array(z.object({ id: z.string() })),
+      run() {
+        return [{ id: 'foo' }]
+      },
+    })
+    commands.set('count', {
+      description: 'Count records',
+      output: z.number(),
+      run() {
+        return 1
+      },
+    })
+    commands.set('show', {
+      description: 'Show record',
+      output: z.object({ id: z.string() }),
+      run() {
+        return { id: 'foo' }
+      },
+    })
+
+    const tools = Mcp.collectTools(commands, [])
+    expect(tools.find((tool) => tool.name === 'list')?.outputSchema).toBeUndefined()
+    expect(tools.find((tool) => tool.name === 'count')?.outputSchema).toBeUndefined()
+    expect(tools.find((tool) => tool.name === 'show')?.outputSchema?.type).toBe('object')
+
+    const [, listRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    expect(listRes.error).toBeUndefined()
+    expect(listRes.result.tools.map((tool: any) => tool.name).sort()).toEqual([
+      'count',
+      'list',
+      'show',
+    ])
+
+    const [, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'list', arguments: {} } },
+    ])
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '[{"id":"foo"}]' }])
+    expect(callRes.result.structuredContent).toBeUndefined()
+  })
+
+  test('tools/call appends cta suggestions to result text', async () => {
+    const commands = new Map<string, any>()
+    commands.set('show', {
+      description: 'Show a record',
+      output: z.object({ id: z.string() }),
+      run(c: any) {
+        return c.ok(
+          { id: 'foo' },
+          {
+            cta: {
+              description: 'Next:',
+              commands: [{ command: 'list', description: 'List all' }],
+            },
+          },
+        )
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'show', arguments: {} } },
+    ])
+
+    expect(res.result.content[0].text).toMatchInlineSnapshot(`
+      "{"id":"foo"}
+
+      Next:
+        test-cli list - List all"
+    `)
+    expect(res.result.structuredContent).toEqual({ id: 'foo' })
+    expect(res.result._meta?.cta).toEqual({
+      description: 'Next:',
+      commands: [{ command: 'test-cli list', description: 'List all' }],
+    })
+  })
+
+  test('tools/call appends cta suggestions to error text', async () => {
+    const commands = new Map<string, any>()
+    commands.set('deploy', {
+      description: 'Deploy a thing',
+      run(c: any) {
+        return c.error({
+          code: 'NOT_AUTHENTICATED',
+          message: 'not signed in',
+          cta: {
+            description: 'Next:',
+            commands: [{ command: 'login', description: 'Sign in' }],
+          },
+        })
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'deploy', arguments: {} } },
+    ])
+
+    expect(res.result.isError).toBe(true)
+    expect(res.result.content[0].text).toMatchInlineSnapshot(`
+      "not signed in
+
+      Next:
+        test-cli login - Sign in"
+    `)
+    expect(res.result._meta?.cta).toEqual({
+      description: 'Next:',
+      commands: [{ command: 'test-cli login', description: 'Sign in' }],
+    })
+  })
+
+  test('callTool serializes bigint values as strings', async () => {
+    const result = await Mcp.callTool(
+      {
+        name: 'whois',
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+          type: 'object',
+          properties: { expiry: { type: 'string' } },
+          required: ['expiry'],
+        },
+        command: {
+          run() {
+            return { expiry: 2461152330n }
+          },
+        },
+      },
+      {},
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(result.content).toEqual([{ type: 'text', text: '{"expiry":"2461152330"}' }])
+    expect(result.structuredContent).toEqual({ expiry: '2461152330' })
+  })
+
+  test('callTool serializes streamed bigint chunks as strings', async () => {
+    const notifications: any[] = []
+    const result = await Mcp.callTool(
+      {
+        name: 'whois',
+        inputSchema: { type: 'object', properties: {} },
+        command: {
+          async *run() {
+            yield { expiry: 2461152330n }
+          },
+        },
+      },
+      {},
+      {
+        extra: { mcpReq: { _meta: { progressToken: 'tok-1' } } },
+        sendNotification: async (notification) => {
+          notifications.push(notification)
+        },
+      },
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(result.content).toEqual([{ type: 'text', text: '[{"expiry":"2461152330"}]' }])
+    expect(notifications[0].params.message).toBe('{"expiry":"2461152330"}')
   })
 
   test('tools/call unknown tool returns error', async () => {
@@ -433,6 +939,7 @@ describe('Mcp', () => {
       input,
       output,
       middlewares,
+      tools: { discovery: 'direct' },
       vars: z.object({ ran: z.boolean().default(false) }),
     })
 
@@ -472,6 +979,7 @@ describe('Mcp', () => {
       input,
       output,
       middlewares,
+      tools: { discovery: 'direct' },
     })
 
     input.write(
@@ -520,6 +1028,7 @@ describe('Mcp', () => {
     const done = Mcp.serve('test-cli', '1.0.0', commands, {
       input,
       output,
+      tools: { discovery: 'direct' },
       vars: z.object({ group: z.string().default('none') }),
     })
 
@@ -561,7 +1070,11 @@ describe('Mcp', () => {
     const chunks: any[] = []
     output.on('data', (chunk) => chunks.push(JSON.parse(chunk.toString().trim())))
 
-    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), { input, output })
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      tools: { discovery: 'direct' },
+    })
 
     // Initialize
     input.write(
@@ -1257,5 +1770,86 @@ describe('Mcp', () => {
     expect(
       discoverBody.result.capabilities.extensions[Mcp.enterpriseManagedAuthorizationExtensionId],
     ).toEqual({})
+  })
+
+  test('serve options.instructions appears in initialize response', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      instructions: 'Use this CLI to run test commands.',
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const [res] = chunks.map((c) => JSON.parse(c.trim()))
+    expect(res.result.instructions).toBe('Use this CLI to run test commands.')
+  })
+
+  test('command mcp.annotations appear in tools/list', async () => {
+    const commands = new Map<string, any>()
+    commands.set('read-data', {
+      description: 'Read some data',
+      mcp: { annotations: { readOnlyHint: true, idempotentHint: true } },
+      run: () => ({ data: 42 }),
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    const tool = res.result.tools.find((t: any) => t.name === 'read-data')
+    expect(tool.annotations).toEqual({ readOnlyHint: true, idempotentHint: true })
+  })
+
+  test('command mcp.instructions appear in tools/list as _meta.instructions', async () => {
+    const commands = new Map<string, any>()
+    commands.set('guided', {
+      description: 'A guided command',
+      mcp: { instructions: 'Pass a valid JSON payload.' },
+      run: () => ({ ok: true }),
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+    ])
+    const tool = res.result.tools.find((t: any) => t.name === 'guided')
+    expect(tool._meta?.instructions).toBe('Pass a valid JSON payload.')
+  })
+
+  test('collectTools extracts annotations and instructions from entry.mcp', () => {
+    const commands = new Map<string, any>()
+    commands.set('destroy', {
+      description: 'Destructive op',
+      mcp: {
+        annotations: { destructiveHint: true, openWorldHint: false },
+        instructions: 'Only call this in dry-run mode.',
+      },
+      run: () => null,
+    })
+
+    const tools = Mcp.collectTools(commands, [])
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.annotations).toEqual({ destructiveHint: true, openWorldHint: false })
+    expect(tools[0]?.instructions).toBe('Only call this in dry-run mode.')
+  })
+
+  test('collectTools omits annotations/instructions when not set', () => {
+    const commands = new Map<string, any>()
+    commands.set('plain', { description: 'No mcp opts', run: () => null })
+
+    const tools = Mcp.collectTools(commands, [])
+    expect(tools[0]?.annotations).toBeUndefined()
+    expect(tools[0]?.instructions).toBeUndefined()
   })
 })

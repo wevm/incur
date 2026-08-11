@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,21 +14,28 @@ function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: st
 
 let dir: string
 let bin: string
+let marker: string
 
 describe('bun build --compile', () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'incur-bun-'))
     bin = join(dir, 'test-cli')
+    marker = join(dir, 'updated')
     const src = join(dir, 'cli.ts')
 
     await writeFile(
       src,
       `
 import { Cli, z } from '${join(import.meta.dirname, 'index.ts')}'
+import { writeFile } from 'node:fs/promises'
 
 const cli = Cli.create('test-cli', {
-  version: '1.0.0',
   description: 'Bun compile test fixture.',
+  update: {
+    check: () => '2.0.0',
+    install: () => writeFile(${JSON.stringify(marker)}, 'updated'),
+  },
+  version: '1.0.0',
 })
 
 cli.command('ping', {
@@ -70,6 +77,11 @@ cli.serve()
     expect(stdout).toContain('result: HELLO')
   })
 
+  test('runs command with --format yaml (lazy yaml import)', async () => {
+    const { stdout } = await exec(bin, ['ping', '--format', 'yaml'])
+    expect(stdout).toContain('pong: true')
+  })
+
   test('shows help', async () => {
     const { stdout } = await exec(bin, ['--help'])
     expect(stdout).toContain('test-cli')
@@ -80,5 +92,11 @@ cli.serve()
   test('shows version', async () => {
     const { stdout } = await exec(bin, ['--version'])
     expect(stdout.trim()).toBe('1.0.0')
+  })
+
+  test('updates through a custom binary provider', async () => {
+    const { stdout } = await exec(bin, ['--update'])
+    expect(stdout).toContain('name: test-cli')
+    await expect(readFile(marker, 'utf8')).resolves.toBe('updated')
   })
 })

@@ -33,13 +33,14 @@
   "[!start-pkg]": "",
   "name": "incur",
   "type": "module",
-  "version": "0.4.8",
+  "version": "0.4.26",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/wevm/incur"
   },
   "files": [
+    "docs",
     "examples",
     "dist",
     "src",
@@ -47,7 +48,7 @@
   ],
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
-    "@modelcontextprotocol/server": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.4",
     "@scalar/openapi-types": "^0.8.0",
     "@toon-format/toon": "^2.1.0",
     "tokenx": "^1.3.0",

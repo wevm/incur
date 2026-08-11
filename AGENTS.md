@@ -38,6 +38,21 @@
 
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
 
+## Binary Build Conventions
+
+- **Compile through a wrapper** — Bun treats a CLI default export with `fetch` as a server, so standalone builds import the entry through a side-effect-only wrapper.
+- **Keep release sets coherent** — remove stale managed artifacts before publishing a completed build while preserving unrelated output files.
+- **Mark generated installers** — replace or clean `install.sh` and `install.ps1` only when their Incur marker is present; reject collisions with unmanaged files.
+- **Pin generated installers** — a mutable latest-release URL may select an installer, but the generated script must download binary assets from its embedded exact release tag.
+- **Release from one Linux action** — run `release@v1` as a step on `ubuntu-latest` with `contents: write`; it cross-compiles unsigned assets for every target.
+- **Infer release action inputs** — default to `./src/bin.ts`, derive the CLI name and stable version, and treat `entry`, `name`, and `release_tag` as overrides.
+- **Append to existing releases** — default to the latest published release, require its tag to match the package version, and never create or modify releases or tags.
+- **Trust action release inputs** — install, build, and upload share one job's write permission; `persist-credentials: false` does not create a permission boundary.
+- **Limit smoke tests to the runner** — test only matching-architecture Linux glibc and musl assets; native macOS and Windows tests and signing stay out of scope.
+- **Install musl runtime libraries** — Bun musl executables require `libstdc++` and `libgcc`; install both before Alpine smoke tests.
+- **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
+
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
+- **Changesets for package changes** — user-facing fixes and features require a `.changeset/*.md` entry in the same PR. Use `patch` for fixes, `minor` for additive features, and `major` for breaking changes. Skip only for tests, docs, or internal-only changes that do not affect the published package.

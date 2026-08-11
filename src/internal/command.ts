@@ -45,8 +45,10 @@ export async function execute(command: any, options: execute.Options): Promise<e
     version,
     envSource = process.env,
     env: envSchema,
+    globals = {},
     vars: varsSchema,
     middlewares = [],
+    request,
   } = options
   const displayName = options.displayName ?? name
   const parseMode = options.parseMode ?? 'argv'
@@ -82,12 +84,12 @@ export async function execute(command: any, options: execute.Options): Promise<e
       // HTTP mode: positional args from URL path segments, options from body/query
       const parsed = Parser.parse(argv, { args: command.args })
       args = parsed.args
-      parsedOptions = command.options ? command.options.parse(inputOptions) : {}
+      parsedOptions = command.options ? Parser.zodParse(command.options, inputOptions) : {}
     } else {
       // MCP mode: all params come from inputOptions, split into args vs options
       const split = splitParams(inputOptions, command)
-      args = command.args ? command.args.parse(split.args) : {}
-      parsedOptions = command.options ? command.options.parse(split.options) : {}
+      args = command.args ? Parser.zodParse(command.args, split.args) : {}
+      parsedOptions = command.options ? Parser.zodParse(command.options, split.options) : {}
     }
 
     // Parse env
@@ -113,9 +115,11 @@ export async function execute(command: any, options: execute.Options): Promise<e
       elicit: Elicitation.create(options.elicitation),
       format,
       formatExplicit,
+      globals,
       name,
       ok: okFn,
       options: parsedOptions,
+      request,
       var: varsMap,
       version,
     })
@@ -130,7 +134,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
         })
         async function* wrapped() {
           try {
-            yield* raw as AsyncGenerator<unknown, unknown, unknown>
+            return yield* raw as AsyncGenerator<unknown, unknown, unknown>
           } finally {
             resolveStreamConsumed!()
           }
@@ -203,7 +207,9 @@ export async function execute(command: any, options: execute.Options): Promise<e
         error: errorFn,
         format: format as any,
         formatExplicit,
+        globals,
         name,
+        request,
         set(key: string, value: unknown) {
           varsMap[key] = value
         },
@@ -290,6 +296,8 @@ export declare namespace execute {
     format: string
     /** Whether the format was explicitly requested. */
     formatExplicit: boolean
+    /** Parsed global options. Defaults to `{}` when not provided. */
+    globals?: Record<string, unknown> | undefined
     /** Raw parsed options (from query params, JSON body, or MCP params). For CLI, pass `{}`. */
     inputOptions: Record<string, unknown>
     /** Middleware handlers (root + group + command, already collected). */
@@ -305,6 +313,8 @@ export declare namespace execute {
     parseMode?: 'argv' | 'split' | 'flat' | undefined
     /** The resolved command path. */
     path: string
+    /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+    request?: Request | undefined
     /** Vars schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
     /** Returns true when an error should propagate instead of becoming an incur result. */
@@ -421,6 +431,10 @@ export const builtinCommands = [
             .describe('Override the command agents will run (e.g. "pnpm my-cli --mcp")'),
           noGlobal: z.boolean().optional().describe('Install to project instead of globally'),
         }),
+      }),
+      subcommand({
+        name: 'doctor',
+        description: 'Validate MCP server startup and tool listing',
       }),
     ],
   },

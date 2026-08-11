@@ -1,50 +1,17 @@
-import {
-  McpServer,
-  StdioServerTransport,
-  UrlElicitationRequiredError,
-} from '@modelcontextprotocol/server'
+import type { McpServer, Transport } from '@modelcontextprotocol/server'
 import { PassThrough, type Readable, type Writable } from 'node:stream'
 import { z } from 'zod'
 
 import * as Elicitation from './Elicitation.js'
 import * as Command from './internal/command.js'
+import { formatCtaBlock, type FormattedCtaBlock, renderCtaText } from './internal/cta.js'
+import * as Json from './internal/json.js'
+import * as Mcp2026 from './Mcp2026.js'
+import type { JsonRpcRequest } from './Mcp2026.js'
+import { draftProtocolVersion } from './Mcp2026Types.js'
+import type { ToolAnnotations } from './Mcp2026Types.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
-
-/** MCP 2026 release-candidate protocol version advertised by incur. */
-export const draftProtocolVersion = 'DRAFT-2026-v1'
-
-/** MCP 2026 final protocol version planned by the release candidate. */
-export const protocolVersion2026 = '2026-07-28'
-
-/** Protocol versions supported by incur's MCP server implementation. */
-export const supportedProtocolVersions = [
-  draftProtocolVersion,
-  protocolVersion2026,
-  '2025-11-25',
-  '2025-06-18',
-  '2025-03-26',
-  '2024-11-05',
-]
-
-/** Canonical MCP Apps extension identifier. */
-export const appsExtensionId = 'io.modelcontextprotocol/ui'
-
-/** MCP Apps compatibility extension identifier used by the draft lifecycle examples. */
-export const appsExtensionAlias = 'io.modelcontextprotocol/apps'
-
-/** MCP Tasks extension identifier. */
-export const tasksExtensionId = 'io.modelcontextprotocol/tasks'
-
-/** OAuth client credentials authorization extension identifier. */
-export const oauthClientCredentialsExtensionId = 'io.modelcontextprotocol/oauth-client-credentials'
-
-/** Enterprise-managed authorization extension identifier. */
-export const enterpriseManagedAuthorizationExtensionId =
-  'io.modelcontextprotocol/enterprise-managed-authorization'
-
-/** MCP Apps HTML resource MIME type. */
-export const appResourceMimeType = 'text/html;profile=mcp-app'
 
 /** Starts a stdio MCP server that exposes commands as tools. */
 export async function serve(
@@ -53,39 +20,29 @@ export async function serve(
   commands: Map<string, any>,
   options: serve.Options = {},
 ): Promise<void> {
-  const server = new McpServer({ name, version })
+  // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
+  const stdio = importStdioModule()
+  const mcp = await import('@modelcontextprotocol/server')
+  const { fromJsonSchema, McpServer, UrlElicitationRequiredError } = mcp
+  const StdioServerTransport = await importStdioServerTransport(mcp, stdio)
 
-  for (const tool of collectTools(commands, [])) {
-    const mergedShape: Record<string, any> = {
-      ...tool.command.args?.shape,
-      ...tool.command.options?.shape,
-    }
-    const hasInput = Object.keys(mergedShape).length > 0
+  const server = new McpServer(
+    { name, ...(options.title ? { title: options.title } : undefined), version },
+    options.instructions ? { instructions: options.instructions } : undefined,
+  )
 
-    server.registerTool(
-      tool.name,
-      {
-        ...(tool.description ? { description: tool.description } : undefined),
-        ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
-        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
-      } as never,
-      async (...callArgs: any[]) => {
-        // registerTool passes (args, extra) when inputSchema is set, (extra) when not
-        const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-        const extra = hasInput ? callArgs[1] : callArgs[0]
-        return callTool(tool, params, {
-          extra,
-          clientCapabilities: server.server.getClientCapabilities(),
-          sendNotification: (n) => server.server.notification(n),
-          name,
-          version,
-          middlewares: options.middlewares,
-          env: options.env,
-          vars: options.vars,
-        })
-      },
-    )
-  }
+  registerTools(server, commands, {
+    clientCapabilities: () => server.server.getClientCapabilities(),
+    env: options.env,
+    fromJsonSchema,
+    middlewares: options.middlewares,
+    name,
+    sendNotification: (notification) => server.server.notification(notification),
+    tools: options.tools,
+    urlElicitationRequiredError: UrlElicitationRequiredError,
+    vars: options.vars,
+    version,
+  })
 
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
@@ -97,6 +54,40 @@ export async function serve(
   const transport = new StdioServerTransport(routed.input as any, output as any)
   await server.connect(transport)
 }
+
+type StdioServerTransport = new (
+  input?: Readable,
+  output?: Writable,
+  options?: { maxBufferSize?: number | undefined },
+) => Transport
+
+type StdioModule = {
+  StdioServerTransport: StdioServerTransport
+}
+
+type StdioImportResult =
+  | { module: unknown; error?: undefined }
+  | { module?: undefined; error: unknown }
+
+async function importStdioServerTransport(
+  mcp: unknown,
+  stdio: Promise<StdioImportResult>,
+): Promise<StdioServerTransport> {
+  const transport = (mcp as Partial<StdioModule>).StdioServerTransport
+  if (transport) return transport
+
+  const result = await stdio
+  if (result.error) throw result.error
+  return (result.module as StdioModule).StdioServerTransport
+}
+
+function importStdioModule(): Promise<StdioImportResult> {
+  return importModule('@modelcontextprotocol/server/stdio')
+    .then((module) => ({ module }))
+    .catch((error: unknown) => ({ error }))
+}
+
+const importModule = (specifier: string): Promise<unknown> => import(specifier)
 
 export declare namespace serve {
   /** Options for the MCP server. */
@@ -113,6 +104,12 @@ export declare namespace serve {
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version?: string | undefined
+    /** Instructions describing how to use the server and its features. */
+    instructions?: string | undefined
+    /** Human-readable MCP server title. */
+    title?: string | undefined
+    /** Filters which command tools are exposed to MCP clients. */
+    tools?: ToolFilter | undefined
   }
 }
 
@@ -124,7 +121,7 @@ async function routeStdio(input: Readable): Promise<{ input: Readable; modern: b
   } catch {
     return { input: routed.input, modern: false }
   }
-  return { input: routed.input, modern: is2026Message(message) }
+  return { input: routed.input, modern: Mcp2026.is2026Message(message) }
 }
 
 async function replayFirstLine(input: Readable) {
@@ -194,7 +191,8 @@ async function handle2026StdioLine(
     message.method === 'server/discover'
       ? draftProtocolVersion
       : String(
-          metaFrom(message)?.['io.modelcontextprotocol/protocolVersion'] ?? draftProtocolVersion,
+          Mcp2026.metaFrom(message)?.['io.modelcontextprotocol/protocolVersion'] ??
+            draftProtocolVersion,
         )
   const response = await handle2026Http(
     new Request('http://localhost/mcp', {
@@ -223,6 +221,9 @@ export async function callTool(
     elicitation?: Elicitation.Adapter | undefined
     extra?: Extra | undefined
     sendNotification?: ((n: ProgressNotification) => Promise<void>) | undefined
+    urlElicitationRequiredError?: UrlElicitationRequiredErrorConstructor | undefined
+    /** The inbound HTTP request when invoked via HTTP MCP. */
+    request?: Request | undefined
     name?: string | undefined
     version?: string | undefined
     middlewares?: MiddlewareHandler[] | undefined
@@ -232,6 +233,7 @@ export async function callTool(
 ): Promise<{
   content: { type: 'text'; text: string }[]
   structuredContent?: Record<string, unknown>
+  _meta?: { cta: FormattedCtaBlock } | undefined
   isError?: boolean
 }> {
   const allMiddleware = [
@@ -245,7 +247,12 @@ export async function callTool(
     argv: [],
     env: options.env,
     elicitation:
-      options.elicitation ?? createElicitationAdapter(options.extra, options.clientCapabilities),
+      options.elicitation ??
+      createElicitationAdapter(
+        options.extra,
+        options.clientCapabilities,
+        options.urlElicitationRequiredError,
+      ),
     format: 'json',
     formatExplicit: true,
     inputOptions: params,
@@ -253,7 +260,9 @@ export async function callTool(
     name: options.name ?? tool.name,
     parseMode: 'flat',
     path: tool.name,
-    rethrowErrors: (error) => isUrlElicitationRequiredError(error) || isInputRequiredError(error),
+    rethrowErrors: (error) =>
+      isUrlElicitationRequiredError(error) || Mcp2026.isInputRequiredError(error),
+    request: options.request,
     vars: options.vars,
     version: options.version,
   })
@@ -269,7 +278,7 @@ export async function callTool(
         if (progressToken !== undefined && options.sendNotification)
           await options.sendNotification({
             method: 'notifications/progress' as const,
-            params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
+            params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
           })
       }
     } catch (err) {
@@ -278,21 +287,32 @@ export async function callTool(
         isError: true,
       }
     }
-    return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+    return { content: [{ type: 'text', text: Json.stringify(chunks) }] }
   }
 
-  if (!result.ok)
+  if (!result.ok) {
+    const cta = formatCtaBlock(options.name ?? tool.name, result.cta)
+    const text = result.error.fieldErrors
+      ? JSON.stringify(result.error)
+      : (result.error.message ?? 'Command failed')
     return {
-      content: [{ type: 'text', text: result.error.message ?? 'Command failed' }],
+      content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
+      ...(cta ? { _meta: { cta } } : undefined),
       isError: true,
     }
+  }
 
   const data = result.data ?? null
+  const jsonData = Json.normalize(data)
+  const cta = formatCtaBlock(options.name ?? tool.name, result.cta as Command.CtaBlock | undefined)
+  const text = Json.stringify(jsonData)
   return {
-    content: [{ type: 'text', text: JSON.stringify(data) }],
+    // Append rendered suggestions to the text so models see them (most clients drop _meta).
+    content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
     ...(data !== null && tool.outputSchema
-      ? { structuredContent: data as Record<string, unknown> }
+      ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
+    ...(cta ? { _meta: { cta } } : undefined),
   }
 }
 
@@ -304,1068 +324,26 @@ export async function handle2026Http(
   commands: Map<string, any>,
   options: handle2026Http.Options = {},
 ): Promise<Response> {
-  let message: JsonRpcRequest
-  try {
-    message = (await req.json()) as JsonRpcRequest
-  } catch {
-    return json(error(null, -32700, 'Parse error'), 400)
-  }
-
-  if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string')
-    return json(error(message?.id ?? null, -32600, 'Invalid Request'), 400)
-
-  if (message.method !== 'server/discover') {
-    const protocolVersion = protocolVersionFrom(req, message)
-    if (!supportedProtocolVersions.includes(protocolVersion))
-      return json(
-        error(message.id, -32001, `Unsupported protocol version: ${protocolVersion}`, {
-          supportedVersions: supportedProtocolVersions,
-        }),
-        400,
-      )
-
-    const headerMethod = req.headers.get('Mcp-Method')
-    if (headerMethod && headerMethod !== message.method)
-      return json(
-        error(message.id, -32600, 'Mcp-Method header does not match JSON-RPC method.'),
-        400,
-      )
-
-    const headerName = req.headers.get('Mcp-Name')
-    if (headerName && message.method === 'tools/call' && headerName !== toolName(message.params))
-      return json(error(message.id, -32600, 'Mcp-Name header does not match tool name.'), 400)
-    if (headerName && isTaskMethod(message.method) && headerName !== taskIdFrom(message.params))
-      return json(error(message.id, -32600, 'Mcp-Name header does not match taskId.'), 400)
-
-    if (options.authorization?.authorize) {
-      const authorized = await options.authorization.authorize({
-        request: req,
-        bearerToken: bearerToken(req),
-        method: message.method,
-        params: isObject(message.params) ? message.params : undefined,
-      })
-      if (!authorized)
-        return json(
-          error(message.id, -32004, 'Unauthorized', {
-            extensions: advertisedAuthorizationExtensions(options.authorization),
-          }),
-          401,
-        )
-    }
-  }
-
-  try {
-    const result = await handle2026Message(message, name, version, commands, options)
-    if (result instanceof Response) return result
-    if (message.id === undefined) return new Response(null, { status: 202 })
-    return json({ jsonrpc: '2.0', id: message.id, result })
-  } catch (err) {
-    if (message.id === undefined) return new Response(null, { status: 202 })
-    if (err instanceof InputRequiredError)
-      return json({
-        jsonrpc: '2.0',
-        id: message.id,
-        result: {
-          resultType: 'input_required',
-          inputRequests: err.inputRequests,
-          requestState: err.requestState,
-        },
-      })
-    if (err instanceof JsonRpcError)
-      return json(error(message.id, err.code, err.message, err.data), err.status)
-    return json(error(message.id, -32603, err instanceof Error ? err.message : String(err)), 500)
-  }
+  return Mcp2026.handle2026Http(req, name, version, commands, {
+    ...options,
+    runtime: { callTool, collectTools },
+  })
 }
 
 /** Returns true when a request should use incur's stateless MCP 2026 dispatcher. */
-export async function is2026HttpRequest(req: Request): Promise<boolean> {
-  const version = req.headers.get('MCP-Protocol-Version') ?? req.headers.get('mcp-protocol-version')
-  if (version === draftProtocolVersion || version === protocolVersion2026) return true
-
-  try {
-    const message = (await req.clone().json()) as JsonRpcRequest
-    return is2026Message(message)
-  } catch {
-    return false
-  }
-}
-
-function is2026Message(message: JsonRpcRequest) {
-  if (message.method === 'server/discover') return true
-  const meta = metaFrom(message)
-  return (
-    meta?.['io.modelcontextprotocol/protocolVersion'] === draftProtocolVersion ||
-    meta?.['io.modelcontextprotocol/protocolVersion'] === protocolVersion2026
-  )
-}
+export const is2026HttpRequest = Mcp2026.is2026HttpRequest
 
 export declare namespace handle2026Http {
   /** Options passed to the stateless MCP 2026 handler. */
-  type Options = {
-    /** Cache hints for cacheable list/read results. */
-    cache?: CacheOptions | undefined
-    /** MCP Apps registered by the CLI. */
-    apps?: AppDefinition[] | undefined
-    /** Optional authorization extensions and request validator. */
-    authorization?: AuthorizationOptions | undefined
-    /** CLI-level env schema. */
-    env?: z.ZodObject<any> | undefined
-    /** Middleware handlers registered on the root CLI. */
-    middlewares?: MiddlewareHandler[] | undefined
-    /** MCP prompts registered by the CLI. */
-    prompts?: PromptDefinition[] | undefined
-    /** MCP resources registered by the CLI. */
-    resources?: ResourceDefinition[] | undefined
-    /** MCP resource templates registered by the CLI. */
-    resourceTemplates?: ResourceTemplateDefinition[] | undefined
-    /** Vars schema for middleware variables. */
-    vars?: z.ZodObject<any> | undefined
-  }
+  type Options = Omit<Mcp2026.handle2026Http.Options, 'runtime'>
 }
 
-/** Authorization extension options for remote MCP deployments. */
-export type AuthorizationOptions = {
-  /** Advertise and accept OAuth client credentials bearer-token authentication. */
-  oauthClientCredentials?: ExtensionSettings | undefined
-  /** Advertise and accept enterprise-managed authorization bearer-token authentication. */
-  enterpriseManagedAuthorization?: ExtensionSettings | undefined
-  /** Validate a request before MCP handling. */
-  authorize?: ((context: AuthorizationContext) => boolean | Promise<boolean>) | undefined
-}
-
-/** Extension settings object advertised in MCP capabilities. */
-export type ExtensionSettings = boolean | Record<string, unknown>
-
-/** Context supplied to the MCP authorization hook. */
-export type AuthorizationContext = {
-  /** Incoming HTTP request. */
-  request: Request
-  /** Bearer token from the Authorization header, if present. */
-  bearerToken?: string | undefined
-  /** MCP method being handled. */
-  method: string
-  /** Parsed JSON-RPC params. */
-  params?: Record<string, unknown> | undefined
-}
-
-/** Cache hint fields required on MCP 2026 cacheable results. */
-export type CacheOptions = {
-  /** Freshness hint in milliseconds. */
-  ttlMs: number
-  /** Whether the result may be cached across users. */
-  cacheScope: 'public' | 'private'
-}
-
-/** Icon metadata for MCP tools, prompts, resources, and apps. */
-export type Icon = {
-  /** Icon URL. */
-  src: string
-  /** Optional MIME type, such as `image/svg+xml`. */
-  mimeType?: string | undefined
-  /** Optional size hints, such as `48x48` or `any`. */
-  sizes?: string[] | undefined
-}
-
-/** MCP content annotations shared by resources and tool results. */
-export type Annotations = {
-  /** Intended audience for this content. */
-  audience?: ('user' | 'assistant')[] | undefined
-  /** Relative priority from 0 to 1. */
-  priority?: number | undefined
-  /** ISO timestamp for the last modification time. */
-  lastModified?: string | undefined
-}
-
-/** MCP tool behavior annotations. */
-export type ToolAnnotations = {
-  /** Human-readable title. */
-  title?: string | undefined
-  /** Whether the tool only reads state. */
-  readOnlyHint?: boolean | undefined
-  /** Whether the tool may modify state. */
-  destructiveHint?: boolean | undefined
-  /** Whether repeated calls with the same input are expected to be idempotent. */
-  idempotentHint?: boolean | undefined
-  /** Whether the tool interacts with open external systems. */
-  openWorldHint?: boolean | undefined
-}
-
-/** MCP tool metadata supplied by a command definition. */
-export type ToolMetadata = {
-  /** Human-readable display title. */
-  title?: string | undefined
-  /** Tool icons. */
-  icons?: Icon[] | undefined
-  /** Tool behavior annotations. */
-  annotations?: ToolAnnotations | undefined
-  /** HTTP header mappings keyed by input property name. */
-  headers?: Record<string, string> | undefined
-  /** MCP Apps UI resource for this tool. */
-  app?: { resourceUri: string } | undefined
-  /** Cache hints for list results involving this tool. */
-  cache?: CacheOptions | undefined
-  /** Task execution options for long-running tools. */
-  task?: TaskOptions | undefined
-}
-
-/** MCP task execution options. */
-export type TaskOptions = {
-  /** Whether the tool should always return a task handle. */
-  required?: boolean | undefined
-  /** Time-to-live for task state in milliseconds. */
-  ttlMs?: number | undefined
-  /** Suggested polling interval in milliseconds. */
-  pollIntervalMs?: number | undefined
-}
-
-/** Text resource content. */
-export type TextResourceContent = {
-  /** Resource URI. */
-  uri: string
-  /** MIME type. */
-  mimeType?: string | undefined
-  /** Text content. */
-  text: string
-  /** Optional annotations. */
-  annotations?: Annotations | undefined
-}
-
-/** Binary resource content. */
-export type BlobResourceContent = {
-  /** Resource URI. */
-  uri: string
-  /** MIME type. */
-  mimeType?: string | undefined
-  /** Base64-encoded binary content. */
-  blob: string
-  /** Optional annotations. */
-  annotations?: Annotations | undefined
-}
-
-/** MCP resource content. */
-export type ResourceContent = TextResourceContent | BlobResourceContent
-
-/** MCP resource definition. */
-export type ResourceDefinition = {
-  /** Programmatic name. */
-  name: string
-  /** Resource URI. */
-  uri: string
-  /** Human-readable title. */
-  title?: string | undefined
-  /** Description. */
-  description?: string | undefined
-  /** MIME type. */
-  mimeType?: string | undefined
-  /** Resource size in bytes. */
-  size?: number | undefined
-  /** Icons. */
-  icons?: Icon[] | undefined
-  /** Annotations. */
-  annotations?: Annotations | undefined
-  /** Cache hints for reads. */
-  cache?: CacheOptions | undefined
-  /** Reads resource contents. */
-  read: () => ResourceContent | ResourceContent[] | Promise<ResourceContent | ResourceContent[]>
-}
-
-/** MCP resource template definition. */
-export type ResourceTemplateDefinition = {
-  /** Programmatic name. */
-  name: string
-  /** URI template. */
-  uriTemplate: string
-  /** Human-readable title. */
-  title?: string | undefined
-  /** Description. */
-  description?: string | undefined
-  /** MIME type. */
-  mimeType?: string | undefined
-  /** Icons. */
-  icons?: Icon[] | undefined
-  /** Annotations. */
-  annotations?: Annotations | undefined
-  /** Completion handlers keyed by template variable. */
-  complete?:
-    | Record<string, (value: string, context: CompletionContext) => string[] | Promise<string[]>>
-    | undefined
-}
-
-/** Context supplied to MCP completion callbacks. */
-export type CompletionContext = {
-  /** Already resolved variables or arguments. */
-  arguments?: Record<string, string> | undefined
-}
-
-/** MCP prompt message. */
-export type PromptMessage = {
-  /** Message role. */
-  role: 'user' | 'assistant'
-  /** Message content block. */
-  content: ContentBlock
-}
-
-/** MCP prompt definition. */
-export type PromptDefinition = {
-  /** Programmatic name. */
-  name: string
-  /** Human-readable title. */
-  title?: string | undefined
-  /** Description. */
-  description?: string | undefined
-  /** Arguments schema. */
-  args?: z.ZodObject<any> | undefined
-  /** Icons. */
-  icons?: Icon[] | undefined
-  /** Completion handlers keyed by argument name. */
-  complete?:
-    | Record<string, (value: string, context: CompletionContext) => string[] | Promise<string[]>>
-    | undefined
-  /** Renders prompt messages. */
-  get: (args: Record<string, string>) => PromptMessage[] | Promise<PromptMessage[]>
-}
-
-/** MCP App definition. */
-export type AppDefinition = {
-  /** Programmatic app name. */
-  name: string
-  /** UI resource URI, typically `ui://...`. */
-  resourceUri: string
-  /** HTML text served as the app resource. */
-  html: string | (() => string | Promise<string>)
-  /** Display title. */
-  title?: string | undefined
-  /** Description. */
-  description?: string | undefined
-  /** Icons. */
-  icons?: Icon[] | undefined
-}
-
-/** MCP content block returned by tools and prompts. */
-export type ContentBlock =
-  | { type: 'text'; text: string; annotations?: Annotations | undefined }
-  | { type: 'image'; data: string; mimeType: string; annotations?: Annotations | undefined }
-  | { type: 'audio'; data: string; mimeType: string; annotations?: Annotations | undefined }
-  | {
-      type: 'resource_link'
-      uri: string
-      name: string
-      description?: string | undefined
-      mimeType?: string | undefined
-      annotations?: Annotations | undefined
-    }
-  | { type: 'resource'; resource: ResourceContent }
-
-/** Creates a text MCP content block. */
-export function text(text: string, annotations?: Annotations | undefined): ContentBlock {
-  return annotations ? { type: 'text', text, annotations } : { type: 'text', text }
-}
-
-/** Creates an image MCP content block. */
-export function image(
-  data: string,
-  mimeType: string,
-  annotations?: Annotations | undefined,
-): ContentBlock {
-  return annotations
-    ? { type: 'image', data, mimeType, annotations }
-    : { type: 'image', data, mimeType }
-}
-
-/** Creates an audio MCP content block. */
-export function audio(
-  data: string,
-  mimeType: string,
-  annotations?: Annotations | undefined,
-): ContentBlock {
-  return annotations
-    ? { type: 'audio', data, mimeType, annotations }
-    : { type: 'audio', data, mimeType }
-}
-
-/** Creates a resource link MCP content block. */
-export function resourceLink(
-  uri: string,
-  name: string,
-  options: {
-    description?: string | undefined
-    mimeType?: string | undefined
-    annotations?: Annotations | undefined
-  } = {},
-): ContentBlock {
-  return { type: 'resource_link', uri, name, ...options }
-}
-
-/** Creates an embedded resource MCP content block. */
-export function embeddedResource(resource: ResourceContent): ContentBlock {
-  return { type: 'resource', resource }
-}
-
-async function handle2026Message(
-  message: JsonRpcRequest,
-  name: string,
-  version: string,
-  commands: Map<string, any>,
-  options: handle2026Http.Options,
-): Promise<Record<string, unknown> | Response> {
-  if (message.method === 'server/discover')
-    return complete({
-      supportedVersions: supportedProtocolVersions,
-      capabilities: capabilities(commands, options),
-      serverInfo: { name, version },
-    })
-
-  if (message.method === 'tools/list')
-    return withCache(
-      {
-        tools: collectTools(commands, []).map(toolDescriptor),
-      },
-      options.cache,
-    )
-
-  if (message.method === 'tools/call')
-    return call2026Tool(message, name, version, commands, options)
-
-  if (message.method === 'resources/list')
-    return withCache({ resources: resources(options).map(resourceDescriptor) }, options.cache)
-
-  if (message.method === 'resources/templates/list')
-    return withCache(
-      { resourceTemplates: (options.resourceTemplates ?? []).map(resourceTemplateDescriptor) },
-      options.cache,
-    )
-
-  if (message.method === 'resources/read') return read2026Resource(message, options)
-
-  if (message.method === 'prompts/list')
-    return withCache({ prompts: (options.prompts ?? []).map(promptDescriptor) }, options.cache)
-
-  if (message.method === 'prompts/get') return get2026Prompt(message, options)
-
-  if (message.method === 'completion/complete') return complete2026(message, options)
-
-  if (message.method === 'subscriptions/listen') return subscriptionResponse(message)
-
-  if (message.method === 'tasks/get') return getTask(message)
-
-  if (message.method === 'tasks/update') return updateTask(message)
-
-  if (message.method === 'tasks/cancel') return cancelTask(message)
-
-  throw new JsonRpcError(-32601, `Method not found: ${message.method}`, 404)
-}
-
-async function call2026Tool(
-  message: JsonRpcRequest,
-  name: string,
-  version: string,
-  commands: Map<string, any>,
-  options: handle2026Http.Options,
-) {
-  const params = objectParams(message)
-  const nameParam = params.name
-  if (typeof nameParam !== 'string') throw new JsonRpcError(-32602, 'Tool name is required.')
-
-  const tool = collectTools(commands, []).find((t) => t.name === nameParam)
-  if (!tool) throw new JsonRpcError(-32602, `Unknown tool: ${nameParam}`)
-
-  const args = isObject(params.arguments) ? params.arguments : {}
-  const meta = tool.command.mcpTool as ToolMetadata | undefined
-  if (meta?.task?.required) {
-    if (!hasClientExtension(message, tasksExtensionId))
-      throw missingRequiredClientCapability(tasksExtensionId)
-    return createTask(tool, args, name, version, options, meta.task)
-  }
-
-  const inputResponses = isObject(params.inputResponses) ? params.inputResponses : {}
-  const result = await callTool(tool, args, {
-    elicitation: createMrtrAdapter(inputResponses),
-    env: options.env,
-    middlewares: options.middlewares,
-    name,
-    vars: options.vars,
-    version,
-  })
-  return complete(result as unknown as Record<string, unknown>)
-}
-
-function createMrtrAdapter(inputResponses: Record<string, unknown>): Elicitation.Adapter {
-  let i = 0
-  function respond(
-    key: string,
-    params: Elicitation.FormRequestParams | Elicitation.UrlRequestParams,
-  ) {
-    const existing = inputResponses[key]
-    if (isObject(existing))
-      return existing as {
-        action: Elicitation.Action
-        content?: Record<string, Elicitation.ContentValue>
-      }
-    throw new InputRequiredError(
-      { [key]: { method: 'elicitation/create', params } },
-      encodeState({ key }),
-    )
-  }
-  return {
-    async form(params, options) {
-      return respond(options?.key ?? `input_${++i}`, params)
-    },
-    requireUrl(params, options) {
-      respond(options?.key ?? `input_${++i}`, params)
-      throw new Error('unreachable')
-    },
-    async url(params, options) {
-      return respond(options?.key ?? `input_${++i}`, params)
-    },
-  }
-}
-
-function capabilities(commands: Map<string, any>, options: handle2026Http.Options) {
-  const result: Record<string, unknown> = {
-    tools: { listChanged: false },
-    extensions: {},
-  }
-  if (resources(options).length > 0 || (options.resourceTemplates?.length ?? 0) > 0)
-    result.resources = { listChanged: false, subscribe: true }
-  if ((options.prompts?.length ?? 0) > 0) result.prompts = { listChanged: false }
-  if (hasCompletions(options)) result.completions = {}
-  if ((options.apps?.length ?? 0) > 0)
-    result.extensions = {
-      ...(result.extensions as Record<string, unknown>),
-      [appsExtensionId]: { mimeTypes: [appResourceMimeType] },
-      [appsExtensionAlias]: { mimeTypes: [appResourceMimeType] },
-    }
-  if (hasTaskTools(commands)) {
-    result.extensions = {
-      ...(result.extensions as Record<string, unknown>),
-      [tasksExtensionId]: {},
-    }
-  }
-  result.extensions = {
-    ...(result.extensions as Record<string, unknown>),
-    ...advertisedAuthorizationExtensions(options.authorization),
-  }
-  return result
-}
-
-function advertisedAuthorizationExtensions(options: AuthorizationOptions | undefined) {
-  const extensions: Record<string, unknown> = {}
-  if (options?.oauthClientCredentials)
-    extensions[oauthClientCredentialsExtensionId] = extensionSettings(
-      options.oauthClientCredentials,
-    )
-  if (options?.enterpriseManagedAuthorization)
-    extensions[enterpriseManagedAuthorizationExtensionId] = extensionSettings(
-      options.enterpriseManagedAuthorization,
-    )
-  return extensions
-}
-
-function extensionSettings(settings: ExtensionSettings) {
-  return settings === true ? {} : settings
-}
-
-function toolDescriptor(tool: ToolEntry) {
-  const meta = tool.command.mcpTool as ToolMetadata | undefined
-  const inputSchema = addHeaders(tool.inputSchema, meta?.headers)
-  return {
-    name: tool.name,
-    ...(meta?.title ? { title: meta.title } : undefined),
-    ...(tool.description ? { description: tool.description } : undefined),
-    inputSchema,
-    ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
-    ...(meta?.icons ? { icons: meta.icons } : undefined),
-    ...(meta?.annotations ? { annotations: meta.annotations } : undefined),
-    ...(meta?.app ? { _meta: { ui: { resourceUri: meta.app.resourceUri } } } : undefined),
-    ...(meta?.task
-      ? { execution: { taskSupport: meta.task.required ? 'required' : 'optional' } }
-      : undefined),
-  }
-}
-
-function addHeaders(
-  schema: { type: 'object'; properties: Record<string, unknown>; required?: string[] },
-  headers?: Record<string, string> | undefined,
-) {
-  if (!headers) return schema
-  const properties = { ...schema.properties }
-  for (const [key, value] of Object.entries(headers)) {
-    const property = properties[key]
-    if (isObject(property)) properties[key] = { ...property, 'x-mcp-header': value }
-  }
-  return { ...schema, properties }
-}
-
-function resources(options: handle2026Http.Options): ResourceDefinition[] {
-  const apps = (options.apps ?? []).map(
-    (app): ResourceDefinition => ({
-      name: app.name,
-      uri: app.resourceUri,
-      title: app.title,
-      description: app.description,
-      mimeType: appResourceMimeType,
-      icons: app.icons,
-      async read() {
-        const html = typeof app.html === 'function' ? await app.html() : app.html
-        return { uri: app.resourceUri, mimeType: appResourceMimeType, text: html }
-      },
-    }),
-  )
-  return [...(options.resources ?? []), ...apps]
-}
-
-function resourceDescriptor(resource: ResourceDefinition) {
-  return {
-    uri: resource.uri,
-    name: resource.name,
-    ...(resource.title ? { title: resource.title } : undefined),
-    ...(resource.description ? { description: resource.description } : undefined),
-    ...(resource.mimeType ? { mimeType: resource.mimeType } : undefined),
-    ...(resource.size !== undefined ? { size: resource.size } : undefined),
-    ...(resource.icons ? { icons: resource.icons } : undefined),
-    ...(resource.annotations ? { annotations: resource.annotations } : undefined),
-  }
-}
-
-function resourceTemplateDescriptor(template: ResourceTemplateDefinition) {
-  return {
-    uriTemplate: template.uriTemplate,
-    name: template.name,
-    ...(template.title ? { title: template.title } : undefined),
-    ...(template.description ? { description: template.description } : undefined),
-    ...(template.mimeType ? { mimeType: template.mimeType } : undefined),
-    ...(template.icons ? { icons: template.icons } : undefined),
-    ...(template.annotations ? { annotations: template.annotations } : undefined),
-  }
-}
-
-async function read2026Resource(message: JsonRpcRequest, options: handle2026Http.Options) {
-  const uri = objectParams(message).uri
-  if (typeof uri !== 'string') throw new JsonRpcError(-32602, 'Resource uri is required.')
-  const resource = resources(options).find((r) => r.uri === uri)
-  if (!resource) throw new JsonRpcError(-32602, 'Resource not found', 400, { uri })
-  const contents = await resource.read()
-  return withCache(
-    { contents: Array.isArray(contents) ? contents : [contents] },
-    resource.cache ?? options.cache,
-  )
-}
-
-function promptDescriptor(prompt: PromptDefinition) {
-  const args = prompt.args ? Schema.toJsonSchema(prompt.args) : undefined
-  const properties = isObject(args?.properties) ? args.properties : {}
-  const required = new Set(Array.isArray(args?.required) ? (args.required as string[]) : [])
-  return {
-    name: prompt.name,
-    ...(prompt.title ? { title: prompt.title } : undefined),
-    ...(prompt.description ? { description: prompt.description } : undefined),
-    arguments: Object.entries(properties).map(([name, schema]) => ({
-      name,
-      ...(isObject(schema) && typeof schema.description === 'string'
-        ? { description: schema.description }
-        : undefined),
-      required: required.has(name),
-    })),
-    ...(prompt.icons ? { icons: prompt.icons } : undefined),
-  }
-}
-
-async function get2026Prompt(message: JsonRpcRequest, options: handle2026Http.Options) {
-  const params = objectParams(message)
-  const name = params.name
-  if (typeof name !== 'string') throw new JsonRpcError(-32602, 'Prompt name is required.')
-  const prompt = (options.prompts ?? []).find((p) => p.name === name)
-  if (!prompt) throw new JsonRpcError(-32602, `Unknown prompt: ${name}`)
-  const rawArgs = isObject(params.arguments) ? params.arguments : {}
-  let parsed: Record<string, unknown>
-  try {
-    parsed = prompt.args ? prompt.args.parse(rawArgs) : rawArgs
-  } catch (error) {
-    if (error instanceof z.ZodError) throw new JsonRpcError(-32602, error.message)
-    throw error
-  }
-  return complete({
-    ...(prompt.description ? { description: prompt.description } : undefined),
-    messages: await prompt.get(parsed as Record<string, string>),
-  })
-}
-
-async function complete2026(message: JsonRpcRequest, options: handle2026Http.Options) {
-  const params = objectParams(message)
-  const argument = isObject(params.argument) ? params.argument : {}
-  const ref = isObject(params.ref) ? params.ref : {}
-  const name = typeof argument.name === 'string' ? argument.name : ''
-  const value = typeof argument.value === 'string' ? argument.value : ''
-  const context =
-    isObject(params.context) && isObject(params.context.arguments)
-      ? { arguments: params.context.arguments as Record<string, string> }
-      : {}
-
-  let values: string[] = []
-  if (ref.type === 'ref/prompt' && typeof ref.name === 'string') {
-    const prompt = (options.prompts ?? []).find((p) => p.name === ref.name)
-    values = prompt?.complete?.[name] ? await prompt.complete[name]!(value, context) : []
-  } else if (ref.type === 'ref/resource' && typeof ref.uri === 'string') {
-    const template = (options.resourceTemplates ?? []).find((t) => t.uriTemplate === ref.uri)
-    values = template?.complete?.[name] ? await template.complete[name]!(value, context) : []
-  }
-
-  return complete({
-    completion: {
-      values: values.slice(0, 100),
-      total: values.length,
-      hasMore: values.length > 100,
-    },
-  })
-}
-
-function subscriptionResponse(message: JsonRpcRequest) {
-  const body = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder()
-      controller.enqueue(
-        encoder.encode(
-          `${JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'notifications/subscriptions/acknowledged',
-            params: { subscriptionId: String(message.id ?? crypto.randomUUID()) },
-          })}\n`,
-        ),
-      )
-      if (message.id !== undefined)
-        controller.enqueue(
-          encoder.encode(
-            `${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: complete({}) })}\n`,
-          ),
-        )
-      controller.close()
-    },
-  })
-  return new Response(body, {
-    headers: { 'Content-Type': 'application/json-seq' },
-  })
-}
-
-async function createTask(
-  tool: ToolEntry,
-  args: Record<string, unknown>,
-  name: string,
-  version: string,
-  options: handle2026Http.Options,
-  taskOptions: TaskOptions,
-) {
-  const taskId = crypto.randomUUID()
-  const ttlMs = taskOptions.ttlMs ?? 300000
-  const now = new Date().toISOString()
-  const task: TaskState = {
-    id: taskId,
-    status: 'working',
-    createdAt: now,
-    lastUpdatedAt: now,
-    ttlMs,
-    pollIntervalMs: taskOptions.pollIntervalMs ?? 5000,
-    expiresAt: Date.now() + ttlMs,
-    inputRequests: {},
-    waiters: new Map(),
-  }
-  tasks.set(taskId, task)
-  void (async () => {
-    try {
-      const result = await callTool(tool, args, {
-        elicitation: createTaskElicitationAdapter(task),
-        env: options.env,
-        middlewares: options.middlewares,
-        name,
-        vars: options.vars,
-        version,
-      })
-      if (task.status === 'cancelled') return
-      task.result = result
-      task.status = 'completed'
-      task.inputRequests = {}
-      touchTask(task)
-    } catch (error) {
-      if (task.status === 'cancelled') return
-      task.status = 'failed'
-      task.error = {
-        code: -32603,
-        message: error instanceof Error ? error.message : String(error),
-      }
-      touchTask(task)
-    }
-  })()
-  return { resultType: 'task', ...taskResult(task) }
-}
-
-function getTask(message: JsonRpcRequest) {
-  const task = taskFrom(message)
-  return complete(taskResult(task))
-}
-
-function updateTask(message: JsonRpcRequest) {
-  const task = taskFrom(message)
-  const inputResponses = objectParams(message).inputResponses
-  if (isObject(inputResponses))
-    for (const [key, value] of Object.entries(inputResponses)) {
-      const waiter = task.waiters.get(key)
-      if (!waiter || !isObject(value)) continue
-      task.waiters.delete(key)
-      delete task.inputRequests[key]
-      waiter(
-        value as { action: Elicitation.Action; content?: Record<string, Elicitation.ContentValue> },
-      )
-    }
-  if (Object.keys(task.inputRequests).length === 0 && task.status === 'input_required') {
-    task.status = 'working'
-    touchTask(task)
-  }
-  return complete({})
-}
-
-function cancelTask(message: JsonRpcRequest) {
-  const task = taskFrom(message)
-  task.status = 'cancelled'
-  task.inputRequests = {}
-  for (const waiter of task.waiters.values()) waiter({ action: 'cancel' })
-  task.waiters.clear()
-  touchTask(task)
-  return complete({})
-}
-
-function taskFrom(message: JsonRpcRequest) {
-  pruneTasks()
-  const taskId = objectParams(message).taskId
-  if (typeof taskId !== 'string') throw new JsonRpcError(-32602, 'taskId is required.')
-  const task = tasks.get(taskId)
-  if (!task) throw new JsonRpcError(-32602, 'Task not found.', 400, { taskId })
-  return task
-}
-
-function taskResult(task: TaskState) {
-  return {
-    taskId: task.id,
-    status: task.status,
-    createdAt: task.createdAt,
-    lastUpdatedAt: task.lastUpdatedAt,
-    ttlMs: task.ttlMs,
-    pollIntervalMs: task.pollIntervalMs,
-    ...(task.status === 'input_required' ? { inputRequests: task.inputRequests } : undefined),
-    ...(task.result ? { result: task.result } : undefined),
-    ...(task.error ? { error: task.error } : undefined),
-  }
-}
-
-function createTaskElicitationAdapter(task: TaskState): Elicitation.Adapter {
-  let i = 0
-  function wait(key: string, params: Elicitation.FormRequestParams | Elicitation.UrlRequestParams) {
-    task.status = 'input_required'
-    task.inputRequests[key] = { method: 'elicitation/create', params }
-    touchTask(task)
-    return new Promise<{
-      action: Elicitation.Action
-      content?: Record<string, Elicitation.ContentValue> | undefined
-    }>((resolve) => {
-      task.waiters.set(key, resolve)
-    })
-  }
-  return {
-    form(params, options) {
-      return wait(options?.key ?? `input_${++i}`, params)
-    },
-    requireUrl(params, options) {
-      throw new InputRequiredError(
-        { [options?.key ?? `input_${++i}`]: { method: 'elicitation/create', params } },
-        encodeState({ taskId: task.id }),
-      )
-    },
-    url(params, options) {
-      return wait(options?.key ?? `input_${++i}`, params)
-    },
-  }
-}
-
-function touchTask(task: TaskState) {
-  task.lastUpdatedAt = new Date().toISOString()
-}
-
-function pruneTasks() {
-  const now = Date.now()
-  for (const [id, task] of tasks) if (task.expiresAt < now) tasks.delete(id)
-}
-
-function hasCompletions(options: handle2026Http.Options) {
-  return (
-    (options.prompts ?? []).some((p) => p.complete && Object.keys(p.complete).length > 0) ||
-    (options.resourceTemplates ?? []).some((t) => t.complete && Object.keys(t.complete).length > 0)
-  )
-}
-
-function hasTaskTools(commands: Map<string, any>) {
-  return collectTools(commands, []).some((tool) =>
-    Boolean((tool.command.mcpTool as ToolMetadata | undefined)?.task),
-  )
-}
-
-function withCache(fields: Record<string, unknown>, cache: CacheOptions | undefined) {
-  return complete({ ...fields, ...(cache ?? defaultCache) })
-}
-
-function complete(fields: Record<string, unknown>) {
-  return { resultType: 'complete', ...fields }
-}
-
-function objectParams(message: JsonRpcRequest) {
-  return isObject(message.params) ? message.params : {}
-}
-
-function protocolVersionFrom(req: Request, message: JsonRpcRequest) {
-  return (
-    req.headers.get('MCP-Protocol-Version') ??
-    req.headers.get('mcp-protocol-version') ??
-    String(metaFrom(message)?.['io.modelcontextprotocol/protocolVersion'] ?? '')
-  )
-}
-
-function metaFrom(message: JsonRpcRequest) {
-  return isObject(message.params) && isObject(message.params._meta)
-    ? message.params._meta
-    : undefined
-}
-
-function toolName(params: unknown) {
-  return isObject(params) && typeof params.name === 'string' ? params.name : ''
-}
-
-function isTaskMethod(method: string) {
-  return method === 'tasks/get' || method === 'tasks/update' || method === 'tasks/cancel'
-}
-
-function taskIdFrom(params: unknown) {
-  return isObject(params) && typeof params.taskId === 'string' ? params.taskId : ''
-}
-
-function bearerToken(req: Request) {
-  const value = req.headers.get('Authorization') ?? req.headers.get('authorization')
-  if (!value?.startsWith('Bearer ')) return undefined
-  return value.slice('Bearer '.length)
-}
-
-function hasClientExtension(message: JsonRpcRequest, extensionId: string) {
-  const capabilities = metaFrom(message)?.['io.modelcontextprotocol/clientCapabilities']
-  if (!isObject(capabilities) || !isObject(capabilities.extensions)) return false
-  return isObject(capabilities.extensions[extensionId])
-}
-
-function missingRequiredClientCapability(extensionId: string) {
-  return new JsonRpcError(-32003, 'Missing required client capability', 400, {
-    requiredCapabilities: { extensions: { [extensionId]: {} } },
-  })
-}
-
-function encodeState(value: Record<string, unknown>) {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  })
-}
-
-function error(
-  id: JsonRpcRequest['id'] | null | undefined,
-  code: number,
-  message: string,
-  data?: unknown,
-) {
-  return {
-    jsonrpc: '2.0',
-    id: id ?? null,
-    error: { code, message, ...(data ? { data } : undefined) },
-  }
-}
-
-function isInputRequiredError(error: unknown) {
-  return error instanceof InputRequiredError
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-class JsonRpcError extends Error {
-  code: number
-  data?: unknown | undefined
-  status: number
-
-  constructor(code: number, message: string, status = 400, data?: unknown | undefined) {
-    super(message)
-    this.code = code
-    this.status = status
-    if (data !== undefined) this.data = data
-  }
-}
-
-class InputRequiredError extends Error {
-  inputRequests: Record<
-    string,
-    { method: string; params: Elicitation.FormRequestParams | Elicitation.UrlRequestParams }
-  >
-  requestState: string
-
-  constructor(
-    inputRequests: Record<
-      string,
-      { method: string; params: Elicitation.FormRequestParams | Elicitation.UrlRequestParams }
-    >,
-    requestState: string,
-  ) {
-    super('Input required')
-    this.inputRequests = inputRequests
-    this.requestState = requestState
-  }
-}
-
-type JsonRpcRequest = {
-  jsonrpc: '2.0'
-  id?: string | number | undefined
-  method: string
-  params?: Record<string, unknown> | undefined
-}
-
-type TaskState = {
-  id: string
-  status: 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled'
-  createdAt: string
-  lastUpdatedAt: string
-  ttlMs: number | null
-  pollIntervalMs: number
-  expiresAt: number
-  inputRequests: Record<
-    string,
-    {
-      method: 'elicitation/create'
-      params: Elicitation.FormRequestParams | Elicitation.UrlRequestParams
-    }
-  >
-  waiters: Map<
-    string,
-    (result: {
-      action: Elicitation.Action
-      content?: Record<string, Elicitation.ContentValue> | undefined
-    }) => void
-  >
-  result?: unknown | undefined
-  error?: { code: number; message: string } | undefined
-}
-
-const defaultCache: CacheOptions = { ttlMs: 300000, cacheScope: 'public' }
-const tasks = new Map<string, TaskState>()
+export * from './Mcp2026Types.js'
 
 function createElicitationAdapter(
   extra: Extra | undefined,
   clientCapabilities: ClientCapabilities | undefined,
+  UrlElicitationRequiredError: UrlElicitationRequiredErrorConstructor | undefined,
 ): Elicitation.Adapter | undefined {
   const elicitInput = extra?.mcpReq?.elicitInput
   if (!elicitInput) return undefined
@@ -1376,6 +354,8 @@ function createElicitationAdapter(
     requireUrl(params) {
       if (!clientCapabilities?.elicitation?.url)
         throw new Error('Client does not support url elicitation.')
+      if (!UrlElicitationRequiredError)
+        throw new Error('URL elicitation requires MCP server support.')
       throw new UrlElicitationRequiredError([params])
     },
     url(params) {
@@ -1385,9 +365,7 @@ function createElicitationAdapter(
 }
 
 function isUrlElicitationRequiredError(error: unknown) {
-  return (
-    error instanceof UrlElicitationRequiredError || (error as { code?: unknown })?.code === -32042
-  )
+  return (error as { code?: unknown })?.code === -32042
 }
 
 /** @internal A progress notification sent during streaming tool calls. */
@@ -1416,12 +394,18 @@ type ClientCapabilities = {
     | undefined
 }
 
+type UrlElicitationRequiredErrorConstructor = new (
+  elicitations: Elicitation.UrlRequestParams[],
+) => Error
+
 /** @internal A resolved tool entry from the command tree. */
 export type ToolEntry = {
   name: string
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
   outputSchema?: Record<string, unknown> | undefined
+  annotations?: ToolAnnotations | undefined
+  instructions?: string | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
 }
@@ -1436,8 +420,279 @@ export declare namespace callTool {
   }
 }
 
+/** MCP tool exposure options. */
+export type ToolFilter = {
+  /** Tool discovery strategy. Progressive discovery exposes search, inspect, and execution tools instead of every command schema. Defaults to `'progressive'`. */
+  discovery?: 'direct' | 'progressive' | undefined
+  /** Tool name patterns to expose. Omitted means all tools. `*` matches any characters. */
+  include?: string[] | undefined
+  /** Tool name patterns to hide. Excludes win over includes. `*` matches any characters. */
+  exclude?: string[] | undefined
+}
+
+/** @internal Registers direct or progressively discovered MCP tools. */
+export function registerTools(
+  server: McpServer,
+  commands: Map<string, any>,
+  options: registerTools.Options,
+) {
+  const tools = collectTools(commands, [], [], options.tools)
+  if (tools.length === 0) return
+  if ((options.tools?.discovery ?? 'progressive') === 'direct') {
+    for (const tool of tools) registerDirectTool(server, tool, options)
+    return
+  }
+  registerDiscoveryTools(server, tools, options)
+}
+
+export declare namespace registerTools {
+  /** Options shared by stdio and HTTP MCP tool registration. */
+  type Options = {
+    /** CLI-level env schema. */
+    env?: z.ZodObject<any> | undefined
+    /** Resolves the current MCP client capabilities. */
+    clientCapabilities?: (() => ClientCapabilities | undefined) | undefined
+    /** Converts JSON Schema output definitions for the MCP SDK. */
+    fromJsonSchema: typeof import('@modelcontextprotocol/server').fromJsonSchema
+    /** Middleware handlers registered on the root CLI. */
+    middlewares?: MiddlewareHandler[] | undefined
+    /** MCP server name. */
+    name: string
+    /** Resolves the inbound HTTP request from MCP call metadata. */
+    request?: ((extra: any) => Request | undefined) | undefined
+    /** Sends MCP progress notifications. */
+    sendNotification?: ((notification: ProgressNotification) => Promise<void>) | undefined
+    /** Tool exposure options. */
+    tools?: ToolFilter | undefined
+    /** SDK error constructor for URL elicitation responses. */
+    urlElicitationRequiredError?: UrlElicitationRequiredErrorConstructor | undefined
+    /** Vars schema for middleware variables. */
+    vars?: z.ZodObject<any> | undefined
+    /** MCP server version. */
+    version: string
+  }
+}
+
+function registerDirectTool(
+  server: Parameters<typeof registerTools>[0],
+  tool: ToolEntry,
+  options: registerTools.Options,
+) {
+  const mergedShape: Record<string, any> = {
+    ...tool.command.args?.shape,
+    ...tool.command.options?.shape,
+  }
+  const hasInput = Object.keys(mergedShape).length > 0
+
+  server.registerTool(
+    tool.name,
+    {
+      ...(tool.description ? { description: tool.description } : undefined),
+      ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
+      ...(tool.outputSchema
+        ? { outputSchema: options.fromJsonSchema(tool.outputSchema) }
+        : undefined),
+      ...(tool.annotations ? { annotations: tool.annotations } : undefined),
+      ...(tool.instructions ? { _meta: { instructions: tool.instructions } } : undefined),
+    },
+    async (...callArgs: any[]) => {
+      // registerTool passes (args, extra) when inputSchema is set, (extra) when not.
+      const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
+      const extra = hasInput ? callArgs[1] : callArgs[0]
+      return callTool(tool, params, callOptions(options, extra))
+    },
+  )
+}
+
+function registerDiscoveryTools(
+  server: Parameters<typeof registerTools>[0],
+  tools: ToolEntry[],
+  options: registerTools.Options,
+) {
+  const byName = new Map(tools.map((tool) => [tool.name, tool]))
+
+  server.registerTool(
+    'search_tools',
+    {
+      description:
+        'Search or page through available tools by capability. Returns names and descriptions without loading their schemas. Inspect a result before calling it.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(20).default(5).describe('Maximum matches.'),
+        offset: z.number().int().min(0).default(0).describe('Matches to skip.'),
+        query: z.string().default('').describe('Capability to find. Empty lists all tools.'),
+      }),
+      annotations: catalogAnnotations,
+    },
+    async (params: { limit: number; offset: number; query: string }) => {
+      const matches = searchTools(tools, params.query)
+      const page = matches.slice(params.offset, params.offset + params.limit)
+      return toolResult({
+        tools: page.map((tool) => ({
+          name: tool.name,
+          ...(tool.description ? { description: tool.description } : undefined),
+          ...(tool.annotations ? { annotations: tool.annotations } : undefined),
+        })),
+        ...(params.offset + page.length < matches.length
+          ? { nextOffset: params.offset + page.length }
+          : undefined),
+      })
+    },
+  )
+
+  server.registerTool(
+    'get_tool_details',
+    {
+      description:
+        'Inspect one tool returned by search_tools. Returns its complete input schema and metadata.',
+      inputSchema: z.object({ name: z.string().min(1).describe('Exact tool name.') }),
+      annotations: catalogAnnotations,
+    },
+    async (params: { name: string }) => {
+      const tool = byName.get(params.name)
+      if (!tool) return toolError(`Unknown tool: ${params.name}`)
+      return toolResult({
+        name: tool.name,
+        ...(tool.description ? { description: tool.description } : undefined),
+        inputSchema: tool.inputSchema,
+        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
+        ...(tool.annotations ? { annotations: tool.annotations } : undefined),
+        ...(tool.instructions ? { instructions: tool.instructions } : undefined),
+      })
+    },
+  )
+
+  server.registerTool(
+    'call_read_tool',
+    {
+      description:
+        'Execute a tool marked read-only after inspecting its schema with get_tool_details.',
+      inputSchema: callSchema,
+      annotations: readAnnotations,
+    },
+    async (params: CallParams, extra: any) => {
+      const tool = byName.get(params.name)
+      if (!tool) return toolError(`Unknown tool: ${params.name}`)
+      if (tool.annotations?.readOnlyHint !== true)
+        return toolError(`Tool is not read-only: ${params.name}`)
+      return callTool(tool, params.arguments, callOptions(options, extra))
+    },
+  )
+
+  server.registerTool(
+    'call_write_tool',
+    {
+      description:
+        'Execute a writable or unclassified tool after inspecting its schema with get_tool_details.',
+      inputSchema: callSchema,
+      annotations: writeAnnotations,
+    },
+    async (params: CallParams, extra: any) => {
+      const tool = byName.get(params.name)
+      if (!tool) return toolError(`Unknown tool: ${params.name}`)
+      if (tool.annotations?.readOnlyHint === true)
+        return toolError(`Tool is read-only: ${params.name}`)
+      return callTool(tool, params.arguments, callOptions(options, extra))
+    },
+  )
+}
+
+type CallParams = {
+  name: string
+  arguments: Record<string, unknown>
+}
+
+const callSchema = z.object({
+  name: z.string().min(1).describe('Exact tool name.'),
+  arguments: z.record(z.string(), z.unknown()).default({}).describe('Arguments from its schema.'),
+})
+
+const catalogAnnotations = {
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+  readOnlyHint: true,
+}
+
+const readAnnotations = {
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+  readOnlyHint: true,
+}
+
+const writeAnnotations = {
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+  readOnlyHint: false,
+}
+
+function callOptions(options: registerTools.Options, extra: any) {
+  return {
+    clientCapabilities: options.clientCapabilities?.(),
+    env: options.env,
+    extra,
+    middlewares: options.middlewares,
+    name: options.name,
+    request: options.request?.(extra),
+    ...(options.sendNotification ? { sendNotification: options.sendNotification } : undefined),
+    urlElicitationRequiredError: options.urlElicitationRequiredError,
+    vars: options.vars,
+    version: options.version,
+  }
+}
+
+function searchTools(tools: ToolEntry[], query: string) {
+  const normalized = normalizeSearch(query)
+  const terms = normalized.split(' ').filter(Boolean)
+  return tools
+    .map((tool) => ({ tool, score: toolScore(tool, normalized, terms) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
+    .map(({ tool }) => tool)
+}
+
+function toolScore(tool: ToolEntry, query: string, terms: string[]) {
+  const name = normalizeSearch(tool.name)
+  const description = normalizeSearch(tool.description ?? '')
+  if (name === query) return 1_000
+  let score = name.startsWith(query) ? 100 : name.includes(query) ? 50 : 0
+  for (const term of terms) {
+    if (name.split(' ').includes(term)) score += 20
+    else if (name.includes(term)) score += 10
+    if (description.includes(term)) score += 2
+  }
+  return score
+}
+
+function normalizeSearch(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function toolResult(value: unknown) {
+  return { content: [{ type: 'text' as const, text: Json.stringify(value) }] }
+}
+
+function toolError(message: string) {
+  return { ...toolResult({ error: message }), isError: true }
+}
+
 /** @internal Recursively collects leaf commands as tool entries. */
 export function collectTools(
+  commands: Map<string, any>,
+  prefix: string[],
+  parentMiddlewares: MiddlewareHandler[] = [],
+  filter?: ToolFilter | undefined,
+): ToolEntry[] {
+  const tools = filterTools(collectToolEntries(commands, prefix, parentMiddlewares), filter)
+  assertUniqueToolNames(tools)
+  return tools.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function collectToolEntries(
   commands: Map<string, any>,
   prefix: string[],
   parentMiddlewares: MiddlewareHandler[] = [],
@@ -1445,27 +700,61 @@ export function collectTools(
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
     if ('_alias' in entry) continue
+    if (entry.mcp === false) continue
     const path = [...prefix, name]
     if ('_group' in entry && entry._group) {
       const groupMw = [
         ...parentMiddlewares,
         ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
       ]
-      result.push(...collectTools(entry.commands, path, groupMw))
+      result.push(...collectToolEntries(entry.commands, path, groupMw))
     } else {
+      const mcp = entry.mcp === false ? undefined : entry.mcp
+      const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
       result.push({
-        name: path.join('_'),
-        description: entry.description,
+        name: mcp?.name ?? path.join('_'),
+        description: mcp?.description ?? entry.description,
         inputSchema: buildToolSchema(entry.args, entry.options),
-        ...(entry.output
-          ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> }
-          : undefined),
+        ...(outputSchema ? { outputSchema } : undefined),
+        ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
+        ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
         command: entry,
         ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })
     }
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+  return result
+}
+
+/** Filters MCP tools by include and exclude patterns. */
+export function filterTools(tools: ToolEntry[], filter?: ToolFilter | undefined): ToolEntry[] {
+  if (!filter) return tools
+  const includes = filter.include?.map(patternToRegExp)
+  const excludes = filter.exclude?.map(patternToRegExp) ?? []
+  return tools.filter((tool) => {
+    if (excludes.some((pattern) => pattern.test(tool.name))) return false
+    if (!includes || includes.length === 0) return true
+    return includes.some((pattern) => pattern.test(tool.name))
+  })
+}
+
+function patternToRegExp(pattern: string) {
+  const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replace(/\*/g, '.*')
+  return new RegExp(`^${escaped}$`)
+}
+
+function assertUniqueToolNames(tools: ToolEntry[]) {
+  const seen = new Set<string>()
+  for (const tool of tools) {
+    if (seen.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`)
+    seen.add(tool.name)
+  }
+}
+
+function mcpOutputSchema(output: any): Record<string, unknown> | undefined {
+  const schema = Schema.toJsonSchema(output) as Record<string, unknown>
+  if (schema.type === 'object') return schema
+  return undefined
 }
 
 /** @internal Builds a merged JSON Schema from args and options Zod schemas. */

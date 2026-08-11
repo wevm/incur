@@ -174,6 +174,17 @@ describe('index', () => {
     expect(result).toContain('`test install [package]`')
   })
 
+  test('renders variadic args with ellipsis', () => {
+    const result = Skill.index('test', [
+      {
+        name: 'lint',
+        description: 'Lint files',
+        args: z.object({ paths: z.array(z.string()) }),
+      },
+    ])
+    expect(result).toContain('`test lint <paths...>`')
+  })
+
   test('handles commands without descriptions', () => {
     const result = Skill.index('test', [{ name: 'ping' }])
     expect(result).toContain('| `test ping` |  |')
@@ -201,6 +212,12 @@ describe('hash', () => {
   test('changes when description changes', () => {
     const a = Skill.hash([{ name: 'ping', description: 'Health check' }])
     const b = Skill.hash([{ name: 'ping', description: 'Check health' }])
+    expect(a).not.toBe(b)
+  })
+
+  test('changes when hint changes', () => {
+    const a = Skill.hash([{ name: 'ping', hint: 'Read status.' }])
+    const b = Skill.hash([{ name: 'ping', hint: 'Delete status.' }])
     expect(a).not.toBe(b)
   })
 

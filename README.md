@@ -40,7 +40,8 @@
 - [**`--llms` flag**](#agent-discovery): token-efficient command manifest in Markdown or JSON schema
 - [**Well-formed I/O**](#well-formed-io): Schemas schemas for arguments, options, environment variables, and output
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
-- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--version` on every CLI for free
+- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
+- [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `.command()`, `.serve()` – that's it
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 
@@ -124,6 +125,7 @@ $ greet --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
+#   --update                            Update to latest version
 #   --version                           Show version
 ```
 
@@ -194,6 +196,7 @@ $ my-cli --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
+#   --update                            Update to latest version
 #   --version                           Show version
 ```
 
@@ -251,6 +254,7 @@ $ my-cli --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
+#   --update                            Update to latest version
 #   --version                           Show version
 ```
 
@@ -358,6 +362,29 @@ $ my-cli api users get --limit 5
 
 When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
 
+#### MCP command sources
+
+Pass a remote MCP streamable-HTTP endpoint to generate a command group from its tools:
+
+```ts
+import { Cli } from 'incur'
+
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('docs', { mcp: 'https://mcp.tempo.xyz/mcp' })
+  .serve()
+```
+
+```sh
+$ my-cli docs --help
+# Commands:
+#   search  Search docs
+
+$ my-cli docs search --query tempo
+# → results: ...
+```
+
+Each MCP tool becomes a plain incur subcommand, so it is also available through `cli.fetch` and through incur's own MCP server as `<group>_<tool>`. Progressive remote catalogs are resolved automatically.
+
 ### Serve CLIs as APIs
 
 The inverse of mounting — expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.
@@ -401,12 +428,20 @@ Async generator commands stream as NDJSON (`application/x-ndjson`). Middleware r
 
 #### MCP over HTTP
 
-The `fetch` handler automatically exposes an MCP endpoint at `/mcp`. Agents can discover and call your CLI's commands as MCP tools over HTTP — no stdio required:
+The `fetch` handler automatically exposes an MCP endpoint at `/mcp`. Agents can discover and call your CLI's commands over HTTP, with no stdio required:
 
 ```
 POST /mcp  { "jsonrpc": "2.0", "method": "initialize", ... }
 POST /mcp  { "jsonrpc": "2.0", "method": "tools/list", ... }
-POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "users", ... } }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "search_tools", ... } }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "get_tool_details", ... } }
+POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "call_read_tool", ... } }
+```
+
+MCP servers use progressive discovery by default: clients search a compact catalog, inspect one full schema, then execute through a read or write gate. This keeps command schemas out of `tools/list`. Set `mcp.tools.discovery` to `'direct'` for clients that require every command as a top-level tool:
+
+```ts
+Cli.create('my-cli', { mcp: { tools: { discovery: 'direct' } } })
 ```
 
 Non-`/mcp` paths continue routing to the command API as usual.
@@ -502,7 +537,7 @@ Most CLIs expose tools via MCP or a single monolithic skill file. incur combines
 
 The table below models a session with a 20-command CLI producing full output envelopes.
 
-- **Session start** – tokens consumed just by having the tool available. _MCP injects all tool schemas into every turn; skills only load frontmatter (name + description)._
+- **Session start** – tokens consumed just by having the tool available. _Traditional MCP servers inject all tool schemas into every turn; skills only load frontmatter (name + description)._
 - **Discovery** – tokens to learn what commands exist and how to call them. _MCP gets this at session start; skills load the full skill file on demand; incur splits by command group so only relevant commands are loaded._
 - **Invocation (×5)** – tokens per tool call.
 - **Response (×5)** – tokens in CLI output. _MCP and skills return JSON; incur defaults to TOON which strips braces, quotes, and keys._
@@ -886,6 +921,79 @@ $ my-cli whoami
 # → debug: true
 ```
 
+### Standalone binaries
+
+Build standalone macOS, Linux, and Windows executables with Bun:
+
+```sh
+incur build ./src/bin.ts --installer
+```
+
+The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell installation scripts.
+
+Copy this workflow to `.github/workflows/binary-release.yml` to prepare a release and upload its unsigned binaries:
+
+```yaml
+name: Binary Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: binary-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - id: release
+        uses: wevm/incur/release@v1
+```
+
+After the release is published, users can install without a package manager:
+
+```sh
+curl -fsSL https://github.com/<org>/<repo>/releases/latest/download/install.sh | sh
+```
+
+Connect those assets to a public GitHub repository:
+
+```ts
+import { Binary, Cli } from 'incur'
+
+const cli = Cli.create('my-cli', {
+  update: Binary.github({ repository: 'example/my-cli' }),
+})
+```
+
+The provider activates only inside an Incur-built executable. Source and package installations continue to use their inferred npm, pnpm, or Bun updater. See the [standalone binary guide](./docs/binaries.md) for installer behavior, the target matrix, and the release action.
+
+### Update notices
+
+Incur CLIs installed from npm packages automatically check for updates in human TTY mode. Results are cached for one day and refreshed in a detached process, so checks do not delay commands or change agent, JSON, MCP, help, or completion output.
+
+When a newer version is available, Incur suggests the built-in root flag:
+
+```text
+Update available for my-cli:
+  my-cli --update  # upgrade from 1.0.0 to 1.1.0
+```
+
+Running `my-cli --update` uses npm, pnpm, or Bun to update the package globally. Incur infers the package and package manager from the executing binary. Set `update.package` to opt into registry updates when package metadata is unavailable:
+
+```ts
+const cli = Cli.create('my-cli', {
+  update: { package: '@example/my-cli' },
+  version: '1.0.0',
+})
+```
+
+Standalone executables configured with `Binary.github` use the same detached check path and install only after an explicit `--update`.
+
+Set `update: false` to disable automatic notices. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` also suppress notices without disabling explicit updates.
+
 ### Global options
 
 Every incur CLI includes these flags automatically:
@@ -903,6 +1011,7 @@ Every incur CLI includes these flags automatically:
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
+| `--update`               | Update to the latest version                           |
 | `--version`              | Print CLI version                                      |
 
 ### Config file

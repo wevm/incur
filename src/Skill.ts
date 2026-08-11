@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { stringify as yamlStringify } from 'yaml'
 import type { z } from 'zod'
 
+import * as Yaml from './internal/yaml.js'
 import * as Schema from './Schema.js'
 
 /** Information about a single command, passed to `generate()`. */
@@ -55,7 +55,11 @@ function buildSignature(cli: string, cmd: CommandInfo): string {
   const shape = cmd.args.shape as Record<string, z.ZodType>
   const json = Schema.toJsonSchema(cmd.args)
   const required = new Set((json.required as string[] | undefined) ?? [])
-  const argNames = Object.keys(shape).map((k) => (required.has(k) ? `<${k}>` : `[${k}]`))
+  const properties = json.properties as Record<string, Record<string, unknown>> | undefined
+  const argNames = Object.keys(shape).map((k) => {
+    const label = properties?.[k]?.type === 'array' ? `${k}...` : k
+    return required.has(k) ? `<${label}>` : `[${label}]`
+  })
   return `${base} ${argNames.join(' ')}`
 }
 
@@ -137,10 +141,12 @@ function renderGroup(
     ? `${desc.replace(/\.$/, '')}. Run \`${title} --help\` for usage details.`
     : `Run \`${title} --help\` for usage details.`
 
-  const fm = yamlStringify(
-    { name: slugify(title), description, requires_bin: cli, command: title },
-    { lineWidth: 0 },
-  ).trimEnd()
+  const fm = Yaml.loadSync()
+    .stringify(
+      { name: slugify(title), description, requires_bin: cli, command: title },
+      { lineWidth: 0 },
+    )
+    .trimEnd()
   const fmBlock = `---\n${fm}\n---`
 
   const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')
@@ -245,6 +251,7 @@ export function hash(commands: CommandInfo[]): string {
   const data = commands.map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
+    hint: cmd.hint,
     args: cmd.args ? Schema.toJsonSchema(cmd.args) : undefined,
     env: cmd.env ? Schema.toJsonSchema(cmd.env) : undefined,
     options: cmd.options ? Schema.toJsonSchema(cmd.options) : undefined,

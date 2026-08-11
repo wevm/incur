@@ -9,6 +9,7 @@ import { z } from 'zod'
 import * as Cli from './Cli.js'
 import * as Fetch from './Fetch.js'
 import { dereference } from './internal/dereference.js'
+import type * as Mcp from './Mcp.js'
 import * as Schema from './Schema.js'
 
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
@@ -32,8 +33,14 @@ export type Mode = 'namespace' | 'operation'
 
 /** Configuration for generating commands from an OpenAPI document. */
 export type Config = {
+  /** Strips `examples`, oversized `pattern` regexes, and regex-deriving date/time formats from generated schemas, shrinking MCP tool listings. Defaults to `false`. */
+  compact?: boolean | undefined
+  /** Header names copied from the inbound request onto upstream requests when not explicitly set. */
+  forwardHeaders?: string[] | undefined
   /** Command naming strategy. Defaults to `'operation'`. */
   mode?: Mode | undefined
+  /** Generates credential options from the document's `security` requirements. Defaults to `true`. */
+  security?: boolean | undefined
 }
 
 /** Options for generating an OpenAPI document from an incur CLI. */
@@ -120,6 +127,12 @@ type FetchHandler = (req: Request) => Response | Promise<Response>
 type GeneratedCommand = {
   args?: z.ZodObject<any> | undefined
   description?: string | undefined
+  mcp?:
+    | {
+        annotations: Mcp.ToolAnnotations
+        description?: string | undefined
+      }
+    | undefined
   options?: z.ZodObject<any> | undefined
   run: (context: any) => any
 }
@@ -368,6 +381,7 @@ export async function generateCommands(
   const operations = openapiOperations(paths)
   const namespaceInfo = getNamespaceInfo(operations)
   const { config } = options
+  if (config?.compact) compactOperations(operations)
 
   for (const { method, operation: op, path } of operations) {
     const segments = commandSegments({
@@ -383,7 +397,7 @@ export async function generateCommands(
     const queryParams = (op.parameters ?? []).filter((p) => p.in === 'query')
     const headerParams = headerOptions([
       ...(op.parameters ?? []).filter((p) => p.in === 'header'),
-      ...securityHeaderParams(resolved, op),
+      ...(config?.security === false ? [] : securityHeaderParams(resolved, op)),
     ])
 
     const bodySchema = op.requestBody?.content?.['application/json']?.schema
@@ -432,11 +446,19 @@ export async function generateCommands(
 
     setCommand(commands, segments, {
       description: op.summary ?? op.description,
+      mcp: {
+        annotations: mcpAnnotations(method),
+        // Help keeps the short summary; MCP tools surface the full prose.
+        ...(op.summary && op.description && op.summary !== op.description
+          ? { description: `${op.summary}\n\n${op.description}` }
+          : undefined),
+      },
       args: argsSchema,
       options: optionsSchema,
       run: createHandler({
         basePath: options.basePath,
         fetch,
+        forwardHeaders: config?.forwardHeaders,
         httpMethod,
         path,
         headerParams,
@@ -448,6 +470,16 @@ export async function generateCommands(
   }
 
   return commands
+}
+
+function mcpAnnotations(method: string) {
+  const readOnly = ['get', 'head', 'options', 'trace'].includes(method)
+  return {
+    destructiveHint: !readOnly,
+    idempotentHint: readOnly || method === 'delete' || method === 'put',
+    openWorldHint: true,
+    readOnlyHint: readOnly,
+  }
 }
 
 export declare namespace generateCommands {
@@ -524,6 +556,70 @@ function securityHeaderParam(
 }
 
 const authorizationSchemes = new Set(['basic', 'bearer'])
+
+/** Patterns longer than this are dropped by `compact`; oversized regexes add schema bytes without helping callers. */
+const compactPatternLimit = 100
+
+/** String formats zod serializes back into oversized regex patterns. */
+const dateTimeFormats = new Set(['date', 'date-time', 'duration', 'time'])
+
+/** Rewrites operation parameter and request-body schemas with `compactSchema` in place. */
+function compactOperations(operations: OperationEntry[]) {
+  for (const { operation } of operations) {
+    for (const parameter of operation.parameters ?? [])
+      if (parameter.schema) parameter.schema = compactSchema(parameter.schema)
+    const body = operation.requestBody?.content?.['application/json']
+    if (body?.schema) body.schema = compactSchema(body.schema)
+  }
+}
+
+/** Returns a copy stripped of `example(s)` and oversized `pattern` regexes; drops subschemas emptied by stripping. */
+function compactSchema(
+  schema: Record<string, unknown>,
+  seen = new Map<object, Record<string, unknown>>(),
+): Record<string, unknown> {
+  // Dereferenced documents may share or cycle subschemas; reuse the copy.
+  const cached = seen.get(schema)
+  if (cached) return cached
+  const out = { ...schema }
+  seen.set(schema, out)
+
+  delete out.example
+  delete out.examples
+  if (typeof out.pattern === 'string' && out.pattern.length > compactPatternLimit)
+    delete out.pattern
+  // Zod re-derives oversized ISO regexes from date/time formats when tools serialize; the description carries the shape.
+  if (typeof out.format === 'string' && dateTimeFormats.has(out.format)) delete out.format
+
+  for (const key of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) {
+    if (!Array.isArray(out[key])) continue
+    const entries = (out[key] as Record<string, unknown>[])
+      .map((entry) => compactSchema(entry, seen))
+      .filter((entry) => Object.keys(entry).length > 0)
+    if (entries.length > 0) out[key] = entries
+    else delete out[key]
+  }
+
+  for (const key of ['additionalProperties', 'contains', 'items', 'not', 'propertyNames']) {
+    const value = out[key]
+    if (isSchemaObject(value)) out[key] = compactSchema(value, seen)
+  }
+
+  for (const key of ['$defs', 'patternProperties', 'properties']) {
+    const value = out[key]
+    if (!isSchemaObject(value)) continue
+    const map: Record<string, unknown> = {}
+    for (const [name, entry] of Object.entries(value))
+      map[name] = isSchemaObject(entry) ? compactSchema(entry, seen) : entry
+    out[key] = map
+  }
+
+  return out
+}
+
+function isSchemaObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 function headerOptions(parameters: Parameter[]): HeaderParameter[] {
   const seen = new Set<string>()
@@ -678,6 +774,7 @@ function createHandler(config: {
   basePath?: string | undefined
   bodyProps: Record<string, Record<string, unknown>>
   fetch: FetchHandler
+  forwardHeaders?: string[] | undefined
   headerParams: HeaderParameter[]
   httpMethod: string
   path: string
@@ -723,6 +820,12 @@ function createHandler(config: {
       if (value !== undefined) input.headers.set(p.name, String(value))
     }
 
+    for (const name of config.forwardHeaders ?? []) {
+      const value = context.request?.headers.get(name)
+      if (!input.headers.has(name) && value !== null && value !== undefined)
+        input.headers.set(name, value)
+    }
+
     if (body && !input.headers.has('content-type'))
       input.headers.set('content-type', 'application/json')
 
@@ -746,12 +849,12 @@ function createHandler(config: {
 }
 
 /** Converts a JSON Schema object to a Zod schema. */
-function toZod(schema: Record<string, unknown>): z.ZodType {
+export function toZod(schema: Record<string, unknown>): z.ZodType {
   return z.fromJSONSchema(schema)
 }
 
 /** Wraps a Zod schema with coercion if the base type is number or boolean (argv is always strings). */
-function coerceIfNeeded(schema: z.ZodType): z.ZodType {
+export function coerceIfNeeded(schema: z.ZodType): z.ZodType {
   const isOptional = schema instanceof z.ZodOptional
   const inner = isOptional ? schema.unwrap() : schema
 
