@@ -130,7 +130,7 @@ export type Cli<
   name: cliName
   /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
   fetch(req: Request): Promise<Response>
-  /** Discovers and registers command modules from a directory. Defaults to `commands/` beside the executed entrypoint. */
+  /** Discovers and registers command modules from a directory. Defaults to files beside the executed entrypoint. */
   fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals, cliName>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
@@ -439,7 +439,7 @@ export function create(
         (async () => {
           const routes = manifest
             ? await FsCommands.loadManifest(manifest)
-            : await loadFsCommandRoutes(await resolveFsCommandsDirectory(directory))
+            : await loadFsCommandRoutes(await resolveFsCommandsRoot(directory))
           for (const route of routes) {
             if (!isFileCommand(route.command))
               throw new Error(
@@ -3227,8 +3227,13 @@ type InternalGroup = {
   commands: Map<string, CommandEntry>
 }
 
-async function resolveFsCommandsDirectory(directory: URL | undefined): Promise<string> {
-  if (directory) return fileURLToPath(directory)
+type FsCommandsRoot = {
+  directory: string
+  exclude?: string | undefined
+}
+
+async function resolveFsCommandsRoot(directory: URL | undefined): Promise<FsCommandsRoot> {
+  if (directory) return { directory: fileURLToPath(directory) }
   const entry = process.argv[1]
   if (!entry)
     throw new Error(
@@ -3236,15 +3241,16 @@ async function resolveFsCommandsDirectory(directory: URL | undefined): Promise<s
     )
   const resolved = path.resolve(entry)
   try {
-    return path.join(path.dirname(await fs.realpath(resolved)), 'commands')
+    const real = await fs.realpath(resolved)
+    return { directory: path.dirname(real), exclude: real }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    return path.join(path.dirname(resolved), 'commands')
+    return { directory: path.dirname(resolved), exclude: resolved }
   }
 }
 
-async function loadFsCommandRoutes(directory: string): Promise<FsCommands.LoadedRoute[]> {
-  const routes = await FsCommands.discover(directory)
+async function loadFsCommandRoutes(root: FsCommandsRoot): Promise<FsCommands.LoadedRoute[]> {
+  const routes = await FsCommands.discover(root.directory, { exclude: root.exclude })
   return Promise.all(
     routes.map(async (route) => ({
       ...route,

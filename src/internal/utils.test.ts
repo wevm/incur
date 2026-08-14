@@ -51,12 +51,12 @@ test('resolves entry from string bin', async () => {
 })
 
 test('provides the entrypoint used by default filesystem command discovery', async () => {
-  const entry = join(tmp, 'cli.ts')
-  const commands = join(tmp, 'commands')
+  const root = join(tmp, 'cli')
+  const entry = join(root, 'index.ts')
   const incur = JSON.stringify(join(import.meta.dirname, '..', 'index.ts'))
-  mkdirSync(commands)
+  mkdirSync(root)
   writeFileSync(
-    join(commands, 'status.ts'),
+    join(root, 'status.ts'),
     `import { Cli } from ${incur}\nexport default Cli.command({ run: () => ({ status: 'ok' }) })\n`,
   )
   writeFileSync(

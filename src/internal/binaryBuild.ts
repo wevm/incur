@@ -85,9 +85,9 @@ export async function build(options: build.Options): Promise<build.Result> {
     const source = resolved.entry.replaceAll(path.sep, '/')
     const entrySource = await fsPromises.readFile(resolved.entry, 'utf8')
     // Compiled executables cannot scan source modules, so the route directory must be statically inferable.
-    const fsCommandsDirectories = resolveFsCommandsDirectories(resolved.entry, entrySource)
+    const fsCommandsRoots = resolveFsCommandsRoots(resolved.entry, entrySource)
     const fsCommands = await Promise.all(
-      fsCommandsDirectories.map((directory) => discoverFsCommands(directory)),
+      fsCommandsRoots.map((root) => discoverFsCommands(root.directory, { exclude: root.exclude })),
     )
     const manifest =
       fsCommands.length > 0
@@ -201,15 +201,20 @@ export async function build(options: build.Options): Promise<build.Result> {
   }
 }
 
-function resolveFsCommandsDirectories(entry: string, source: string): string[] {
+type FsCommandsRoot = {
+  directory: string
+  exclude?: string | undefined
+}
+
+function resolveFsCommandsRoots(entry: string, source: string): FsCommandsRoot[] {
   return findFsCalls(source).map(({ end, start }) => {
     const args = source.slice(start, end)
-    if (args.trim() === '') return path.join(path.dirname(entry), 'commands')
+    if (args.trim() === '') return { directory: path.dirname(entry), exclude: entry }
 
     const match = args.match(
       /^\s*new\s+URL\s*\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)\s*$/,
     )
-    if (match?.[2]) return fileURLToPath(new URL(match[2], pathToFileURL(entry)))
+    if (match?.[2]) return { directory: fileURLToPath(new URL(match[2], pathToFileURL(entry))) }
     throw new Error(
       'Standalone builds require `fs()` or `fs(new URL("./path/", import.meta.url))` so routes can be embedded.',
     )

@@ -154,9 +154,10 @@ describe('build', () => {
 
   test('embeds adjacent filesystem commands in the standalone entrypoint', async () => {
     await writeFile(entry, 'await cli.fs().serve()\n')
-    await mkdir(join(directory, 'commands', 'project'), { recursive: true })
-    await writeFile(join(directory, 'commands', 'status.ts'), 'export default {}\n')
-    await writeFile(join(directory, 'commands', 'project', 'list.ts'), 'export default {}\n')
+    await mkdir(join(directory, 'project'), { recursive: true })
+    await writeFile(join(directory, 'status.ts'), 'export default {}\n')
+    await writeFile(join(directory, 'project', 'index.ts'), 'export default {}\n')
+    await writeFile(join(directory, 'project', 'list.ts'), 'export default {}\n')
     let compiledEntry = ''
     const execute: build.Execute = async (_command, args) => {
       if (args[0] === '--version') return
@@ -168,7 +169,8 @@ describe('build', () => {
     await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
 
     expect(compiledEntry).toContain('Symbol.for("incur.fs.manifests")')
-    expect(compiledEntry).toContain('commands/status.ts')
+    expect(compiledEntry).toContain('status.ts')
+    expect(compiledEntry).toContain('segments: ["project"]')
     expect(compiledEntry).toContain('segments: ["project","list"]')
     expect(compiledEntry).toContain('load: () => import(')
     expect(compiledEntry).not.toContain('import __incurCommand')
@@ -203,8 +205,7 @@ describe('build', () => {
   })
 
   test('does not inspect adjacent commands unless the entrypoint enables filesystem routing', async () => {
-    await mkdir(join(directory, 'commands'))
-    await writeFile(join(directory, 'commands', 'badName.ts'), 'throw new Error()\n')
+    await writeFile(join(directory, 'badName.ts'), 'throw new Error()\n')
     let compiledEntry = ''
     const execute: build.Execute = async (_command, args) => {
       if (args[0] === '--version') return
@@ -228,8 +229,7 @@ describe('build', () => {
         'const template = `cli.fs()`',
       ].join('\n'),
     )
-    await mkdir(join(directory, 'commands'))
-    await writeFile(join(directory, 'commands', 'badName.ts'), 'throw new Error()\n')
+    await writeFile(join(directory, 'badName.ts'), 'throw new Error()\n')
     let compiledEntry = ''
     const execute: build.Execute = async (_command, args) => {
       if (args[0] === '--version') return
@@ -260,9 +260,8 @@ describe('build', () => {
     expect(compiledEntry).toContain('routes/status.ts')
   })
 
-  test('embeds an empty manifest for an empty filesystem command directory', async () => {
+  test('embeds an empty manifest when the entrypoint has no sibling commands', async () => {
     await writeFile(entry, 'await cli.fs().serve()\n')
-    await mkdir(join(directory, 'commands'))
     let compiledEntry = ''
     const execute: build.Execute = async (_command, args) => {
       if (args[0] === '--version') return
@@ -555,12 +554,11 @@ export default cli
   )
 
   test.runIf(target)(
-    'runs embedded filesystem commands without a runtime commands directory',
+    'runs embedded filesystem commands without runtime command files',
     async () => {
       const incur = JSON.stringify(join(import.meta.dirname, '..', 'index.ts'))
-      await mkdir(join(directory, 'commands'))
       await writeFile(
-        join(directory, 'commands', 'status.ts'),
+        join(directory, 'status.ts'),
         `import { Cli } from ${incur}\nconst initialized = (globalThis as any)[Symbol.for('incur.test.initialized')]\nexport default Cli.command({ run: () => ({ initialized, status: 'ok' }) })\n`,
       )
       await writeFile(

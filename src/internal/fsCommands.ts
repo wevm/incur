@@ -25,8 +25,12 @@ export type LoadedRoute = Route & {
 export const manifestKey = 'incur.fs.manifests'
 
 /** @internal Discovers command module files below a directory. */
-export async function discover(directory: string): Promise<Route[]> {
+export async function discover(
+  directory: string,
+  options: { exclude?: string | undefined } = {},
+): Promise<Route[]> {
   const routes: Route[] = []
+  const exclude = options.exclude ? path.resolve(options.exclude) : undefined
 
   async function walk(current: string, prefix: string[]): Promise<void> {
     const entries: Dirent[] = await fs.readdir(current, { withFileTypes: true })
@@ -41,6 +45,7 @@ export async function discover(directory: string): Promise<Route[]> {
         continue
       }
       if (!entry.isFile()) continue
+      if (target === exclude) continue
 
       const extension = extensions.find((candidate) => entry.name.endsWith(candidate))
       if (!extension) continue
@@ -52,6 +57,10 @@ export async function discover(directory: string): Promise<Route[]> {
         stem.endsWith('.spec')
       )
         continue
+      if (stem === 'index') {
+        if (prefix.length > 0) routes.push({ file: target, segments: prefix })
+        continue
+      }
       assertSegment(stem, target)
       routes.push({ file: target, segments: [...prefix, stem] })
     }

@@ -4,8 +4,8 @@
     "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
     "changeset:version": "changeset version",
     "check": "oxlint --fix --ignore-pattern package.json && oxfmt",
-    "check:types": "tsc -b",
-    "incur": "node --import tsx src/bin.ts",
+    "check:types": "tsc -b src test",
+    "incur": "node --import tsx src/cli/index.ts",
     "cli:skills": "pnpm incur skills add",
     "dev": "zile dev",
     "test": "vitest"
@@ -60,8 +60,8 @@
   },
   "sideEffects": false,
   "bin": {
-    "incur": "./dist/bin.js",
-    "incur.src": "./src/bin.ts"
+    "incur": "./dist/cli/index.js",
+    "incur.src": "./src/cli/index.ts"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",

@@ -175,10 +175,12 @@ describe('command', () => {
 
 describe('fs', () => {
   let directory: string
+  let root: string
   let commandId = 0
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'incur-fs-commands-'))
+    root = join(directory, 'cli')
   })
 
   afterEach(async () => {
@@ -186,20 +188,20 @@ describe('fs', () => {
   })
 
   async function writeCommand(relative: string, definition: Cli.FileCommand<any, any, any, any>) {
-    const file = join(directory, 'commands', relative)
+    const file = join(root, relative)
     const key = `incur.test.fs-command.${commandId++}`
     ;(globalThis as any)[Symbol.for(key)] = definition
     await mkdir(dirname(file), { recursive: true })
     await writeFile(file, `export default globalThis[Symbol.for(${JSON.stringify(key)})]\n`)
   }
 
-  test('infers flat commands, nested sub-apps, and callable groups', async () => {
+  test('infers flat commands, nested sub-commands, and callable groups', async () => {
     await writeCommand(
       'status.mjs',
       Cli.command({ description: 'Show status', run: () => ({ status: 'ok' }) }),
     )
     await writeCommand(
-      'project.mjs',
+      'project/index.mjs',
       Cli.command({ description: 'Show project', run: () => ({ project: 'root' }) }),
     )
     await writeCommand(
@@ -208,7 +210,7 @@ describe('fs', () => {
     )
 
     const cli = Cli.create('test')
-    cli.fs(pathToFileURL(join(directory, 'commands')))
+    cli.fs(pathToFileURL(root))
 
     expect(JSON.parse((await serve(cli, ['status', '--json'])).output)).toEqual({ status: 'ok' })
     expect(JSON.parse((await serve(cli, ['project', '--json'])).output)).toEqual({
@@ -239,9 +241,11 @@ describe('fs', () => {
 
   test('defaults to commands beside the executed entrypoint', async () => {
     await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    const entry = join(root, 'index.mjs')
+    await writeFile(entry, '')
     const cli = Cli.create('test')
     const argv = process.argv
-    process.argv = [argv[0]!, join(directory, 'cli.ts')]
+    process.argv = [argv[0]!, entry]
     try {
       cli.fs()
     } finally {
@@ -254,7 +258,7 @@ describe('fs', () => {
 
   test('defaults to commands beside a symlinked entrypoint target', async () => {
     await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
-    const entry = join(directory, 'cli.mjs')
+    const entry = join(root, 'index.mjs')
     const bin = join(directory, 'bin', 'test')
     await writeFile(entry, '')
     await mkdir(dirname(bin))
@@ -273,9 +277,9 @@ describe('fs', () => {
     expect(JSON.parse(result.output)).toEqual({ status: 'ok' })
   })
 
-  test('awaits filesystem commands from mounted sub-apps', async () => {
+  test('awaits filesystem commands from mounted sub-command CLIs', async () => {
     await writeCommand('list.mjs', Cli.command({ run: () => ({ projects: [] }) }))
-    const project = Cli.create('project').fs(pathToFileURL(join(directory, 'commands')))
+    const project = Cli.create('project').fs(pathToFileURL(root))
     const cli = Cli.create('test').command(project)
 
     const result = await serve(cli, ['project', 'list', '--json'])
@@ -290,7 +294,7 @@ describe('fs', () => {
         run: () => ({}),
       }),
     )
-    const admin = Cli.create('admin').fs(pathToFileURL(join(directory, 'commands')))
+    const admin = Cli.create('admin').fs(pathToFileURL(root))
     const cli = Cli.create('test', {
       globals: z.object({ rpcUrl: z.string() }),
     }).command(admin)
@@ -305,41 +309,41 @@ describe('fs', () => {
     await writeCommand('_private.mjs', Cli.command({ run: () => ({ private: true }) }))
     await writeCommand('status.test.mjs', Cli.command({ run: () => ({ test: true }) }))
     await writeCommand('status.test-d.ts', Cli.command({ run: () => ({ typeTest: true }) }))
-    await writeFile(join(directory, 'commands', 'types.d.ts'), 'export type Value = string\n')
-    await writeFile(join(directory, 'commands', 'notes.txt'), 'not a command\n')
+    await writeFile(join(root, 'types.d.ts'), 'export type Value = string\n')
+    await writeFile(join(root, 'notes.txt'), 'not a command\n')
 
     const cli = Cli.create('test')
-    cli.fs(pathToFileURL(join(directory, 'commands')))
+    cli.fs(pathToFileURL(root))
     await Promise.all(Cli.toPending.get(cli)!)
     expect([...Cli.toCommands.get(cli)!.keys()]).toEqual(['status'])
   })
 
   test('rejects duplicate routes across extensions', async () => {
-    await mkdir(join(directory, 'commands'), { recursive: true })
-    await writeFile(join(directory, 'commands', 'status.js'), 'export default {}\n')
-    await writeFile(join(directory, 'commands', 'status.mjs'), 'export default {}\n')
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'status.js'), 'export default {}\n')
+    await writeFile(join(root, 'status.mjs'), 'export default {}\n')
 
-    const cli = Cli.create('test').fs(pathToFileURL(join(directory, 'commands')))
+    const cli = Cli.create('test').fs(pathToFileURL(root))
     await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
       "Duplicate filesystem command 'status'",
     )
   })
 
   test('requires lowercase kebab-case route segments', async () => {
-    await mkdir(join(directory, 'commands'), { recursive: true })
-    await writeFile(join(directory, 'commands', 'badName.mjs'), 'export default {}\n')
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'badName.mjs'), 'export default {}\n')
 
-    const cli = Cli.create('test').fs(pathToFileURL(join(directory, 'commands')))
+    const cli = Cli.create('test').fs(pathToFileURL(root))
     await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
       "Invalid filesystem command segment 'badName'",
     )
   })
 
   test('requires command modules to use Cli.command()', async () => {
-    await mkdir(join(directory, 'commands'), { recursive: true })
-    await writeFile(join(directory, 'commands', 'status.mjs'), 'export default { run() {} }\n')
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'status.mjs'), 'export default { run() {} }\n')
 
-    const cli = Cli.create('test').fs(pathToFileURL(join(directory, 'commands')))
+    const cli = Cli.create('test').fs(pathToFileURL(root))
     await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
       'to be created with `Cli.command()`',
     )

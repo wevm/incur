@@ -41,7 +41,7 @@
 - [**Well-formed I/O**](#well-formed-io): Schemas schemas for arguments, options, environment variables, and output
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
 - [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
-- [**File-based commands**](#file-based-commands): load commands and nested sub-commands from a `commands/` directory
+- [**File-based commands**](#file-based-commands): load commands and nested sub-commands from sibling files and folders
 - [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `Cli.command()`, `.command()`, `.fs()`, and `.serve()`
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
@@ -261,21 +261,21 @@ $ my-cli --help
 
 ### File-based commands
 
-Use `fs()` when each command should live in its own file. The entrypoint owns the CLI configuration and discovers `commands/` beside itself.
+Use `fs()` when each command should live in its own file. The entrypoint owns the CLI configuration and discovers command files beside itself.
 
 ```text
 src/
-├── cli.ts
-└── commands/
+└── cli/
+    ├── index.ts
     ├── status.ts
-    ├── project.ts
     └── project/
+        ├── index.ts
         └── list.ts
 ```
 
 <!-- prettier-ignore -->
 ```ts
-// src/cli.ts
+// src/cli/index.ts
 import { Cli } from 'incur'
 
 await Cli.create('my-cli', { description: 'My CLI' })
@@ -284,7 +284,7 @@ await Cli.create('my-cli', { description: 'My CLI' })
 ```
 
 ```ts
-// src/commands/project/list.ts
+// src/cli/project/list.ts
 import { Cli, z } from 'incur'
 
 export default Cli.command({
