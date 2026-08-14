@@ -41,6 +41,7 @@
 - [**Well-formed I/O**](#well-formed-io): Schemas schemas for arguments, options, environment variables, and output
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
 - [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
+- [**File-based commands**](#file-based-commands): load commands and nested sub-commands from a `commands/` directory
 - [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `Cli.command()`, `.command()`, `.fs()`, and `.serve()`
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
@@ -258,9 +259,9 @@ $ my-cli --help
 #   --version                           Show version
 ```
 
-#### File-based commands
+### File-based commands
 
-Use `fs()` when each command should live in its own module. The entrypoint owns the CLI configuration and discovers `commands/` beside itself.
+Use `fs()` when each command should live in its own file. The entrypoint owns the CLI configuration and discovers `commands/` beside itself.
 
 ```text
 src/
