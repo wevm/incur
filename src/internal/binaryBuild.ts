@@ -4,9 +4,11 @@ import * as fs from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import * as path from 'node:path'
 import * as stream from 'node:stream/promises'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as zlib from 'node:zlib'
 
 import * as BinaryInstaller from './binaryInstaller.js'
+import { discover as discoverFsCommands, manifestKey } from './fsCommands.js'
 
 /** Canonical standalone-binary targets supported by Incur. */
 export const targets = [
@@ -81,7 +83,33 @@ export async function build(options: build.Options): Promise<build.Result> {
     // Prevent Bun from treating a CLI's default export as an auto-started server.
     const entry = path.join(staging, 'entry.ts')
     const source = resolved.entry.replaceAll(path.sep, '/')
-    await fsPromises.writeFile(entry, `await import(${JSON.stringify(source)})\n`)
+    const entrySource = await fsPromises.readFile(resolved.entry, 'utf8')
+    // Compiled executables cannot scan source modules, so the route directory must be statically inferable.
+    const fsCommandsDirectory = resolveFsCommandsDirectory(resolved.entry, entrySource)
+    if (/\.fs\s*\(/.test(entrySource) && !fsCommandsDirectory)
+      throw new Error(
+        'Standalone builds require `fs()` or `fs(new URL("./path/", import.meta.url))` so routes can be embedded.',
+      )
+    const fsCommands = fsCommandsDirectory ? await discoverFsCommands(fsCommandsDirectory) : []
+    const imports = fsCommands
+      .map(
+        (route, index) =>
+          `import __incurCommand${index} from ${JSON.stringify(route.file.replaceAll(path.sep, '/'))}`,
+      )
+      .join('\n')
+    const manifest =
+      fsCommandsDirectory
+        ? `globalThis[Symbol.for(${JSON.stringify(manifestKey)})] = [[${fsCommands
+            .map(
+              (route, index) =>
+                `{ command: __incurCommand${index}, file: ${JSON.stringify(route.file)}, segments: ${JSON.stringify(route.segments)} }`,
+            )
+            .join(', ')}]]\n`
+        : ''
+    await fsPromises.writeFile(
+      entry,
+      `${imports}${imports ? '\n' : ''}${manifest}await import(${JSON.stringify(source)})\n`,
+    )
     const artifacts: build.Artifact[] = []
     for (const target of selected) {
       const definition = definitions[target]
@@ -177,6 +205,15 @@ export async function build(options: build.Options): Promise<build.Result> {
   } finally {
     await fsPromises.rm(staging, { force: true, recursive: true })
   }
+}
+
+function resolveFsCommandsDirectory(entry: string, source: string): string | undefined {
+  if (/\.fs\s*\(\s*\)/.test(source)) return path.join(path.dirname(entry), 'commands')
+  const match = source.match(
+    /\.fs\s*\(\s*new\s+URL\s*\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)\s*\)/,
+  )
+  if (!match?.[2]) return undefined
+  return fileURLToPath(new URL(match[2], pathToFileURL(entry)))
 }
 
 export declare namespace build {

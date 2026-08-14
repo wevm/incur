@@ -2,7 +2,8 @@ import { Cli, Errors, Mcp, z } from 'incur'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import * as Command from './internal/command.js'
 import * as Update from './internal/update.js'
@@ -153,6 +154,146 @@ describe('command', () => {
       },
     })
     expect(result).toBe(cli)
+  })
+
+  test('mounts a callable sub-app with child commands', async () => {
+    const project = Cli.create('project', {
+      run: () => ({ route: 'project' }),
+    }).command('list', {
+      run: () => ({ route: 'project list' }),
+    })
+    const cli = Cli.create('test').command(project)
+
+    expect(JSON.parse((await serve(cli, ['project', '--json'])).output)).toEqual({
+      route: 'project',
+    })
+    expect(JSON.parse((await serve(cli, ['project', 'list', '--json'])).output)).toEqual({
+      route: 'project list',
+    })
+  })
+})
+
+describe('fs', () => {
+  let directory: string
+  let commandId = 0
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'incur-fs-commands-'))
+  })
+
+  afterEach(async () => {
+    await rm(directory, { force: true, recursive: true })
+  })
+
+  async function writeCommand(relative: string, definition: Cli.FileCommand) {
+    const file = join(directory, 'commands', relative)
+    const key = `incur.test.fs-command.${commandId++}`
+    ;(globalThis as any)[Symbol.for(key)] = definition
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, `export default globalThis[Symbol.for(${JSON.stringify(key)})]\n`)
+  }
+
+  test('infers flat commands, nested sub-apps, and callable groups', async () => {
+    await writeCommand(
+      'status.mjs',
+      Cli.command({ description: 'Show status', run: () => ({ status: 'ok' }) }),
+    )
+    await writeCommand(
+      'project.mjs',
+      Cli.command({ description: 'Show project', run: () => ({ project: 'root' }) }),
+    )
+    await writeCommand(
+      'project/list.mjs',
+      Cli.command({ description: 'List projects', run: () => ({ projects: [] }) }),
+    )
+
+    const cli = Cli.create('test')
+    cli.fs(pathToFileURL(join(directory, 'commands')))
+
+    expect(JSON.parse((await serve(cli, ['status', '--json'])).output)).toEqual({ status: 'ok' })
+    expect(JSON.parse((await serve(cli, ['project', '--json'])).output)).toEqual({
+      project: 'root',
+    })
+    expect(JSON.parse((await serve(cli, ['project', 'list', '--json'])).output)).toEqual({
+      projects: [],
+    })
+
+    const help = await serve(cli, ['project', '--help'])
+    expect(help.output).toContain('Show project')
+    expect(help.output).toContain('list')
+
+    const manifest = await serve(cli, ['--llms-full', '--format', 'json'])
+    expect(JSON.parse(manifest.output).commands.map((entry: any) => entry.name)).toEqual([
+      'project',
+      'project list',
+      'status',
+    ])
+
+    await expect(cli.fetch(new Request('https://example.test/project'))).resolves.toMatchObject({
+      status: 200,
+    })
+    await expect(
+      cli.fetch(new Request('https://example.test/project/list')),
+    ).resolves.toMatchObject({ status: 200 })
+  })
+
+  test('defaults to commands beside the executed entrypoint', async () => {
+    await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    const cli = Cli.create('test')
+    const argv = process.argv
+    process.argv = [argv[0]!, join(directory, 'cli.ts')]
+    try {
+      cli.fs()
+    } finally {
+      process.argv = argv
+    }
+
+    const result = await serve(cli, ['status', '--json'])
+    expect(JSON.parse(result.output)).toEqual({ status: 'ok' })
+  })
+
+  test('ignores private, test, declaration, and unsupported files', async () => {
+    await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    await writeCommand('_private.mjs', Cli.command({ run: () => ({ private: true }) }))
+    await writeCommand('status.test.mjs', Cli.command({ run: () => ({ test: true }) }))
+    await writeFile(join(directory, 'commands', 'types.d.ts'), 'export type Value = string\n')
+    await writeFile(join(directory, 'commands', 'notes.txt'), 'not a command\n')
+
+    const cli = Cli.create('test')
+    cli.fs(pathToFileURL(join(directory, 'commands')))
+    await Promise.all(Cli.toPending.get(cli)!)
+    expect([...Cli.toCommands.get(cli)!.keys()]).toEqual(['status'])
+  })
+
+  test('rejects duplicate routes across extensions', async () => {
+    await mkdir(join(directory, 'commands'), { recursive: true })
+    await writeFile(join(directory, 'commands', 'status.js'), 'export default {}\n')
+    await writeFile(join(directory, 'commands', 'status.mjs'), 'export default {}\n')
+
+    const cli = Cli.create('test').fs(pathToFileURL(join(directory, 'commands')))
+    await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
+      "Duplicate filesystem command 'status'",
+    )
+  })
+
+  test('requires lowercase kebab-case route segments', async () => {
+    await mkdir(join(directory, 'commands'), { recursive: true })
+    await writeFile(join(directory, 'commands', 'badName.mjs'), 'export default {}\n')
+
+    const cli = Cli.create('test').fs(pathToFileURL(join(directory, 'commands')))
+    await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
+      "Invalid filesystem command segment 'badName'",
+    )
+  })
+
+  test('requires command modules to use Cli.command()', async () => {
+    await mkdir(join(directory, 'commands'), { recursive: true })
+    await writeFile(join(directory, 'commands', 'status.mjs'), 'export default { run() {} }\n')
+
+    const cli = Cli.create('test').fs(pathToFileURL(join(directory, 'commands')))
+    await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
+      'to be created with `Cli.command()`',
+    )
   })
 })
 

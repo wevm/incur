@@ -66,6 +66,21 @@ describe('fromCli', () => {
     `)
   })
 
+  test('includes callable groups and their child commands', () => {
+    const project = Cli.create('project', {
+      options: z.object({ verbose: z.boolean() }),
+      run: () => ({}),
+    }).command('list', {
+      options: z.object({ limit: z.number() }),
+      run: () => ({}),
+    })
+    const cli = Cli.create('test').command(project)
+
+    const output = Typegen.fromCli(cli)
+    expect(output).toContain("'project': { args: {}; options: { verbose: boolean } }")
+    expect(output).toContain("'project list': { args: {}; options: { limit: number } }")
+  })
+
   test('deeply nested sub-commands', () => {
     const cli = Cli.create('test')
     const review = Cli.create('review').command('approve', {

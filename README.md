@@ -42,7 +42,7 @@
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
 - [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
 - [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
-- [**Light API surface**](#light-api-surface): `Cli.create()`, `.command()`, `.serve()` – that's it
+- [**Light API surface**](#light-api-surface): `Cli.create()`, `Cli.command()`, `.command()`, `.fs()`, and `.serve()`
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 
 ## Quickprompt
@@ -199,6 +199,52 @@ $ my-cli --help
 #   --update                            Update to latest version
 #   --version                           Show version
 ```
+
+### File-based commands
+
+Use `fs()` when each command should live in its own module. The entrypoint owns the CLI configuration and discovers `commands/` beside itself.
+
+```text
+src/
+├── cli.ts
+└── commands/
+    ├── status.ts
+    ├── project.ts
+    └── project/
+        └── list.ts
+```
+
+```ts
+// src/cli.ts
+import { Cli } from 'incur'
+
+const cli = Cli.create('my-cli', { description: 'My CLI' })
+await cli.fs().serve()
+
+export default cli
+```
+
+```ts
+// src/commands/project/list.ts
+import { Cli, z } from 'incur'
+
+export default Cli.command({
+  options: z.object({ limit: z.number().default(20) }),
+  run(c) {
+    return { projects: [], limit: c.options.limit }
+  },
+})
+```
+
+File and directory names become command segments, so the example exposes `status`, `project`, and `project list`. A matching file and directory make the group callable at its own path. Names must use lowercase kebab-case. Files beginning with `_`, test files, declaration files, source maps, and dot directories are ignored.
+
+Pass a directory for tests or unusual layouts:
+
+```ts
+await cli.fs(new URL('./routes/', import.meta.url)).serve()
+```
+
+`incur build` embeds the default adjacent `commands/` tree and static `new URL(..., import.meta.url)` directories in standalone binaries. Keep the directory inline in one of these forms so the build can infer it.
 
 ### Sub-command CLI
 

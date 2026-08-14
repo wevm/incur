@@ -145,6 +145,18 @@ describe('complete', () => {
     expect(values).toContain('seed')
   })
 
+  test('suggests options for a callable group', () => {
+    const project = Cli.create('project', {
+      options: z.object({ verbose: z.boolean() }),
+      run: () => ({}),
+    }).command('list', { run: () => ({}) })
+    const cli = Cli.create('mycli').command(project)
+    const commands = Cli.toCommands.get(cli)!
+
+    const candidates = Completions.complete(commands, undefined, ['mycli', 'project', '--'], 2)
+    expect(candidates.map((candidate) => candidate.value)).toContain('--verbose')
+  })
+
   test('suggests options for leaf command', () => {
     const cli = makeCli()
     const commands = Cli.toCommands.get(cli)!

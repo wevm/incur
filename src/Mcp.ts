@@ -508,23 +508,27 @@ function collectToolEntries(
         ...parentMiddlewares,
         ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
       ]
+      if (entry.root && entry.root.mcp !== false)
+        result.push(toToolEntry(entry.root, path, groupMw))
       result.push(...collectToolEntries(entry.commands, path, groupMw))
-    } else {
-      const mcp = entry.mcp === false ? undefined : entry.mcp
-      const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
-      result.push({
-        name: mcp?.name ?? path.join('_'),
-        description: mcp?.description ?? entry.description,
-        inputSchema: buildToolSchema(entry.args, entry.options),
-        ...(outputSchema ? { outputSchema } : undefined),
-        ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
-        ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
-        command: entry,
-        ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
-      })
-    }
+    } else result.push(toToolEntry(entry, path, parentMiddlewares))
   }
   return result
+}
+
+function toToolEntry(entry: any, path: string[], middlewares: MiddlewareHandler[]): ToolEntry {
+  const mcp = entry.mcp === false ? undefined : entry.mcp
+  const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
+  return {
+    name: mcp?.name ?? path.join('_'),
+    description: mcp?.description ?? entry.description,
+    inputSchema: buildToolSchema(entry.args, entry.options),
+    ...(outputSchema ? { outputSchema } : undefined),
+    ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
+    ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
+    command: entry,
+    ...(middlewares.length > 0 ? { middlewares } : undefined),
+  }
 }
 
 /** Filters MCP tools by include and exclude patterns. */

@@ -23,6 +23,7 @@ type CommandEntry = {
   commands?: Map<string, CommandEntry> | undefined
   description?: string | undefined
   options?: z.ZodObject<any> | undefined
+  root?: CommandEntry | undefined
   target?: string | undefined
 }
 
@@ -73,7 +74,7 @@ export function complete(
     if (entry._alias && entry.target) entry = scope.commands.get(entry.target)
     if (!entry) continue
     if (entry._group && entry.commands) {
-      scope = { commands: entry.commands }
+      scope = { commands: entry.commands, leaf: entry.root }
     } else {
       scope = { commands: new Map(), leaf: entry }
       break

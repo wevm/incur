@@ -39,6 +39,22 @@ test('without schemas, run receives empty objects', () => {
   })
 })
 
+test('file commands infer args, options, and output', () => {
+  const fileCommand = Cli.command({
+    args: z.object({ id: z.string() }),
+    options: z.object({ verbose: z.boolean() }),
+    output: z.object({ id: z.string() }),
+    run(c) {
+      expectTypeOf(c.args).toEqualTypeOf<{ id: string }>()
+      expectTypeOf(c.options).toEqualTypeOf<{ verbose: boolean }>()
+      return { id: c.args.id }
+    },
+  })
+
+  expectTypeOf(fileCommand.run).toBeFunction()
+  expectTypeOf(Cli.create('test').fs()).toMatchTypeOf<Cli.Cli>()
+})
+
 test('fetch command accepts OpenAPI object and URL sources', () => {
   const cli = Cli.create('test')
   const fetch = () => new Response()
