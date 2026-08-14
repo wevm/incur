@@ -3,6 +3,10 @@ on:
   workflow_call:
   workflow_dispatch:
 
+concurrency:
+  group: verify-${{ github.ref_type }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     name: Checks
