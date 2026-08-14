@@ -328,6 +328,24 @@ describe('Mcp', () => {
     `)
   })
 
+  test('collectTools includes callable groups and their child commands', () => {
+    const commands = new Map<string, any>([
+      [
+        'project',
+        {
+          _group: true,
+          root: { description: 'Show project', run: () => null },
+          commands: new Map([['list', { description: 'List projects', run: () => null }]]),
+        },
+      ],
+    ])
+
+    expect(Mcp.collectTools(commands, []).map((tool) => tool.name)).toEqual([
+      'project',
+      'project_list',
+    ])
+  })
+
   test('collectTools filters tools by include and exclude patterns', () => {
     const commands = new Map<string, any>([
       ['docs_list', { run: () => null }],

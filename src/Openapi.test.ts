@@ -135,6 +135,16 @@ describe('fromCli', () => {
     const yamlResponse = await cli.fetch(new Request('http://localhost/openapi.yaml'))
     expect(yamlParse(await yamlResponse.text()).openapi).toBe('3.2.0')
   })
+
+  test('includes callable groups and their child commands', () => {
+    const project = Cli.create('project', { run: () => ({}) }).command('list', {
+      run: () => ({}),
+    })
+    const spec = Openapi.fromCli(Cli.create('api').command(project))
+
+    expect(spec.paths?.['/project']?.post).toBeDefined()
+    expect(spec.paths?.['/project/list']?.get).toBeDefined()
+  })
 })
 
 describe('generateCommands', () => {

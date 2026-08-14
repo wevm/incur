@@ -2,6 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import * as Cli from '../Cli.js'
 import { importCli } from './utils.js'
 
 let tmp: string
@@ -47,4 +48,22 @@ test('resolves entry from string bin', async () => {
   writeFileSync(join(tmp, 'package.json'), JSON.stringify({ bin: './index.ts' }))
   writeFileSync(entry, 'export default 42')
   await expect(importCli(tmp)).rejects.toThrow('Expected default export to be a `Cli` instance')
+})
+
+test('provides the entrypoint used by default filesystem command discovery', async () => {
+  const entry = join(tmp, 'cli.ts')
+  const commands = join(tmp, 'commands')
+  const incur = JSON.stringify(join(import.meta.dirname, '..', 'index.ts'))
+  mkdirSync(commands)
+  writeFileSync(
+    join(commands, 'status.ts'),
+    `import { Cli } from ${incur}\nexport default Cli.command({ run: () => ({ status: 'ok' }) })\n`,
+  )
+  writeFileSync(
+    entry,
+    `import { Cli } from ${incur}\nconst cli = Cli.create('test').fs()\nexport default cli\n`,
+  )
+
+  const cli = await importCli(entry)
+  expect([...Cli.toCommands.get(cli)!.keys()]).toEqual(['status'])
 })

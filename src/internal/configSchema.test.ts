@@ -135,6 +135,23 @@ describe('fromCli', () => {
     `)
   })
 
+  test('includes options for callable groups and child commands', () => {
+    const project = Cli.create('project', {
+      options: z.object({ verbose: z.boolean() }),
+      run: () => ({}),
+    }).command('list', {
+      options: z.object({ limit: z.number() }),
+      run: () => ({}),
+    })
+    const schema = ConfigSchema.fromCli(Cli.create('test').command(project)) as any
+    const projectSchema = schema.properties.commands.properties.project
+
+    expect(projectSchema.properties.options.properties).toHaveProperty('verbose')
+    expect(
+      projectSchema.properties.commands.properties.list.properties.options.properties,
+    ).toHaveProperty('limit')
+  })
+
   test('returns schema with only $schema for cli with no commands', () => {
     const cli = Cli.create('test')
     const schema = ConfigSchema.fromCli(cli)

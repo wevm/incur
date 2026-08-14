@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { z } from 'zod'
 
@@ -23,6 +24,7 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { formatCtaBlock, type FormattedCta, type FormattedCtaBlock } from './internal/cta.js'
+import * as FsCommands from './internal/fsCommands.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
@@ -49,6 +51,7 @@ export type Cli<
   vars extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
   globals extends z.ZodObject<any> | undefined = undefined,
+  cliName extends string = string,
 > = {
   /** Registers a root command or mounts a sub-CLI as a command group. */
   command: {
@@ -66,29 +69,34 @@ export type Cli<
       commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<options> } },
       vars,
       env,
-      globals
+      globals,
+      cliName
     >
     /** Mounts a sub-CLI as a command group. */
-    <const name extends string, const sub extends CommandsMap>(
-      cli: Cli<sub, any, any, any> & { name: name },
+    <const subName extends string, const sub extends CommandsMap>(
+      cli: Cli<sub, any, any, any, subName>,
     ): Cli<
-      commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] },
+      commands & {
+        [key in keyof sub & string as key extends subName ? subName : `${subName} ${key}`]: sub[key]
+      },
       vars,
       env,
-      globals
+      globals,
+      cliName
     >
     /** Mounts a root CLI as a single command. */
     <
-      const name extends string,
+      const subName extends string,
       const args extends z.ZodObject<any> | undefined,
       const opts extends z.ZodObject<any> | undefined,
     >(
-      cli: Root<args, opts> & { name: name },
+      cli: Root<args, opts> & { name: subName },
     ): Cli<
-      commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<opts> } },
+      commands & { [key in subName]: { args: InferOutput<args>; options: InferOutput<opts> } },
       vars,
       env,
-      globals
+      globals,
+      cliName
     >
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
@@ -103,7 +111,7 @@ export type Cli<
         /** Set to `false` to hide this command group from MCP clients. */
         mcp?: false | undefined
       },
-    ): Cli<commands, vars, env, globals>
+    ): Cli<commands, vars, env, globals, cliName>
     /** Mounts a remote MCP server as a command group. */
     <const name extends string>(
       name: name,
@@ -112,20 +120,22 @@ export type Cli<
         mcp: McpSource.Source
         outputPolicy?: OutputPolicy | undefined
       },
-    ): Cli<commands, vars, env, globals>
+    ): Cli<commands, vars, env, globals, cliName>
   }
   /** A short description of the CLI. */
   description?: string | undefined
   /** The env schema, if declared. Use `typeof cli.env` with `middleware<vars, env>()` for typed middleware. */
   env: env
   /** The name of the CLI application. */
-  name: string
+  name: cliName
   /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
   fetch(req: Request): Promise<Response>
+  /** Discovers and registers command modules from a directory. Defaults to `commands/` beside the executed entrypoint. */
+  fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals, cliName>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
-  use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals>
+  use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals, cliName>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
   vars: vars
 }
@@ -183,8 +193,31 @@ export type Cta<commands extends CommandsMap = Commands> =
               description?: string | undefined
             })
 
+const fileCommandSymbol = Symbol.for('incur.fileCommand')
+
+/** A command definition whose route is assigned by `fs()`. */
+export type FileCommand<
+  args extends z.ZodObject<any> | undefined = undefined,
+  env extends z.ZodObject<any> | undefined = undefined,
+  options extends z.ZodObject<any> | undefined = undefined,
+  output extends z.ZodType | undefined = undefined,
+> = CommandDefinition<args, env, options, output>
+
+/** Defines a command whose route is inferred from its module path by `fs()`. */
+export function command<
+  const args extends z.ZodObject<any> | undefined = undefined,
+  const env extends z.ZodObject<any> | undefined = undefined,
+  const options extends z.ZodObject<any> | undefined = undefined,
+  const output extends z.ZodType | undefined = undefined,
+>(definition: FileCommand<args, env, options, output>): FileCommand<args, env, options, output> {
+  const result = { ...definition }
+  Object.defineProperty(result, fileCommandSymbol, { value: true })
+  return result
+}
+
 /** Creates a CLI with a root handler. Can still register subcommands which take precedence. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -192,16 +225,18 @@ export function create<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  name: string,
+  name: name,
   definition: create.Options<args, env, opts, output, vars, globals> & { run: Function },
 ): Cli<
   { [key in typeof name]: { args: InferOutput<args>; options: InferOutput<opts> } },
   vars,
   env,
-  globals
+  globals,
+  name
 >
 /** Creates a router CLI that registers subcommands. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -209,11 +244,12 @@ export function create<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  name: string,
+  name: name,
   definition?: create.Options<args, env, opts, output, vars, globals>,
-): Cli<{}, vars, env, globals>
+): Cli<{}, vars, env, globals, name>
 /** Creates a CLI with a root handler from a single options object. Can still register subcommands. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -222,19 +258,21 @@ export function create<
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
   definition: create.Options<args, env, opts, output, vars, globals> & {
-    name: string
+    name: name
     run: Function
   },
 ): Cli<
   {
-    [key in (typeof definition)['name']]: { args: InferOutput<args>; options: InferOutput<opts> }
+    [key in name]: { args: InferOutput<args>; options: InferOutput<opts> }
   },
   vars,
   env,
-  globals
+  globals,
+  name
 >
 /** Creates a router CLI from a single options object (e.g. package.json). */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -242,8 +280,8 @@ export function create<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  definition: create.Options<args, env, opts, output, vars, globals> & { name: string },
-): Cli<{}, vars, env, globals>
+  definition: create.Options<args, env, opts, output, vars, globals> & { name: name },
+): Cli<{}, vars, env, globals, name>
 export function create(
   nameOrDefinition: string | (any & { name: string }),
   definition?: any,
@@ -346,27 +384,36 @@ export function create(
         return cli
       }
       const mountedRootDef = toRootDefinition.get(nameOrCli)
-      if (mountedRootDef) {
-        assertNoGlobalOptionConflicts(nameOrCli.name, mountedRootDef, toGlobals.get(cli))
-        commands.set(nameOrCli.name, mountedRootDef)
-        const rootAliases = toRootAliases.get(nameOrCli)
-        if (rootAliases)
-          for (const a of rootAliases) commands.set(a, { _alias: true, target: nameOrCli.name })
-        return cli
-      }
       const sub = nameOrCli as Cli
       const subCommands = toCommands.get(sub)!
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
-      const entry = {
-        _group: true,
-        description: sub.description,
-        commands: subCommands,
-        ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
-        ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
-      } as InternalGroup
-      assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
+      const subPending = toPending.get(sub)
+      const entry =
+        mountedRootDef && subCommands.size === 0
+          ? mountedRootDef
+          : ({
+              _group: true,
+              description: sub.description,
+              commands: subCommands,
+              ...(mountedRootDef ? { root: mountedRootDef } : undefined),
+              ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
+              ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
+            } as InternalGroup)
+      if (subPending?.length)
+        pending.push(
+          Promise.all(subPending).then(() => {
+            assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
+          }),
+        )
+      else assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
       commands.set(sub.name, entry)
+      if (mountedRootDef) {
+        const rootAliases = toRootAliases.get(nameOrCli)
+        if (rootAliases)
+          for (const alias of rootAliases)
+            commands.set(alias, { _alias: true, target: nameOrCli.name })
+      }
       return cli
     },
 
@@ -384,6 +431,25 @@ export function create(
         vars: def.vars,
         version,
       })
+    },
+
+    fs(directory?: URL) {
+      const manifest = FsCommands.consumeManifest()
+      pending.push(
+        (async () => {
+          const routes = manifest
+            ? await FsCommands.loadManifest(manifest)
+            : await loadFsCommandRoutes(await resolveFsCommandsDirectory(directory))
+          for (const route of routes) {
+            if (!isFileCommand(route.command))
+              throw new Error(
+                `Expected the default export from '${route.file}' to be created with \`Cli.command()\`.`,
+              )
+            mountFsCommand(commands, route.segments, route.command, route.file, toGlobals.get(cli))
+          }
+        })(),
+      )
+      return cli
     },
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
@@ -465,6 +531,7 @@ export function create(
   }
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
+  toPending.set(cli, pending)
   return cli
 }
 
@@ -907,6 +974,7 @@ async function serveImpl(
     let scopedCommands = commands
     const prefix: string[] = []
     let scopedDescription: string | undefined = options.description
+    let scopedRoot = options.rootCommand
     for (const token of filtered) {
       const rawEntry = scopedCommands.get(token)
       if (!rawEntry) break
@@ -914,15 +982,17 @@ async function serveImpl(
       if (isGroup(entry)) {
         scopedCommands = entry.commands
         scopedDescription = entry.description
+        scopedRoot = entry.root
         prefix.push(token)
       } else {
         // Leaf command — scope to just this command
         scopedCommands = new Map([[token, entry]])
+        scopedRoot = undefined
         break
       }
     }
 
-    const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+    if (prefix.length === 0) scopedRoot = options.rootCommand
     // Markdown skill output renders scopedName separately. Passing prefix again
     // to those collect helpers would double the group segment in command names
     // (e.g. "cli auth auth login" instead of "cli auth login").
@@ -938,7 +1008,7 @@ async function serveImpl(
       }
       writeln(
         Formatter.format(
-          buildManifest(scopedCommands, prefix, options.globals?.schema),
+          buildManifest(scopedCommands, prefix, options.globals?.schema, scopedRoot),
           formatFlag,
         ),
       )
@@ -954,7 +1024,7 @@ async function serveImpl(
     }
     writeln(
       Formatter.format(
-        buildIndexManifest(scopedCommands, prefix, options.globals?.schema),
+        buildIndexManifest(scopedCommands, prefix, options.globals?.schema, scopedRoot),
         formatFlag,
       ),
     )
@@ -1377,9 +1447,11 @@ async function serveImpl(
       const isRootCmd = resolved.path === name
       const commandName = isRootCmd ? name : `${name} ${resolved.path}`
       const helpSubcommands =
-        isRootCmd && options.rootCommand && commands.size > 0
-          ? collectHelpCommands(commands)
-          : undefined
+        'commands' in resolved && resolved.commands && resolved.commands.size > 0
+          ? collectHelpCommands(resolved.commands)
+          : isRootCmd && options.rootCommand && commands.size > 0
+            ? collectHelpCommands(commands)
+            : undefined
       writeln(
         Help.formatCommand(commandName, {
           alias: cmd.alias as Record<string, string> | undefined,
@@ -2483,6 +2555,7 @@ function resolveCommand(
 ):
   | {
       command: CommandDefinition<any, any, any>
+      commands?: Map<string, CommandEntry> | undefined
       middlewares: MiddlewareHandler[]
       outputPolicy?: OutputPolicy | undefined
       path: string
@@ -2528,6 +2601,17 @@ function resolveCommand(
     if (entry.outputPolicy) inheritedOutputPolicy = entry.outputPolicy
     if (entry.middlewares) collectedMiddlewares.push(...entry.middlewares)
     const next = remaining[0]
+    if (!next && entry.root) {
+      const outputPolicy = entry.root.outputPolicy ?? inheritedOutputPolicy
+      return {
+        command: entry.root,
+        commands: entry.commands,
+        middlewares: collectedMiddlewares,
+        path: path.join(' '),
+        rest: remaining,
+        ...(outputPolicy ? { outputPolicy } : undefined),
+      }
+    }
     if (!next)
       return {
         help: true,
@@ -2538,6 +2622,17 @@ function resolveCommand(
 
     const rawChild = entry.commands.get(next)
     if (!rawChild) {
+      if (entry.root && !suggest(next, entry.commands.keys())) {
+        const outputPolicy = entry.root.outputPolicy ?? inheritedOutputPolicy
+        return {
+          command: entry.root,
+          commands: entry.commands,
+          middlewares: collectedMiddlewares,
+          path: path.join(' '),
+          rest: remaining,
+          ...(outputPolicy ? { outputPolicy } : undefined),
+        }
+      }
       return {
         error: next,
         path: path.join(' '),
@@ -3128,7 +3223,97 @@ type InternalGroup = {
   mcp?: false | undefined
   middlewares?: MiddlewareHandler[] | undefined
   outputPolicy?: OutputPolicy | undefined
+  root?: CommandDefinition<any, any, any> | undefined
   commands: Map<string, CommandEntry>
+}
+
+async function resolveFsCommandsDirectory(directory: URL | undefined): Promise<string> {
+  if (directory) return fileURLToPath(directory)
+  const entry = process.argv[1]
+  if (!entry)
+    throw new Error(
+      'Could not infer the filesystem command directory without an executed entrypoint. Pass a directory URL to `fs()`.',
+    )
+  const resolved = path.resolve(entry)
+  try {
+    return path.join(path.dirname(await fs.realpath(resolved)), 'commands')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return path.join(path.dirname(resolved), 'commands')
+  }
+}
+
+async function loadFsCommandRoutes(directory: string): Promise<FsCommands.LoadedRoute[]> {
+  const routes = await FsCommands.discover(directory)
+  return Promise.all(
+    routes.map(async (route) => ({
+      ...route,
+      command: ((await import(pathToFileURL(route.file).href)) as { default?: unknown }).default,
+    })),
+  )
+}
+
+function isFileCommand(value: unknown): value is CommandDefinition<any, any, any> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<symbol, unknown>)[fileCommandSymbol] === true
+  )
+}
+
+function mountFsCommand(
+  commands: Map<string, CommandEntry>,
+  segments: string[],
+  command: CommandDefinition<any, any, any>,
+  source: string,
+  globals: GlobalsDescriptor | undefined,
+): void {
+  let scope = commands
+  for (const [index, segment] of segments.entries()) {
+    const final = index === segments.length - 1
+    const existing = scope.get(segment)
+    if (final) {
+      if (!existing) scope.set(segment, command)
+      else if (isGroup(existing) && !existing.root) {
+        existing.root = command
+        existing.description ??= command.description
+      } else throw fsCommandCollision(segments, source)
+
+      assertNoGlobalOptionConflicts(segments.join(' '), command, globals)
+      for (const alias of command.aliases ?? []) {
+        if (scope.has(alias)) throw fsCommandCollision([...segments.slice(0, -1), alias], source)
+        scope.set(alias, { _alias: true, target: segment })
+      }
+      return
+    }
+
+    if (!existing) {
+      const group: InternalGroup = { _group: true, commands: new Map() }
+      scope.set(segment, group)
+      scope = group.commands
+      continue
+    }
+    if (isAlias(existing) || isFetchGateway(existing)) throw fsCommandCollision(segments, source)
+    if (isGroup(existing)) {
+      scope = existing.commands
+      continue
+    }
+
+    const group: InternalGroup = {
+      _group: true,
+      commands: new Map(),
+      description: existing.description,
+      root: existing,
+    }
+    scope.set(segment, group)
+    scope = group.commands
+  }
+}
+
+function fsCommandCollision(segments: string[], source: string): Error {
+  return new Error(
+    `Filesystem command '${segments.join(' ')}' from '${source}' conflicts with an existing command or alias.`,
+  )
 }
 
 /** @internal A fetch gateway entry. */
@@ -3207,6 +3392,7 @@ function assertNoGlobalOptionConflicts(
 ) {
   if (!globals || isFetchGateway(entry) || isAlias(entry)) return
   if (isGroup(entry)) {
+    if (entry.root) assertNoGlobalOptionConflicts(path, entry.root, globals)
     for (const [name, child] of entry.commands)
       assertNoGlobalOptionConflicts(`${path} ${name}`, child, globals)
     return
@@ -3236,6 +3422,9 @@ function assertNoGlobalOptionConflicts(
 
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
+
+/** @internal Maps CLI instances to asynchronous command registrations. */
+export const toPending = new WeakMap<Cli, Promise<void>[]>()
 
 /** @internal Maps CLI instances to their middleware arrays. */
 const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
@@ -3547,10 +3736,17 @@ function buildIndexManifest(
   commands: Map<string, CommandEntry>,
   prefix: string[] = [],
   globalsSchema?: z.ZodObject<any>,
+  root?: SkillCommandSource | undefined,
 ) {
+  const entries = collectIndexCommands(commands, prefix)
+  if (root && prefix.length > 0)
+    entries.push({
+      name: prefix.join(' '),
+      ...(root.description ? { description: root.description } : undefined),
+    })
   return {
     version: 'incur.v1',
-    commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+    commands: entries.sort((a, b) => a.name.localeCompare(b.name)),
     ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
   }
 }
@@ -3565,6 +3761,11 @@ function collectIndexCommands(
     if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isGroup(entry)) {
+      if (entry.root) {
+        const cmd: (typeof result)[number] = { name: path.join(' ') }
+        if (entry.root.description) cmd.description = entry.root.description
+        result.push(cmd)
+      }
       result.push(...collectIndexCommands(entry.commands, path))
     } else {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -3582,10 +3783,13 @@ function buildManifest(
   commands: Map<string, CommandEntry>,
   prefix: string[] = [],
   globalsSchema?: z.ZodObject<any>,
+  root?: CommandDefinition<any, any, any> | undefined,
 ) {
+  const entries = collectCommands(commands, prefix)
+  if (root && prefix.length > 0) entries.push(commandManifestEntry(prefix, root))
   return {
     version: 'incur.v1',
-    commands: collectCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+    commands: entries.sort((a, b) => a.name.localeCompare(b.name)),
     ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
   }
 }
@@ -3609,33 +3813,41 @@ function collectCommands(
       if (entry.description) cmd.description = entry.description
       result.push(cmd)
     } else if (isGroup(entry)) {
+      if (entry.root) result.push(commandManifestEntry(path, entry.root))
       result.push(...collectCommands(entry.commands, path))
     } else {
-      const cmd: (typeof result)[number] = { name: path.join(' ') }
-      if (entry.description) cmd.description = entry.description
-
-      const inputSchema = buildInputSchema(entry.args, entry.env, entry.options)
-      const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
-      if (inputSchema || outputSchema) {
-        cmd.schema = {}
-        if (inputSchema?.args) cmd.schema.args = inputSchema.args
-        if (inputSchema?.env) cmd.schema.env = inputSchema.env
-        if (inputSchema?.options) cmd.schema.options = inputSchema.options
-        if (outputSchema) cmd.schema.output = outputSchema
-      }
-
-      const examples = formatExamples(entry.examples)
-      if (examples) {
-        const cmdName = path.join(' ')
-        cmd.examples = examples.map((e) => ({
-          ...e,
-          command: e.command ? `${cmdName} ${e.command}` : cmdName,
-        }))
-      }
-      result.push(cmd)
+      result.push(commandManifestEntry(path, entry))
     }
   }
   return result
+}
+
+function commandManifestEntry(
+  path: string[],
+  entry: CommandDefinition<any, any, any>,
+): ReturnType<typeof collectCommands>[number] {
+  const cmd: ReturnType<typeof collectCommands>[number] = { name: path.join(' ') }
+  if (entry.description) cmd.description = entry.description
+
+  const inputSchema = buildInputSchema(entry.args, entry.env, entry.options)
+  const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
+  if (inputSchema || outputSchema) {
+    cmd.schema = {}
+    if (inputSchema?.args) cmd.schema.args = inputSchema.args
+    if (inputSchema?.env) cmd.schema.env = inputSchema.env
+    if (inputSchema?.options) cmd.schema.options = inputSchema.options
+    if (outputSchema) cmd.schema.output = outputSchema
+  }
+
+  const examples = formatExamples(entry.examples)
+  if (examples) {
+    const cmdName = path.join(' ')
+    cmd.examples = examples.map((example) => ({
+      ...example,
+      command: example.command ? `${cmdName} ${example.command}` : cmdName,
+    }))
+  }
+  return cmd
 }
 
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
@@ -3669,28 +3881,33 @@ export function collectSkillCommands(
       result.push(cmd)
     } else if (isGroup(entry)) {
       if (entry.description) groups.set(path.join(' '), entry.description)
+      if (entry.root) result.push(skillCommandEntry(path, entry.root))
       result.push(...collectSkillCommands(entry.commands, path, groups))
     } else {
-      const cmd: Skill.CommandInfo = { name: path.join(' ') }
-      if (entry.description) cmd.description = entry.description
-      if (entry.args) cmd.args = entry.args
-      if (entry.env) cmd.env = entry.env
-      if (entry.hint) cmd.hint = entry.hint
-      if (isDestructive(entry)) cmd.hint = appendDestructiveHint(cmd.hint)
-      if (entry.options) cmd.options = entry.options
-      if (entry.output) cmd.output = entry.output
-      const examples = formatExamples(entry.examples)
-      if (examples) {
-        const cmdName = path.join(' ')
-        cmd.examples = examples.map((e) => ({
-          ...e,
-          command: e.command ? `${cmdName} ${e.command}` : cmdName,
-        }))
-      }
-      result.push(cmd)
+      result.push(skillCommandEntry(path, entry))
     }
   }
   return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+}
+
+function skillCommandEntry(path: string[], entry: SkillCommandSource): Skill.CommandInfo {
+  const cmd: Skill.CommandInfo = { name: path.join(' ') }
+  if (entry.description) cmd.description = entry.description
+  if (entry.args) cmd.args = entry.args
+  if (entry.env) cmd.env = entry.env
+  if (entry.hint) cmd.hint = entry.hint
+  if (isDestructive(entry)) cmd.hint = appendDestructiveHint(cmd.hint)
+  if (entry.options) cmd.options = entry.options
+  if (entry.output) cmd.output = entry.output
+  const examples = formatExamples(entry.examples)
+  if (examples) {
+    const name = path.join(' ')
+    cmd.examples = examples.map((example) => ({
+      ...example,
+      command: example.command ? `${name} ${example.command}` : name,
+    }))
+  }
+  return cmd
 }
 
 type SkillCommandSource = Pick<

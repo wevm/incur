@@ -4,9 +4,11 @@ import * as fs from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import * as path from 'node:path'
 import * as stream from 'node:stream/promises'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as zlib from 'node:zlib'
 
 import * as BinaryInstaller from './binaryInstaller.js'
+import { discover as discoverFsCommands, manifestKey } from './fsCommands.js'
 
 /** Canonical standalone-binary targets supported by Incur. */
 export const targets = [
@@ -81,7 +83,27 @@ export async function build(options: build.Options): Promise<build.Result> {
     // Prevent Bun from treating a CLI's default export as an auto-started server.
     const entry = path.join(staging, 'entry.ts')
     const source = resolved.entry.replaceAll(path.sep, '/')
-    await fsPromises.writeFile(entry, `await import(${JSON.stringify(source)})\n`)
+    const entrySource = await fsPromises.readFile(resolved.entry, 'utf8')
+    // Compiled executables cannot scan source modules, so the route directory must be statically inferable.
+    const fsCommandsDirectories = resolveFsCommandsDirectories(resolved.entry, entrySource)
+    const fsCommands = await Promise.all(
+      fsCommandsDirectories.map((directory) => discoverFsCommands(directory)),
+    )
+    const manifest =
+      fsCommands.length > 0
+        ? `globalThis[Symbol.for(${JSON.stringify(manifestKey)})] = [${fsCommands
+            .map(
+              (routes) =>
+                `[${routes
+                  .map(
+                    (route) =>
+                      `{ load: () => import(${JSON.stringify(route.file.replaceAll(path.sep, '/'))}).then((module) => module.default), file: ${JSON.stringify(route.file)}, segments: ${JSON.stringify(route.segments)} }`,
+                  )
+                  .join(', ')}]`,
+            )
+            .join(', ')}]\n`
+        : ''
+    await fsPromises.writeFile(entry, `${manifest}await import(${JSON.stringify(source)})\n`)
     const artifacts: build.Artifact[] = []
     for (const target of selected) {
       const definition = definitions[target]
@@ -177,6 +199,81 @@ export async function build(options: build.Options): Promise<build.Result> {
   } finally {
     await fsPromises.rm(staging, { force: true, recursive: true })
   }
+}
+
+function resolveFsCommandsDirectories(entry: string, source: string): string[] {
+  return findFsCalls(source).map(({ end, start }) => {
+    const args = source.slice(start, end)
+    if (args.trim() === '') return path.join(path.dirname(entry), 'commands')
+
+    const match = args.match(
+      /^\s*new\s+URL\s*\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)\s*$/,
+    )
+    if (match?.[2]) return fileURLToPath(new URL(match[2], pathToFileURL(entry)))
+    throw new Error(
+      'Standalone builds require `fs()` or `fs(new URL("./path/", import.meta.url))` so routes can be embedded.',
+    )
+  })
+}
+
+function findFsCalls(source: string): { end: number; start: number }[] {
+  const code = maskNonCode(source)
+  const calls: { end: number; start: number }[] = []
+  const pattern = /\.fs\s*\(/g
+  for (let match = pattern.exec(code); match; match = pattern.exec(code)) {
+    const open = code.indexOf('(', match.index)
+    let depth = 1
+    let index = open + 1
+    for (; index < code.length && depth > 0; index++) {
+      if (code[index] === '(') depth++
+      else if (code[index] === ')') depth--
+    }
+    if (depth > 0) break
+    calls.push({ end: index - 1, start: open + 1 })
+    pattern.lastIndex = index
+  }
+  return calls
+}
+
+function maskNonCode(source: string): string {
+  const result = [...source]
+  const mask = (index: number) => {
+    if (source[index] !== '\n' && source[index] !== '\r') result[index] = ' '
+  }
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]
+    const next = source[index + 1]
+    if (char === '/' && next === '/') {
+      mask(index++)
+      mask(index)
+      while (index + 1 < source.length && source[index + 1] !== '\n') mask(++index)
+      continue
+    }
+    if (char === '/' && next === '*') {
+      mask(index++)
+      mask(index)
+      while (index + 1 < source.length) {
+        mask(++index)
+        if (source[index - 1] === '*' && source[index] === '/') break
+      }
+      continue
+    }
+    if (char !== "'" && char !== '"' && char !== '`') continue
+
+    const quote = char
+    mask(index)
+    while (index + 1 < source.length) {
+      const current = source[++index]
+      mask(index)
+      if (current === '\\') {
+        if (index + 1 < source.length) mask(++index)
+        continue
+      }
+      if (current === quote) break
+    }
+  }
+  return result.join('')
 }
 
 export declare namespace build {

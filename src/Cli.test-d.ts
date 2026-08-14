@@ -39,6 +39,22 @@ test('without schemas, run receives empty objects', () => {
   })
 })
 
+test('file commands infer args, options, and output', () => {
+  const fileCommand = Cli.command({
+    args: z.object({ id: z.string() }),
+    options: z.object({ verbose: z.boolean() }),
+    output: z.object({ id: z.string() }),
+    run(c) {
+      expectTypeOf(c.args).toEqualTypeOf<{ id: string }>()
+      expectTypeOf(c.options).toEqualTypeOf<{ verbose: boolean }>()
+      return { id: c.args.id }
+    },
+  })
+
+  expectTypeOf(fileCommand.run).toBeFunction()
+  expectTypeOf(Cli.create('test').fs()).toMatchTypeOf<Cli.Cli>()
+})
+
 test('fetch command accepts OpenAPI object and URL sources', () => {
   const cli = Cli.create('test')
   const fetch = () => new Response()
@@ -249,6 +265,29 @@ test('command() accumulates command types through chaining', () => {
     options: { verbose: boolean }
   }>()
   expectTypeOf<Commands['list']>().toEqualTypeOf<{ args: {}; options: { limit: number } }>()
+})
+
+test('mounted callable sub-app types include the root and children', () => {
+  const project = Cli.create('project', {
+    args: z.object({ id: z.string() }),
+    options: z.object({ verbose: z.boolean() }),
+    run: () => ({}),
+  }).command('list', {
+    options: z.object({ limit: z.number() }),
+    run: () => ({}),
+  })
+  const cli = Cli.create('test').command(project)
+
+  type Commands = typeof cli extends Cli.Cli<infer commands> ? commands : never
+  expectTypeOf<keyof Commands>().toEqualTypeOf<'project' | 'project list'>()
+  expectTypeOf<Commands['project']>().toEqualTypeOf<{
+    args: { id: string }
+    options: { verbose: boolean }
+  }>()
+  expectTypeOf<Commands['project list']>().toEqualTypeOf<{
+    args: {}
+    options: { limit: number }
+  }>()
 })
 
 test('middleware<typeof cli.vars>() infers vars types', () => {

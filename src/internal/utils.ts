@@ -18,7 +18,7 @@ export async function importCli(input: string): Promise<Cli.Cli> {
   const savedArgv = process.argv
   const savedExit = process.exit
   const savedWrite = process.stdout.write
-  process.argv = [savedArgv[0]!]
+  process.argv = [savedArgv[0]!, file]
   process.exit = (() => {}) as never
   process.stdout.write = (() => true) as never
   try {
@@ -26,6 +26,8 @@ export async function importCli(input: string): Promise<Cli.Cli> {
     const cli = mod.default as Cli.Cli
     if (!cli || !Cli.toCommands.has(cli))
       throw new Error(`Expected default export to be a \`Cli\` instance: ${input}`)
+    const pending = Cli.toPending.get(cli)
+    if (pending?.length) await Promise.all(pending)
     return cli
   } finally {
     process.argv = savedArgv

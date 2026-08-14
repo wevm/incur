@@ -143,6 +143,7 @@ type GeneratedGroup = {
   _group: true
   description?: string | undefined
   commands: Map<string, GeneratedEntry>
+  root?: GeneratedCommand | undefined
 }
 
 type CommandSegment = {
@@ -160,6 +161,7 @@ function addEntry(paths: NonNullable<Document['paths']>, segments: string[], ent
   if ('_alias' in entry) return
   if ('_fetch' in entry) return
   if ('_group' in entry) {
+    if (entry.root) addCommand(paths, segments, entry.root)
     for (const [name, child] of entry.commands)
       addEntry(paths, [...segments, ...splitCommandName(name)], child)
     return

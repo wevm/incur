@@ -152,6 +152,139 @@ describe('build', () => {
     ])
   })
 
+  test('embeds adjacent filesystem commands in the standalone entrypoint', async () => {
+    await writeFile(entry, 'await cli.fs().serve()\n')
+    await mkdir(join(directory, 'commands', 'project'), { recursive: true })
+    await writeFile(join(directory, 'commands', 'status.ts'), 'export default {}\n')
+    await writeFile(join(directory, 'commands', 'project', 'list.ts'), 'export default {}\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).toContain('Symbol.for("incur.fs.manifests")')
+    expect(compiledEntry).toContain('commands/status.ts')
+    expect(compiledEntry).toContain('segments: ["project","list"]')
+    expect(compiledEntry).toContain('load: () => import(')
+    expect(compiledEntry).not.toContain('import __incurCommand')
+  })
+
+  test('embeds every filesystem command directory in source order', async () => {
+    await writeFile(
+      entry,
+      "await cli.fs(new URL('./routes-a/', import.meta.url)).fs(new URL('./routes-b/', import.meta.url)).serve()\n",
+    )
+    await mkdir(join(directory, 'routes-a'))
+    await mkdir(join(directory, 'routes-b'))
+    await writeFile(join(directory, 'routes-a', 'alpha.ts'), 'export default {}\n')
+    await writeFile(join(directory, 'routes-b', 'beta.ts'), 'export default {}\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).toContain('routes-a/alpha.ts')
+    expect(compiledEntry).toContain('routes-b/beta.ts')
+    expect(compiledEntry.indexOf('routes-a/alpha.ts')).toBeLessThan(
+      compiledEntry.indexOf('routes-b/beta.ts'),
+    )
+    expect(compiledEntry).toContain('segments: ["alpha"] }], [{ load: () => import(')
+    expect(compiledEntry.match(/load: \(\) => import\(/g)).toHaveLength(2)
+  })
+
+  test('does not inspect adjacent commands unless the entrypoint enables filesystem routing', async () => {
+    await mkdir(join(directory, 'commands'))
+    await writeFile(join(directory, 'commands', 'badName.ts'), 'throw new Error()\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).not.toContain('incur.fs.manifests')
+  })
+
+  test('ignores filesystem routing examples in comments and strings', async () => {
+    await writeFile(
+      entry,
+      [
+        '// cli.fs(routes)',
+        '/* cli.fs() */',
+        'const quoted = "cli.fs(routes)"',
+        'const template = `cli.fs()`',
+      ].join('\n'),
+    )
+    await mkdir(join(directory, 'commands'))
+    await writeFile(join(directory, 'commands', 'badName.ts'), 'throw new Error()\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).not.toContain('incur.fs.manifests')
+  })
+
+  test('embeds a static directory URL passed to filesystem routing', async () => {
+    await writeFile(entry, "await cli.fs(new URL('./routes/', import.meta.url)).serve()\n")
+    await mkdir(join(directory, 'routes'))
+    await writeFile(join(directory, 'routes', 'status.ts'), 'export default {}\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).toContain('routes/status.ts')
+  })
+
+  test('embeds an empty manifest for an empty filesystem command directory', async () => {
+    await writeFile(entry, 'await cli.fs().serve()\n')
+    await mkdir(join(directory, 'commands'))
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).toContain('Symbol.for("incur.fs.manifests")] = [[]]')
+  })
+
+  test('rejects filesystem directories that cannot be inferred for a standalone build', async () => {
+    await writeFile(entry, 'await cli.fs(routes).serve()\n')
+    const execute = vi.fn<build.Execute>().mockResolvedValue(undefined)
+
+    await expect(
+      build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' }),
+    ).rejects.toThrow('Standalone builds require `fs()`')
+  })
+
   test('generates release-pinned installers from package metadata', async () => {
     await writeFile(
       join(directory, 'package.json'),
@@ -417,6 +550,34 @@ export default cli
       expect(help).toContain('Usage: frog <command>')
       expect(JSON.parse(metadata)).toEqual({ name: 'frog', target, version: '1.2.3' })
       expect(version.trim()).toBe('1.2.3')
+    },
+    60_000,
+  )
+
+  test.runIf(target)(
+    'runs embedded filesystem commands without a runtime commands directory',
+    async () => {
+      const incur = JSON.stringify(join(import.meta.dirname, '..', 'index.ts'))
+      await mkdir(join(directory, 'commands'))
+      await writeFile(
+        join(directory, 'commands', 'status.ts'),
+        `import { Cli } from ${incur}\nconst initialized = (globalThis as any)[Symbol.for('incur.test.initialized')]\nexport default Cli.command({ run: () => ({ initialized, status: 'ok' }) })\n`,
+      )
+      await writeFile(
+        entry,
+        `import { Cli } from ${incur}\n;(globalThis as any)[Symbol.for('incur.test.initialized')] = true\nconst cli = Cli.create('frog')\nawait cli.fs().serve()\nexport default cli\n`,
+      )
+
+      const result = await build({
+        entry,
+        name: 'frog',
+        targets: [target!],
+        version: '1.2.3',
+      })
+      const executable = result.artifacts[0]!.executable
+      const { stdout } = await exec(executable, ['status', '--format', 'json'])
+
+      expect(JSON.parse(stdout)).toEqual({ initialized: true, status: 'ok' })
     },
     60_000,
   )
