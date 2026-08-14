@@ -170,9 +170,64 @@ describe('build', () => {
     expect(compiledEntry).toContain('Symbol.for("incur.fs.manifests")')
     expect(compiledEntry).toContain('commands/status.ts')
     expect(compiledEntry).toContain('segments: ["project","list"]')
+    expect(compiledEntry).toContain('load: () => import(')
+    expect(compiledEntry).not.toContain('import __incurCommand')
+  })
+
+  test('embeds every filesystem command directory in source order', async () => {
+    await writeFile(
+      entry,
+      "await cli.fs(new URL('./routes-a/', import.meta.url)).fs(new URL('./routes-b/', import.meta.url)).serve()\n",
+    )
+    await mkdir(join(directory, 'routes-a'))
+    await mkdir(join(directory, 'routes-b'))
+    await writeFile(join(directory, 'routes-a', 'alpha.ts'), 'export default {}\n')
+    await writeFile(join(directory, 'routes-b', 'beta.ts'), 'export default {}\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).toContain('routes-a/alpha.ts')
+    expect(compiledEntry).toContain('routes-b/beta.ts')
+    expect(compiledEntry.indexOf('routes-a/alpha.ts')).toBeLessThan(
+      compiledEntry.indexOf('routes-b/beta.ts'),
+    )
+    expect(compiledEntry).toContain('segments: ["alpha"] }], [{ load: () => import(')
+    expect(compiledEntry.match(/load: \(\) => import\(/g)).toHaveLength(2)
   })
 
   test('does not inspect adjacent commands unless the entrypoint enables filesystem routing', async () => {
+    await mkdir(join(directory, 'commands'))
+    await writeFile(join(directory, 'commands', 'badName.ts'), 'throw new Error()\n')
+    let compiledEntry = ''
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      compiledEntry = await readFile(args[1]!, 'utf8')
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({ entry, execute, name: 'frog', targets: ['darwin-arm64'], version: '1.0.0' })
+
+    expect(compiledEntry).not.toContain('incur.fs.manifests')
+  })
+
+  test('ignores filesystem routing examples in comments and strings', async () => {
+    await writeFile(
+      entry,
+      [
+        '// cli.fs(routes)',
+        '/* cli.fs() */',
+        'const quoted = "cli.fs(routes)"',
+        'const template = `cli.fs()`',
+      ].join('\n'),
+    )
     await mkdir(join(directory, 'commands'))
     await writeFile(join(directory, 'commands', 'badName.ts'), 'throw new Error()\n')
     let compiledEntry = ''
@@ -506,11 +561,11 @@ export default cli
       await mkdir(join(directory, 'commands'))
       await writeFile(
         join(directory, 'commands', 'status.ts'),
-        `import { Cli } from ${incur}\nexport default Cli.command({ run: () => ({ status: 'ok' }) })\n`,
+        `import { Cli } from ${incur}\nconst initialized = (globalThis as any)[Symbol.for('incur.test.initialized')]\nexport default Cli.command({ run: () => ({ initialized, status: 'ok' }) })\n`,
       )
       await writeFile(
         entry,
-        `import { Cli } from ${incur}\nconst cli = Cli.create('frog')\nawait cli.fs().serve()\nexport default cli\n`,
+        `import { Cli } from ${incur}\n;(globalThis as any)[Symbol.for('incur.test.initialized')] = true\nconst cli = Cli.create('frog')\nawait cli.fs().serve()\nexport default cli\n`,
       )
 
       const result = await build({
@@ -522,7 +577,7 @@ export default cli
       const executable = result.artifacts[0]!.executable
       const { stdout } = await exec(executable, ['status', '--format', 'json'])
 
-      expect(JSON.parse(stdout)).toEqual({ status: 'ok' })
+      expect(JSON.parse(stdout)).toEqual({ initialized: true, status: 'ok' })
     },
     60_000,
   )

@@ -51,6 +51,7 @@ export type Cli<
   vars extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
   globals extends z.ZodObject<any> | undefined = undefined,
+  cliName extends string = string,
 > = {
   /** Registers a root command or mounts a sub-CLI as a command group. */
   command: {
@@ -68,29 +69,34 @@ export type Cli<
       commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<options> } },
       vars,
       env,
-      globals
+      globals,
+      cliName
     >
     /** Mounts a sub-CLI as a command group. */
-    <const name extends string, const sub extends CommandsMap>(
-      cli: Cli<sub, any, any, any> & { name: name },
+    <const subName extends string, const sub extends CommandsMap>(
+      cli: Cli<sub, any, any, any, subName>,
     ): Cli<
-      commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] },
+      commands & {
+        [key in keyof sub & string as key extends subName ? subName : `${subName} ${key}`]: sub[key]
+      },
       vars,
       env,
-      globals
+      globals,
+      cliName
     >
     /** Mounts a root CLI as a single command. */
     <
-      const name extends string,
+      const subName extends string,
       const args extends z.ZodObject<any> | undefined,
       const opts extends z.ZodObject<any> | undefined,
     >(
-      cli: Root<args, opts> & { name: name },
+      cli: Root<args, opts> & { name: subName },
     ): Cli<
-      commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<opts> } },
+      commands & { [key in subName]: { args: InferOutput<args>; options: InferOutput<opts> } },
       vars,
       env,
-      globals
+      globals,
+      cliName
     >
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
@@ -105,7 +111,7 @@ export type Cli<
         /** Set to `false` to hide this command group from MCP clients. */
         mcp?: false | undefined
       },
-    ): Cli<commands, vars, env, globals>
+    ): Cli<commands, vars, env, globals, cliName>
     /** Mounts a remote MCP server as a command group. */
     <const name extends string>(
       name: name,
@@ -114,22 +120,22 @@ export type Cli<
         mcp: McpSource.Source
         outputPolicy?: OutputPolicy | undefined
       },
-    ): Cli<commands, vars, env, globals>
+    ): Cli<commands, vars, env, globals, cliName>
   }
   /** A short description of the CLI. */
   description?: string | undefined
   /** The env schema, if declared. Use `typeof cli.env` with `middleware<vars, env>()` for typed middleware. */
   env: env
   /** The name of the CLI application. */
-  name: string
+  name: cliName
   /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
   fetch(req: Request): Promise<Response>
   /** Discovers and registers command modules from a directory. Defaults to `commands/` beside the executed entrypoint. */
-  fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals>
+  fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals, cliName>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
-  use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals>
+  use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals, cliName>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
   vars: vars
 }
@@ -211,6 +217,7 @@ export function command<
 
 /** Creates a CLI with a root handler. Can still register subcommands which take precedence. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -218,16 +225,18 @@ export function create<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  name: string,
+  name: name,
   definition: create.Options<args, env, opts, output, vars, globals> & { run: Function },
 ): Cli<
   { [key in typeof name]: { args: InferOutput<args>; options: InferOutput<opts> } },
   vars,
   env,
-  globals
+  globals,
+  name
 >
 /** Creates a router CLI that registers subcommands. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -235,11 +244,12 @@ export function create<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  name: string,
+  name: name,
   definition?: create.Options<args, env, opts, output, vars, globals>,
-): Cli<{}, vars, env, globals>
+): Cli<{}, vars, env, globals, name>
 /** Creates a CLI with a root handler from a single options object. Can still register subcommands. */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -248,19 +258,21 @@ export function create<
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
   definition: create.Options<args, env, opts, output, vars, globals> & {
-    name: string
+    name: name
     run: Function
   },
 ): Cli<
   {
-    [key in (typeof definition)['name']]: { args: InferOutput<args>; options: InferOutput<opts> }
+    [key in name]: { args: InferOutput<args>; options: InferOutput<opts> }
   },
   vars,
   env,
-  globals
+  globals,
+  name
 >
 /** Creates a router CLI from a single options object (e.g. package.json). */
 export function create<
+  const name extends string,
   const args extends z.ZodObject<any> | undefined = undefined,
   const env extends z.ZodObject<any> | undefined = undefined,
   const opts extends z.ZodObject<any> | undefined = undefined,
@@ -268,8 +280,8 @@ export function create<
   const vars extends z.ZodObject<any> | undefined = undefined,
   const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  definition: create.Options<args, env, opts, output, vars, globals> & { name: string },
-): Cli<{}, vars, env, globals>
+  definition: create.Options<args, env, opts, output, vars, globals> & { name: name },
+): Cli<{}, vars, env, globals, name>
 export function create(
   nameOrDefinition: string | (any & { name: string }),
   definition?: any,
@@ -376,6 +388,7 @@ export function create(
       const subCommands = toCommands.get(sub)!
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
+      const subPending = toPending.get(sub)
       const entry =
         mountedRootDef && subCommands.size === 0
           ? mountedRootDef
@@ -387,7 +400,13 @@ export function create(
               ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
               ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
             } as InternalGroup)
-      assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
+      if (subPending?.length)
+        pending.push(
+          Promise.all(subPending).then(() => {
+            assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
+          }),
+        )
+      else assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
       commands.set(sub.name, entry)
       if (mountedRootDef) {
         const rootAliases = toRootAliases.get(nameOrCli)
@@ -415,11 +434,12 @@ export function create(
     },
 
     fs(directory?: URL) {
-      const root = resolveFsCommandsDirectory(directory)
+      const manifest = FsCommands.consumeManifest()
       pending.push(
         (async () => {
-          const manifest = FsCommands.consumeManifest()
-          const routes = manifest ?? (await loadFsCommandRoutes(root))
+          const routes = manifest
+            ? await FsCommands.loadManifest(manifest)
+            : await loadFsCommandRoutes(await resolveFsCommandsDirectory(directory))
           for (const route of routes) {
             if (!isFileCommand(route.command))
               throw new Error(
@@ -967,6 +987,7 @@ async function serveImpl(
       } else {
         // Leaf command — scope to just this command
         scopedCommands = new Map([[token, entry]])
+        scopedRoot = undefined
         break
       }
     }
@@ -3206,17 +3227,23 @@ type InternalGroup = {
   commands: Map<string, CommandEntry>
 }
 
-function resolveFsCommandsDirectory(directory: URL | undefined): string {
+async function resolveFsCommandsDirectory(directory: URL | undefined): Promise<string> {
   if (directory) return fileURLToPath(directory)
   const entry = process.argv[1]
   if (!entry)
     throw new Error(
       'Could not infer the filesystem command directory without an executed entrypoint. Pass a directory URL to `fs()`.',
     )
-  return path.join(path.dirname(path.resolve(entry)), 'commands')
+  const resolved = path.resolve(entry)
+  try {
+    return path.join(path.dirname(await fs.realpath(resolved)), 'commands')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return path.join(path.dirname(resolved), 'commands')
+  }
 }
 
-async function loadFsCommandRoutes(directory: string): Promise<FsCommands.ManifestRoute[]> {
+async function loadFsCommandRoutes(directory: string): Promise<FsCommands.LoadedRoute[]> {
   const routes = await FsCommands.discover(directory)
   return Promise.all(
     routes.map(async (route) => ({

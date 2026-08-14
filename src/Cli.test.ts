@@ -1,6 +1,6 @@
 import { Cli, Errors, Mcp, z } from 'incur'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -185,7 +185,7 @@ describe('fs', () => {
     await rm(directory, { force: true, recursive: true })
   })
 
-  async function writeCommand(relative: string, definition: Cli.FileCommand) {
+  async function writeCommand(relative: string, definition: Cli.FileCommand<any, any, any, any>) {
     const file = join(directory, 'commands', relative)
     const key = `incur.test.fs-command.${commandId++}`
     ;(globalThis as any)[Symbol.for(key)] = definition
@@ -252,10 +252,59 @@ describe('fs', () => {
     expect(JSON.parse(result.output)).toEqual({ status: 'ok' })
   })
 
+  test('defaults to commands beside a symlinked entrypoint target', async () => {
+    await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    const entry = join(directory, 'cli.mjs')
+    const bin = join(directory, 'bin', 'test')
+    await writeFile(entry, '')
+    await mkdir(dirname(bin))
+    await symlink(entry, bin)
+
+    const cli = Cli.create('test')
+    const argv = process.argv
+    process.argv = [argv[0]!, bin]
+    try {
+      cli.fs()
+    } finally {
+      process.argv = argv
+    }
+
+    const result = await serve(cli, ['status', '--json'])
+    expect(JSON.parse(result.output)).toEqual({ status: 'ok' })
+  })
+
+  test('awaits filesystem commands from mounted sub-apps', async () => {
+    await writeCommand('list.mjs', Cli.command({ run: () => ({ projects: [] }) }))
+    const project = Cli.create('project').fs(pathToFileURL(join(directory, 'commands')))
+    const cli = Cli.create('test').command(project)
+
+    const result = await serve(cli, ['project', 'list', '--json'])
+    expect(JSON.parse(result.output)).toEqual({ projects: [] })
+  })
+
+  test('validates parent globals after mounted filesystem commands load', async () => {
+    await writeCommand(
+      'deploy.mjs',
+      Cli.command({
+        options: z.object({ rpcUrl: z.string() }),
+        run: () => ({}),
+      }),
+    )
+    const admin = Cli.create('admin').fs(pathToFileURL(join(directory, 'commands')))
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    }).command(admin)
+
+    await expect(serve(cli, ['admin', 'deploy', '--rpc-url', 'http://x'])).rejects.toThrow(
+      /conflicts with a global option/,
+    )
+  })
+
   test('ignores private, test, declaration, and unsupported files', async () => {
     await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
     await writeCommand('_private.mjs', Cli.command({ run: () => ({ private: true }) }))
     await writeCommand('status.test.mjs', Cli.command({ run: () => ({ test: true }) }))
+    await writeCommand('status.test-d.ts', Cli.command({ run: () => ({ typeTest: true }) }))
     await writeFile(join(directory, 'commands', 'types.d.ts'), 'export type Value = string\n')
     await writeFile(join(directory, 'commands', 'notes.txt'), 'not a command\n')
 
@@ -1624,6 +1673,19 @@ describe('--llms', () => {
     const { output } = await serve(cli, ['auth', '--llms', '--format', 'json'])
     const manifest = JSON.parse(output)
     expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
+  })
+
+  test('scoping to a callable group leaf omits the group root', async () => {
+    const project = Cli.create('project', {
+      description: 'Show project',
+      run: () => ({}),
+    }).command('list', { description: 'List projects', run: () => ({}) })
+    const cli = Cli.create('test').command(project)
+
+    const { output } = await serve(cli, ['project', 'list', '--llms-full', '--format', 'json'])
+    expect(JSON.parse(output).commands.map((command: any) => command.name)).toEqual([
+      'project list',
+    ])
   })
 })
 

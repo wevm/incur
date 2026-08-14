@@ -267,6 +267,29 @@ test('command() accumulates command types through chaining', () => {
   expectTypeOf<Commands['list']>().toEqualTypeOf<{ args: {}; options: { limit: number } }>()
 })
 
+test('mounted callable sub-app types include the root and children', () => {
+  const project = Cli.create('project', {
+    args: z.object({ id: z.string() }),
+    options: z.object({ verbose: z.boolean() }),
+    run: () => ({}),
+  }).command('list', {
+    options: z.object({ limit: z.number() }),
+    run: () => ({}),
+  })
+  const cli = Cli.create('test').command(project)
+
+  type Commands = typeof cli extends Cli.Cli<infer commands> ? commands : never
+  expectTypeOf<keyof Commands>().toEqualTypeOf<'project' | 'project list'>()
+  expectTypeOf<Commands['project']>().toEqualTypeOf<{
+    args: { id: string }
+    options: { verbose: boolean }
+  }>()
+  expectTypeOf<Commands['project list']>().toEqualTypeOf<{
+    args: {}
+    options: { limit: number }
+  }>()
+})
+
 test('middleware<typeof cli.vars>() infers vars types', () => {
   const cli = Cli.create('test', {
     vars: z.object({ user: z.string(), count: z.number() }),

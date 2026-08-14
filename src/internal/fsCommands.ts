@@ -11,8 +11,13 @@ export type Route = {
   segments: string[]
 }
 
-/** @internal A command supplied by a standalone build manifest. */
+/** @internal A command loader supplied by a standalone build manifest. */
 export type ManifestRoute = Route & {
+  load: () => Promise<unknown>
+}
+
+/** @internal A loaded command and its filesystem route. */
+export type LoadedRoute = Route & {
   command: unknown
 }
 
@@ -40,7 +45,13 @@ export async function discover(directory: string): Promise<Route[]> {
       const extension = extensions.find((candidate) => entry.name.endsWith(candidate))
       if (!extension) continue
       const stem = entry.name.slice(0, -extension.length)
-      if (stem.endsWith('.d') || stem.endsWith('.test') || stem.endsWith('.spec')) continue
+      if (
+        stem.endsWith('.d') ||
+        stem.endsWith('.test') ||
+        stem.endsWith('.test-d') ||
+        stem.endsWith('.spec')
+      )
+        continue
       assertSegment(stem, target)
       routes.push({ file: target, segments: [...prefix, stem] })
     }
@@ -68,6 +79,16 @@ export function consumeManifest(): ManifestRoute[] | undefined {
   }
   const manifests = global[Symbol.for(manifestKey)]
   return manifests?.shift()
+}
+
+/** @internal Loads commands deferred by a standalone build manifest. */
+export async function loadManifest(routes: ManifestRoute[]): Promise<LoadedRoute[]> {
+  return Promise.all(
+    routes.map(async ({ load, ...route }) => ({
+      ...route,
+      command: await load(),
+    })),
+  )
 }
 
 function assertSegment(segment: string, source: string): void {
