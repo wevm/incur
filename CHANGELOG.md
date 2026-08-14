@@ -1,5 +1,17 @@
 # incur
 
+## 0.5.1
+
+### Patch Changes
+
+- 00767da: Changed zero-argument `cli.fs()` to infer commands from sibling files and folders beside the entrypoint.
+
+  ```ts
+  import { Cli } from "incur";
+
+  await Cli.create("my-cli").fs().serve();
+  ```
+
 ## 0.5.0
 
 ### Minor Changes
