@@ -1,5 +1,17 @@
 # incur
 
+## 0.5.0
+
+### Minor Changes
+
+- f28d63f: Added filesystem command routing through `Cli.command()` and `cli.fs()`.
+
+  ```ts
+  await Cli.create("my-cli").fs().serve();
+  ```
+
+  [Read more](https://github.com/wevm/incur#file-based-commands).
+
 ## 0.4.26
 
 ### Patch Changes
