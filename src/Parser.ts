@@ -14,8 +14,8 @@ export function parse<
   const optionNames = createOptionNames(optionsSchema, alias)
 
   // First pass: split argv into positional tokens and raw option values
-  const positionals: string[] = []
-  const rawArgvOptions: Record<string, unknown> = {}
+  const positionals: { index: number; value: string }[] = []
+  const optionEvents: OptionEvent[] = []
 
   let i = 0
   while (i < argv.length) {
@@ -25,7 +25,7 @@ export function parse<
       // --no-flag negation
       const name = normalizeOptionName(token.slice(5), optionNames)
       if (!name) throw new ParseError({ message: `Unknown flag: ${token}` })
-      rawArgvOptions[name] = false
+      optionEvents.push({ type: 'assign', name, value: false })
       i++
     } else if (token.startsWith('--')) {
       const eqIdx = token.indexOf('=')
@@ -34,25 +34,30 @@ export function parse<
         const raw = token.slice(2, eqIdx)
         const name = normalizeOptionName(raw, optionNames)
         if (!name) throw new ParseError({ message: `Unknown flag: --${raw}` })
-        setOption(rawArgvOptions, name, token.slice(eqIdx + 1), optionsSchema)
+        optionEvents.push({ type: 'set', name, value: token.slice(eqIdx + 1) })
         i++
       } else {
         // --flag [value]
         const name = normalizeOptionName(token.slice(2), optionNames)
         if (!name) throw new ParseError({ message: `Unknown flag: ${token}` })
         if (isCountOption(name, optionsSchema)) {
-          rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
+          optionEvents.push({ type: 'count', name })
           i++
         } else if (isBooleanOption(name, optionsSchema)) {
           const value = argv[i + 1]
           const explicit = value === 'true' || value === 'false'
-          rawArgvOptions[name] = explicit ? value === 'true' : true
+          optionEvents.push({
+            type: 'assign',
+            name,
+            value: explicit ? value === 'true' : true,
+            ...(explicit ? { positional: { index: i + 1, value } } : undefined),
+          })
           i += explicit ? 2 : 1
         } else {
           const value = argv[i + 1]
           if (value === undefined)
             throw new ParseError({ message: `Missing value for flag: ${token}` })
-          setOption(rawArgvOptions, name, value, optionsSchema)
+          optionEvents.push({ type: 'set', name, value })
           i += 2
         }
       }
@@ -66,34 +71,58 @@ export function parse<
         const isLast = j === chars.length - 1
         if (!isLast) {
           if (isCountOption(name, optionsSchema)) {
-            rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
+            optionEvents.push({ type: 'count', name })
           } else if (isBooleanOption(name, optionsSchema)) {
-            rawArgvOptions[name] = true
+            optionEvents.push({ type: 'assign', name, value: true })
           } else {
             throw new ParseError({
               message: `Non-boolean flag -${short} must be last in a stacked alias`,
             })
           }
         } else if (isCountOption(name, optionsSchema)) {
-          rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
+          optionEvents.push({ type: 'count', name })
         } else if (isBooleanOption(name, optionsSchema)) {
           const value = argv[i + 1]
           const explicit = value === 'true' || value === 'false'
-          rawArgvOptions[name] = explicit ? value === 'true' : true
+          optionEvents.push({
+            type: 'assign',
+            name,
+            value: explicit ? value === 'true' : true,
+            ...(explicit ? { positional: { index: i + 1, value } } : undefined),
+          })
           if (explicit) i++
         } else {
           const value = argv[i + 1]
           if (value === undefined)
             throw new ParseError({ message: `Missing value for flag: -${short}` })
-          setOption(rawArgvOptions, name, value, optionsSchema)
+          optionEvents.push({ type: 'set', name, value })
           i++
         }
       }
       i++
     } else {
-      positionals.push(token)
+      positionals.push({ index: i, value: token })
       i++
     }
+  }
+
+  // A spaced boolean literal is ambiguous; treat it as an option value unless a required arg needs it.
+  let missing = Math.max(minimumPositionals(argsSchema) - positionals.length, 0)
+  for (const event of optionEvents) {
+    if (event.type !== 'assign' || !event.positional || missing === 0) continue
+    positionals.push(event.positional)
+    event.value = true
+    missing--
+  }
+  positionals.sort((a, b) => a.index - b.index)
+  const positionalValues = positionals.map(({ value }) => value)
+
+  const rawArgvOptions: Record<string, unknown> = {}
+  for (const event of optionEvents) {
+    if (event.type === 'count')
+      rawArgvOptions[event.name] = ((rawArgvOptions[event.name] as number) ?? 0) + 1
+    else if (event.type === 'set') setOption(rawArgvOptions, event.name, event.value, optionsSchema)
+    else rawArgvOptions[event.name] = event.value
   }
 
   // Assign positionals to args schema keys in order; a final array key collects the rest
@@ -107,14 +136,14 @@ export function parse<
         if (j !== keys.length - 1)
           throw new Error(`Variadic arg "${key}" must be the last key in the args schema`)
         variadic = true
-        const rest = positionals.slice(j)
+        const rest = positionalValues.slice(j)
         if (rest.length > 0) rawArgs[key] = rest
-      } else if (positionals[j] !== undefined) {
-        rawArgs[key] = positionals[j]!
+      } else if (positionalValues[j] !== undefined) {
+        rawArgs[key] = positionalValues[j]!
       }
     }
   }
-  if (!variadic && positionals.length > keys.length)
+  if (!variadic && positionalValues.length > keys.length)
     throw new ParseError({ message: 'Unexpected argument' })
 
   // Validate args through zod
@@ -169,6 +198,16 @@ type OptionNames = {
   kebabToCamel: Map<string, string>
   knownOptions: Set<string>
 }
+
+type OptionEvent =
+  | { type: 'count'; name: string }
+  | { type: 'set'; name: string; value: unknown }
+  | {
+      type: 'assign'
+      name: string
+      value: unknown
+      positional?: { index: number; value: string } | undefined
+    }
 
 /** Builds lookup tables for option names and short aliases. */
 function createOptionNames(
@@ -251,11 +290,23 @@ function isArrayField(name: string, schema: z.ZodObject<any> | undefined): boole
   return unwrap(field).constructor.name === 'ZodArray'
 }
 
+/** Returns the fewest positional tokens needed before all remaining fields may be omitted. */
+function minimumPositionals(schema: z.ZodObject<any> | undefined): number {
+  if (!schema) return 0
+  let minimum = 0
+  const fields = Object.values(schema.shape) as z.ZodType[]
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i]! as any
+    if (field._zod?.optin !== 'optional' && field.def?.type !== 'catch') minimum = i + 1
+  }
+  return minimum
+}
+
 /** Sets an option value, collecting into arrays for array schemas. */
 function setOption(
   raw: Record<string, unknown>,
   name: string,
-  value: string,
+  value: unknown,
   schema: z.ZodObject<any> | undefined,
 ) {
   if (isArrayField(name, schema)) {
@@ -396,8 +447,10 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
           rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
           i++
         } else if (isBooleanOption(name, schema)) {
-          rawOptions[name] = true
-          i++
+          const value = argv[i + 1]
+          const explicit = value === 'true' || value === 'false'
+          rawOptions[name] = explicit ? value === 'true' : true
+          i += explicit ? 2 : 1
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -439,7 +492,10 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
           } else if (isCountOption(name, schema)) {
             rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
           } else if (isBooleanOption(name, schema)) {
-            rawOptions[name] = true
+            const value = argv[i + 1]
+            const explicit = value === 'true' || value === 'false'
+            rawOptions[name] = explicit ? value === 'true' : true
+            if (explicit) i++
           } else {
             const value = argv[i + 1]
             if (value === undefined)

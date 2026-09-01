@@ -144,6 +144,39 @@ describe('parse', () => {
     expect(result.options).toEqual({ dry: expected })
   })
 
+  test.each([
+    ['--verbose', 'true', undefined],
+    ['--verbose', 'false', undefined],
+    ['-v', 'true', { verbose: 'v' }],
+    ['-v', 'false', { verbose: 'v' }],
+  ])('preserves a required boolean-looking positional after %s', (flag, value, alias) => {
+    const result = Parser.parse([flag, value], {
+      args: z.object({ value: z.enum(['true', 'false']) }),
+      options: z.object({ verbose: z.boolean() }),
+      alias,
+    })
+    expect(result.args).toEqual({ value })
+    expect(result.options).toEqual({ verbose: true })
+  })
+
+  test('consumes an explicit boolean value when another positional is available', () => {
+    const result = Parser.parse(['--verbose', 'false', 'target'], {
+      args: z.object({ value: z.string() }),
+      options: z.object({ verbose: z.boolean() }),
+    })
+    expect(result.args).toEqual({ value: 'target' })
+    expect(result.options).toEqual({ verbose: false })
+  })
+
+  test('does not parse optional positional fields while resolving boolean values', () => {
+    const transform = vi.fn((value: string | undefined) => value)
+    Parser.parse(['--verbose', 'false'], {
+      args: z.object({ value: z.string().optional().transform(transform) }),
+      options: z.object({ verbose: z.boolean() }),
+    })
+    expect(transform).toHaveBeenCalledOnce()
+  })
+
   test('applies default values for missing options', () => {
     const result = Parser.parse([], {
       options: z.object({ limit: z.number().default(30) }),
@@ -479,11 +512,9 @@ describe('parseGlobals', () => {
 
   test('handles short aliases', () => {
     const schema = z.object({ rpcUrl: z.string() })
-    const result = Parser.parseGlobals(
-      ['-r', 'http://example.com', 'deploy'],
-      schema,
-      { rpcUrl: 'r' },
-    )
+    const result = Parser.parseGlobals(['-r', 'http://example.com', 'deploy'], schema, {
+      rpcUrl: 'r',
+    })
     expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
     expect(result.rest).toEqual(['deploy'])
   })
@@ -492,6 +523,18 @@ describe('parseGlobals', () => {
     const schema = z.object({ verbose: z.boolean().default(false) })
     const result = Parser.parseGlobals(['--verbose', 'deploy'], schema)
     expect(result.parsed).toEqual({ verbose: true })
+    expect(result.rest).toEqual(['deploy'])
+  })
+
+  test.each([
+    ['--verbose', 'true', true, undefined],
+    ['--verbose', 'false', false, undefined],
+    ['-v', 'true', true, { verbose: 'v' }],
+    ['-v', 'false', false, { verbose: 'v' }],
+  ])('handles an explicit value for boolean global %s', (flag, value, expected, alias) => {
+    const schema = z.object({ verbose: z.boolean() })
+    const result = Parser.parseGlobals([flag, value, 'deploy'], schema, alias)
+    expect(result.parsed).toEqual({ verbose: expected })
     expect(result.rest).toEqual(['deploy'])
   })
 
@@ -586,9 +629,9 @@ describe('parseGlobals', () => {
       output: z.string(),
       verbose: z.boolean().default(false),
     })
-    expect(() => Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' })).toThrow(
-      /must be last/,
-    )
+    expect(() =>
+      Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' }),
+    ).toThrow(/must be last/)
   })
 
   test('short flag value-taking as last in stacked alias', () => {

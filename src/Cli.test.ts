@@ -6884,6 +6884,24 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ dryRun: false })
   })
 
+  test.each([
+    ['before', 'true', ['--dry-run', 'true', 'ping', '--json']],
+    ['before', 'false', ['--dry-run', 'false', 'ping', '--json']],
+    ['after', 'true', ['ping', '--dry-run', 'true', '--json']],
+    ['after', 'false', ['ping', '--dry-run', 'false', '--json']],
+  ])('boolean globals consume explicit values %s the command', async (_, expected, argv) => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean() }),
+    }).command('ping', {
+      run(c) {
+        return { dryRun: c.globals.dryRun }
+      },
+    })
+
+    const { output } = await serve(cli, argv)
+    expect(JSON.parse(output)).toEqual({ dryRun: expected === 'true' })
+  })
+
   test('parseGlobals error produces clean error output with exit code 1', async () => {
     const cli = Cli.create('test', {
       globals: z.object({ rpcUrl: z.string() }),
