@@ -12,6 +12,17 @@ describe('parse', () => {
     expect(result.args).toEqual({ greeting: 'hello', name: 'world' })
   })
 
+  test('throws ParseError on unexpected positional args', () => {
+    expect(() => Parser.parse(['secret'])).toThrow(
+      expect.objectContaining({ name: 'Incur.ParseError', message: 'Unexpected argument' }),
+    )
+    expect(() =>
+      Parser.parse(['hello', 'secret'], {
+        args: z.object({ greeting: z.string() }),
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ParseError', message: 'Unexpected argument' }))
+  })
+
   test('collects remaining positionals into a final array arg', () => {
     const result = Parser.parse(['a.ts', 'b.ts', 'c.ts'], {
       args: z.object({ paths: z.array(z.string()) }),
@@ -123,11 +134,14 @@ describe('parse', () => {
     expect(result.options).toEqual({ limit: 10 })
   })
 
-  test('coerces string to boolean', () => {
-    const result = Parser.parse(['--dry', 'true'], {
+  test.each([
+    ['true', true],
+    ['false', false],
+  ])('coerces string %s to boolean', (value, expected) => {
+    const result = Parser.parse(['--dry', value], {
       options: z.object({ dry: z.boolean() }),
     })
-    expect(result.options).toEqual({ dry: true })
+    expect(result.options).toEqual({ dry: expected })
   })
 
   test('applies default values for missing options', () => {

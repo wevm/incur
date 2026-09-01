@@ -44,8 +44,10 @@ export function parse<
           rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
           i++
         } else if (isBooleanOption(name, optionsSchema)) {
-          rawArgvOptions[name] = true
-          i++
+          const value = argv[i + 1]
+          const explicit = value === 'true' || value === 'false'
+          rawArgvOptions[name] = explicit ? value === 'true' : true
+          i += explicit ? 2 : 1
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -75,7 +77,10 @@ export function parse<
         } else if (isCountOption(name, optionsSchema)) {
           rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
         } else if (isBooleanOption(name, optionsSchema)) {
-          rawArgvOptions[name] = true
+          const value = argv[i + 1]
+          const explicit = value === 'true' || value === 'false'
+          rawArgvOptions[name] = explicit ? value === 'true' : true
+          if (explicit) i++
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -93,13 +98,15 @@ export function parse<
 
   // Assign positionals to args schema keys in order; a final array key collects the rest
   const rawArgs: Record<string, unknown> = {}
+  const keys = Object.keys(argsSchema?.shape ?? {})
+  let variadic = false
   if (argsSchema) {
-    const keys = Object.keys(argsSchema.shape)
     for (let j = 0; j < keys.length; j++) {
       const key = keys[j]!
       if (isArrayField(key, argsSchema)) {
         if (j !== keys.length - 1)
           throw new Error(`Variadic arg "${key}" must be the last key in the args schema`)
+        variadic = true
         const rest = positionals.slice(j)
         if (rest.length > 0) rawArgs[key] = rest
       } else if (positionals[j] !== undefined) {
@@ -107,6 +114,8 @@ export function parse<
       }
     }
   }
+  if (!variadic && positionals.length > keys.length)
+    throw new ParseError({ message: 'Unexpected argument' })
 
   // Validate args through zod
   const args = argsSchema ? zodParse(argsSchema, rawArgs) : {}
