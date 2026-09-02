@@ -827,14 +827,22 @@ async function serveImpl(
 
   let globals: Record<string, unknown> = {}
   let filtered = rest
+  let globalBooleanValues: Parser.parseGlobals.BooleanValue[] = []
+  const globalCommandPositionals = new Set<number>()
 
-  function parseGlobalOptions(validate: boolean) {
+  function parseGlobalOptions(validate: boolean, positionals?: ReadonlySet<number> | undefined) {
     if (!options.globals) return true
     try {
+      const booleanValues: Parser.parseGlobals.BooleanValue[] = []
       const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias, {
+        onBooleanValue(value) {
+          booleanValues.push(value)
+        },
+        positionals,
         validate,
       })
       if (validate) globals = result.parsed
+      else globalBooleanValues = booleanValues
       filtered = result.rest
       return true
     } catch (error) {
@@ -846,7 +854,57 @@ async function serveImpl(
     }
   }
 
+  function parseBuiltinOptions(
+    argv: string[],
+    schema?: z.ZodObject<any> | undefined,
+    alias?: Record<string, string> | undefined,
+  ): { ok: true; options: Record<string, unknown> } | { ok: false } {
+    try {
+      const result = Parser.parse(argv, { alias, options: schema })
+      return { ok: true, options: result.options }
+    } catch (error) {
+      const output = {
+        code: 'UNKNOWN',
+        message: error instanceof Error ? error.message : String(error),
+      }
+      if (human) writeln(formatHumanError(output))
+      else writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
+      exit(1)
+      return { ok: false }
+    }
+  }
+
   if (!parseGlobalOptions(false)) return
+
+  if (globalBooleanValues.length > 0) {
+    const candidates = new Map<number, Parser.parseGlobals.BooleanValue[]>()
+    for (const value of globalBooleanValues) {
+      const entries = candidates.get(value.index) ?? []
+      entries.push(value)
+      candidates.set(value.index, entries)
+    }
+    const annotated: { id?: number | undefined; value: string }[] = []
+    for (let i = 0; i <= filtered.length; i++) {
+      for (const value of candidates.get(i) ?? [])
+        annotated.push({ id: value.id, value: value.value })
+      if (i < filtered.length) annotated.push({ value: filtered[i]! })
+    }
+    const legacy = resolveCommand(
+      commands,
+      annotated.map(({ value }) => value),
+    )
+    const consumed = (() => {
+      if ('error' in legacy) return 0
+      if ('help' in legacy) return legacy.path.split(' ').length
+      return annotated.length - legacy.rest.length
+    })()
+    for (const token of annotated.slice(0, consumed))
+      if (token.id !== undefined) globalCommandPositionals.add(token.id)
+    if (globalCommandPositionals.size > 0)
+      filtered = annotated
+        .filter(({ id }) => id === undefined || globalCommandPositionals.has(id))
+        .map(({ value }) => value)
+  }
 
   // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
   if (formatFlag === 'yaml') await Yaml.load()
@@ -1057,6 +1115,7 @@ async function serveImpl(
       exit(1)
       return
     }
+    if (!parseBuiltinOptions(filtered.slice(completionsIdx + 2)).ok) return
     const names = [name, ...(options.aliases ?? [])]
     writeln(names.map((n) => Completions.register(shell as Shell, n)).join('\n'))
     return
@@ -1103,6 +1162,7 @@ async function serveImpl(
         writeln(formatBuiltinSubcommandHelp(name, builtin, 'list'))
         return
       }
+      if (!parseBuiltinOptions(filtered.slice(skillsIdx + 2)).ok) return
       try {
         const result = await SyncSkills.list(name, commands, {
           cwd: options.sync?.cwd,
@@ -1149,15 +1209,14 @@ async function serveImpl(
       return
     }
     const rest = filtered.slice(skillsIdx + 2)
-    const depthArg = rest.indexOf('--depth')
-    const depthEq = rest.find((t) => t.startsWith('--depth='))
-    const depth =
-      depthArg !== -1
-        ? Number(rest[depthArg + 1])
-        : depthEq
-          ? Number(depthEq.split('=')[1])
-          : (options.sync?.depth ?? 1)
-    const global = rest.includes('--no-global') ? false : undefined
+    const parsed = parseBuiltinOptions(
+      rest,
+      sub!.options,
+      sub!.alias as Record<string, string> | undefined,
+    )
+    if (!parsed.ok) return
+    const depth = (parsed.options.depth as number | undefined) ?? options.sync?.depth ?? 1
+    const global = parsed.options.noGlobal === true ? false : undefined
     try {
       stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
@@ -1252,21 +1311,25 @@ async function serveImpl(
       return
     }
     if (sub!.name === 'doctor') {
+      if (!parseBuiltinOptions(filtered.slice(mcpIdx + 2)).ok) return
       const result = await runMcpDoctor(name, commands, options)
       writeln(Formatter.format(result, formatExplicit ? formatFlag : 'toon'))
       if (!result.ok) exit(1)
       return
     }
     const rest = filtered.slice(mcpIdx + 2)
-    const global = rest.includes('--no-global') ? false : true
-
-    // Parse --command / -c and --agent flags from argv
-    let command = options.mcp?.command
-    const agents: string[] = [...(options.mcp?.agents ?? [])]
-    for (let i = 0; i < rest.length; i++) {
-      if ((rest[i] === '--command' || rest[i] === '-c') && rest[i + 1]) command = rest[++i]!
-      else if (rest[i] === '--agent' && rest[i + 1]) agents.push(rest[++i]!)
-    }
+    const parsed = parseBuiltinOptions(
+      rest,
+      sub!.options!.extend({ agent: z.array(z.string()).optional() }),
+      sub!.alias as Record<string, string> | undefined,
+    )
+    if (!parsed.ok) return
+    const global = parsed.options.noGlobal === true ? false : true
+    const command = (parsed.options.command as string | undefined) ?? options.mcp?.command
+    const agents = [
+      ...(options.mcp?.agents ?? []),
+      ...((parsed.options.agent as string[] | undefined) ?? []),
+    ]
 
     try {
       const mcpName = options.mcp?.name ?? name
@@ -1846,8 +1909,41 @@ async function serveImpl(
   }
 
   const { command, path, rest: commandRest } = effective
+  const commandOffset = filtered.length - commandRest.length - globalCommandPositionals.size
+  const commandPositionals = globalBooleanValues
+    .filter(({ id, index }) => !globalCommandPositionals.has(id) && index >= commandOffset)
+    .map(({ id, index, value }) => ({
+      id,
+      index: index - commandOffset,
+      order: id,
+      value,
+    }))
+  let globalPositionals: Set<number>
+  try {
+    globalPositionals = Parser.internal.resolvePositionals(
+      commandRest,
+      {
+        alias: command.alias as Record<string, string> | undefined,
+        args: command.args,
+        options: command.options,
+      },
+      commandPositionals,
+    )
+  } catch (error) {
+    write({
+      ok: false,
+      error: {
+        code: 'UNKNOWN',
+        message: error instanceof Error ? error.message : String(error),
+      },
+      meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
+    })
+    exit(1)
+    return
+  }
 
-  if (!parseGlobalOptions(true)) return
+  for (const id of globalCommandPositionals) globalPositionals.add(id)
+  if (!parseGlobalOptions(true, globalPositionals)) return
 
   // Collect middleware: root CLI + groups traversed + per-command
   const allMiddleware = [
@@ -1902,6 +1998,7 @@ async function serveImpl(
     middlewares: allMiddleware,
     name,
     path,
+    positionals: commandPositionals,
     vars: options.vars,
     version: options.version,
   })

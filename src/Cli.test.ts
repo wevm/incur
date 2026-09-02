@@ -3111,6 +3111,22 @@ describe('env', () => {
 })
 
 describe('built-in commands', () => {
+  test.each([
+    ['completions', 'bash', 'extra'],
+    ['mcp', 'add', 'extra'],
+    ['mcp', 'doctor', 'extra'],
+    ['skills', 'add', 'extra'],
+    ['skills', 'list', 'extra'],
+  ])('rejects unexpected arguments for %s %s', async (...argv) => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output, exitCode } = await serve(cli, argv)
+
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Unexpected argument')
+  })
+
   test('bare completions shows help', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
@@ -6900,6 +6916,66 @@ describe('globals', () => {
 
     const { output } = await serve(cli, argv)
     expect(JSON.parse(output)).toEqual({ dryRun: expected === 'true' })
+  })
+
+  test('preserves a required boolean-looking positional after a global boolean', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean() }),
+    }).command('set', {
+      args: z.object({ value: z.enum(['true', 'false']) }),
+      options: z.object({ verbose: z.boolean().default(false) }),
+      run(c) {
+        return { dryRun: c.globals.dryRun, value: c.args.value, verbose: c.options.verbose }
+      },
+    })
+
+    const { output } = await serve(cli, ['set', '--verbose', '--dry-run', 'false', '--json'])
+
+    expect(JSON.parse(output)).toEqual({ dryRun: true, value: 'false', verbose: true })
+  })
+
+  test('preserves a boolean-looking variadic positional after a global boolean', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean() }),
+    }).command('set', {
+      args: z.object({ values: z.array(z.string()).default([]) }),
+      run(c) {
+        return { dryRun: c.globals.dryRun, values: c.args.values }
+      },
+    })
+
+    const { output } = await serve(cli, ['set', '--dry-run', 'false', '--json'])
+
+    expect(JSON.parse(output)).toEqual({ dryRun: true, values: ['false'] })
+  })
+
+  test('replays global boolean assignments after positional resolution', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean() }),
+    }).command('set', {
+      args: z.object({ value: z.enum(['true', 'false']) }),
+      run(c) {
+        return { dryRun: c.globals.dryRun, value: c.args.value }
+      },
+    })
+
+    const { output } = await serve(cli, ['set', '--dry-run', 'false', '--dry-run=false', '--json'])
+
+    expect(JSON.parse(output)).toEqual({ dryRun: false, value: 'false' })
+  })
+
+  test('preserves a boolean-looking command name after a global boolean', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ dryRun: z.boolean() }),
+    }).command('false', {
+      run(c) {
+        return { dryRun: c.globals.dryRun }
+      },
+    })
+
+    const { output } = await serve(cli, ['--dry-run', 'false', '--json'])
+
+    expect(JSON.parse(output)).toEqual({ dryRun: true })
   })
 
   test('parseGlobals error produces clean error output with exit code 1', async () => {

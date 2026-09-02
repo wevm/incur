@@ -168,13 +168,43 @@ describe('parse', () => {
     expect(result.options).toEqual({ verbose: false })
   })
 
-  test('does not parse optional positional fields while resolving boolean values', () => {
+  test('preserves a boolean-looking optional positional', () => {
     const transform = vi.fn((value: string | undefined) => value)
-    Parser.parse(['--verbose', 'false'], {
+    const result = Parser.parse(['--verbose', 'false'], {
       args: z.object({ value: z.string().optional().transform(transform) }),
       options: z.object({ verbose: z.boolean() }),
     })
+    expect(result.args).toEqual({ value: 'false' })
+    expect(result.options).toEqual({ verbose: true })
     expect(transform).toHaveBeenCalledOnce()
+  })
+
+  test.each([z.array(z.string()), z.array(z.string()).default([])])(
+    'preserves boolean-looking variadic positionals',
+    (values) => {
+      const result = Parser.parse(['ordinary', '--verbose', 'false'], {
+        args: z.object({ values }),
+        options: z.object({ verbose: z.boolean() }),
+      })
+      expect(result.args).toEqual({ values: ['ordinary', 'false'] })
+      expect(result.options).toEqual({ verbose: true })
+    },
+  )
+
+  test('resolves repeated boolean values in argv order when positional capacity is limited', () => {
+    const result = Parser.parse(['--first', 'false', '--second', 'false'], {
+      args: z.object({ value: z.string().optional() }),
+      options: z.object({ first: z.boolean(), second: z.boolean() }),
+    })
+    expect(result.args).toEqual({ value: 'false' })
+    expect(result.options).toEqual({ first: true, second: false })
+  })
+
+  test('prefers an exact no-prefixed option name over boolean negation', () => {
+    const result = Parser.parse(['--no-global'], {
+      options: z.object({ noGlobal: z.boolean() }),
+    })
+    expect(result.options).toEqual({ noGlobal: true })
   })
 
   test('applies default values for missing options', () => {

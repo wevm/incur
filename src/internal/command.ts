@@ -47,6 +47,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     globals = {},
     vars: varsSchema,
     middlewares = [],
+    positionals = [],
     request,
   } = options
   const displayName = options.displayName ?? name
@@ -71,12 +72,16 @@ export async function execute(command: any, options: execute.Options): Promise<e
 
     if (parseMode === 'argv') {
       // CLI mode: parse both args and options from argv tokens
-      const parsed = Parser.parse(argv, {
-        alias: command.alias as Record<string, string> | undefined,
-        args: command.args,
-        defaults: options.defaults,
-        options: command.options,
-      })
+      const parsed = Parser.internal.parse(
+        argv,
+        {
+          alias: command.alias as Record<string, string> | undefined,
+          args: command.args,
+          defaults: options.defaults,
+          options: command.options,
+        },
+        positionals,
+      )
       args = parsed.args
       parsedOptions = parsed.options
     } else if (parseMode === 'split') {
@@ -308,6 +313,8 @@ export declare namespace execute {
     parseMode?: 'argv' | 'split' | 'flat' | undefined
     /** The resolved command path. */
     path: string
+    /** Boolean-looking global values that may belong to command positionals. */
+    positionals?: { id: number; index: number; order: number; value: string }[] | undefined
     /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
     request?: Request | undefined
     /** Vars schema for middleware variables. */
