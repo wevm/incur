@@ -327,11 +327,18 @@ function isCountSchema(schema: unknown): boolean {
   return typeof s?.meta === 'function' && s.meta()?.count === true
 }
 
-/** Unwraps optional/default/nullable wrappers to get the inner type. */
+/** Unwraps optional/default/nullable wrappers and nullable unions to get the inner type. */
 function unwrap(schema: unknown): unknown {
   if (schema instanceof z.ZodOptional) return unwrap(schema.unwrap())
   if (schema instanceof z.ZodDefault) return unwrap(schema.removeDefault())
   if (schema instanceof z.ZodNullable) return unwrap(schema.unwrap())
+  // `z.fromJSONSchema` renders OpenAPI 3.1 `type: ['array', 'null']` as a union, not a ZodNullable.
+  if (schema instanceof z.ZodUnion) {
+    const options = (((schema as any)._zod?.def?.options ?? []) as unknown[]).filter(
+      (o) => !(o instanceof z.ZodNull) && !(o instanceof z.ZodUndefined),
+    )
+    if (options.length === 1) return unwrap(options[0])
+  }
   return schema
 }
 

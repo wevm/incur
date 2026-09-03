@@ -116,6 +116,45 @@ describe('parse', () => {
     expect(result.options).toEqual({ label: ['bug', 'feature'] })
   })
 
+  test('parses repeated flags as array for a nullable array union', () => {
+    const result = Parser.parse(['--label', 'bug', '--label', 'feature'], {
+      options: z.object({
+        label: z.fromJSONSchema({ type: ['array', 'null'], items: { type: 'string' } }).optional(),
+      }),
+    })
+    expect(result.options).toEqual({ label: ['bug', 'feature'] })
+  })
+
+  test('parses a single flag as array for a nullable array union', () => {
+    const result = Parser.parse(['--label', 'bug'], {
+      options: z.object({
+        label: z.fromJSONSchema({ type: ['array', 'null'], items: { type: 'string' } }).optional(),
+      }),
+    })
+    expect(result.options).toEqual({ label: ['bug'] })
+  })
+
+  test('coerces string to number for a nullable number union', () => {
+    const result = Parser.parse(['--limit', '10'], {
+      options: z.object({ limit: z.fromJSONSchema({ type: ['number', 'null'] }).optional() }),
+    })
+    expect(result.options).toEqual({ limit: 10 })
+  })
+
+  test('coerces string to boolean for a nullable boolean union', () => {
+    const result = Parser.parse(['--force', 'true'], {
+      options: z.object({ force: z.fromJSONSchema({ type: ['boolean', 'null'] }).optional() }),
+    })
+    expect(result.options).toEqual({ force: true })
+  })
+
+  test('leaves a multi-type union uncoerced', () => {
+    const result = Parser.parse(['--value', '10'], {
+      options: z.object({ value: z.union([z.string(), z.number()]) }),
+    })
+    expect(result.options).toEqual({ value: '10' })
+  })
+
   test('coerces string to number', () => {
     const result = Parser.parse(['--limit', '10'], {
       options: z.object({ limit: z.number() }),
@@ -465,11 +504,9 @@ describe('parseGlobals', () => {
 
   test('handles short aliases', () => {
     const schema = z.object({ rpcUrl: z.string() })
-    const result = Parser.parseGlobals(
-      ['-r', 'http://example.com', 'deploy'],
-      schema,
-      { rpcUrl: 'r' },
-    )
+    const result = Parser.parseGlobals(['-r', 'http://example.com', 'deploy'], schema, {
+      rpcUrl: 'r',
+    })
     expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
     expect(result.rest).toEqual(['deploy'])
   })
@@ -572,9 +609,9 @@ describe('parseGlobals', () => {
       output: z.string(),
       verbose: z.boolean().default(false),
     })
-    expect(() => Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' })).toThrow(
-      /must be last/,
-    )
+    expect(() =>
+      Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' }),
+    ).toThrow(/must be last/)
   })
 
   test('short flag value-taking as last in stacked alias', () => {
