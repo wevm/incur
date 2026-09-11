@@ -1,5 +1,15 @@
 # incur
 
+## 0.6.0
+
+### Minor Changes
+
+- dcfec03: Added support for disabling generated skills, including their commands, help, completions, and stale-skill notices, with `sync: false`.
+
+### Patch Changes
+
+- afbb49a: Generate MCP and stale-skill commands from an explicit trusted package. Never reuse dependency specifiers from the invoking project's manifest.
+
 ## 0.5.1
 
 ### Patch Changes
