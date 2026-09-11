@@ -468,6 +468,7 @@ export function create(
         mcp: def.mcp,
         middlewares,
         outputPolicy: def.outputPolicy,
+        package: def.package,
         rootCommand: rootDef,
         rootFetch,
         sync: def.sync,
@@ -681,6 +682,8 @@ export declare namespace create {
           tools?: Mcp.ToolFilter | undefined
         }
       | undefined
+    /** Trusted npm package for generated commands when it differs from the CLI name. */
+    package?: string | undefined
     /** Options for the built-in `skills add` command. */
     sync?:
       | {
@@ -958,7 +961,11 @@ async function serveImpl(
         if (Skill.hash(entries) !== stored) {
           const command =
             process.env.npm_config_user_agent || process.env.npm_execpath
-              ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(name)} skills add`
+              ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(
+                  name,
+                  options.package,
+                  options.version,
+                )} skills add`
               : `${displayName} skills add`
           skillsCta = {
             description: 'Skills are out of date:',
@@ -1276,6 +1283,9 @@ async function serveImpl(
         command,
         global,
         agents,
+        ...(options.package !== undefined
+          ? { package: options.package, version: options.version }
+          : undefined),
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
@@ -2698,6 +2708,8 @@ declare namespace serveImpl {
     middlewares?: MiddlewareHandler[] | undefined
     /** CLI-level default output policy. */
     outputPolicy?: OutputPolicy | undefined
+    /** Trusted npm package for generated commands. */
+    package?: string | undefined
     mcp?:
       | {
           agents?: string[] | undefined

@@ -506,6 +506,13 @@ my-cli mcp add
 my-cli --llms
 ```
 
+If the CLI binary name differs from its npm package, set `package` so generated MCP and
+skill commands use that trusted package, pinned when `version` is also supplied:
+
+```ts
+Cli.create('my-cli', { package: '@example/my-cli', version: '1.0.0' })
+```
+
 ### Session savings
 
 Most CLIs expose tools via MCP or a single monolithic skill file. incur combines on-demand skill loading with TOON output to cut token usage across the entire session – from discovery through invocation and response.

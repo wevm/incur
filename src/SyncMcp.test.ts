@@ -66,19 +66,27 @@ test('returns bare name when multiple deps exist', () => {
   expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns URL specifier for https dep', () => {
+test('returns bare name for https dep', () => {
   setupPkg({ 'my-cli': 'https://pkg.pr.new/my-cli@abc123' })
-  expect(detectPackageSpecifier('my-cli')).toBe('https://pkg.pr.new/my-cli@abc123')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns URL specifier for file: dep', () => {
+test('returns bare name for file: dep', () => {
   setupPkg({ 'my-cli': 'file:../local-cli' })
-  expect(detectPackageSpecifier('my-cli')).toBe('file:../local-cli')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns name@version for pinned version', () => {
+test('never emits dependency specs containing whitespace or flags', () => {
+  setupPkg({ 'my-cli': '1.2.3 --inspect' })
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
+  expect(detectPackageSpecifier('my-cli', '@example/cli')).toBe('@example/cli')
+  expect(() => detectPackageSpecifier('my-cli', 'https://example.com/cli', '1.2.3')).toThrow()
+  expect(() => detectPackageSpecifier('my-cli', '@example/cli', '1.2.3 --inspect')).toThrow()
+})
+
+test('returns bare name for pinned version', () => {
   setupPkg({ 'my-cli': '1.2.3' })
-  expect(detectPackageSpecifier('my-cli')).toBe('my-cli@1.2.3')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
 test('returns bare name for range specifier', () => {
@@ -148,7 +156,11 @@ test('register uses bare name for global binary installs', async () => {
   const { execFile } = await import('node:child_process')
   vi.mocked(execFile).mockClear()
 
-  const result = await register('my-cli', { agents: ['amp'] })
+  const result = await register('my-cli', {
+    agents: ['amp'],
+    package: '@example/cli',
+    version: '1.2.3',
+  })
 
   expect(result.command).toBe('my-cli --mcp')
 
@@ -170,6 +182,22 @@ test('register uses runner for source entrypoints outside node_modules', async (
 
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('my-cli --mcp')
+})
+
+test('register uses the detected runner with an explicit scoped package and version', async () => {
+  process.argv[1] = join(tmp, 'dist', 'bin.js')
+  vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+  try {
+    const result = await register('my-cli', {
+      agents: ['amp'],
+      package: '@example/cli',
+      version: '1.2.3',
+    })
+
+    expect(result.command).toBe('pnpx @example/cli@1.2.3 --mcp')
+  } finally {
+    vi.unstubAllEnvs()
+  }
 })
 
 test('register derives the command from a different CLI name', async () => {

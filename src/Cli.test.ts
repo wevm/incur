@@ -3736,6 +3736,20 @@ describe('skills staleness', () => {
     expect(output).toContain('skills add')
   })
 
+  test('uses the trusted scoped package and version for stale skills', async () => {
+    vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+    try {
+      __mockSkillsHash = '0000000000000000'
+      const cli = Cli.create('test', { package: '@example/cli', version: '1.2.3' })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+      const { output } = await serve(cli, ['ping'])
+      expect(output).toContain('pnpx @example/cli@1.2.3 skills add')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('uses displayName for stale skills CTA when invoked directly', async () => {
     const savedArgv1 = process.argv[1]
     const savedAgent = process.env.npm_config_user_agent

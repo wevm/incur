@@ -5,13 +5,19 @@ import { dirname, join } from 'node:path'
 
 import { detectRunner } from './internal/pm.js'
 
+const exactVersionPattern =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/
+const safePackageNamePattern = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
+
 /** Registers the CLI as an MCP server via `npx add-mcp` and direct config writes for unsupported agents. */
 export async function register(
   name: string,
   options: register.Options = {},
 ): Promise<register.Result> {
   const runner = detectRunner()
-  const command = options.command ?? defaultCommand(options.cli ?? name, runner)
+  const command =
+    options.command ??
+    defaultCommand(options.cli ?? name, runner, options.package, options.version)
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
@@ -89,6 +95,10 @@ export declare namespace register {
     command?: string | undefined
     /** Install globally. Defaults to `true`. */
     global?: boolean | undefined
+    /** Trusted npm package used to run the CLI. */
+    package?: string | undefined
+    /** Exact CLI version appended to `package` when provided. */
+    version?: string | undefined
   }
 
   /** Result of a register operation. */
@@ -101,10 +111,11 @@ export declare namespace register {
 }
 
 /** @internal Builds the default MCP command for the current launch mode. */
-function defaultCommand(name: string, runner: string): string {
+function defaultCommand(name: string, runner: string, pkg?: string, version?: string): string {
+  const specifier = pkg !== undefined ? detectPackageSpecifier(name, pkg, version) : undefined
   return shouldUseBareCommand(name)
     ? `${name} --mcp`
-    : `${runner} ${detectPackageSpecifier(name)} --mcp`
+    : `${runner} ${specifier ?? detectPackageSpecifier(name)} --mcp`
 }
 
 /** @internal Returns node_modules path details for the current entrypoint. */
@@ -143,21 +154,15 @@ function packageDependsOn(root: string, name: string): boolean {
   }
 }
 
-/** @internal Detects the package specifier used to run this CLI (handles dlx/npx URL and version installs). */
-export function detectPackageSpecifier(name: string): string {
-  const info = nodeModulesInfo()
-  if (!info) return name
-
-  try {
-    const pkg = JSON.parse(readFileSync(join(info.root, 'package.json'), 'utf-8'))
-    const deps = pkg.dependencies ?? {}
-    const spec = deps[name]
-    if (!spec || Object.keys(deps).length !== 1) return name
-
-    if (/^https?:\/\//.test(spec) || spec.startsWith('file:')) return spec
-    if (/^\d/.test(spec)) return `${name}@${spec}`
-  } catch {}
-
+/** @internal Detects the safe package specifier used to run this CLI. */
+export function detectPackageSpecifier(name: string, pkg?: string, version?: string): string {
+  if (pkg !== undefined) {
+    if (!safePackageNamePattern.test(pkg))
+      throw new Error(`Invalid npm package name: ${pkg}`)
+    if (version !== undefined && !exactVersionPattern.test(version))
+      throw new Error(`Invalid exact package version: ${version}`)
+    return version === undefined ? pkg : `${pkg}@${version}`
+  }
   return name
 }
 
