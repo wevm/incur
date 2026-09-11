@@ -618,6 +618,16 @@ describe('serve integration', () => {
     expect(output).not.toContain('skills')
   })
 
+  test('COMPLETE=bash preserves custom skills subcommands when sync is disabled', async () => {
+    const cli = Cli.create('mycli', { sync: false })
+    cli.command(Cli.create('skills').command('install', { run: () => ({}) }))
+    const output = await serve(cli, ['--', 'mycli', 'skills', ''], {
+      COMPLETE: 'bash',
+      _COMPLETE_INDEX: '2',
+    })
+    expect(output).toMatchInlineSnapshot(`"install"`)
+  })
+
   test('COMPLETE=bash suggests add for skills subcommand', async () => {
     const cli = makeCli()
     const output = await serve(cli, ['--', 'mycli', 'skills', ''], {

@@ -942,8 +942,7 @@ async function serveImpl(
       } else if (nonFlags.length === 2) {
         const parent = nonFlags[nonFlags.length - 1]!
         const builtin = findBuiltin(parent)
-        if (builtin && !builtins.includes(builtin)) return
-        if (builtin?.subcommands)
+        if (builtin?.subcommands && builtins.includes(builtin))
           for (const sub of builtin.subcommands)
             for (const value of [sub.name, ...(sub.aliases ?? [])])
               if (value.startsWith(current) && !candidates.some((c) => c.value === value))
