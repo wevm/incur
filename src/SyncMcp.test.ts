@@ -200,6 +200,23 @@ test('register uses the detected runner with an explicit scoped package and vers
   }
 })
 
+test('register uses runner for scoped dependency with different binary name', async () => {
+  setupPkg({ '@example/cli': '1.2.3' })
+  process.argv[1] = join(tmp, 'node_modules', '@example', 'cli', 'dist', 'bin.js')
+  vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+  try {
+    const result = await register('my-cli', {
+      agents: ['amp'],
+      package: '@example/cli',
+      version: '1.2.3',
+    })
+
+    expect(result.command).toBe('pnpx @example/cli@1.2.3 --mcp')
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
 test('register derives the command from a different CLI name', async () => {
   process.argv[1] = join(tmp, 'dist', 'bin.js')
 

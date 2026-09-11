@@ -113,7 +113,7 @@ export declare namespace register {
 /** @internal Builds the default MCP command for the current launch mode. */
 function defaultCommand(name: string, runner: string, pkg?: string, version?: string): string {
   const specifier = pkg !== undefined ? detectPackageSpecifier(name, pkg, version) : undefined
-  return shouldUseBareCommand(name)
+  return shouldUseBareCommand(name, pkg)
     ? `${name} --mcp`
     : `${runner} ${specifier ?? detectPackageSpecifier(name)} --mcp`
 }
@@ -127,12 +127,12 @@ function nodeModulesInfo(): { entry: string; root: string } | null {
 }
 
 /** @internal Uses the bare command only when the binary is expected on PATH. */
-function shouldUseBareCommand(name: string): boolean {
+function shouldUseBareCommand(name: string, pkg?: string): boolean {
   const bin = process.argv[1]
   if (!bin) return false
 
   const info = nodeModulesInfo()
-  if (info) return !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, name)
+  if (info) return !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, pkg ?? name)
 
   const file = bin.replace(/\\/g, '/').split('/').pop()
   return file === name || file === `${name}.cmd` || file === `${name}.ps1`
