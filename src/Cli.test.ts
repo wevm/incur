@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 import * as Command from './internal/command.js'
 import * as Update from './internal/update.js'
 import * as SyncMcp from './SyncMcp.js'
+import * as SyncSkills from './SyncSkills.js'
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -3747,6 +3748,28 @@ describe('skills staleness', () => {
       expect(output).toContain('pnpx @example/cli@1.2.3 skills add')
     } finally {
       vi.unstubAllEnvs()
+    }
+  })
+
+  test('sync false disables generated skills', async () => {
+    __mockSkillsHash = '0000000000000000'
+    const spy = vi.spyOn(SyncSkills, 'sync')
+    const cli = Cli.create('test', { sync: false })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    try {
+      const help = await serve(cli, [])
+      expect(help.output).not.toContain('skills')
+
+      const command = await serve(cli, ['skills', 'add'])
+      expect(command.exitCode).toBe(1)
+      expect(command.output).toContain("'skills' is not a command")
+      expect(spy).not.toHaveBeenCalled()
+
+      const ping = await serve(cli, ['ping'])
+      expect(ping.output).not.toContain('Skills are out of date')
+    } finally {
+      spy.mockRestore()
     }
   })
 

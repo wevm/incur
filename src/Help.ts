@@ -12,6 +12,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     configFlag,
     description,
     globals,
+    hideSkills = false,
     version,
     commands = [],
     root = false,
@@ -40,7 +41,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines(root, configFlag, globals))
+  lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills))
 
   return lines.join('\n')
 }
@@ -57,6 +58,8 @@ export declare namespace formatRoot {
     description?: string | undefined
     /** Custom global options schema and alias map. */
     globals?: GlobalsDescriptor | undefined
+    /** Hide the built-in skills integration. */
+    hideSkills?: boolean | undefined
     /** Show root-level built-in commands and flags. */
     root?: boolean | undefined
     /** CLI version string. */
@@ -90,6 +93,8 @@ export declare namespace formatCommand {
     hint?: string | undefined
     /** Hide global options section. */
     hideGlobalOptions?: boolean | undefined
+    /** Hide the built-in skills integration. */
+    hideSkills?: boolean | undefined
     /** Zod schema for named options/flags. */
     options?: z.ZodObject<any> | undefined
     /** Show root-level built-in commands and flags. */
@@ -116,6 +121,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     configFlag,
     description,
     globals,
+    hideSkills = false,
     version,
     args,
     env,
@@ -220,7 +226,8 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     }
   }
 
-  if (!options.hideGlobalOptions) lines.push(...globalOptionsLines(root, configFlag, globals))
+  if (!options.hideGlobalOptions)
+    lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills))
 
   // Environment Variables
   if (env) {
@@ -358,19 +365,22 @@ function globalOptionsLines(
   root = false,
   configFlag?: string,
   globals?: GlobalsDescriptor,
+  hideSkills = false,
 ): string[] {
   const lines: string[] = []
 
   if (root) {
-    const builtins = builtinCommands.flatMap((b) => {
-      if (!b.subcommands) return [{ name: b.name, desc: b.description }]
-      if (b.subcommands.length === 1)
-        return [
-          { name: `${b.name} ${b.subcommands[0]!.name}`, desc: b.subcommands[0]!.description },
-        ]
-      const names = b.subcommands.map((s) => s.name).join(', ')
-      return [{ name: b.name, desc: `${b.description} (${names})` }]
-    })
+    const builtins = builtinCommands
+      .filter((b) => !hideSkills || b.name !== 'skills')
+      .flatMap((b) => {
+        if (!b.subcommands) return [{ name: b.name, desc: b.description }]
+        if (b.subcommands.length === 1)
+          return [
+            { name: `${b.name} ${b.subcommands[0]!.name}`, desc: b.subcommands[0]!.description },
+          ]
+        const names = b.subcommands.map((s) => s.name).join(', ')
+        return [{ name: b.name, desc: `${b.description} (${names})` }]
+      })
     const maxCmd = Math.max(...builtins.map((b) => b.name.length))
     lines.push(
       '',

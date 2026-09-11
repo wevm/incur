@@ -684,8 +684,9 @@ export declare namespace create {
       | undefined
     /** Trusted npm package for generated commands when it differs from the CLI name. */
     package?: string | undefined
-    /** Options for the built-in `skills add` command. */
+    /** Options for the built-in `skills add` command. Pass `false` to disable generated skills. */
     sync?:
+      | false
       | {
           /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
           body?: string | undefined
@@ -771,6 +772,11 @@ async function serveImpl(
   const configEnabled = options.config !== undefined
   const configFlag = options.config?.flag
   const displayName = resolveDisplayName(name, options.aliases)
+  const skillsEnabled = options.sync !== false
+  const sync = options.sync === false ? undefined : options.sync
+  const builtins = skillsEnabled
+    ? builtinCommands
+    : builtinCommands.filter((command) => command.name !== 'skills')
 
   function writeln(s: string) {
     stdout(s.endsWith('\n') ? s : `${s}\n`)
@@ -925,7 +931,7 @@ async function serveImpl(
       const current = words[index] ?? ''
       const nonFlags = words.slice(0, index).filter((w) => !w.startsWith('-'))
       if (nonFlags.length <= 1) {
-        for (const b of builtinCommands) {
+        for (const b of builtins) {
           if (b.name.startsWith(current) && !candidates.some((c) => c.value === b.name))
             candidates.push({
               value: b.name,
@@ -936,6 +942,7 @@ async function serveImpl(
       } else if (nonFlags.length === 2) {
         const parent = nonFlags[nonFlags.length - 1]!
         const builtin = findBuiltin(parent)
+        if (builtin && !builtins.includes(builtin)) return
         if (builtin?.subcommands)
           for (const sub of builtin.subcommands)
             for (const value of [sub.name, ...(sub.aliases ?? [])])
@@ -950,12 +957,21 @@ async function serveImpl(
 
   // Skills staleness check (skip for built-in commands)
   let skillsCta: FormattedCtaBlock | undefined
-  if (!llms && !llmsFull && !schema && !help && !update && !updateCheck && !version) {
+  if (
+    skillsEnabled &&
+    !llms &&
+    !llmsFull &&
+    !schema &&
+    !help &&
+    !update &&
+    !updateCheck &&
+    !version
+  ) {
     const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
     const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
-      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: options.sync?.cwd })) {
+      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: sync?.cwd })) {
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
@@ -1070,7 +1086,7 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx = builtinIdx(filtered, name, 'skills')
+  const skillsIdx = skillsEnabled ? builtinIdx(filtered, name, 'skills') : -1
   if (skillsIdx !== -1) {
     const builtin = findBuiltin('skills')!
     const skillsSub = filtered[skillsIdx + 1]
@@ -1112,10 +1128,10 @@ async function serveImpl(
       }
       try {
         const result = await SyncSkills.list(name, commands, {
-          cwd: options.sync?.cwd,
-          depth: options.sync?.depth ?? 1,
+          cwd: sync?.cwd,
+          depth: sync?.depth ?? 1,
           description: options.description,
-          include: options.sync?.include,
+          include: sync?.include,
           rootCommand: options.rootCommand,
         })
         if (result.length === 0) {
@@ -1163,16 +1179,16 @@ async function serveImpl(
         ? Number(rest[depthArg + 1])
         : depthEq
           ? Number(depthEq.split('=')[1])
-          : (options.sync?.depth ?? 1)
+          : (sync?.depth ?? 1)
     const global = rest.includes('--no-global') ? false : undefined
     try {
       stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
-        cwd: options.sync?.cwd,
+        cwd: sync?.cwd,
         depth,
         description: options.description,
         global,
-        include: options.sync?.include,
+        include: sync?.include,
         rootCommand: options.rootCommand,
       })
       stdout('\r\x1b[K')
@@ -1189,12 +1205,12 @@ async function serveImpl(
       lines.push('')
       lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`)
       // Before the suggestions: whatever is left to do is what makes the suggestions work.
-      const body = options.sync?.body
+      const body = sync?.body
       if (body) {
         lines.push('')
         lines.push(body)
       }
-      const suggestions = options.sync?.suggestions
+      const suggestions = sync?.suggestions
       if (suggestions && suggestions.length > 0) {
         lines.push('')
         lines.push(`Your agent can now use ${name}. Try asking:`)
@@ -1293,7 +1309,7 @@ async function serveImpl(
       if (result.agents.length > 0) lines.push(`  Agents: ${result.agents.join(', ')}`)
       lines.push('')
       lines.push(`Agents can now use ${mcpName} tools.`)
-      const suggestions = options.sync?.suggestions
+      const suggestions = sync?.suggestions
       if (suggestions && suggestions.length > 0) {
         lines.push('')
         lines.push('Try asking:')
@@ -1351,6 +1367,7 @@ async function serveImpl(
           examples: formatExamples(cmd.examples),
           usage: cmd.usage,
           commands: commands.size > 0 ? collectHelpCommands(commands) : undefined,
+          hideSkills: !skillsEnabled,
           root: true,
         }),
       )
@@ -1368,6 +1385,7 @@ async function serveImpl(
           globals: options.globals,
           version: options.version,
           commands: collectHelpCommands(commands),
+          hideSkills: !skillsEnabled,
           root: true,
         }),
       )
@@ -1402,6 +1420,7 @@ async function serveImpl(
           description: options.description,
           version: options.version,
           commands: collectHelpCommands(commands),
+          hideSkills: !skillsEnabled,
           root: true,
         }),
       )
@@ -1436,6 +1455,7 @@ async function serveImpl(
             examples: formatExamples(cmd.examples),
             usage: cmd.usage,
             commands: collectHelpCommands(helpCmds),
+            hideSkills: !skillsEnabled,
             root: true,
           }),
         )
@@ -1448,6 +1468,7 @@ async function serveImpl(
             globals: options.globals,
             version: isRoot ? options.version : undefined,
             commands: collectHelpCommands(helpCmds),
+            hideSkills: !skillsEnabled,
             root: isRoot,
           }),
         )
@@ -1478,6 +1499,7 @@ async function serveImpl(
           examples: formatExamples(cmd.examples),
           usage: cmd.usage,
           commands: helpSubcommands,
+          hideSkills: !skillsEnabled,
           root: isRootCmd,
         }),
       )
@@ -1565,7 +1587,7 @@ async function serveImpl(
     !resolved.path &&
     (() => {
       const candidates = [...resolved.commands.keys()]
-      for (const b of builtinCommands) candidates.push(b.name)
+      for (const b of builtins) candidates.push(b.name)
       return suggest(resolved.error, candidates) !== undefined
     })()
   const effective =
@@ -1680,7 +1702,7 @@ async function serveImpl(
     const helpCmd = effective.path ? `${name} ${effective.path} --help` : `${name} --help`
     const parent = effective.path ? `${name} ${effective.path}` : name
     const candidates = 'commands' in effective ? [...effective.commands.keys()] : []
-    if (!effective.path) for (const b of builtinCommands) candidates.push(b.name)
+    if (!effective.path) for (const b of builtins) candidates.push(b.name)
     const suggestion = suggest(effective.error, candidates)
     const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
     const message = `'${effective.error}' is not a command for '${parent}'.${didYouMean}`
@@ -2734,6 +2756,7 @@ declare namespace serveImpl {
     /** Root fetch handler, invoked when no subcommand matches and no rootCommand is set. */
     rootFetch?: FetchHandler | undefined
     sync?:
+      | false
       | {
           body?: string | undefined
           cwd?: string | undefined
