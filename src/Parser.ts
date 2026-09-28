@@ -117,6 +117,7 @@ export function parse<
     argsSchema && keys.length > 0 && isArrayField(keys[keys.length - 1]!, argsSchema)
   if (!trailingArray) {
     const consumed = new Set<number>()
+    // Consume boolean candidates earliest-first when they exceed positional capacity.
     for (const candidate of booleanCandidates) {
       if (positionals.length - consumed.size <= keys.length) break
       consumed.add(candidate.index)

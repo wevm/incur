@@ -90,6 +90,15 @@ describe('parse', () => {
     ).toEqual({ args: {}, options: { verbose: false } })
   })
 
+  test('consumes boolean candidates earliest-first', () => {
+    expect(
+      Parser.parse(['--quiet', 'true', '--verbose', 'false'], {
+        args: z.object({ target: z.string() }),
+        options: z.object({ quiet: z.boolean(), verbose: z.boolean() }),
+      }),
+    ).toEqual({ args: { target: 'false' }, options: { quiet: true, verbose: true } })
+  })
+
   test('a final array keeps boolean-looking tokens as positionals', () => {
     expect(
       Parser.parse(['--verbose', 'false', 'true'], {
