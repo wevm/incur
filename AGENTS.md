@@ -37,6 +37,7 @@
 ## Testing Conventions
 
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
+- **Positional parsing regressions** — when changing arg or flag handling, cover spaced boolean values, boolean-looking positional values, global flags, and the `--` separator together.
 
 ## Binary Build Conventions
 

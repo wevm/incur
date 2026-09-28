@@ -14,18 +14,37 @@ export function parse<
   const optionNames = createOptionNames(optionsSchema, alias)
 
   // First pass: split argv into positional tokens and raw option values
-  const positionals: string[] = []
+  let positionals: string[] = []
   const rawArgvOptions: Record<string, unknown> = {}
+  const booleanCandidates: { index: number; name: string; value: boolean; flagIndex: number }[] = []
+  const lastBooleanAssignment = new Map<string, number>()
+
+  function setBoolean(name: string, flagIndex: number, value: boolean) {
+    rawArgvOptions[name] = value
+    lastBooleanAssignment.set(name, flagIndex)
+  }
+
+  function setBooleanCandidate(name: string, flagIndex: number) {
+    setBoolean(name, flagIndex, true)
+    const next = argv[flagIndex + 1]
+    if (next !== 'true' && next !== 'false') return false
+    booleanCandidates.push({ index: positionals.length, name, value: next === 'true', flagIndex })
+    positionals.push(next)
+    return true
+  }
 
   let i = 0
   while (i < argv.length) {
     const token = argv[i]!
 
-    if (token.startsWith('--no-') && token.length > 5) {
+    if (token === '--') {
+      positionals.push(...argv.slice(i + 1))
+      break
+    } else if (token.startsWith('--no-') && token.length > 5) {
       // --no-flag negation
       const name = normalizeOptionName(token.slice(5), optionNames)
       if (!name) throw new ParseError({ message: `Unknown flag: ${token}` })
-      rawArgvOptions[name] = false
+      setBoolean(name, i, false)
       i++
     } else if (token.startsWith('--')) {
       const eqIdx = token.indexOf('=')
@@ -35,6 +54,7 @@ export function parse<
         const name = normalizeOptionName(raw, optionNames)
         if (!name) throw new ParseError({ message: `Unknown flag: --${raw}` })
         setOption(rawArgvOptions, name, token.slice(eqIdx + 1), optionsSchema)
+        if (isBooleanOption(name, optionsSchema)) lastBooleanAssignment.set(name, i)
         i++
       } else {
         // --flag [value]
@@ -44,8 +64,7 @@ export function parse<
           rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
           i++
         } else if (isBooleanOption(name, optionsSchema)) {
-          rawArgvOptions[name] = true
-          i++
+          i += setBooleanCandidate(name, i) ? 2 : 1
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -66,7 +85,7 @@ export function parse<
           if (isCountOption(name, optionsSchema)) {
             rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
           } else if (isBooleanOption(name, optionsSchema)) {
-            rawArgvOptions[name] = true
+            setBoolean(name, i, true)
           } else {
             throw new ParseError({
               message: `Non-boolean flag -${short} must be last in a stacked alias`,
@@ -75,7 +94,7 @@ export function parse<
         } else if (isCountOption(name, optionsSchema)) {
           rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
         } else if (isBooleanOption(name, optionsSchema)) {
-          rawArgvOptions[name] = true
+          if (setBooleanCandidate(name, i)) i++
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -93,8 +112,20 @@ export function parse<
 
   // Assign positionals to args schema keys in order; a final array key collects the rest
   const rawArgs: Record<string, unknown> = {}
+  const keys = argsSchema ? Object.keys(argsSchema.shape) : []
+  const trailingArray =
+    argsSchema && keys.length > 0 && isArrayField(keys[keys.length - 1]!, argsSchema)
+  if (!trailingArray) {
+    const consumed = new Set<number>()
+    for (const candidate of booleanCandidates) {
+      if (positionals.length - consumed.size <= keys.length) break
+      consumed.add(candidate.index)
+      if (lastBooleanAssignment.get(candidate.name) === candidate.flagIndex)
+        rawArgvOptions[candidate.name] = candidate.value
+    }
+    if (consumed.size > 0) positionals = positionals.filter((_, index) => !consumed.has(index))
+  }
   if (argsSchema) {
-    const keys = Object.keys(argsSchema.shape)
     for (let j = 0; j < keys.length; j++) {
       const key = keys[j]!
       if (isArrayField(key, argsSchema)) {
@@ -106,6 +137,10 @@ export function parse<
         rawArgs[key] = positionals[j]!
       }
     }
+  }
+  if (!trailingArray) {
+    const extra = positionals[keys.length]
+    if (extra !== undefined) throw new ParseError({ message: `Unexpected argument: ${extra}` })
   }
 
   // Validate args through zod
