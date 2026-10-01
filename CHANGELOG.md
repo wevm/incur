@@ -1,5 +1,12 @@
 # incur
 
+## 0.6.1
+
+### Patch Changes
+
+- e95e4eb: Surfaced `error.code` and `error.message` from nested `{ error: { code, message } }` response bodies in OpenAPI-generated commands and the fetch gateway, instead of falling back to `HTTP <status>`.
+- f617e17: Require a patched TOON version to prevent prototype pollution when decoding untrusted input.
+
 ## 0.6.0
 
 ### Minor Changes
