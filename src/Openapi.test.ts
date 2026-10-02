@@ -363,6 +363,86 @@ describe('generateCommands', () => {
     expect(id && '_group' in id ? id.description : undefined).toMatchInlineSnapshot(`"One user"`)
     expect(commands.has('missing')).toBe(false)
   })
+
+  test('groupsFromTags describes groups from shared or own-path tags, preferring x-cli-description', async () => {
+    const taggedSpec = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      tags: [
+        {
+          name: 'Accounts',
+          description: 'Customer accounts.',
+          'x-cli-description': 'Manage customer accounts.',
+        },
+        { name: 'Activity', description: 'Account activity.' },
+        { name: 'Inventory', description: 'Store inventory.' },
+        { name: 'Orders', description: 'Store orders.' },
+        { name: 'Pets', description: 'Pets for adoption. Each pet has one owner.' },
+      ],
+      paths: {
+        '/accounts': { get: { summary: 'List accounts', tags: ['Accounts'] } },
+        '/accounts/{id}/activity': { get: { summary: 'List activity', tags: ['Activity'] } },
+        '/pets': {
+          get: { summary: 'List pets', tags: ['Pets'] },
+          post: { summary: 'Create a pet', tags: ['Pets'] },
+        },
+        '/pets/{petId}': {
+          delete: {
+            parameters: [{ description: 'Pet ID', in: 'path', name: 'petId', required: true }],
+            summary: 'Delete a pet',
+            tags: ['Pets'],
+          },
+          get: {
+            parameters: [{ description: 'Pet ID', in: 'path', name: 'petId', required: true }],
+            summary: 'Get a pet',
+            tags: ['Pets'],
+          },
+        },
+        '/stores/inventory': { get: { summary: 'Get inventory', tags: ['Inventory'] } },
+        '/stores/orders': { get: { summary: 'List orders', tags: ['Orders'] } },
+      },
+    } as const
+    const describe = async (config: Openapi.Config) => {
+      const commands = await Openapi.generateCommands(taggedSpec, app.fetch, { config })
+      type Group = { commands: Map<string, unknown>; description?: string | undefined }
+      const group = (entry: unknown): Group | undefined =>
+        entry && typeof entry === 'object' && '_group' in entry ? (entry as never) : undefined
+      const pets = group(commands.get('pets'))
+      return {
+        accounts: group(commands.get('accounts'))?.description,
+        pets: pets?.description,
+        petId: group(pets?.commands.get('petId'))?.description,
+        stores: group(commands.get('stores'))?.description,
+      }
+    }
+
+    expect(await describe({ mode: 'namespace' })).toMatchInlineSnapshot(`
+      {
+        "accounts": "List accounts",
+        "petId": "Pet ID",
+        "pets": "List pets",
+        "stores": undefined,
+      }
+    `)
+    expect(await describe({ groupsFromTags: true, mode: 'namespace' })).toMatchInlineSnapshot(`
+      {
+        "accounts": "Manage customer accounts.",
+        "petId": "Pet ID",
+        "pets": "Pets for adoption.",
+        "stores": undefined,
+      }
+    `)
+    expect(
+      await describe({ groups: { pets: 'Adopt a pet' }, groupsFromTags: true, mode: 'namespace' }),
+    ).toMatchInlineSnapshot(`
+      {
+        "accounts": "Manage customer accounts.",
+        "petId": "Pet ID",
+        "pets": "Adopt a pet",
+        "stores": undefined,
+      }
+    `)
+  })
 })
 
 describe('cli integration', () => {
