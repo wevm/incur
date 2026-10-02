@@ -2749,6 +2749,69 @@ describe('help', () => {
     expect(output).toContain('no url')
   })
 
+  test('extra positional fails before a scalar command runs', async () => {
+    const run = vi.fn(() => ({ cleaned: 'a' }))
+    const cli = Cli.create('mycli').command('clean', {
+      args: z.object({ target: z.string() }),
+      run,
+    })
+
+    const { output, exitCode } = await serve(cli, ['clean', 'a', 'b', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({ code: 'UNKNOWN', message: 'Unexpected argument: b' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('extra positional fails before a no-args command runs', async () => {
+    const run = vi.fn(() => ({ ok: true }))
+    const cli = Cli.create('mycli').command('info', { run })
+
+    const { output, exitCode } = await serve(cli, ['info', 'extra', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({ code: 'UNKNOWN', message: 'Unexpected argument: extra' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('extra positional fails before a group root command runs', async () => {
+    const run = vi.fn(() => ({ cleaned: 'a' }))
+    const group = Cli.create('clean', {
+      args: z.object({ target: z.string() }),
+      run,
+    }).command('status', { run: () => ({ ok: true }) })
+    const cli = Cli.create('mycli').command(group)
+
+    const { output, exitCode } = await serve(cli, ['clean', 'zzzz', 'b', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({ code: 'UNKNOWN', message: 'Unexpected argument: b' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('-- keeps built-in flag-shaped tokens positional', async () => {
+    const run = vi.fn(() => ({ cleaned: 'a' }))
+    const cli = Cli.create('mycli').command('clean', {
+      args: z.object({ target: z.string() }),
+      run,
+    })
+
+    const { output, exitCode } = await serve(cli, ['clean', 'a', '--', '--json'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('Unexpected argument: --json')
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('global boolean leaves a required boolean-looking positional intact', async () => {
+    const cli = Cli.create('mycli', {
+      globals: z.object({ dryRun: z.boolean().default(false) }),
+    }).command('clean', {
+      args: z.object({ target: z.enum(['true', 'false']) }),
+      run: ({ args, globals }) => ({ target: args.target, dryRun: globals.dryRun }),
+    })
+
+    const { output, exitCode } = await serve(cli, ['clean', '--dry-run', 'false', '--json'])
+    expect(exitCode).toBeUndefined()
+    expect(JSON.parse(output)).toEqual({ target: 'false', dryRun: true })
+  })
+
   test('invalid subcommand in group returns COMMAND_NOT_FOUND instead of falling through to root', async () => {
     const cli = Cli.create('tool', {
       args: z.object({ url: z.string().describe('URL') }),
