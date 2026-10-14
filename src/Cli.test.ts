@@ -5239,6 +5239,25 @@ describe('--filter-output', () => {
     const parsed = JSON.parse(output)
     expect(parsed).toEqual({ name: 'alice', age: 30 })
   })
+
+  test('unclosed bracket produces an error', async () => {
+    let ran = false
+    const cli = Cli.create('test')
+    cli.command('list', {
+      run() {
+        ran = true
+        return { items: [1, 2, 3] }
+      },
+    })
+    const { exitCode, output } = await serve(cli, ['list', '--filter-output', 'items['])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: "Unclosed bracket in filter expression: \\"items[\\""
+      "
+    `)
+    expect(ran).toBe(false)
+  })
 })
 
 describe('Command.execute', () => {
