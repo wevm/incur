@@ -565,12 +565,13 @@ describe('error handling', () => {
     `)
   })
 
-  test('IncurError preserves code and retryable', async () => {
+  test('IncurError preserves code, hint, and retryable', async () => {
     const { output, exitCode } = await serve(createApp(), ['explode-clac', '--format', 'json'])
     expect(exitCode).toBe(1)
     expect(json(output)).toMatchInlineSnapshot(`
       {
         "code": "QUOTA_EXCEEDED",
+        "hint": "Wait 60 seconds",
         "message": "Rate limit exceeded",
         "retryable": true,
       }
@@ -2806,6 +2807,7 @@ describe('fetch api', () => {
           "body": {
             "error": {
               "code": "QUOTA_EXCEEDED",
+              "hint": "Wait 60 seconds",
               "message": "Rate limit exceeded",
               "retryable": true,
             },

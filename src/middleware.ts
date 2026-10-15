@@ -48,6 +48,7 @@ export type Context<
     code: string
     cta?: CtaBlock | undefined
     exitCode?: number | undefined
+    hint?: string | undefined
     message: string
     retryable?: boolean | undefined
   }) => never

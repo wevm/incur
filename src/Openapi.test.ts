@@ -136,6 +136,36 @@ describe('fromCli', () => {
     expect(yamlParse(await yamlResponse.text()).openapi).toBe('3.2.0')
   })
 
+  test('describes the error envelope for failed commands', () => {
+    const spec = Openapi.fromCli(Cli.create('api').command('status', { run: () => ({}) }))
+    const responses = spec.paths?.['/status']?.get?.responses as Record<string, any>
+    expect(responses['500'].content['application/json'].schema.properties.error)
+      .toMatchInlineSnapshot(`
+        {
+          "properties": {
+            "code": {
+              "type": "string",
+            },
+            "hint": {
+              "type": "string",
+            },
+            "message": {
+              "type": "string",
+            },
+            "retryable": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "code",
+            "message",
+          ],
+          "type": "object",
+        }
+      `)
+    expect(responses['400']).toEqual({ ...responses['500'], description: 'Validation error.' })
+  })
+
   test('includes callable groups and their child commands', () => {
     const project = Cli.create('project', { run: () => ({}) }).command('list', {
       run: () => ({}),

@@ -1,4 +1,4 @@
-import { Cli, Fetch, middleware, z } from 'incur'
+import { Cli, Errors, Fetch, middleware, z } from 'incur'
 import type { MiddlewareHandler } from 'incur'
 import { expectTypeOf, test } from 'vitest'
 
@@ -213,6 +213,12 @@ test('Cta narrows strings and objects to registered commands', () => {
   // object form narrows args/options via discriminated union on command
   expectTypeOf<{ command: 'get'; args: { id: 42 } }>().toMatchTypeOf<Cta>()
   expectTypeOf<{ command: 'list'; options: { limit: 10 } }>().toMatchTypeOf<Cta>()
+})
+
+test('IncurError cta takes the same commands as error() cta', () => {
+  type Commands = NonNullable<Errors.IncurError.Options['cta']>['commands']
+  expectTypeOf<Commands>().toEqualTypeOf<Cli.Cta[]>()
+  expectTypeOf<Errors.IncurError['cta']>().toEqualTypeOf<Errors.IncurError.CtaBlock | undefined>()
 })
 
 test('vars are typed in run context', () => {

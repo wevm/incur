@@ -9,7 +9,7 @@ import { z } from 'zod'
 import * as Binary from './Binary.js'
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
-import { IncurError, ParseError, ValidationError } from './Errors.js'
+import { ParseError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
@@ -642,6 +642,7 @@ export declare namespace create {
             code: string
             cta?: CtaBlock | undefined
             exitCode?: number | undefined
+            hint?: string | undefined
             message: string
             retryable?: boolean | undefined
           }) => never
@@ -1697,6 +1698,20 @@ async function serveImpl(
     writeln(truncate(Formatter.format(payload, format)).text)
   }
 
+  function writeFailure(failure: Command.execute.Failure, command: string) {
+    const cta = formatCtaBlock(displayName, failure.cta)
+    write({
+      ok: false,
+      error: failure.error,
+      meta: {
+        command,
+        duration: `${Math.round(performance.now() - start)}ms`,
+        ...(cta ? { cta } : undefined),
+      },
+    })
+    exit(failure.exitCode ?? 1)
+  }
+
   if ('error' in effective) {
     const helpCmd = effective.path ? `${name} ${effective.path} --help` : `${name} --help`
     const parent = effective.path ? `${name} ${effective.path}` : name
@@ -1802,13 +1817,8 @@ async function serveImpl(
         : {}
       if (fetchMiddleware.length > 0) {
         const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-        const errorFn = (opts: {
-          code: string
-          exitCode?: number | undefined
-          message: string
-          retryable?: boolean | undefined
-          cta?: CtaBlock | undefined
-        }): never => ({ [sentinel]: 'error', ...opts }) as never
+        const errorFn = (opts: Command.ErrorOptions): never =>
+          ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
           agent: !human,
           command: path,
@@ -1827,22 +1837,7 @@ async function serveImpl(
         }
         const handleMwSentinel = (result: unknown) => {
           if (!isSentinel(result) || result[sentinel] !== 'error') return
-          const err = result as ErrorResult
-          const cta = formatCtaBlock(displayName, err.cta)
-          write({
-            ok: false,
-            error: {
-              code: err.code,
-              message: err.message,
-              ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-            },
-            meta: {
-              command: path,
-              duration: `${Math.round(performance.now() - start)}ms`,
-              ...(cta ? { cta } : undefined),
-            },
-          })
-          exit(err.exitCode ?? 1)
+          writeFailure(Command.failure(result as ErrorResult), path)
         }
         const composed = fetchMiddleware.reduceRight(
           (next: () => Promise<void>, mw) => async () => {
@@ -1855,15 +1850,7 @@ async function serveImpl(
         await runFetch()
       }
     } catch (error) {
-      write({
-        ok: false,
-        error: {
-          code: error instanceof IncurError ? error.code : 'UNKNOWN',
-          message: error instanceof Error ? error.message : String(error),
-        },
-        meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
-      })
-      exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+      writeFailure(Command.fromError(error), path)
     }
     return
   }
@@ -1898,15 +1885,7 @@ async function serveImpl(
         loader: options.config?.loader,
       })
     } catch (error) {
-      write({
-        ok: false,
-        error: {
-          code: error instanceof IncurError ? error.code : 'UNKNOWN',
-          message: error instanceof Error ? error.message : String(error),
-        },
-        meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
-      })
-      exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+      writeFailure(Command.fromError(error), path)
       return
     }
   }
@@ -1962,8 +1941,6 @@ async function serveImpl(
       },
     })
   } else {
-    const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
-
     if (human && !formatExplicit && result.error.fieldErrors) {
       writeln(
         formatHumanValidationError(
@@ -1982,23 +1959,7 @@ async function serveImpl(
       return
     }
 
-    write({
-      ok: false,
-      error: {
-        code: result.error.code,
-        message: result.error.message,
-        ...(result.error.retryable !== undefined
-          ? { retryable: result.error.retryable }
-          : undefined),
-        ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
-      },
-      meta: {
-        command: path,
-        duration,
-        ...(cta ? { cta } : undefined),
-      },
-    })
-    exit(result.exitCode ?? 1)
+    writeFailure(result, path)
   }
 }
 
@@ -2406,15 +2367,11 @@ async function executeCommand(
       duration: `${Math.round(performance.now() - start)}ms`,
       ...(cta ? { cta } : undefined),
     })
-    const errorRecord = (err: ErrorResult) => ({
+    const errorRecord = (failure: Command.execute.Failure) => ({
       type: 'error',
       ok: false,
-      error: {
-        code: err.code,
-        message: err.message,
-        ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-      },
-      meta: meta(formatCtaBlock(options.name ?? path, err.cta)),
+      error: failure.error,
+      meta: meta(formatCtaBlock(options.name ?? path, failure.cta)),
     })
     const stream = new ReadableStream({
       async cancel() {
@@ -2425,7 +2382,8 @@ async function executeCommand(
           const { value, done } = await iterator.next()
           if (done) {
             if (isSentinel(value) && value[sentinel] === 'error') {
-              controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
+              const record = errorRecord(Command.failure(value))
+              controller.enqueue(encoder.encode(Json.stringify(record) + '\n'))
               controller.close()
               return
             }
@@ -2447,7 +2405,8 @@ async function executeCommand(
           }
 
           if (isSentinel(value) && value[sentinel] === 'error') {
-            controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
+            const record = errorRecord(Command.failure(value))
+            controller.enqueue(encoder.encode(Json.stringify(record) + '\n'))
             await iterator.return(undefined)
             controller.close()
             return
@@ -2455,20 +2414,8 @@ async function executeCommand(
 
           controller.enqueue(encoder.encode(Json.stringify({ type: 'chunk', data: value }) + '\n'))
         } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              Json.stringify({
-                type: 'error',
-                ok: false,
-                error: {
-                  code: error instanceof IncurError ? error.code : 'UNKNOWN',
-                  message: error instanceof Error ? error.message : String(error),
-                  ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
-                },
-                meta: meta(),
-              }) + '\n',
-            ),
-          )
+          const record = errorRecord(Command.fromError(error))
+          controller.enqueue(encoder.encode(Json.stringify(record) + '\n'))
           controller.close()
         }
       },
@@ -2484,14 +2431,7 @@ async function executeCommand(
     return jsonResponse(
       {
         ok: false,
-        error: {
-          code: result.error.code,
-          message: result.error.message,
-          ...(result.error.retryable !== undefined
-            ? { retryable: result.error.retryable }
-            : undefined),
-          ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
-        },
+        error: result.error,
         meta: {
           command: path,
           duration,
@@ -3496,14 +3436,7 @@ type OkResult = {
 }
 
 /** @internal A tagged error result returned by the `error` context helper. */
-type ErrorResult = {
-  [sentinel]: 'error'
-  code: string
-  message: string
-  retryable?: boolean | undefined
-  exitCode?: number | undefined
-  cta?: CtaBlock | undefined
-}
+type ErrorResult = Command.ErrorOptions & { [sentinel]: 'error' }
 
 /** @internal A CTA block with a description and list of suggested commands. */
 type CtaBlock<commands extends CommandsMap = Commands> = {
@@ -3517,6 +3450,7 @@ type CtaBlock<commands extends CommandsMap = Commands> = {
 function formatHumanError(error: {
   code: string
   message: string
+  hint?: string | undefined
   fieldErrors?: FieldError[] | undefined
 }): string {
   const prefix =
@@ -3525,6 +3459,7 @@ function formatHumanError(error: {
       : `Error (${error.code})`
   let out = `${prefix}: ${error.message}`
   if (error.fieldErrors) for (const fe of error.fieldErrors) out += `\n  ${fe.path}: ${fe.message}`
+  if (error.hint) out += `\nHint: ${error.hint}`
   return out
 }
 
@@ -3583,6 +3518,34 @@ async function handleStreaming(
   const useJsonl = ctx.format === 'jsonl'
   const incremental = useJsonl || (!ctx.formatExplicit && ctx.format === 'toon')
 
+  // Renders a yielded or returned `error()`, or a thrown error converted to one, then exits.
+  const fail = (failure: Command.execute.Failure) => {
+    const cta = formatCtaBlock(ctx.name, failure.cta)
+    if (useJsonl)
+      ctx.writeln(
+        JSON.stringify({
+          type: 'error',
+          ok: false,
+          error: failure.error,
+          ...(cta ? { meta: { cta } } : undefined),
+        }),
+      )
+    else if (incremental) {
+      ctx.writeln(formatHumanError(failure.error))
+      if (cta) ctx.writeln(formatHumanCta(cta))
+    } else
+      ctx.write({
+        ok: false,
+        error: failure.error,
+        meta: {
+          command: ctx.path,
+          duration: `${Math.round(performance.now() - ctx.start)}ms`,
+          ...(cta ? { cta } : undefined),
+        },
+      })
+    ctx.exit(failure.exitCode ?? 1)
+  }
+
   if (incremental) {
     // Incremental output: write each chunk as it arrives
     try {
@@ -3593,52 +3556,15 @@ async function handleStreaming(
           returnValue = value
           break
         }
-        if (isSentinel(value)) {
-          const tagged = value as any
-          if (tagged[sentinel] === 'error') {
-            if (useJsonl)
-              ctx.writeln(
-                JSON.stringify({
-                  type: 'error',
-                  ok: false,
-                  error: {
-                    code: tagged.code,
-                    message: tagged.message,
-                    ...(tagged.retryable !== undefined
-                      ? { retryable: tagged.retryable }
-                      : undefined),
-                  },
-                }),
-              )
-            else ctx.writeln(formatHumanError({ code: tagged.code, message: tagged.message }))
-            ctx.exit(tagged.exitCode ?? 1)
-            return
-          }
-        }
+        if (isSentinel(value) && value[sentinel] === 'error') return fail(Command.failure(value))
         if (useJsonl) ctx.writeln(Json.stringify({ type: 'chunk', data: value }))
         else if (ctx.renderOutput)
           ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
 
       // Handle return value — error() or ok() sentinel
-      if (isSentinel(returnValue) && returnValue[sentinel] === 'error') {
-        const err = returnValue as ErrorResult
-        if (useJsonl)
-          ctx.writeln(
-            JSON.stringify({
-              type: 'error',
-              ok: false,
-              error: {
-                code: err.code,
-                message: err.message,
-                ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-              },
-            }),
-          )
-        else ctx.writeln(formatHumanError({ code: err.code, message: err.message }))
-        ctx.exit(err.exitCode ?? 1)
-        return
-      }
+      if (isSentinel(returnValue) && returnValue[sentinel] === 'error')
+        return fail(Command.failure(returnValue))
 
       const cta =
         isSentinel(returnValue) && returnValue[sentinel] === 'ok'
@@ -3659,26 +3585,7 @@ async function handleStreaming(
         )
       else if (cta) ctx.writeln(formatHumanCta(cta))
     } catch (error) {
-      if (useJsonl)
-        ctx.writeln(
-          JSON.stringify({
-            type: 'error',
-            ok: false,
-            error: {
-              code: error instanceof IncurError ? error.code : 'UNKNOWN',
-              message: error instanceof Error ? error.message : String(error),
-              ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
-            },
-          }),
-        )
-      else
-        ctx.writeln(
-          formatHumanError({
-            code: 'UNKNOWN',
-            message: error instanceof Error ? error.message : String(error),
-          }),
-        )
-      ctx.exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+      fail(Command.fromError(error))
     }
   } else {
     // Buffered output: collect all chunks, write as single value
@@ -3691,45 +3598,12 @@ async function handleStreaming(
           returnValue = value
           break
         }
-        if (isSentinel(value)) {
-          const tagged = value as any
-          if (tagged[sentinel] === 'error') {
-            ctx.write({
-              ok: false,
-              error: {
-                code: tagged.code,
-                message: tagged.message,
-                ...(tagged.retryable !== undefined ? { retryable: tagged.retryable } : undefined),
-              },
-              meta: {
-                command: ctx.path,
-                duration: `${Math.round(performance.now() - ctx.start)}ms`,
-              },
-            })
-            ctx.exit(tagged.exitCode ?? 1)
-            return
-          }
-        }
+        if (isSentinel(value) && value[sentinel] === 'error') return fail(Command.failure(value))
         chunks.push(value)
       }
 
-      if (isSentinel(returnValue) && returnValue[sentinel] === 'error') {
-        const err = returnValue as ErrorResult
-        ctx.write({
-          ok: false,
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-          },
-          meta: {
-            command: ctx.path,
-            duration: `${Math.round(performance.now() - ctx.start)}ms`,
-          },
-        })
-        ctx.exit(err.exitCode ?? 1)
-        return
-      }
+      if (isSentinel(returnValue) && returnValue[sentinel] === 'error')
+        return fail(Command.failure(returnValue))
 
       const cta =
         isSentinel(returnValue) && returnValue[sentinel] === 'ok'
@@ -3746,19 +3620,7 @@ async function handleStreaming(
         },
       })
     } catch (error) {
-      ctx.write({
-        ok: false,
-        error: {
-          code: error instanceof IncurError ? error.code : 'UNKNOWN',
-          message: error instanceof Error ? error.message : String(error),
-          ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
-        },
-        meta: {
-          command: ctx.path,
-          duration: `${Math.round(performance.now() - ctx.start)}ms`,
-        },
-      })
-      ctx.exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
+      fail(Command.fromError(error))
     }
   }
 }
@@ -4082,6 +3944,8 @@ type Output = OneOf<
         code: string
         /** Per-field validation errors. */
         fieldErrors?: FieldError[] | undefined
+        /** Actionable hint for the user. */
+        hint?: string | undefined
         /** Human-readable error message. */
         message: string
         /** Whether the operation can be retried. */
@@ -4178,6 +4042,7 @@ type CommandDefinition<
       code: string
       cta?: CtaBlock | undefined
       exitCode?: number | undefined
+      hint?: string | undefined
       message: string
       retryable?: boolean | undefined
     }) => never

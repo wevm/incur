@@ -1,3 +1,5 @@
+import type { Cta } from './Cli.js'
+
 /** Base error with shortMessage, details from cause chain, and walk(). */
 export class BaseError extends Error {
   override name = 'Incur.BaseError'
@@ -32,11 +34,13 @@ export declare namespace BaseError {
   }
 }
 
-/** CLI error with code, hint, and retryable flag. */
+/** CLI error with code, hint, retryable flag, and suggested commands. Renders like `c.error()`. */
 export class IncurError extends BaseError {
   override name = 'Incur.IncurError'
   /** Machine-readable error code (e.g. `'NOT_AUTHENTICATED'`). */
   code: string
+  /** Suggested commands to run next, rendered like the `cta` of `c.error()`. */
+  cta: IncurError.CtaBlock | undefined
   /** Actionable hint for the user. */
   hint: string | undefined
   /** Whether the operation can be retried. */
@@ -47,6 +51,7 @@ export class IncurError extends BaseError {
   constructor(options: IncurError.Options) {
     super(options.message, options.cause ? { cause: options.cause } : undefined)
     this.code = options.code
+    this.cta = options.cta
     this.hint = options.hint
     this.retryable = options.retryable ?? false
     this.exitCode = options.exitCode
@@ -54,10 +59,20 @@ export class IncurError extends BaseError {
 }
 
 export declare namespace IncurError {
+  /** Suggested commands attached to an error. */
+  type CtaBlock = {
+    /** Commands to suggest. */
+    commands: Cta[]
+    /** Human-readable label. Defaults to `"Suggested command:"` or `"Suggested commands:"` based on count. */
+    description?: string | undefined
+  }
+
   /** Options for constructing a IncurError. */
   type Options = {
     /** Machine-readable error code. */
     code: string
+    /** Suggested commands to run next, rendered like the `cta` of `c.error()`. */
+    cta?: CtaBlock | undefined
     /** Human-readable error message. */
     message: string
     /** Actionable hint for the user. */

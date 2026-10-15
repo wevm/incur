@@ -120,7 +120,7 @@ export async function callTool(
 ): Promise<{
   content: { type: 'text'; text: string }[]
   structuredContent?: Record<string, unknown>
-  _meta?: { cta: FormattedCtaBlock } | undefined
+  _meta?: { cta?: FormattedCtaBlock | undefined; error?: ErrorMeta | undefined } | undefined
   isError?: boolean
 }> {
   const allMiddleware = [
@@ -150,35 +150,41 @@ export async function callTool(
     const chunks: unknown[] = []
     const progressToken = options.extra?.mcpReq?._meta?.progressToken
     let i = 0
+    let returned: unknown
     try {
-      for await (const chunk of result.stream) {
-        chunks.push(chunk)
+      while (true) {
+        const { done, value } = await result.stream.next()
+        if (done) {
+          returned = value
+          break
+        }
+        if (Command.isError(value)) {
+          await result.stream.return(undefined)
+          return toolFailure(Command.failure(value), options.name ?? tool.name)
+        }
+        chunks.push(value)
         if (progressToken !== undefined && options.sendNotification)
           await options.sendNotification({
             method: 'notifications/progress' as const,
-            params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
+            params: { progressToken, progress: ++i, message: Json.stringify(value) },
           })
       }
     } catch (err) {
-      return {
-        content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
-        isError: true,
-      }
+      return toolFailure(Command.fromError(err), options.name ?? tool.name)
     }
-    return { content: [{ type: 'text', text: Json.stringify(chunks) }] }
-  }
-
-  if (!result.ok) {
-    const cta = formatCtaBlock(options.name ?? tool.name, result.cta)
-    const text = result.error.fieldErrors
-      ? JSON.stringify(result.error)
-      : (result.error.message ?? 'Command failed')
+    if (Command.isError(returned))
+      return toolFailure(Command.failure(returned), options.name ?? tool.name)
+    const cta = Command.isOk(returned)
+      ? formatCtaBlock(options.name ?? tool.name, returned.cta)
+      : undefined
+    const text = Json.stringify(chunks)
     return {
       content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
       ...(cta ? { _meta: { cta } } : undefined),
-      isError: true,
     }
   }
+
+  if (!result.ok) return toolFailure(result, options.name ?? tool.name)
 
   const data = result.data ?? null
   const jsonData = Json.normalize(data)
@@ -191,6 +197,37 @@ export async function callTool(
       ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
     ...(cta ? { _meta: { cta } } : undefined),
+  }
+}
+
+/** @internal Machine-readable error fields in `_meta.error` of a failed tool result. */
+type ErrorMeta = {
+  /** Machine-readable error code. */
+  code: string
+  /** Process exit code the CLI would exit with. */
+  exitCode?: number | undefined
+  /** Whether the operation can be retried. */
+  retryable?: boolean | undefined
+}
+
+/** @internal Renders a failed command result as an MCP tool error. */
+function toolFailure(failure: Command.execute.Failure, name: string) {
+  const { error, exitCode } = failure
+  const cta = formatCtaBlock(name, failure.cta)
+  let text = error.fieldErrors ? JSON.stringify(error) : (error.message ?? 'Command failed')
+  if (error.hint) text += `\nHint: ${error.hint}`
+  if (cta) text += `\n\n${renderCtaText(cta)}`
+  return {
+    content: [{ type: 'text' as const, text }],
+    _meta: {
+      ...(cta ? { cta } : undefined),
+      error: {
+        code: error.code,
+        ...(exitCode !== undefined ? { exitCode } : undefined),
+        ...(error.retryable !== undefined ? { retryable: error.retryable } : undefined),
+      },
+    },
+    isError: true,
   }
 }
 

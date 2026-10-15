@@ -21,15 +21,24 @@ type OkResult = {
   cta?: CtaBlock | undefined
 }
 
-/** @internal A tagged error result. */
-type ErrorResult = {
-  [sentinel]: 'error'
+/** @internal Options for the `error()` context helper. A thrown `IncurError` carries the same fields. */
+export type ErrorOptions = {
+  /** Machine-readable error code (e.g. `'NOT_AUTHENTICATED'`). */
   code: string
-  message: string
-  retryable?: boolean | undefined
-  exitCode?: number | undefined
+  /** Suggested commands to run next. */
   cta?: CtaBlock | undefined
+  /** Process exit code. Defaults to `1`. */
+  exitCode?: number | undefined
+  /** Actionable hint for the user. */
+  hint?: string | undefined
+  /** Human-readable error message. */
+  message: string
+  /** Whether the operation can be retried. */
+  retryable?: boolean | undefined
 }
+
+/** @internal A tagged error result. */
+type ErrorResult = ErrorOptions & { [sentinel]: 'error' }
 
 /** @internal Unified command execution used by CLI, HTTP, and MCP transports. */
 export async function execute(command: any, options: execute.Options): Promise<execute.Result> {
@@ -97,13 +106,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     // Build sentinel helpers
     const okFn = (data: unknown, meta: { cta?: CtaBlock | undefined } = {}): never =>
       ({ [sentinel]: 'ok', data, cta: meta.cta }) as never
-    const errorFn = (opts: {
-      code: string
-      cta?: CtaBlock | undefined
-      exitCode?: number | undefined
-      message: string
-      retryable?: boolean | undefined
-    }): never => ({ [sentinel]: 'error', ...opts }) as never
+    const errorFn = (opts: ErrorOptions): never => ({ [sentinel]: 'error', ...opts }) as never
 
     const raw = command.run({
       agent,
@@ -152,19 +155,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       if (awaited[sentinel] === 'ok') {
         const ok = awaited as OkResult
         result = { ok: true, data: ok.data, ...(ok.cta ? { cta: ok.cta } : undefined) }
-      } else {
-        const err = awaited as ErrorResult
-        result = {
-          ok: false,
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
-          },
-          ...(err.cta ? { cta: err.cta } : undefined),
-          ...(err.exitCode !== undefined ? { exitCode: err.exitCode } : undefined),
-        }
-      }
+      } else result = failure(awaited as ErrorResult)
       return
     }
 
@@ -176,24 +167,9 @@ export async function execute(command: any, options: execute.Options): Promise<e
     const cliEnv = envSchema ? Parser.parseEnv(envSchema, envSource) : {}
 
     if (middlewares.length > 0) {
-      const errorFn = (opts: {
-        code: string
-        cta?: CtaBlock | undefined
-        exitCode?: number | undefined
-        message: string
-        retryable?: boolean | undefined
-      }): never => {
+      const errorFn = (opts: ErrorOptions): never => {
         // Side-effect: set result directly (handles both `return c.error()` and bare `c.error()`)
-        result = {
-          ok: false,
-          error: {
-            code: opts.code,
-            message: opts.message,
-            ...(opts.retryable !== undefined ? { retryable: opts.retryable } : undefined),
-          },
-          ...(opts.cta ? { cta: opts.cta } : undefined),
-          ...(opts.exitCode !== undefined ? { exitCode: opts.exitCode } : undefined),
-        }
+        result = failure(opts)
         return undefined as never
       }
 
@@ -233,29 +209,40 @@ export async function execute(command: any, options: execute.Options): Promise<e
       await runCommand()
     }
   } catch (error) {
-    if (error instanceof ValidationError)
-      return {
-        ok: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: error.message,
-          fieldErrors: error.fieldErrors,
-        },
-      }
-    return {
-      ok: false,
-      error: {
-        code: error instanceof IncurError ? error.code : 'UNKNOWN',
-        message: error instanceof Error ? error.message : String(error),
-        ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
-      },
-      ...(error instanceof IncurError && error.exitCode !== undefined
-        ? { exitCode: error.exitCode }
-        : undefined),
-    }
+    return fromError(error)
   }
 
   return result ?? { ok: true, data: undefined }
+}
+
+/** @internal Builds the failed result for `error()` options. Every transport renders this shape. */
+export function failure(options: ErrorOptions): execute.Failure {
+  const { code, cta, exitCode, hint, message, retryable } = options
+  return {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(hint !== undefined ? { hint } : undefined),
+      ...(retryable !== undefined ? { retryable } : undefined),
+    },
+    ...(cta ? { cta } : undefined),
+    ...(exitCode !== undefined ? { exitCode } : undefined),
+  }
+}
+
+/** @internal Converts a thrown error into the failed result of the equivalent `error()` call. */
+export function fromError(error: unknown): execute.Failure {
+  if (error instanceof ValidationError)
+    return {
+      ok: false,
+      error: { code: 'VALIDATION_ERROR', message: error.message, fieldErrors: error.fieldErrors },
+    }
+  if (error instanceof IncurError) return failure(error)
+  return failure({
+    code: 'UNKNOWN',
+    message: error instanceof Error ? error.message : String(error),
+  })
 }
 
 /** @internal Splits flat params into args vs options using schema shapes. */
@@ -316,26 +303,49 @@ export declare namespace execute {
     version: string | undefined
   }
 
+  /** A failed command result, from a returned `error()` or a thrown error. */
+  type Failure = {
+    /** Whether the command succeeded. Always `false`. */
+    ok: false
+    /** Error details, rendered as the `error` of the output envelope. */
+    error: {
+      /** Machine-readable error code. */
+      code: string
+      /** Human-readable error message. */
+      message: string
+      /** Actionable hint for the user. */
+      hint?: string | undefined
+      /** Whether the operation can be retried. */
+      retryable?: boolean | undefined
+      /** Per-field validation errors. */
+      fieldErrors?: FieldError[] | undefined
+    }
+    /** Suggested commands to run next, before the CLI name is prefixed. */
+    cta?: CtaBlock | undefined
+    /** Process exit code. Defaults to `1`. */
+    exitCode?: number | undefined
+  }
+
   /** Result of executing a command. */
   type Result =
     | { ok: true; data: unknown; cta?: CtaBlock | undefined }
-    | {
-        ok: false
-        error: {
-          code: string
-          message: string
-          retryable?: boolean | undefined
-          fieldErrors?: FieldError[] | undefined
-        }
-        cta?: CtaBlock | undefined
-        exitCode?: number | undefined
-      }
+    | Failure
     | { stream: AsyncGenerator<unknown, unknown, unknown> }
 }
 
 /** @internal Type guard for sentinel results. */
 function isSentinel(value: unknown): value is OkResult | ErrorResult {
   return typeof value === 'object' && value !== null && sentinel in value
+}
+
+/** @internal Whether a yielded or returned value is an `error()` result. */
+export function isError(value: unknown): value is ErrorResult {
+  return isSentinel(value) && value[sentinel] === 'error'
+}
+
+/** @internal Whether a yielded or returned value is an `ok()` result. */
+export function isOk(value: unknown): value is OkResult {
+  return isSentinel(value) && value[sentinel] === 'ok'
 }
 
 /** @internal Type guard for async generators. */

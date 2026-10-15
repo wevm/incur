@@ -2058,6 +2058,38 @@ describe('subcommands', () => {
   })
 })
 
+/** `error()` options using every field a thrown `IncurError` also carries. */
+const errorOptions = {
+  code: 'NOT_AUTHENTICATED',
+  cta: { description: 'Authenticate to continue:', commands: ['auth login'] },
+  exitCode: 4,
+  hint: 'Log in, then retry.',
+  message: 'Not logged in',
+  retryable: true,
+}
+
+/** Creates a CLI whose commands fail with `errorOptions`, thrown or returned through `error()`. */
+function createErrorCli(thrown: boolean) {
+  return Cli.create('test')
+    .command('fail', {
+      run(c) {
+        if (thrown) throw new Errors.IncurError(errorOptions)
+        return c.error(errorOptions)
+      },
+    })
+    .command('stream', {
+      async *run(c) {
+        yield { step: 1 }
+        if (thrown) throw new Errors.IncurError(errorOptions)
+        return c.error(errorOptions)
+      },
+    })
+}
+
+function stripDuration(output: string) {
+  return output.replace(/\d+ms/g, '<stripped>')
+}
+
 describe('cta', () => {
   test('string shorthand for cta commands', async () => {
     const cli = Cli.create('test')
@@ -2233,6 +2265,167 @@ describe('cta', () => {
     const parsed = JSON.parse(output)
     expect(parsed.ok).toBe(false)
     expect(parsed.meta.cta).toBeUndefined()
+  })
+
+  test('error() with cta renders in toon, JSON, and human output', async () => {
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run(c) {
+        return c.error({
+          code: 'NOT_AUTHENTICATED',
+          message: 'Not logged in',
+          retryable: false,
+          cta: { description: 'Authenticate to continue:', commands: ['auth login'] },
+        })
+      },
+    })
+
+    const toon = await serve(cli, ['fail'])
+    expect(toon.exitCode).toBe(1)
+    expect(toon.output).toMatchInlineSnapshot(`
+      "code: NOT_AUTHENTICATED
+      message: Not logged in
+      retryable: false
+      cta:
+        description: "Authenticate to continue:"
+        commands[1]{command}:
+          test auth login
+      "
+    `)
+
+    const json = await serve(cli, ['fail', '--format', 'json'])
+    expect(JSON.parse(json.output)).toMatchInlineSnapshot(`
+      {
+        "code": "NOT_AUTHENTICATED",
+        "cta": {
+          "commands": [
+            {
+              "command": "test auth login",
+            },
+          ],
+          "description": "Authenticate to continue:",
+        },
+        "message": "Not logged in",
+        "retryable": false,
+      }
+    `)
+
+    ;(process.stdout as any).isTTY = true
+    const human = await serve(cli, ['fail'])
+    ;(process.stdout as any).isTTY = false
+    expect(human.output).toMatchInlineSnapshot(`
+      "Error (NOT_AUTHENTICATED): Not logged in
+
+      Authenticate to continue:
+        test auth login
+      "
+    `)
+  })
+
+  test('thrown IncurError keeps its cta', async () => {
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run() {
+        throw new Errors.IncurError({
+          code: 'NOT_AUTHENTICATED',
+          message: 'Not logged in',
+          cta: { description: 'Authenticate to continue:', commands: ['auth login'] },
+        })
+      },
+    })
+
+    const toon = await serve(cli, ['fail'])
+    expect(toon.exitCode).toBe(1)
+    expect(toon.output).toMatchInlineSnapshot(`
+      "code: NOT_AUTHENTICATED
+      message: Not logged in
+      retryable: false
+      cta:
+        description: "Authenticate to continue:"
+        commands[1]{command}:
+          test auth login
+      "
+    `)
+
+    const json = await serve(cli, ['fail', '--full-output', '--format', 'json'])
+    const body = JSON.parse(json.output)
+    body.meta.duration = '<stripped>'
+    expect(body).toMatchInlineSnapshot(`
+      {
+        "error": {
+          "code": "NOT_AUTHENTICATED",
+          "message": "Not logged in",
+          "retryable": false,
+        },
+        "meta": {
+          "command": "fail",
+          "cta": {
+            "commands": [
+              {
+                "command": "test auth login",
+              },
+            ],
+            "description": "Authenticate to continue:",
+          },
+          "duration": "<stripped>",
+        },
+        "ok": false,
+      }
+    `)
+  })
+
+  test('thrown IncurError keeps its hint', async () => {
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run() {
+        throw new Errors.IncurError({
+          code: 'QUOTA_EXCEEDED',
+          message: 'Rate limit exceeded',
+          hint: 'Wait 60 seconds',
+        })
+      },
+    })
+
+    const toon = await serve(cli, ['fail'])
+    expect(toon.exitCode).toBe(1)
+    expect(toon.output).toMatchInlineSnapshot(`
+      "code: QUOTA_EXCEEDED
+      message: Rate limit exceeded
+      hint: Wait 60 seconds
+      retryable: false
+      "
+    `)
+
+    ;(process.stdout as any).isTTY = true
+    const human = await serve(cli, ['fail'])
+    ;(process.stdout as any).isTTY = false
+    expect(human.output).toMatchInlineSnapshot(`
+      "Error (QUOTA_EXCEEDED): Rate limit exceeded
+      Hint: Wait 60 seconds
+      "
+    `)
+  })
+
+  test.each([
+    { name: 'toon', argv: ['fail'] },
+    { name: 'json', argv: ['fail', '--format', 'json'] },
+    { name: 'yaml', argv: ['fail', '--format', 'yaml'] },
+    { name: 'full', argv: ['fail', '--full-output', '--format', 'json'] },
+    { name: 'human', argv: ['fail'], tty: true },
+    { name: 'incremental stream', argv: ['stream'] },
+    { name: 'human stream', argv: ['stream'], tty: true },
+    { name: 'jsonl stream', argv: ['stream', '--format', 'jsonl'] },
+    { name: 'buffered stream', argv: ['stream', '--full-output', '--format', 'json'] },
+  ])('thrown IncurError renders like error() in $name output', async ({ argv, tty }) => {
+    ;(process.stdout as any).isTTY = tty ?? false
+    const thrown = await serve(createErrorCli(true), argv)
+    const returned = await serve(createErrorCli(false), argv)
+    ;(process.stdout as any).isTTY = false
+    expect(thrown.exitCode).toBe(4)
+    expect(returned.exitCode).toBe(4)
+    expect(thrown.output).toContain('test auth login')
+    expect(thrown.output).toContain('Log in, then retry.')
+    expect(stripDuration(thrown.output)).toBe(stripDuration(returned.output))
   })
 
   test('ok() cta works with sub-commands', async () => {
@@ -5088,6 +5281,28 @@ describe('fetch', async () => {
     `)
   })
 
+  test('thrown IncurError renders like middleware error()', async () => {
+    const thrown = Cli.create('test').command('api', {
+      fetch() {
+        throw new Errors.IncurError(errorOptions)
+      },
+    })
+    const returned = Cli.create('test')
+      .use((c) => c.error(errorOptions))
+      .command('api', { fetch: app.fetch })
+
+    const argv = ['api', 'users', '--full-output', '--format', 'json']
+    const a = await serve(thrown, argv)
+    const b = await serve(returned, argv)
+    expect(a.exitCode).toBe(4)
+    expect(b.exitCode).toBe(4)
+    expect(stripDuration(a.output)).toBe(stripDuration(b.output))
+    expect(JSON.parse(a.output).meta.cta).toEqual({
+      description: 'Authenticate to continue:',
+      commands: [{ command: 'test auth login' }],
+    })
+  })
+
   test('--format json', async () => {
     const cli = Cli.create('test', { description: 'test' }).command('api', {
       fetch: app.fetch,
@@ -6045,6 +6260,71 @@ describe('fetch', () => {
           },
         ],
         "status": 200,
+      }
+    `)
+  })
+
+  test('thrown IncurError keeps cta and hint like error()', async () => {
+    const thrown = await fetchJson(createErrorCli(true), new Request('http://localhost/fail'))
+    const returned = await fetchJson(createErrorCli(false), new Request('http://localhost/fail'))
+    expect(thrown).toEqual(returned)
+    expect(thrown).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": {
+            "code": "NOT_AUTHENTICATED",
+            "hint": "Log in, then retry.",
+            "message": "Not logged in",
+            "retryable": true,
+          },
+          "meta": {
+            "command": "fail",
+            "cta": {
+              "commands": [
+                {
+                  "command": "test auth login",
+                },
+              ],
+              "description": "Authenticate to continue:",
+            },
+            "duration": "<stripped>",
+          },
+          "ok": false,
+        },
+        "status": 500,
+      }
+    `)
+  })
+
+  test('streaming response thrown IncurError keeps cta and hint like error()', async () => {
+    const thrown = await fetchNdjson(createErrorCli(true), new Request('http://localhost/stream'))
+    const returned = await fetchNdjson(
+      createErrorCli(false),
+      new Request('http://localhost/stream'),
+    )
+    expect(thrown).toEqual(returned)
+    expect(thrown.lines.at(-1)).toMatchInlineSnapshot(`
+      {
+        "error": {
+          "code": "NOT_AUTHENTICATED",
+          "hint": "Log in, then retry.",
+          "message": "Not logged in",
+          "retryable": true,
+        },
+        "meta": {
+          "command": "stream",
+          "cta": {
+            "commands": [
+              {
+                "command": "test auth login",
+              },
+            ],
+            "description": "Authenticate to continue:",
+          },
+          "duration": "<stripped>",
+        },
+        "ok": false,
+        "type": "error",
       }
     `)
   })

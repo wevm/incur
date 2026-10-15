@@ -309,6 +309,7 @@ function errorResponse(description: string) {
               properties: {
                 code: { type: 'string' },
                 message: { type: 'string' },
+                hint: { type: 'string' },
                 retryable: { type: 'boolean' },
               },
             },

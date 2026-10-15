@@ -598,6 +598,19 @@ $ my-cli list
 #   my-cli list closed – View closed
 ```
 
+Errors carry CTAs too. Instead of returning `error()`, a command, helper, or middleware can throw an `IncurError` with the same `cta` and `hint`, and it renders the same way. Failed MCP tool calls also carry `code`, `retryable`, and `exitCode` in `_meta.error`.
+
+```ts
+import { Errors } from 'incur'
+
+throw new Errors.IncurError({
+  code: 'NOT_AUTHENTICATED',
+  message: 'GitHub token not found',
+  hint: 'Tokens expire after 30 days.',
+  cta: { commands: [{ command: 'auth login', description: 'Log in to GitHub' }] },
+})
+```
+
 ### Light API surface
 
 A small API means agents can build entire CLIs in a single pass without needing to learn framework abstractions. Three functions: `create`, `command`, `serve`, and everything else (parsing, help, validation, output formatting, agent discovery) is handled automatically:

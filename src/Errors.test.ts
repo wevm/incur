@@ -58,6 +58,13 @@ describe('IncurError', () => {
     const error = new Errors.IncurError({ code: 'FAIL', message: 'fail' })
     expect(error.retryable).toBe(false)
   })
+
+  test('has cta', () => {
+    const cta = { description: 'To authenticate:', commands: ['auth login'] }
+    const error = new Errors.IncurError({ code: 'NOT_AUTHENTICATED', message: 'no token', cta })
+    expect(error.cta).toEqual(cta)
+    expect(new Errors.IncurError({ code: 'FAIL', message: 'fail' }).cta).toBeUndefined()
+  })
 })
 
 describe('ValidationError', () => {
