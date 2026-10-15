@@ -1,5 +1,6 @@
 import { decode } from '@toon-format/toon'
 import { Formatter } from 'incur'
+import { parse as yamlParse } from 'yaml'
 
 describe('format', () => {
   test('formats success envelope as TOON', () => {
@@ -339,5 +340,72 @@ describe('format jsonl', () => {
   test('scalar value outputs JSON', () => {
     expect(Formatter.format(42, 'jsonl')).toMatchInlineSnapshot(`"42"`)
     expect(Formatter.format('hi', 'jsonl')).toMatchInlineSnapshot(`""hi""`)
+  })
+})
+
+describe('format normalization', () => {
+  const value = {
+    id: 1,
+    symbol: undefined,
+    amount: 2461152330n,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    tokens: [
+      { symbol: 'USD', balance: 1n, memo: undefined },
+      { symbol: 'EUR', balance: 2n, memo: undefined },
+    ],
+    nested: { list: [1, 2n], meta: { note: undefined, active: true } },
+  }
+
+  const expected = {
+    id: 1,
+    amount: '2461152330',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    tokens: [
+      { symbol: 'USD', balance: '1' },
+      { symbol: 'EUR', balance: '2' },
+    ],
+    nested: { list: [1, '2'], meta: { active: true } },
+  }
+
+  test.each([
+    ['toon', decode],
+    ['json', JSON.parse],
+    ['yaml', yamlParse],
+    ['jsonl', JSON.parse],
+  ] as const)('%s renders the same data as JSON', (format, parse) => {
+    expect(parse(Formatter.format(value, format))).toStrictEqual(expected)
+  })
+
+  test('md renders the same data as JSON', () => {
+    expect(Formatter.format(value, 'md')).toMatchInlineSnapshot(`
+      "## id
+
+      1
+
+      ## amount
+
+      2461152330
+
+      ## createdAt
+
+      2026-01-01T00:00:00.000Z
+
+      ## tokens
+
+      | symbol | balance |
+      |--------|---------|
+      | USD    | 1       |
+      | EUR    | 2       |
+
+      ## nested.list
+
+      1,2
+
+      ## nested.meta
+
+      | Key    | Value |
+      |--------|-------|
+      | active | true  |"
+    `)
   })
 })

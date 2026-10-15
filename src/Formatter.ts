@@ -20,15 +20,17 @@ export function format(value: unknown, fmt: Format = 'toon'): string {
     }
     return Json.stringify(value, 2)
   }
-  if (fmt === 'yaml') return Yaml.loadSync().stringify(value)
-  if (fmt === 'md') return formatMarkdown(value)
   if (fmt === 'jsonl') {
     if (Array.isArray(value)) return value.map((v) => Json.stringify(v)).join('\n')
     return Json.stringify(value)
   }
+  // Render the same data as the JSON formats (e.g. `undefined` keys dropped, bigints as strings).
+  const data = isScalar(value) ? value : Json.normalize(value)
+  if (fmt === 'yaml') return Yaml.loadSync().stringify(data)
+  if (fmt === 'md') return formatMarkdown(data)
   // toon (default)
-  if (isScalar(value)) return String(value)
-  return encode(value as Record<string, unknown>)
+  if (isScalar(data)) return String(data)
+  return encode(data as Record<string, unknown>)
 }
 
 /** Whether a value is a scalar (string, number, boolean, null, undefined). */
