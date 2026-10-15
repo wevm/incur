@@ -492,7 +492,7 @@ export function create(
   if (def.globals) {
     toGlobals.set(cli, { schema: def.globals, alias: def.globalAlias as any })
     const builtinNames = [
-      'verbose',
+      'fullOutput',
       'format',
       'json',
       'llms',
