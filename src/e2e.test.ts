@@ -3011,6 +3011,18 @@ describe('fetch api', () => {
       expect(body.result.tools.map((t: any) => t.name).sort()).toContain('ping')
     })
 
+    test('tools/list returns no tools for a root-only CLI', async () => {
+      const cli = Cli.create('root-only', { run: () => ({ ok: true }) })
+      const res = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ jsonrpc: '2.0', id: 1, result: { tools: [] } })
+    })
+
     test('GET /mcp returns method not allowed in stateless mode', async () => {
       const cli = createApp()
       const res = await cli.fetch(

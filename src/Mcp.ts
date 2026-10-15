@@ -23,7 +23,11 @@ export async function serve(
 
   const server = new McpServer(
     { name, ...(options.title ? { title: options.title } : undefined), version },
-    options.instructions ? { instructions: options.instructions } : undefined,
+    {
+      // Registers `tools/list` up front so a CLI without tools answers with an empty list.
+      capabilities: { tools: {} },
+      ...(options.instructions ? { instructions: options.instructions } : undefined),
+    },
   )
 
   registerTools(server, commands, {

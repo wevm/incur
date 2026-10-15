@@ -194,6 +194,25 @@ describe('Mcp', () => {
     expect(res.result.tools.some((tool: any) => tool.name === 'echo')).toBe(false)
   })
 
+  test.each(['direct', 'progressive'] as const)(
+    'tools/list returns no tools after initialize when none are exposed (%s)',
+    async (discovery) => {
+      const commands = new Map<string, any>([['hidden', { mcp: false, run: () => null }]])
+      const responses = await mcpSession(
+        commands,
+        [
+          { id: 1, method: 'initialize', params: initParams },
+          { id: 2, method: 'tools/list', params: {} },
+        ],
+        { tools: { discovery } },
+      )
+
+      expect(responses.map((res) => res.id)).toEqual([1, 2])
+      expect(responses[0].result.capabilities.tools).toEqual({ listChanged: true })
+      expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: { tools: [] } })
+    },
+  )
+
   test('progressive discovery searches, inspects, and gates execution', async () => {
     const commands = new Map<string, any>([
       [

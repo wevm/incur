@@ -3399,6 +3399,19 @@ describe('built-in commands', () => {
     }
   })
 
+  test('mcp doctor passes for a root-only CLI', async () => {
+    const cli = Cli.create('test', { run: () => ({ ok: true }) })
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    expect(exitCode).toBeUndefined()
+    expect(JSON.parse(output)).toEqual({
+      ok: true,
+      toolCount: 0,
+      tools: [],
+      warnings: ['No MCP tools exposed.'],
+      errors: [],
+    })
+  })
+
   test('mcp doctor filters malformed tools from tools/list', async () => {
     const spy = mockMcpServeResponses([
       {
