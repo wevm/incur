@@ -73,14 +73,15 @@ export type GenerateOptions = {
 type HttpMethod = 'delete' | 'get' | 'patch' | 'post'
 
 /** Generates an OpenAPI 3.2 document from an incur CLI's command tree. */
-export function fromCli(cli: Cli.Cli, options: GenerateOptions = {}): Document {
+export function fromCli(cli: Cli.Cli<any, any, any, any>, options: GenerateOptions = {}): Document {
   const commands = Cli.toCommands.get(cli)
   if (!commands) throw new Error('No commands registered on this CLI instance')
 
   const paths: NonNullable<Document['paths']> = {}
+  const globals = Cli.toGlobals.get(cli)?.schema
   const root = Cli.toRootDefinition.get(cli as unknown as Cli.Root)
-  if (root) addCommand(paths, [], root)
-  for (const [name, entry] of commands) addEntry(paths, splitCommandName(name), entry)
+  if (root) addCommand(paths, [], root, globals)
+  for (const [name, entry] of commands) addEntry(paths, splitCommandName(name), entry, globals)
 
   return {
     openapi: '3.2.0',
@@ -171,25 +172,39 @@ type OperationEntry = {
   path: string
 }
 
-function addEntry(paths: NonNullable<Document['paths']>, segments: string[], entry: any) {
+function addEntry(
+  paths: NonNullable<Document['paths']>,
+  segments: string[],
+  entry: any,
+  globals: z.ZodObject<any> | undefined,
+) {
   if ('_alias' in entry) return
   if ('_fetch' in entry) return
   if ('_group' in entry) {
-    if (entry.root) addCommand(paths, segments, entry.root)
+    if (entry.root) addCommand(paths, segments, entry.root, globals)
     for (const [name, child] of entry.commands)
-      addEntry(paths, [...segments, ...splitCommandName(name)], child)
+      addEntry(paths, [...segments, ...splitCommandName(name)], child, globals)
     return
   }
-  addCommand(paths, segments, entry)
+  addCommand(paths, segments, entry, globals)
 }
 
 function splitCommandName(name: string) {
   return name.split(/\s+/).filter(Boolean)
 }
 
-function addCommand(paths: NonNullable<Document['paths']>, segments: string[], command: any) {
+function addCommand(
+  paths: NonNullable<Document['paths']>,
+  segments: string[],
+  command: any,
+  globals: z.ZodObject<any> | undefined,
+) {
+  // Globals are read from the same query or body as options and win over a same-named option.
+  const options = globals
+    ? z.object({ ...command.options?.shape, ...globals.shape })
+    : command.options
   const argsSchema = command.args ? Schema.toJsonSchema(command.args) : undefined
-  const optionsSchema = command.options ? Schema.toJsonSchema(command.options) : undefined
+  const optionsSchema = options ? Schema.toJsonSchema(options) : undefined
   const outputSchema = command.output ? Schema.toJsonSchema(command.output) : undefined
   const args = objectProperties(argsSchema)
   const requiredArgs = new Set(requiredProperties(argsSchema))

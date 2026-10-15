@@ -6222,7 +6222,7 @@ describe('fetch', () => {
     }
 
     async function mcpRequest(
-      cli: Cli.Cli<any, any, any>,
+      cli: Cli.Cli<any, any, any, any>,
       body: unknown,
       sessionId?: string,
       extraHeaders: Record<string, string> = {},
@@ -6594,6 +6594,48 @@ describe('fetch', () => {
             "message": "hello world",
           },
           "isError": undefined,
+        }
+      `)
+    })
+
+    test('POST /mcp merges globals into tool schemas and passes them to calls', async () => {
+      const cli = Cli.create('test', {
+        globals: z.object({ rpcUrl: z.string().default('fallback') }),
+        mcp: { tools: { discovery: 'direct' } },
+        vars: z.object({ rpcUrl: z.string().default('') }),
+        version: '1.0.0',
+      })
+        .use(async (c, next) => {
+          c.set('rpcUrl', c.globals.rpcUrl)
+          await next()
+        })
+        .command('ping', {
+          options: z.object({ limit: z.number().default(0) }),
+          run: (c) => ({ globals: c.globals, limit: c.options.limit, middleware: c.var.rpcUrl }),
+        })
+
+      const list = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      })
+      const call = await mcpRequest(cli, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'ping', arguments: { limit: 3, rpcUrl: 'http://example.com' } },
+      })
+
+      const [tool] = (await list.json()).result.tools
+      expect(Object.keys(tool.inputSchema.properties)).toEqual(['limit', 'rpcUrl'])
+      expect(JSON.parse((await call.json()).result.content[0].text)).toMatchInlineSnapshot(`
+        {
+          "globals": {
+            "rpcUrl": "http://example.com",
+          },
+          "limit": 3,
+          "middleware": "http://example.com",
         }
       `)
     })
@@ -7161,6 +7203,20 @@ describe('--mcp', () => {
       await cli.serve(['--mcp'])
       expect(spy).toHaveBeenCalledOnce()
       expect(spy.mock.calls[0]![3]).toMatchObject({ instructions: 'Always pass --dry-run first.' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('globals from create() are forwarded to Mcp.serve', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    try {
+      const globals = z.object({ rpcUrl: z.string() })
+      const cli = Cli.create('test', { globals })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      await cli.serve(['--mcp'])
+      expect(spy).toHaveBeenCalledOnce()
+      expect(spy.mock.calls[0]![3]?.globals).toBe(globals)
     } finally {
       spy.mockRestore()
     }

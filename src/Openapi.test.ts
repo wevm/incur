@@ -145,6 +145,45 @@ describe('fromCli', () => {
     expect(spec.paths?.['/project']?.post).toBeDefined()
     expect(spec.paths?.['/project/list']?.get).toBeDefined()
   })
+
+  test('includes globals in operation inputs', async () => {
+    const cli = Cli.create('api', {
+      globals: z.object({ network: z.enum(['mainnet', 'testnet']).describe('Network to use') }),
+    })
+      .command('users list', {
+        options: z.object({ limit: z.number().optional() }),
+        run: () => ({}),
+      })
+      .command('users create', {
+        options: z.object({ name: z.string() }),
+        run: () => ({}),
+      })
+      .command('deploy', { run: () => ({}) })
+
+    const spec = Openapi.fromCli(cli)
+    const network = { description: 'Network to use', enum: ['mainnet', 'testnet'], type: 'string' }
+    expect(spec.paths?.['/users/list']?.get?.parameters).toEqual([
+      { name: 'limit', in: 'query', schema: { type: 'number' } },
+      { name: 'network', in: 'query', required: true, schema: network },
+    ])
+    expect(spec.paths?.['/users/create']?.post?.requestBody).toMatchObject({
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            properties: { name: { type: 'string' }, network },
+            required: ['name', 'network'],
+          },
+        },
+      },
+    })
+    expect(spec.paths?.['/deploy']?.post?.requestBody).toMatchObject({
+      content: { 'application/json': { schema: { properties: { network } } } },
+    })
+
+    const served = await cli.fetch(new Request('http://localhost/openapi.json'))
+    expect((await served.json()).paths).toEqual(spec.paths)
+  })
 })
 
 describe('generateCommands', () => {
