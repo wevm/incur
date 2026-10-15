@@ -609,4 +609,70 @@ describe('parseGlobals', () => {
     const result = Parser.parseGlobals(['--tag=foo', '--tag=bar'], schema)
     expect(result.parsed).toEqual({ tag: ['foo', 'bar'] })
   })
+
+  describe('with command options', () => {
+    const schema = z.object({ network: z.string().optional(), yes: z.boolean().default(false) })
+    const alias = { network: 'n', yes: 'y' }
+    const command = {
+      alias: { data: 'd', silent: 's' },
+      options: z.object({ data: z.string().optional(), silent: z.boolean().default(false) }),
+    }
+
+    test.each([
+      // A command option value that looks like a global stays with the option
+      { argv: '-d --network=x', parsed: {}, rest: '-d --network=x' },
+      { argv: '--data --network=x', parsed: {}, rest: '--data --network=x' },
+      { argv: '--data=--network=x', parsed: {}, rest: '--data=--network=x' },
+      { argv: '-d -n', parsed: {}, rest: '-d -n' },
+      { argv: '-d -yn', parsed: {}, rest: '-d -yn' },
+      // A global value that looks like a flag stays with the global
+      { argv: '--network -d', parsed: { network: '-d' }, rest: '' },
+      // Globals before and after the command
+      { argv: '--network x deploy -d v', parsed: { network: 'x' }, rest: 'deploy -d v' },
+      { argv: 'deploy -d v --network x', parsed: { network: 'x' }, rest: 'deploy -d v' },
+      // Stacked shorts split into globals and command options
+      { argv: '-sn x', parsed: { network: 'x' }, rest: '-s' },
+      { argv: '-ys', parsed: { yes: true }, rest: '-s' },
+      { argv: '-ysd --network=x', parsed: { yes: true }, rest: '-sd --network=x' },
+      { argv: '-sd v', parsed: {}, rest: '-sd v' },
+      // A flag of unknown arity leaves the remaining tokens untouched
+      { argv: '--other --network=x', parsed: {}, rest: '--other --network=x' },
+      { argv: '-o -n x', parsed: {}, rest: '-o -n x' },
+      // `--no-flag` and `--flag=value` never take a value
+      {
+        argv: '--no-color --other=v --network x',
+        parsed: { network: 'x' },
+        rest: '--no-color --other=v',
+      },
+    ])('$argv', ({ argv, parsed, rest }) => {
+      expect(Parser.parseGlobals(argv.split(' '), schema, alias, { command })).toEqual({
+        parsed: { yes: false, ...parsed },
+        rest: rest ? rest.split(' ') : [],
+      })
+    })
+
+    test.each([
+      { argv: '-d v --network', error: 'Missing value for flag: --network' },
+      { argv: '-s -n', error: 'Missing value for flag: -n' },
+      { argv: '-ns x', error: 'Non-boolean flag -n must be last in a stacked alias' },
+      { argv: '-ds x', error: 'Non-boolean flag -d must be last in a stacked alias' },
+    ])('$argv throws $error', ({ argv, error }) => {
+      expect(() => Parser.parseGlobals(argv.split(' '), schema, alias, { command })).toThrow(
+        expect.objectContaining({ name: 'Incur.ParseError', message: error }),
+      )
+    })
+
+    test('unresolved command: stops at the first non-global flag', () => {
+      const result = Parser.parseGlobals(
+        ['--network', 'x', 'deploy', '-y', '-d', '--network=y'],
+        schema,
+        alias,
+        { command: {} },
+      )
+      expect(result).toEqual({
+        parsed: { network: 'x', yes: true },
+        rest: ['deploy', '-d', '--network=y'],
+      })
+    })
+  })
 })

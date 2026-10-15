@@ -834,31 +834,38 @@ async function serveImpl(
     version: options.version,
   }
 
-  let globals: Record<string, unknown> = {}
-  let filtered = rest
+  // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
+  if (formatFlag === 'yaml') await Yaml.load()
 
-  function parseGlobalOptions(validate: boolean) {
-    if (!options.globals) return true
+  let globals: Record<string, unknown> = {}
+
+  /** Parses globals from `rest` and returns the remaining argv, or `undefined` after reporting an error. */
+  function parseGlobalOptions(validate: boolean, command?: Parser.parseGlobals.Options['command']) {
+    if (!options.globals) return rest
     try {
       const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias, {
+        command,
         validate,
       })
       if (validate) globals = result.parsed
-      filtered = result.rest
-      return true
+      return result.rest
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
-      else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+      // Report like command option errors
+      const output = {
+        code: error instanceof ValidationError ? 'VALIDATION_ERROR' : 'UNKNOWN',
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ValidationError ? { fieldErrors: error.fieldErrors } : undefined),
+      }
+      if (human) writeln(formatHumanError(output))
+      else writeln(Formatter.format(output, formatFlag))
       exit(1)
-      return false
+      return undefined
     }
   }
 
-  if (!parseGlobalOptions(false)) return
-
-  // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
-  if (formatFlag === 'yaml') await Yaml.load()
+  // The command is not resolved yet, so stop at its first flag: it may take a value.
+  const filtered = parseGlobalOptions(false, {})
+  if (!filtered) return
 
   if (updateCheck) {
     if (options.update !== false)
@@ -1737,10 +1744,16 @@ async function serveImpl(
     return
   }
 
+  // Globals are re-parsed from the full argv once the command is known. Only globals can precede
+  // the command path, so every parse starts with the same `depth` path tokens.
+  const depth = filtered.length - effective.rest.length
+
   // Fetch gateway execution path
   if ('fetchGateway' in effective) {
-    if (!parseGlobalOptions(true)) return
-    const { fetchGateway, path, rest: fetchRest } = effective
+    const parsed = parseGlobalOptions(true)
+    if (!parsed) return
+    const fetchRest = parsed.slice(depth)
+    const { fetchGateway, path } = effective
     const fetchMiddleware = [
       ...(options.middlewares ?? []),
       ...((effective as any).middlewares ?? []),
@@ -1868,9 +1881,14 @@ async function serveImpl(
     return
   }
 
-  const { command, path, rest: commandRest } = effective
+  const { command, path } = effective
 
-  if (!parseGlobalOptions(true)) return
+  const parsed = parseGlobalOptions(true, {
+    alias: command.alias as Record<string, string> | undefined,
+    options: command.options,
+  })
+  if (!parsed) return
+  const commandRest = parsed.slice(depth)
 
   // Collect middleware: root CLI + groups traversed + per-command
   const allMiddleware = [

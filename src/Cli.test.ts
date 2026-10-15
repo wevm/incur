@@ -6902,6 +6902,128 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ url: 'http://x' })
   })
 
+  describe('with command options', () => {
+    function create() {
+      return Cli.create('test', {
+        globals: z.object({
+          limit: z.number().optional(),
+          network: z.string().default('mainnet'),
+          yes: z.boolean().default(false),
+        }),
+        globalAlias: { network: 'n', yes: 'y' },
+      }).command('send', {
+        options: z.object({
+          count: z.number().optional(),
+          data: z.string().optional(),
+          silent: z.boolean().default(false),
+        }),
+        alias: { data: 'd', silent: 's' },
+        run: (c) => ({ globals: c.globals, options: c.options }),
+      })
+    }
+
+    test.each([
+      // A command option value that looks like a global stays with the option
+      { argv: 'send -d --network=testnet', options: { data: '--network=testnet' } },
+      { argv: 'send --data --network=testnet', options: { data: '--network=testnet' } },
+      { argv: 'send --data=--network=testnet', options: { data: '--network=testnet' } },
+      { argv: 'send -d -n', options: { data: '-n' } },
+      // Globals before and after the command
+      {
+        argv: '--network testnet send -d x',
+        globals: { network: 'testnet' },
+        options: { data: 'x' },
+      },
+      {
+        argv: 'send -d x --network testnet',
+        globals: { network: 'testnet' },
+        options: { data: 'x' },
+      },
+      {
+        argv: '-n testnet send -s -y',
+        globals: { network: 'testnet', yes: true },
+        options: { silent: true },
+      },
+      // Stacked shorts that include a global alias
+      { argv: 'send -sn testnet', globals: { network: 'testnet' }, options: { silent: true } },
+      {
+        argv: 'send -ysd --network=testnet',
+        globals: { yes: true },
+        options: { data: '--network=testnet', silent: true },
+      },
+      // Unchanged
+      { argv: 'send' },
+      {
+        argv: 'send --network=testnet -sd x',
+        globals: { network: 'testnet' },
+        options: { data: 'x', silent: true },
+      },
+    ])('$argv', async ({ argv, globals, options }) => {
+      const { output, exitCode } = await serve(create(), [...argv.split(' '), '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toEqual({
+        globals: { network: 'mainnet', yes: false, ...globals },
+        options: { silent: false, ...options },
+      })
+    })
+
+    test.each([
+      {
+        global: '--network',
+        option: '--data',
+        error: { code: 'UNKNOWN', message: 'Missing value for flag: --network' },
+      },
+      {
+        global: '-s -n',
+        option: '-s -d',
+        error: { code: 'UNKNOWN', message: 'Missing value for flag: -n' },
+      },
+      {
+        global: '--limit abc',
+        option: '--count abc',
+        error: {
+          code: 'VALIDATION_ERROR',
+          fieldErrors: [expect.objectContaining({ path: 'limit' })],
+        },
+      },
+    ])('send $global errors like send $option', async ({ global, option, error }) => {
+      const cli = create()
+      const globalResult = await serve(cli, ['send', ...global.split(' '), '--json'])
+      const optionResult = await serve(cli, ['send', ...option.split(' '), '--json'])
+      expect(globalResult.exitCode).toBe(1)
+      expect(globalResult.exitCode).toBe(optionResult.exitCode)
+      expect(JSON.parse(globalResult.output)).toMatchObject(error)
+      expect(JSON.parse(globalResult.output).code).toBe(JSON.parse(optionResult.output).code)
+    })
+
+    test('root command option value that looks like a global stays with the option', async () => {
+      const cli = Cli.create('test', {
+        globals: z.object({ network: z.string().default('mainnet') }),
+        options: z.object({ data: z.string().optional() }),
+        alias: { data: 'd' },
+        run: (c) => ({ data: c.options.data, network: c.globals.network }),
+      })
+
+      const { output } = await serve(cli, ['-d', '--network=testnet', '--json'])
+      expect(JSON.parse(output)).toEqual({ data: '--network=testnet', network: 'mainnet' })
+    })
+  })
+
+  test('globals after fetch gateway flags are parsed', async () => {
+    const { app } = await import('../test/fixtures/hono-api.js')
+    let rpcUrl: string | undefined
+    const cli = Cli.create('test', { globals: z.object({ rpcUrl: z.string() }) })
+      .use(async (c, next) => {
+        rpcUrl = c.globals.rpcUrl
+        await next()
+      })
+      .command('api', { fetch: app.fetch })
+
+    const { output } = await serve(cli, ['api', 'users', '--limit', '5', '--rpc-url', 'http://x'])
+    expect(rpcUrl).toBe('http://x')
+    expect(output).toContain('limit: 5')
+  })
+
   test.each(['format', 'incurBinaryApply'])(
     'global %s conflicts with builtins at create() time',
     (name) => {
@@ -7009,7 +7131,7 @@ describe('globals', () => {
 
     const { output, exitCode } = await serve(cli, ['--limit', 'abc', 'ping'])
     expect(exitCode).toBe(1)
-    expect(output).toContain('UNKNOWN')
+    expect(output).toContain('code: VALIDATION_ERROR')
     ;(process.stdout as any).isTTY = true
   })
 

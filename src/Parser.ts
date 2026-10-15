@@ -335,14 +335,21 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   return value
 }
 
-/** Parses known global options from argv, passing unknown flags and positionals through to `rest`. */
+/**
+ * Parses known global options from argv, passing unknown flags and positionals through to `rest`.
+ *
+ * With `options.command`, flags are read with the command's option arity, so a token consumed as
+ * the value of a command option is never read as a global.
+ */
 export function parseGlobals<const globals extends z.ZodObject<any>>(
   argv: string[],
   schema: globals,
   alias?: Record<string, string>,
   options: parseGlobals.Options = {},
 ): { parsed: z.output<globals>; rest: string[] } {
+  const { command } = options
   const optionNames = createOptionNames(schema, alias)
+  const commandNames = command ? createOptionNames(command.options, command.alias) : undefined
 
   const rest: string[] = []
   const rawOptions: Record<string, unknown> = {}
@@ -351,7 +358,8 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
   while (i < argv.length) {
     const token = argv[i]!
 
-    if (token === '--') {
+    // A flag that may take a value we cannot identify leaves the remaining tokens untouched
+    if (token === '--' || (commandNames && isUnknownFlag(token, optionNames, commandNames))) {
       for (let j = i; j < argv.length; j++) rest.push(argv[j]!)
       break
     }
@@ -380,9 +388,14 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
         // --flag [value]
         const name = normalizeOptionName(token.slice(2), optionNames)
         if (!name) {
-          // Unknown flag — pass through as-is
+          // Not a global — pass through as-is, with its value if it is a value-taking command option
           rest.push(token)
           i++
+          const commandName = commandNames && normalizeOptionName(token.slice(2), commandNames)
+          if (commandName && takesValue(commandName, command!.options) && i < argv.length) {
+            rest.push(argv[i]!)
+            i++
+          }
         } else if (isCountOption(name, schema)) {
           rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
           i++
@@ -402,7 +415,7 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
       const chars = token.slice(1)
       let allKnown = true
       for (let j = 0; j < chars.length; j++) {
-        if (!optionNames.aliasToName.has(chars[j]!)) {
+        if (!optionNames.aliasToName.has(chars[j]!) && !commandNames?.aliasToName.has(chars[j]!)) {
           allKnown = false
           break
         }
@@ -413,11 +426,23 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
         rest.push(token)
         i++
       } else {
+        // Command aliases stay stacked in `rest`, followed by the value of the last one if it takes one
+        let commandChars = ''
+        let commandValue: string | undefined
         for (let j = 0; j < chars.length; j++) {
           const short = chars[j]!
-          const name = optionNames.aliasToName.get(short)!
+          const name = optionNames.aliasToName.get(short)
           const isLast = j === chars.length - 1
-          if (!isLast) {
+          if (!name) {
+            commandChars += short
+            if (!takesValue(commandNames!.aliasToName.get(short)!, command!.options)) continue
+            if (!isLast)
+              throw new ParseError({
+                message: `Non-boolean flag -${short} must be last in a stacked alias`,
+              })
+            commandValue = argv[i + 1]
+            if (commandValue !== undefined) i++
+          } else if (!isLast) {
             if (isCountOption(name, schema)) {
               rawOptions[name] = ((rawOptions[name] as number) ?? 0) + 1
             } else if (isBooleanOption(name, schema)) {
@@ -439,6 +464,8 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
             i++
           }
         }
+        if (commandChars) rest.push(`-${commandChars}`)
+        if (commandValue !== undefined) rest.push(commandValue)
         i++
       }
     } else {
@@ -461,9 +488,41 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
 export declare namespace parseGlobals {
   /** Options for parsing global flags. */
   type Options = {
+    /**
+     * The command that receives `rest`. Values of its value-taking options pass through to `rest`
+     * untouched. A flag that is neither a global nor a command option may take a value, so it and
+     * all following tokens pass through unparsed. Pass `{}` when the command is not yet known.
+     */
+    command?:
+      | {
+          /** Map of command option names to single-char aliases. */
+          alias?: Record<string, string> | undefined
+          /** Zod schema for the command's options. */
+          options?: z.ZodObject<any> | undefined
+        }
+      | undefined
     /** Whether to validate parsed globals against the schema. */
     validate?: boolean | undefined
   }
+}
+
+/** Checks if a flag that may take the next token as its value is neither a global nor a command option. */
+function isUnknownFlag(token: string, globals: OptionNames, command: OptionNames): boolean {
+  if (token.startsWith('--')) {
+    // `--no-flag` and `--flag=value` never take the next token
+    if (token.startsWith('--no-') || token.includes('=')) return false
+    const raw = token.slice(2)
+    return !normalizeOptionName(raw, globals) && !normalizeOptionName(raw, command)
+  }
+  if (!token.startsWith('-') || token.length < 2) return false
+  for (const short of token.slice(1))
+    if (!globals.aliasToName.has(short) && !command.aliasToName.has(short)) return true
+  return false
+}
+
+/** Checks if an option takes the next token as its value. */
+function takesValue(name: string, schema: z.ZodObject<any> | undefined): boolean {
+  return !isCountOption(name, schema) && !isBooleanOption(name, schema)
 }
 
 /** Returns the best available env source for the current runtime. */
