@@ -154,11 +154,15 @@ function packageDependsOn(root: string, name: string): boolean {
   }
 }
 
+/** @internal Checks whether `name` is a safe npm package name (e.g. `my-cli` or `@scope/my-cli`). */
+export function isPackageName(name: string): boolean {
+  return safePackageNamePattern.test(name)
+}
+
 /** @internal Detects the safe package specifier used to run this CLI. */
 export function detectPackageSpecifier(name: string, pkg?: string, version?: string): string {
   if (pkg !== undefined) {
-    if (!safePackageNamePattern.test(pkg))
-      throw new Error(`Invalid npm package name: ${pkg}`)
+    if (!isPackageName(pkg)) throw new Error(`Invalid npm package name: ${pkg}`)
     if (version !== undefined && !exactVersionPattern.test(version))
       throw new Error(`Invalid exact package version: ${version}`)
     return version === undefined ? pkg : `${pkg}@${version}`

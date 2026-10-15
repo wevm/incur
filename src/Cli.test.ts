@@ -3780,6 +3780,37 @@ describe('skills staleness', () => {
     }
   })
 
+  test.each([
+    // A package manager runs the trusted package, including for a multi-word CLI name.
+    ['my-cli', '@example/my-cli', 'pnpm/10.0.0', 'pnpx @example/my-cli skills add'],
+    ['tempo wallet', '@tempo/wallet', 'pnpm/10.0.0', 'pnpx @tempo/wallet skills add'],
+    // Without a package, a CLI name that is a package name is run as that package.
+    ['my-cli', undefined, 'pnpm/10.0.0', 'pnpx my-cli skills add'],
+    ['my-cli', undefined, 'bun/1.3.0', 'bunx my-cli skills add'],
+    // Without a package, a CLI name that is not a package name runs the installed binary.
+    ['tempo wallet', undefined, 'pnpm/10.0.0', 'tempo wallet skills add'],
+    ['tempo wallet', undefined, 'npm/10.0.0', 'tempo wallet skills add'],
+    // Outside a package manager, the installed binary runs.
+    ['my-cli', '@example/my-cli', '', 'my-cli skills add'],
+    ['tempo wallet', '@tempo/wallet', '', 'tempo wallet skills add'],
+  ])(
+    'stale skills CTA for %j (package: %s, agent: %j) is %j',
+    async (name, pkg, agent, expected) => {
+      vi.stubEnv('npm_config_user_agent', agent)
+      vi.stubEnv('npm_execpath', '')
+      try {
+        __mockSkillsHash = '0000000000000000'
+        const cli = Cli.create(name, { package: pkg })
+        cli.command('ping', { run: () => ({ pong: true }) })
+
+        const { output } = await serve(cli, ['ping', '--json', '--full-output'])
+        expect(JSON.parse(output).meta.cta.commands[0].command).toBe(expected)
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    },
+  )
+
   test('sync false disables generated skills', async () => {
     __mockSkillsHash = '0000000000000000'
     const spy = vi.spyOn(SyncSkills, 'sync')

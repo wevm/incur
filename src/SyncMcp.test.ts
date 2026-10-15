@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detectPackageSpecifier, register } from './SyncMcp.js'
+import { detectPackageSpecifier, isPackageName, register } from './SyncMcp.js'
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
@@ -97,6 +97,19 @@ test('returns bare name for range specifier', () => {
 test('returns bare name for tag specifier', () => {
   setupPkg({ 'my-cli': 'latest' })
   expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
+})
+
+// --- isPackageName tests ---
+
+test.each([
+  ['my-cli', true],
+  ['@example/my-cli', true],
+  ['tempo wallet', false],
+  ['My-CLI', false],
+  ['my-cli --inspect', false],
+  ['', false],
+])('isPackageName(%j) is %s', (name, expected) => {
+  expect(isPackageName(name)).toBe(expected)
 })
 
 // --- register tests ---

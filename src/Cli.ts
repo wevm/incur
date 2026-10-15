@@ -974,8 +974,10 @@ async function serveImpl(
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
+          // A CLI name that is not a package name (e.g. `tempo wallet`) cannot be run by a package runner.
           const command =
-            process.env.npm_config_user_agent || process.env.npm_execpath
+            (process.env.npm_config_user_agent || process.env.npm_execpath) &&
+            (options.package !== undefined || SyncMcp.isPackageName(name))
               ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(
                   name,
                   options.package,
