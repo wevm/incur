@@ -13,6 +13,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     description,
     globals,
     hideSkills = false,
+    hideUpdate = false,
     version,
     commands = [],
     root = false,
@@ -41,7 +42,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills))
+  lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills, hideUpdate))
 
   return lines.join('\n')
 }
@@ -60,6 +61,8 @@ export declare namespace formatRoot {
     globals?: GlobalsDescriptor | undefined
     /** Hide the built-in skills integration. */
     hideSkills?: boolean | undefined
+    /** Hide the built-in `--update` flag. */
+    hideUpdate?: boolean | undefined
     /** Show root-level built-in commands and flags. */
     root?: boolean | undefined
     /** CLI version string. */
@@ -95,6 +98,8 @@ export declare namespace formatCommand {
     hideGlobalOptions?: boolean | undefined
     /** Hide the built-in skills integration. */
     hideSkills?: boolean | undefined
+    /** Hide the built-in `--update` flag. */
+    hideUpdate?: boolean | undefined
     /** Zod schema for named options/flags. */
     options?: z.ZodObject<any> | undefined
     /** Show root-level built-in commands and flags. */
@@ -122,6 +127,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     description,
     globals,
     hideSkills = false,
+    hideUpdate = false,
     version,
     args,
     env,
@@ -227,7 +233,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   }
 
   if (!options.hideGlobalOptions)
-    lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills))
+    lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills, hideUpdate))
 
   // Environment Variables
   if (env) {
@@ -366,6 +372,7 @@ function globalOptionsLines(
   configFlag?: string,
   globals?: GlobalsDescriptor,
   hideSkills = false,
+  hideUpdate = false,
 ): string[] {
   const lines: string[] = []
 
@@ -429,7 +436,7 @@ function globalOptionsLines(
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
     { flag: '--full-output', desc: 'Show full output envelope' },
-    ...(root ? [{ flag: '--update', desc: 'Update to latest version' }] : []),
+    ...(root && !hideUpdate ? [{ flag: '--update', desc: 'Update to latest version' }] : []),
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ].sort((a, b) => a.flag.localeCompare(b.flag))
   const maxLen = Math.max(...flags.map((f) => f.flag.length))

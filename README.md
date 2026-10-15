@@ -999,7 +999,7 @@ const cli = Cli.create('my-cli', {
 
 Standalone executables configured with `Binary.github` use the same detached check path and install only after an explicit `--update`.
 
-Set `update: false` to disable automatic notices. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` also suppress notices without disabling explicit updates.
+Set `update: false` to disable automatic notices and the built-in `--update` flag, so `--update` is parsed like any other flag. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` also suppress notices without disabling explicit updates.
 
 ### Global options
 

@@ -3928,6 +3928,58 @@ describe('update notices', () => {
     expect(output).not.toContain('Update available')
   })
 
+  test('update false hides --update from root help', async () => {
+    const cli = Cli.create('frog', { update: false })
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--help'])
+
+    expect(output).toContain('--version')
+    expect(output).not.toContain('--update')
+  })
+
+  test.each([
+    // At the root, `--update` is not a command.
+    [['--update'], "'--update' is not a command for 'frog'"],
+    // A command without an `update` option rejects it.
+    [['ping', '--update'], 'Unknown flag: --update'],
+  ])('update false rejects %j as an unknown flag', async (argv, message) => {
+    const cli = Cli.create('frog', { update: false })
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { exitCode, output } = await serve(cli, argv)
+
+    expect(exitCode).toBe(1)
+    expect(output).toContain(message)
+    expect(__mockInstallCalls).toBe(0)
+  })
+
+  test('update false passes --update to command options', async () => {
+    const cli = Cli.create('frog', { update: false })
+    cli.command('sync', {
+      options: z.object({ update: z.boolean().default(false) }),
+      run: (c) => ({ update: c.options.update }),
+    })
+
+    const { output } = await serve(cli, ['sync', '--update', '--json'])
+
+    expect(JSON.parse(output)).toEqual({ update: true })
+    expect(__mockInstallCalls).toBe(0)
+  })
+
+  test('update false allows an update global option', async () => {
+    const cli = Cli.create('frog', {
+      globals: z.object({ update: z.boolean().default(false) }),
+      update: false,
+    })
+    cli.command('sync', { run: (c) => ({ update: c.globals.update }) })
+
+    const { output } = await serve(cli, ['--update', 'sync', '--json'])
+
+    expect(JSON.parse(output)).toEqual({ update: true })
+    expect(__mockInstallCalls).toBe(0)
+  })
+
   test('omits update notices from structured agent output', async () => {
     ;(process.stdout as any).isTTY = false
     const cli = Cli.create('frog')

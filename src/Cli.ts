@@ -501,7 +501,7 @@ export function create(
       'help',
       'incurBinaryApply',
       'incurUpdateCheck',
-      'update',
+      ...(def.update === false ? [] : ['update']),
       'version',
       'schema',
       'filterOutput',
@@ -700,7 +700,7 @@ export declare namespace create {
           suggestions?: string[] | undefined
         }
       | undefined
-    /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks. */
+    /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks and the built-in `--update` flag. */
     update?: false | UpdateOptions | undefined
     /** The CLI version string. */
     version?: string | undefined
@@ -773,6 +773,7 @@ async function serveImpl(
   const configFlag = options.config?.flag
   const displayName = resolveDisplayName(name, options.aliases)
   const skillsEnabled = options.sync !== false
+  const updateEnabled = options.update !== false
   const sync = options.sync === false ? undefined : options.sync
   const builtins = skillsEnabled
     ? builtinCommands
@@ -798,7 +799,7 @@ async function serveImpl(
 
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
   try {
-    builtinFlags = extractBuiltinFlags(argv, { configFlag })
+    builtinFlags = extractBuiltinFlags(argv, { configFlag, update: updateEnabled })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
@@ -1367,6 +1368,7 @@ async function serveImpl(
           usage: cmd.usage,
           commands: commands.size > 0 ? collectHelpCommands(commands) : undefined,
           hideSkills: !skillsEnabled,
+          hideUpdate: !updateEnabled,
           root: true,
         }),
       )
@@ -1385,6 +1387,7 @@ async function serveImpl(
           version: options.version,
           commands: collectHelpCommands(commands),
           hideSkills: !skillsEnabled,
+          hideUpdate: !updateEnabled,
           root: true,
         }),
       )
@@ -1420,6 +1423,7 @@ async function serveImpl(
           version: options.version,
           commands: collectHelpCommands(commands),
           hideSkills: !skillsEnabled,
+          hideUpdate: !updateEnabled,
           root: true,
         }),
       )
@@ -1455,6 +1459,7 @@ async function serveImpl(
             usage: cmd.usage,
             commands: collectHelpCommands(helpCmds),
             hideSkills: !skillsEnabled,
+            hideUpdate: !updateEnabled,
             root: true,
           }),
         )
@@ -1468,6 +1473,7 @@ async function serveImpl(
             version: isRoot ? options.version : undefined,
             commands: collectHelpCommands(helpCmds),
             hideSkills: !skillsEnabled,
+            hideUpdate: !updateEnabled,
             root: isRoot,
           }),
         )
@@ -1499,6 +1505,7 @@ async function serveImpl(
           usage: cmd.usage,
           commands: helpSubcommands,
           hideSkills: !skillsEnabled,
+          hideUpdate: !updateEnabled,
           root: isRootCmd,
         }),
       )
@@ -2797,7 +2804,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
     else if (token === '--help' || token === '-h') help = true
-    else if (token === '--update') update = true
+    else if (token === '--update' && options.update !== false) update = true
     else if (token === Update.checkFlag) updateCheck = true
     // A following value belongs to a command-local `--version` option.
     else if (token === '--version' && (argv[i + 1] === undefined || argv[i + 1]!.startsWith('-')))
@@ -2874,6 +2881,8 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
 declare namespace extractBuiltinFlags {
   type Options = {
     configFlag?: string | undefined
+    /** Whether `--update` is a built-in flag. Defaults to `true`. */
+    update?: boolean | undefined
   }
 }
 
