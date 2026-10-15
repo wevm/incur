@@ -672,4 +672,65 @@ describe('serve integration', () => {
     expect(output).toContain('--target\tBuild target')
     expect(output).toContain('--watch\tWatch mode')
   })
+
+  test('COMPLETE skips built-in and global flag values before the cursor', async () => {
+    const cli = Cli.create('mycli', {
+      config: { flag: 'config' },
+      globals: z.object({ network: z.string() }),
+      globalAlias: { network: 'n' },
+    })
+    cli.command('build', {
+      options: z.object({ version: z.enum(['latest', 'next']).optional() }),
+      run: () => ({}),
+    })
+    cli.command(Cli.create('db').command('migrate', { run: () => ({}) }))
+
+    const results: Record<string, string> = {}
+    for (const line of [
+      // Global values
+      'mycli --network testnet com',
+      'mycli -n testnet com',
+      'mycli --network db ',
+      'mycli --network testnet skills ',
+      // Built-in flag values
+      'mycli --format json ',
+      'mycli --filter-output a.b ',
+      'mycli --token-limit 5 --token-offset 10 ',
+      'mycli --config mycli.json ',
+      // A value at the cursor
+      'mycli --format j',
+      'mycli --network ',
+      // `--version` is a command option when followed by a value, and the built-in flag otherwise
+      'mycli build --version ',
+      'mycli build --version n',
+      'mycli --version ',
+    ]) {
+      const words = line.split(' ')
+      const output = await serve(cli, ['--', ...words], {
+        COMPLETE: 'fish',
+        _COMPLETE_INDEX: String(words.length - 1),
+      })
+      results[line] = output
+        .split('\n')
+        .map((candidate) => candidate.split('\t')[0])
+        .join(' ')
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "mycli --config mycli.json ": "build db completions mcp skills",
+        "mycli --filter-output a.b ": "build db completions mcp skills",
+        "mycli --format j": "",
+        "mycli --format json ": "build db completions mcp skills",
+        "mycli --network ": "",
+        "mycli --network db ": "build db completions mcp skills",
+        "mycli --network testnet com": "completions",
+        "mycli --network testnet skills ": "build db add list ls",
+        "mycli --token-limit 5 --token-offset 10 ": "build db completions mcp skills",
+        "mycli --version ": "build db completions mcp skills",
+        "mycli -n testnet com": "completions",
+        "mycli build --version ": "latest next",
+        "mycli build --version n": "next",
+      }
+    `)
+  })
 })

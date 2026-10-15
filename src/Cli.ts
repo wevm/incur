@@ -796,6 +796,72 @@ async function serveImpl(
     } catch {}
   }
 
+  // COMPLETE: dynamic shell completions (called by shell hook at tab-press)
+  const completeShell = process.env.COMPLETE as Shell | undefined
+  if (completeShell) {
+    // Remove separator `--` from argv
+    const sepIdx = argv.indexOf('--')
+    const words = sepIdx !== -1 ? argv.slice(sepIdx + 1) : argv
+    if (words.length === 0) {
+      // Registration mode: print shell hook script for primary name + aliases
+      const names = [name, ...(options.aliases ?? [])]
+      stdout(names.map((n) => Completions.register(completeShell, n)).join('\n'))
+    } else {
+      const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
+      // Read the words before the cursor like dispatch does, without built-in and global flags
+      // or their values. The word at the cursor may be a partial value, so it is not parsed.
+      const before = (() => {
+        try {
+          const { rest } = extractBuiltinFlags(words.slice(0, index), { configFlag })
+          // A trailing `--version` is read as the built-in flag, but it may be a command option
+          // whose value is the word at the cursor
+          if (words[index - 1] === '--version') rest.push('--version')
+          // No globals to drop
+          if (!options.globals) return rest
+          // Drop globals and their values
+          const { alias, schema } = options.globals
+          return Parser.parseGlobals(rest, schema, alias, { validate: false }).rest
+        } catch {
+          // A flag before the cursor has an invalid value, or the cursor is at its missing value
+          return undefined
+        }
+      })()
+      const candidates = Completions.complete(
+        commands,
+        options.rootCommand,
+        before ? [...before, ...words.slice(index)] : words,
+        before?.length ?? index,
+        options.globals
+          ? { schema: options.globals.schema, alias: options.globals.alias }
+          : undefined,
+      )
+      // Add built-in commands (completions, mcp, skills) to completions
+      const current = words[index] ?? ''
+      const nonFlags = before?.filter((w) => !w.startsWith('-'))
+      if (nonFlags && nonFlags.length <= 1) {
+        for (const b of builtins) {
+          if (b.name.startsWith(current) && !candidates.some((c) => c.value === b.name))
+            candidates.push({
+              value: b.name,
+              description: b.description,
+              ...(b.subcommands ? { noSpace: true } : undefined),
+            })
+        }
+      } else if (nonFlags?.length === 2) {
+        const parent = nonFlags[nonFlags.length - 1]!
+        const builtin = findBuiltin(parent)
+        if (builtin?.subcommands && builtins.includes(builtin))
+          for (const sub of builtin.subcommands)
+            for (const value of [sub.name, ...(sub.aliases ?? [])])
+              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+                candidates.push({ value, description: sub.description })
+      }
+      const out = Completions.format(completeShell, candidates)
+      if (out) stdout(out)
+    }
+    return
+  }
+
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
   try {
     builtinFlags = extractBuiltinFlags(argv, { configFlag })
@@ -903,54 +969,6 @@ async function serveImpl(
       ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
       ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
     })
-    return
-  }
-
-  // COMPLETE: dynamic shell completions (called by shell hook at tab-press)
-  const completeShell = process.env.COMPLETE as Shell | undefined
-  if (completeShell) {
-    // Remove separator `--` from argv
-    const sepIdx = argv.indexOf('--')
-    const words = sepIdx !== -1 ? argv.slice(sepIdx + 1) : argv
-    if (words.length === 0) {
-      // Registration mode: print shell hook script for primary name + aliases
-      const names = [name, ...(options.aliases ?? [])]
-      stdout(names.map((n) => Completions.register(completeShell, n)).join('\n'))
-    } else {
-      const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
-      const candidates = Completions.complete(
-        commands,
-        options.rootCommand,
-        words,
-        index,
-        options.globals
-          ? { schema: options.globals.schema, alias: options.globals.alias }
-          : undefined,
-      )
-      // Add built-in commands (completions, mcp, skills) to completions
-      const current = words[index] ?? ''
-      const nonFlags = words.slice(0, index).filter((w) => !w.startsWith('-'))
-      if (nonFlags.length <= 1) {
-        for (const b of builtins) {
-          if (b.name.startsWith(current) && !candidates.some((c) => c.value === b.name))
-            candidates.push({
-              value: b.name,
-              description: b.description,
-              ...(b.subcommands ? { noSpace: true } : undefined),
-            })
-        }
-      } else if (nonFlags.length === 2) {
-        const parent = nonFlags[nonFlags.length - 1]!
-        const builtin = findBuiltin(parent)
-        if (builtin?.subcommands && builtins.includes(builtin))
-          for (const sub of builtin.subcommands)
-            for (const value of [sub.name, ...(sub.aliases ?? [])])
-              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
-                candidates.push({ value, description: sub.description })
-      }
-      const out = Completions.format(completeShell, candidates)
-      if (out) stdout(out)
-    }
     return
   }
 
