@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detectPackageSpecifier, register } from './SyncMcp.js'
+import { detectPackageSpecifier, isPackageName, register } from './SyncMcp.js'
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
@@ -97,6 +97,19 @@ test('returns bare name for range specifier', () => {
 test('returns bare name for tag specifier', () => {
   setupPkg({ 'my-cli': 'latest' })
   expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
+})
+
+// --- isPackageName tests ---
+
+test.each([
+  ['my-cli', true],
+  ['@example/my-cli', true],
+  ['tempo wallet', false],
+  ['My-CLI', false],
+  ['my-cli --inspect', false],
+  ['', false],
+])('isPackageName(%j) is %s', (name, expected) => {
+  expect(isPackageName(name)).toBe(expected)
 })
 
 // --- register tests ---
@@ -271,6 +284,32 @@ test('register uses runner for node_modules installs', async () => {
   // Should include a runner prefix (npx, pnpx, or bunx)
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('--mcp')
+})
+
+test.each([
+  // A package runner runs the trusted package, including for a multi-word CLI name.
+  { cli: 'my-cli', pkg: '@example/my-cli', command: 'pnpx @example/my-cli --mcp' },
+  { cli: 'tempo wallet', pkg: '@tempo/wallet', command: 'pnpx @tempo/wallet --mcp' },
+  // Without a package, a CLI name that is a package name is run as that package.
+  { cli: 'my-cli', pkg: undefined, command: 'pnpx my-cli --mcp' },
+  // Without a package, a CLI name that is not a package name runs the installed binary.
+  { cli: 'tempo wallet', pkg: undefined, command: 'tempo wallet --mcp' },
+  { cli: 'My-CLI', pkg: undefined, command: 'My-CLI --mcp' },
+])('register $cli (package: $pkg) defaults to $command', async ({ cli, pkg, command }) => {
+  process.argv[1] = join(tmp, 'dist', 'bin.js')
+  vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+  try {
+    const result = await register(cli, { agents: ['amp'], package: pkg })
+    expect(result.command).toBe(command)
+
+    // Amp runs the first word as the executable and the rest as its arguments.
+    const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+    const [executable, ...args] = command.split(' ')
+    expect(config['amp.mcpServers'][cli]).toEqual({ command: executable, args })
+  } finally {
+    vi.unstubAllEnvs()
+  }
 })
 
 test('register writes amp config to existing settings', async () => {

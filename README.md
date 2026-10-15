@@ -524,11 +524,13 @@ my-cli mcp add
 my-cli --llms
 ```
 
-If the CLI binary name differs from its npm package, set `package` so generated MCP and skill commands use that trusted package, pinned when `version` is also supplied:
+If the CLI name is not its npm package name (for example a CLI published as `@example/my-cli`, or a multi-word name such as `tempo wallet`), set `package` so generated MCP and skill commands use that trusted package, pinned when `version` is also supplied:
 
 ```ts
 Cli.create('my-cli', { package: '@example/my-cli', version: '1.0.0' })
 ```
+
+Set `mcp.command` when agents should run a different command.
 
 If a CLI distributes hand-authored skills through another installer, disable incur's generated skills integration entirely:
 

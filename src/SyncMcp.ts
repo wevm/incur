@@ -91,7 +91,11 @@ export declare namespace register {
     agents?: string[] | undefined
     /** CLI name used to derive the default command. Defaults to the MCP server name. */
     cli?: string | undefined
-    /** Override the command agents will run. Defaults to `<runner> <name> --mcp`. */
+    /**
+     * Override the command agents will run. Defaults to `<name> --mcp` when the binary is on PATH
+     * or, without `package`, the name is not an npm package name (e.g. `tempo wallet`). Otherwise
+     * defaults to `<runner> <package> --mcp`.
+     */
     command?: string | undefined
     /** Install globally. Defaults to `true`. */
     global?: boolean | undefined
@@ -113,7 +117,8 @@ export declare namespace register {
 /** @internal Builds the default MCP command for the current launch mode. */
 function defaultCommand(name: string, runner: string, pkg?: string, version?: string): string {
   const specifier = pkg !== undefined ? detectPackageSpecifier(name, pkg, version) : undefined
-  return shouldUseBareCommand(name, pkg)
+  // A CLI name that is not a package name (e.g. `tempo wallet`) cannot be run by a package runner.
+  return shouldUseBareCommand(name, pkg) || (pkg === undefined && !isPackageName(name))
     ? `${name} --mcp`
     : `${runner} ${specifier ?? detectPackageSpecifier(name)} --mcp`
 }
@@ -154,11 +159,15 @@ function packageDependsOn(root: string, name: string): boolean {
   }
 }
 
+/** @internal Checks whether `name` is a safe npm package name (e.g. `my-cli` or `@scope/my-cli`). */
+export function isPackageName(name: string): boolean {
+  return safePackageNamePattern.test(name)
+}
+
 /** @internal Detects the safe package specifier used to run this CLI. */
 export function detectPackageSpecifier(name: string, pkg?: string, version?: string): string {
   if (pkg !== undefined) {
-    if (!safePackageNamePattern.test(pkg))
-      throw new Error(`Invalid npm package name: ${pkg}`)
+    if (!isPackageName(pkg)) throw new Error(`Invalid npm package name: ${pkg}`)
     if (version !== undefined && !exactVersionPattern.test(version))
       throw new Error(`Invalid exact package version: ${version}`)
     return version === undefined ? pkg : `${pkg}@${version}`
