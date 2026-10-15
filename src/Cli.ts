@@ -25,7 +25,7 @@ import {
 import * as Command from './internal/command.js'
 import { formatCtaBlock, type FormattedCta, type FormattedCtaBlock } from './internal/cta.js'
 import * as FsCommands from './internal/fsCommands.js'
-import { isRecord, suggest, toKebab } from './internal/helpers.js'
+import { isPlainObject, isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
@@ -1692,8 +1692,9 @@ async function serveImpl(
       if (formatted) writeln(truncate(formatted).text)
       return
     }
-    const payload =
-      typeof base === 'object' && base !== null ? { ...base, cta } : { data: base, cta }
+    // Only plain objects can take `cta` as a sibling key without changing shape; spreading an
+    // array or other object would turn it into index keys or drop its value.
+    const payload = isPlainObject(base) ? { ...base, cta } : { data: base, cta }
     writeln(truncate(Formatter.format(payload, format)).text)
   }
 

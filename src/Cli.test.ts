@@ -2294,6 +2294,110 @@ describe('cta', () => {
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta.commands).toEqual([{ command: expected }])
   })
+
+  describe('output shape', () => {
+    const cta = { commands: ['next'] }
+    const formatted = { description: 'Suggested command:', commands: [{ command: 'test next' }] }
+    const ctaToon = [
+      'cta:',
+      '  description: "Suggested command:"',
+      '  commands[1]{command}:',
+      '    test next',
+    ]
+    const ctaText = '\n\nSuggested command:\n  test next'
+
+    test.each([
+      {
+        name: 'array',
+        output: z.array(z.object({ id: z.number() })),
+        data: [{ id: 1 }, { id: 2 }],
+        toon: ['[2]{id}:', '  1', '  2'],
+        json: [{ id: 1 }, { id: 2 }],
+        mcp: { content: [{ type: 'text', text: '[{"id":1},{"id":2}]' }] },
+      },
+      {
+        name: 'array with cta',
+        output: z.array(z.object({ id: z.number() })),
+        data: [{ id: 1 }, { id: 2 }],
+        cta,
+        toon: ['data[2]{id}:', '  1', '  2', ...ctaToon],
+        json: { data: [{ id: 1 }, { id: 2 }], cta: formatted },
+        mcp: {
+          content: [{ type: 'text', text: `[{"id":1},{"id":2}]${ctaText}` }],
+          _meta: { cta: formatted },
+        },
+      },
+      {
+        name: 'scalar',
+        output: z.number(),
+        data: 42,
+        toon: ['42'],
+        json: 42,
+        mcp: { content: [{ type: 'text', text: '42' }] },
+      },
+      {
+        name: 'scalar with cta',
+        output: z.number(),
+        data: 42,
+        cta,
+        toon: ['data: 42', ...ctaToon],
+        json: { data: 42, cta: formatted },
+        mcp: { content: [{ type: 'text', text: `42${ctaText}` }], _meta: { cta: formatted } },
+      },
+      {
+        name: 'object',
+        output: z.object({ id: z.number() }),
+        data: { id: 1 },
+        toon: ['id: 1'],
+        json: { id: 1 },
+        mcp: { content: [{ type: 'text', text: '{"id":1}' }], structuredContent: { id: 1 } },
+      },
+      {
+        name: 'object with cta',
+        output: z.object({ id: z.number() }),
+        data: { id: 1 },
+        cta,
+        toon: ['id: 1', ...ctaToon],
+        json: { id: 1, cta: formatted },
+        mcp: {
+          content: [{ type: 'text', text: `{"id":1}${ctaText}` }],
+          structuredContent: { id: 1 },
+          _meta: { cta: formatted },
+        },
+      },
+    ])('$name', async ({ output, data, cta, toon, json, mcp }) => {
+      const command = { output, run: (c: any) => c.ok(data, { cta }) }
+      const cli = Cli.create('test').command('show', command)
+
+      expect((await serve(cli, ['show'])).output).toBe(`${toon.join('\n')}\n`)
+      expect(JSON.parse((await serve(cli, ['show', '--format', 'json'])).output)).toEqual(json)
+
+      const [tool] = Mcp.collectTools(new Map([['show', command]]), [])
+      expect(await Mcp.callTool(tool!, {}, { name: 'test' })).toEqual(mcp)
+    })
+
+    test('non-plain object with cta is wrapped in data', async () => {
+      const cli = Cli.create('test')
+      cli.command('now', { run: (c) => c.ok(new Date(0), { cta }) })
+
+      const { output } = await serve(cli, ['now', '--format', 'json'])
+      expect(JSON.parse(output)).toEqual({ data: '1970-01-01T00:00:00.000Z', cta: formatted })
+    })
+
+    test('buffered stream with cta keeps chunks as an array', async () => {
+      const cli = Cli.create('test')
+      cli.command('stream', {
+        async *run(c) {
+          yield { step: 1 }
+          yield { step: 2 }
+          return c.ok({ ignored: true }, { cta })
+        },
+      })
+
+      const { output } = await serve(cli, ['stream', '--format', 'json'])
+      expect(JSON.parse(output)).toEqual({ data: [{ step: 1 }, { step: 2 }], cta: formatted })
+    })
+  })
 })
 
 describe('leaf cli', () => {
@@ -3840,6 +3944,31 @@ describe('skills staleness', () => {
     ;(process.stdout as any).isTTY = false
     expect(output).toContain('status')
     expect(output).toContain('skills add')
+  })
+
+  test.each([
+    { name: 'array', data: [{ id: 1 }, { id: 2 }], json: { data: [{ id: 1 }, { id: 2 }] } },
+    { name: 'scalar', data: 42, json: { data: 42 } },
+    { name: 'object', data: { id: 1 }, json: { id: 1 } },
+  ])('skills CTA keeps $name output shape', async ({ data, json }) => {
+    vi.stubEnv('npm_config_user_agent', '')
+    vi.stubEnv('npm_execpath', '')
+    try {
+      __mockSkillsHash = '0000000000000000'
+      const cli = Cli.create('test')
+      cli.command('show', { description: 'Show data', run: () => data })
+
+      const { output } = await serve(cli, ['show', '--format', 'json'])
+      expect(JSON.parse(output)).toEqual({
+        ...json,
+        cta: {
+          description: 'Skills are out of date:',
+          commands: [{ command: 'test skills add', description: 'sync outdated skills' }],
+        },
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   test('does not warn when hash matches', async () => {

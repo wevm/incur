@@ -1,6 +1,22 @@
 import { describe, expect, test } from 'vitest'
 
-import { levenshtein, suggest } from './helpers.js'
+import { isPlainObject, levenshtein, suggest } from './helpers.js'
+
+describe('isPlainObject', () => {
+  test.each([
+    { name: 'object literal', value: { a: 1 }, expected: true },
+    { name: 'null prototype', value: Object.create(null), expected: true },
+    { name: 'array', value: [1, 2], expected: false },
+    { name: 'date', value: new Date(0), expected: false },
+    { name: 'map', value: new Map(), expected: false },
+    { name: 'class instance', value: new (class {})(), expected: false },
+    { name: 'null', value: null, expected: false },
+    { name: 'number', value: 42, expected: false },
+    { name: 'string', value: 'a', expected: false },
+  ])('$name', ({ value, expected }) => {
+    expect(isPlainObject(value)).toBe(expected)
+  })
+})
 
 describe('levenshtein', () => {
   test('identical strings', () => {
