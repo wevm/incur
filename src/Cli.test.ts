@@ -7083,6 +7083,22 @@ test('--token-offset with non-numeric value errors', async () => {
   expect(output).not.toContain('NaN')
 })
 
+test.each(['--token-limit', '--token-offset'])('%s with a negative value errors', async (flag) => {
+  let ran = false
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => {
+      ran = true
+      return c.ok({ message: 'hello world' })
+    },
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', flag, '-3'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain(`Invalid value for ${flag}`)
+  expect(output).toContain('-3')
+  expect(ran).toBe(false)
+})
+
 describe('command aliases', () => {
   function makeAliasedCli() {
     return Cli.create('gh').command('extension', {

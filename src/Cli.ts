@@ -2835,13 +2835,13 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+      if (!Number.isFinite(n) || n < 0 || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
       tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+      if (!Number.isFinite(n) || n < 0 || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
       tokenOffset = n
       i++
