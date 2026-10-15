@@ -387,6 +387,7 @@ export function create(
       const sub = nameOrCli as Cli
       const subCommands = toCommands.get(sub)!
       const subOutputPolicy = toOutputPolicy.get(sub)
+      const subMcpDisabled = toMcpDisabled.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
       const subPending = toPending.get(sub)
       const entry =
@@ -398,6 +399,7 @@ export function create(
               commands: subCommands,
               ...(mountedRootDef ? { root: mountedRootDef } : undefined),
               ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
+              ...(subMcpDisabled ? { mcp: false } : undefined),
               ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
             } as InternalGroup)
       if (subPending?.length)
@@ -488,6 +490,7 @@ export function create(
   if (rootDef && def.aliases) toRootAliases.set(cli as unknown as Root, def.aliases)
   if (def.options) toRootOptions.set(cli, def.options)
   if (def.config !== undefined) toConfigEnabled.set(cli, true)
+  if (def.mcp === false) toMcpDisabled.set(cli, true)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
   if (def.globals) {
     toGlobals.set(cli, { schema: def.globals, alias: def.globalAlias as any })
@@ -663,8 +666,9 @@ export declare namespace create {
           | Promise<InferReturn<output>>
           | AsyncGenerator<InferReturn<output>, unknown, unknown>)
       | undefined
-    /** Options for MCP integration. */
+    /** Options for MCP integration. Set to `false` to hide this CLI's commands from MCP clients when it is mounted as a command group. */
     mcp?:
+      | false
       | {
           /** Target specific agents by default (e.g. `['claude-code', 'cursor']`). */
           agents?: string[] | undefined
@@ -3472,6 +3476,9 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
+
+/** @internal Maps CLI instances to whether they are hidden from MCP clients when mounted. */
+const toMcpDisabled = new WeakMap<Cli, boolean>()
 
 /** Descriptor for a CLI's custom global options schema and aliases. */
 export type GlobalsDescriptor = {

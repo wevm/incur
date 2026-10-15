@@ -505,6 +505,12 @@ MCP servers use progressive discovery by default: clients search a compact catal
 Cli.create('my-cli', { mcp: { tools: { discovery: 'direct' } } })
 ```
 
+Set `mcp: false` on a command to hide it from MCP clients. On a CLI mounted as a command group, it hides the group's root command and all of its subcommands:
+
+```ts
+cli.command(Cli.create('admin', { mcp: false }).command('reset', { run: () => reset() }))
+```
+
 Non-`/mcp` paths continue routing to the command API as usual.
 
 ## Walkthrough

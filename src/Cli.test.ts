@@ -6464,6 +6464,54 @@ describe('fetch', () => {
       `)
     })
 
+    test.each([
+      // A router group hides all of its subcommands.
+      [
+        'router group',
+        () => Cli.create('admin', { mcp: false }).command('reset', { run: () => ({ ok: true }) }),
+        ['admin', 'reset'],
+      ],
+      // A callable group hides its root tool and its subcommands.
+      [
+        'callable group',
+        () =>
+          Cli.create('admin', { mcp: false, run: () => ({ ok: true }) }).command('reset', {
+            run: () => ({ ok: true }),
+          }),
+        ['admin', 'reset'],
+      ],
+      // A leaf CLI hides its root tool.
+      ['leaf CLI', () => Cli.create('admin', { mcp: false, run: () => ({ ok: true }) }), ['admin']],
+      // A hidden group hides the groups mounted inside it.
+      [
+        'nested group',
+        () =>
+          Cli.create('admin', { mcp: false }).command(
+            Cli.create('users').command('reset', { run: () => ({ ok: true }) }),
+          ),
+        ['admin', 'users', 'reset'],
+      ],
+    ])('POST /mcp omits a mounted %s with mcp false', async (_, group, argv) => {
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
+      cli.command('public', { run: () => ({ ok: true }) })
+      cli.command(group())
+
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      const body = await res.json()
+      const command = await serve(cli, [...argv, '--json'])
+
+      expect(body.result.tools.map((tool: any) => tool.name)).toEqual(['public'])
+      expect(JSON.parse(command.output)).toEqual({ ok: true })
+    })
+
     test('POST /mcp filters tools with root include and exclude patterns', async () => {
       const cli = Cli.create('test', {
         version: '1.0.0',

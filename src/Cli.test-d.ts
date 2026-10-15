@@ -435,6 +435,8 @@ test('command mcp metadata accepts instructions and annotations', () => {
     run: () => ({ ok: true }),
   })
 
+  Cli.create('test').command(Cli.create('hidden', { mcp: false }))
+
   Cli.create('test', {
     mcp: {
       instructions: 'Use this server for test commands.',
