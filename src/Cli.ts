@@ -2832,6 +2832,8 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       configDisabled = true
     } else if (token === '--filter-output' && argv[i + 1]) {
       filterOutput = argv[i + 1]!
+      // Validate up front so a malformed filter is reported before the command runs
+      Filter.parse(filterOutput)
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
       const n = Number(argv[i + 1])

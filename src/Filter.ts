@@ -1,10 +1,12 @@
+import { ParseError } from './Errors.js'
+
 /** A single segment in a filter path: either a string key or an array slice. */
 export type Segment = { key: string } | { start: number; end: number }
 
 /** A filter path is an ordered list of segments to traverse. */
 export type FilterPath = Segment[]
 
-/** Parses a filter expression string into structured filter paths. */
+/** Parses a filter expression string into structured filter paths. Throws a `ParseError` on an unclosed `[`. */
 export function parse(expression: string): FilterPath[] {
   const paths: FilterPath[] = []
   const tokens: string[] = []
@@ -43,6 +45,8 @@ export function parse(expression: string): FilterPath[] {
 
       // Parse the slice [start,end]
       const closeBracket = remaining.indexOf(']', bracketIdx)
+      if (closeBracket === -1)
+        throw new ParseError({ message: `Unclosed bracket in filter expression: "${token}"` })
       const inner = remaining.slice(bracketIdx + 1, closeBracket)
       const [startStr, endStr] = inner.split(',')
       path.push({ start: Number(startStr), end: Number(endStr) })
