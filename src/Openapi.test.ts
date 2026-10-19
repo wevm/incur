@@ -363,6 +363,177 @@ describe('generateCommands', () => {
     expect(id && '_group' in id ? id.description : undefined).toMatchInlineSnapshot(`"One user"`)
     expect(commands.has('missing')).toBe(false)
   })
+
+  /** Operations whose JSON request bodies are composed with `anyOf`, `oneOf`, or `allOf`. */
+  const composedSpec = {
+    openapi: '3.1.0',
+    info: { title: 'Composed API', version: '1.0.0' },
+    paths: {
+      '/events': {
+        post: {
+          operationId: 'createEvent',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: { kind: { const: 'push' }, ref: { type: 'string' } },
+                      required: ['kind', 'ref'],
+                    },
+                    {
+                      type: 'object',
+                      properties: { kind: { const: 'tag' }, name: { type: 'string' } },
+                      required: ['kind', 'name'],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'OK' } },
+        },
+      },
+      '/items': {
+        post: {
+          operationId: 'createItem',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  allOf: [
+                    { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+                    { type: 'object', properties: { note: { type: 'string' } } },
+                  ],
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'OK' } },
+        },
+      },
+      '/policy': {
+        put: {
+          operationId: 'setPolicy',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  anyOf: [
+                    {
+                      type: 'object',
+                      properties: { enabled: { const: false } },
+                      required: ['enabled'],
+                    },
+                    {
+                      type: 'object',
+                      properties: { enabled: { const: true }, limit: { type: 'string' } },
+                      required: ['enabled', 'limit'],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'OK' } },
+        },
+      },
+      '/rpc': {
+        post: {
+          operationId: 'rpc',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  anyOf: [
+                    {
+                      type: 'object',
+                      properties: { method: { type: 'string' }, params: { type: 'array' } },
+                      required: ['method'],
+                    },
+                    { type: 'array', items: { type: 'object' } },
+                  ],
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'OK' } },
+        },
+      },
+    },
+  } as const
+
+  test('flattens composed request bodies into options', async () => {
+    const commands = await Openapi.generateCommands(composedSpec, app.fetch)
+    const fields = Object.fromEntries(
+      ['createEvent', 'createItem', 'rpc', 'setPolicy'].map((name) => {
+        const cmd = commands.get(name)!
+        if ('_group' in cmd) throw new Error(`expected ${name} command`)
+        const schema = z.toJSONSchema(cmd.options!, { io: 'input' }) as {
+          properties: Record<string, unknown>
+          required?: string[] | undefined
+        }
+        return [name, { properties: Object.keys(schema.properties), required: schema.required }]
+      }),
+    )
+    // Union variants merge their fields; a field stays required only when every variant requires it.
+    // `allOf` members accumulate fields and requirements. Array variants contribute no fields.
+    expect(fields).toMatchInlineSnapshot(`
+      {
+        "createEvent": {
+          "properties": [
+            "kind",
+            "ref",
+            "name",
+          ],
+          "required": [
+            "kind",
+          ],
+        },
+        "createItem": {
+          "properties": [
+            "id",
+            "note",
+          ],
+          "required": [
+            "id",
+          ],
+        },
+        "rpc": {
+          "properties": [
+            "method",
+            "params",
+          ],
+          "required": [
+            "method",
+          ],
+        },
+        "setPolicy": {
+          "properties": [
+            "enabled",
+            "limit",
+          ],
+          "required": [
+            "enabled",
+          ],
+        },
+      }
+    `)
+  })
+
+  test('sends composed request bodies', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: async (request) => Response.json(await request.json()),
+      openapi: composedSpec,
+    })
+    const { output } = await serve(cli, ['api', 'createEvent', '--kind', 'tag', '--name', 'v1'])
+    expect(output).toMatchInlineSnapshot(`
+      "kind: tag
+      name: v1
+      "
+    `)
+  })
 })
 
 describe('cli integration', () => {
