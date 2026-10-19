@@ -23,6 +23,14 @@ export type OpenAPISpec = {
   openapi?: string | undefined
   paths?: {} | undefined
   security?: readonly SecurityRequirement[] | undefined
+  tags?:
+    | readonly {
+        description?: string | undefined
+        name: string
+        /** CLI-specific group description, preferred over `description` by `Config.groupsFromTags`. */
+        'x-cli-description'?: string | undefined
+      }[]
+    | undefined
 }
 
 /** OpenAPI document source accepted by fetch-backed CLI commands. */
@@ -39,6 +47,8 @@ export type Config = {
   forwardHeaders?: string[] | undefined
   /** Descriptions for generated command groups, keyed by space-separated command path (e.g. `{ v1: 'Version 1 API', 'v1 users': 'Manage users' }`). Overrides descriptions inferred from the document. */
   groups?: Record<string, string> | undefined
+  /** Describes namespace-mode groups from a tag: the one every operation in the group shares, or else the one on the group's own operations. Uses the tag's `x-cli-description`, falling back to its description's first sentence. `groups` takes precedence. Defaults to `false`. */
+  groupsFromTags?: boolean | undefined
   /** Generates commands only for operations this returns `true` for, as if the document contained nothing else. Defaults to every operation. */
   include?: ((operation: IncludeOperation) => boolean) | undefined
   /** Command naming strategy. Defaults to `'operation'`. */
@@ -105,6 +115,7 @@ type Operation = {
   responses?: Record<string, unknown> | undefined
   security?: readonly SecurityRequirement[] | undefined
   summary?: string | undefined
+  tags?: readonly string[] | undefined
 }
 
 type Parameter = {
@@ -163,6 +174,13 @@ type GeneratedGroup = {
 type CommandSegment = {
   description?: string | undefined
   name: string
+  parameter?: boolean | undefined
+}
+
+type Placement = {
+  method: string
+  segments: CommandSegment[]
+  tags: readonly string[]
 }
 
 type OperationEntry = {
@@ -401,6 +419,7 @@ export async function generateCommands(
   )
   const namespaceInfo = getNamespaceInfo(operations)
   if (config?.compact) compactOperations(operations)
+  const placements: Placement[] = []
 
   for (const { method, operation: op, path } of operations) {
     const segments = commandSegments({
@@ -410,6 +429,7 @@ export async function generateCommands(
       operation: op,
       path,
     })
+    placements.push({ method, segments, tags: op.tags ?? [] })
     const httpMethod = method.toUpperCase()
 
     const pathParams = (op.parameters ?? []).filter((p) => p.in === 'path')
@@ -488,22 +508,81 @@ export async function generateCommands(
     })
   }
 
+  if (config?.groupsFromTags) describeGroupsFromTags(commands, placements, resolved.tags ?? [])
   if (config?.groups) describeGroups(commands, config.groups)
   return commands
 }
 
 function describeGroups(commands: Map<string, GeneratedEntry>, groups: Record<string, string>) {
   for (const [path, description] of Object.entries(groups)) {
-    let entries = commands
-    let group: GeneratedGroup | undefined
-    for (const name of path.trim().split(/\s+/)) {
-      const entry = entries.get(name)
-      group = entry && '_group' in entry ? entry : undefined
-      if (!group) break
-      entries = group.commands
-    }
+    const group = findGroup(commands, path.trim().split(/\s+/))
     if (group) group.description = description
   }
+}
+
+function describeGroupsFromTags(
+  commands: Map<string, GeneratedEntry>,
+  placements: Placement[],
+  tags: NonNullable<OpenAPISpec['tags']>,
+) {
+  const descriptions = new Map(
+    tags.map((tag) => [
+      tag.name,
+      // Help lists one line per group, so a document-oriented description contributes its first sentence.
+      tag['x-cli-description'] ?? tag.description?.split(/(?<=[.!?])\s+/)[0],
+    ]),
+  )
+  const groups = new Map<
+    string,
+    { all: Placement[]; own: Placement[]; segments: CommandSegment[] }
+  >()
+  // Every group is a proper prefix of a command's segments.
+  for (const placement of placements)
+    for (let length = 1; length < placement.segments.length; length++) {
+      const segments = placement.segments.slice(0, length)
+      const key = segments.map((segment) => segment.name).join(' ')
+      const group = groups.get(key) ?? { all: [], own: [], segments }
+      group.all.push(placement)
+      // An operation at the group's own path is the group followed by its method.
+      if (
+        length === placement.segments.length - 1 &&
+        placement.segments[length]!.name === placement.method
+      )
+        group.own.push(placement)
+      groups.set(key, group)
+    }
+  for (const { all, own, segments } of groups.values()) {
+    // Path parameter groups keep the parameter's own description.
+    if (segments.at(-1)!.parameter) continue
+    const tag = sharedTag(all) ?? sharedTag(own)
+    const description = tag ? descriptions.get(tag) : undefined
+    const group = description
+      ? findGroup(
+          commands,
+          segments.map((segment) => segment.name),
+        )
+      : undefined
+    if (group) group.description = description
+  }
+}
+
+function sharedTag(placements: Placement[]): string | undefined {
+  const [first, ...rest] = placements
+  if (!first) return undefined
+  const shared = first.tags.filter((tag) => rest.every((placement) => placement.tags.includes(tag)))
+  return shared.length === 1 ? shared[0] : undefined
+}
+
+function findGroup(commands: Map<string, GeneratedEntry>, names: string[]) {
+  let entries = commands
+  let group: GeneratedGroup | undefined
+  for (const name of names) {
+    const entry = entries.get(name)
+    group = entry && '_group' in entry ? entry : undefined
+    if (!group) return undefined
+    entries = group.commands
+  }
+  return group
 }
 
 function mcpAnnotations(method: string) {
@@ -748,13 +827,15 @@ function namespaceSegment(
   operation?: Operation | undefined,
 ): CommandSegment | undefined {
   if (!segment) return undefined
-  const name = segment.startsWith('{') && segment.endsWith('}') ? segment.slice(1, -1) : segment
+  const templated = segment.startsWith('{') && segment.endsWith('}')
+  const name = templated ? segment.slice(1, -1) : segment
   const description = operation?.parameters?.find(
     (parameter) => parameter.in === 'path' && parameter.name === name,
   )?.description
   return {
     ...(description ? { description } : undefined),
     name: name.replace(/[^\w.-]+/g, '-'),
+    ...(templated ? { parameter: true } : undefined),
   }
 }
 
