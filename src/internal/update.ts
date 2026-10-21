@@ -3,6 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
+import { execFile } from './exec.js'
 import { globalInstall } from './pm.js'
 
 const defaultInterval = 24 * 60 * 60 * 1_000
@@ -393,13 +394,8 @@ function selfInvocation(
 }
 
 /** @internal Runs a package-manager command and surfaces its useful error output. */
-function exec(command: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    childProcess.execFile(command, args, (error, stdout, stderr) => {
-      if (!error) return resolve()
-      reject(new Error(stderr.trim() || stdout.trim() || error.message))
-    })
-  })
+async function exec(command: string, args: string[]): Promise<void> {
+  await execFile(command, args)
 }
 
 /** @internal Returns whether the environment suppresses update notifications. */

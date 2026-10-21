@@ -3,18 +3,14 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
+import { execFile } from './exec.js'
 import { check, checkFlag, install, isNewerVersion, refresh } from './update.js'
 
+vi.mock('./exec.js', () => ({
+  execFile: vi.fn(async () => ({ stdout: '', stderr: '' })),
+}))
+
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn(
-    (
-      _command: string,
-      _args: string[],
-      callback: (error: Error | null, stdout: string, stderr: string) => void,
-    ) => {
-      callback(null, '', '')
-    },
-  ),
   spawn: vi.fn(() => ({
     once: vi.fn(),
     unref: vi.fn(),
@@ -42,7 +38,7 @@ beforeEach(() => {
   delete process.env.NO_UPDATE_NOTIFIER
   delete process.env.npm_config_update_notifier
   process.env.npm_config_user_agent = 'npm/11.0.0 node/v22.0.0'
-  vi.mocked(childProcess.execFile).mockClear()
+  vi.mocked(execFile).mockClear()
   vi.mocked(childProcess.spawn).mockClear()
 
   return () => {
@@ -221,11 +217,7 @@ test('installs executing packages through their package manager', async () => {
     command: 'npm install --global frog@latest',
     name: 'frog',
   })
-  expect(childProcess.execFile).toHaveBeenCalledWith(
-    'npm',
-    ['install', '--global', 'frog@latest'],
-    expect.any(Function),
-  )
+  expect(execFile).toHaveBeenCalledWith('npm', ['install', '--global', 'frog@latest'])
 })
 
 test('reports unsupported standalone installation', async () => {

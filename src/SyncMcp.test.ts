@@ -4,10 +4,11 @@ import { join } from 'node:path'
 
 import { detectPackageSpecifier, register } from './SyncMcp.js'
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
-    cb(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
-  }),
+vi.mock('./internal/exec.js', () => ({
+  execFile: vi.fn(async () => ({
+    stdout: '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n',
+    stderr: '',
+  })),
 }))
 
 let fakeHome: string | undefined
@@ -119,7 +120,7 @@ test('register calls add-mcp and writes amp config', async () => {
 })
 
 test('register with agents: ["amp"] skips add-mcp', async () => {
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', {
@@ -132,7 +133,7 @@ test('register with agents: ["amp"] skips add-mcp', async () => {
 })
 
 test('register handles quoted command paths with spaces', async () => {
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', {
@@ -153,7 +154,7 @@ test('register handles quoted command paths with spaces', async () => {
 test('register uses bare name for global binary installs', async () => {
   process.argv[1] = '/usr/local/bin/my-cli'
 
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', {
@@ -175,7 +176,7 @@ test('register uses bare name for global binary installs', async () => {
 test('register uses runner for source entrypoints outside node_modules', async () => {
   process.argv[1] = join(tmp, 'dist', 'bin.js')
 
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', { agents: ['amp'] })
@@ -236,7 +237,7 @@ test('register derives the command from a different CLI name', async () => {
 test('register uses bare name for global package entrypoints under node_modules', async () => {
   process.argv[1] = join(tmp, 'global', 'node_modules', 'my-cli', 'dist', 'bin.js')
 
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', { agents: ['amp'] })
@@ -251,7 +252,7 @@ test('register uses runner for project dev dependency entrypoints under node_mod
   )
   process.argv[1] = join(tmp, 'node_modules', 'my-cli', 'dist', 'bin.js')
 
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', { agents: ['amp'] })
@@ -263,7 +264,7 @@ test('register uses runner for project dev dependency entrypoints under node_mod
 test('register uses runner for node_modules installs', async () => {
   process.argv[1] = join(tmp, 'node_modules', '.bin', 'my-cli')
 
-  const { execFile } = await import('node:child_process')
+  const { execFile } = await import('./internal/exec.js')
   vi.mocked(execFile).mockClear()
 
   const result = await register('my-cli', { agents: ['amp'] })
