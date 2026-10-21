@@ -52,7 +52,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
   const displayName = options.displayName ?? name
   const parseMode = options.parseMode ?? 'argv'
 
-  const varsMap: Record<string, unknown> = varsSchema ? varsSchema.parse({}) : {}
+  const varsMap: Record<string, unknown> = varsSchema ? varsSchema.partial().parse({}) : {}
   let result: execute.Result | undefined
   // For streaming with middleware: runCommand suspends on streamConsumed so middleware "after"
   // runs after the stream is consumed. The wrapped generator resolves it in its finally block.
