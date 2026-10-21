@@ -45,6 +45,15 @@ test('rejects when the command writes more than the output limit', async () => {
   ).rejects.toThrow(/more than 1048576 bytes/)
 })
 
+test('applies the output limit to each stream separately', async () => {
+  const { stdout, stderr } = await execFile(process.execPath, [
+    '-e',
+    'process.stdout.write("o".repeat(900 * 1024)); process.stderr.write("e".repeat(900 * 1024))',
+  ])
+  expect(stdout.length).toBe(900 * 1024)
+  expect(stderr.length).toBe(900 * 1024)
+})
+
 test.skipIf(process.platform !== 'win32')(
   'runs a .cmd shim and keeps argument boundaries intact',
   async () => {
