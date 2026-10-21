@@ -3,16 +3,21 @@ import spawn from 'cross-spawn'
 /** Maximum bytes buffered from a command's output, matching `node:child_process` defaults. */
 const maxBuffer = 1024 * 1024
 
+/** The output a command produced. */
+export type ExecResult = {
+  /** What the command wrote to standard output. */
+  stdout: string
+  /** What the command wrote to standard error. */
+  stderr: string
+}
+
 /**
  * Runs a command and collects its output.
  *
  * Resolves `.cmd` and `.bat` shims, which `node:child_process` cannot launch
  * directly on Windows because command scripts require a shell.
  */
-export function execFile(
-  command: string,
-  args: string[],
-): Promise<{ stdout: string; stderr: string }> {
+export function execFile(command: string, args: string[]): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
