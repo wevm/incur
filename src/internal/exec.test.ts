@@ -31,6 +31,20 @@ test('rejects when the command does not exist', async () => {
   )
 })
 
+test('keeps a multibyte character intact when it spans two chunks', async () => {
+  const { stdout } = await execFile(process.execPath, [
+    '-e',
+    'const b = Buffer.from("✓"); process.stdout.write(b.subarray(0, 1)); setTimeout(() => process.stdout.write(b.subarray(1)), 50)',
+  ])
+  expect(stdout).toBe('✓')
+})
+
+test('rejects when the command writes more than the output limit', async () => {
+  await expect(
+    execFile(process.execPath, ['-e', 'process.stdout.write("x".repeat(1024 * 1024 + 1024))']),
+  ).rejects.toThrow(/more than 1048576 bytes/)
+})
+
 test.skipIf(process.platform !== 'win32')(
   'runs a .cmd shim and keeps argument boundaries intact',
   async () => {
