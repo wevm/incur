@@ -6,6 +6,11 @@ import * as path from 'node:path'
 import { check, checkFlag, install, isNewerVersion, refresh } from './update.js'
 
 vi.mock('node:child_process', () => ({
+  exec: vi.fn(
+    (_command: string, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(null, '', '')
+    },
+  ),
   execFile: vi.fn(
     (
       _command: string,
@@ -42,6 +47,7 @@ beforeEach(() => {
   delete process.env.NO_UPDATE_NOTIFIER
   delete process.env.npm_config_update_notifier
   process.env.npm_config_user_agent = 'npm/11.0.0 node/v22.0.0'
+  vi.mocked(childProcess.exec).mockClear()
   vi.mocked(childProcess.execFile).mockClear()
   vi.mocked(childProcess.spawn).mockClear()
 
@@ -216,16 +222,37 @@ test('reports deferred custom installations', async () => {
 
 test('installs executing packages through their package manager', async () => {
   setupPackage({ name: 'frog', version: '1.0.0' })
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
 
-  await expect(install('frog')).resolves.toEqual({
-    command: 'npm install --global frog@latest',
-    name: 'frog',
-  })
-  expect(childProcess.execFile).toHaveBeenCalledWith(
-    'npm',
-    ['install', '--global', 'frog@latest'],
-    expect.any(Function),
-  )
+  try {
+    await expect(install('frog')).resolves.toEqual({
+      command: 'npm install --global frog@latest',
+      name: 'frog',
+    })
+    expect(childProcess.execFile).toHaveBeenCalledWith(
+      'npm',
+      ['install', '--global', 'frog@latest'],
+      expect.any(Function),
+    )
+  } finally {
+    platform.mockRestore()
+  }
+})
+
+test('installs through the shell on Windows, where package managers are script shims', async () => {
+  setupPackage({ name: 'frog', version: '1.0.0' })
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+
+  try {
+    await install('frog')
+    expect(childProcess.exec).toHaveBeenCalledWith(
+      '"npm" "install" "--global" "frog@latest"',
+      expect.any(Function),
+    )
+    expect(childProcess.execFile).not.toHaveBeenCalled()
+  } finally {
+    platform.mockRestore()
+  }
 })
 
 test('reports unsupported standalone installation', async () => {

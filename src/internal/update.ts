@@ -393,13 +393,23 @@ function selfInvocation(
 }
 
 /** @internal Runs a package-manager command and surfaces its useful error output. */
-function exec(command: string, args: string[]): Promise<void> {
+export function exec(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    childProcess.execFile(command, args, (error, stdout, stderr) => {
+    const done = (error: Error | null, stdout: string, stderr: string) => {
       if (!error) return resolve()
       reject(new Error(stderr.trim() || stdout.trim() || error.message))
-    })
+    }
+    // npm and pnpm are `.cmd` shims on Windows: `execFile` cannot find them, and Node refuses to
+    // spawn a `.cmd` without a shell. Arguments are package-manager flags and a validated package name.
+    if (process.platform === 'win32')
+      return childProcess.exec([command, ...args].map(quote).join(' '), done)
+    childProcess.execFile(command, args, done)
   })
+}
+
+/** @internal Quotes a command-line argument for the Windows shell. */
+function quote(arg: string): string {
+  return `"${arg.replaceAll('"', '\\"')}"`
 }
 
 /** @internal Returns whether the environment suppresses update notifications. */
