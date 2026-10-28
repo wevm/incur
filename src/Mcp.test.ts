@@ -1437,3 +1437,114 @@ describe('globals', () => {
     })
   })
 })
+
+describe('defaults', () => {
+  function commands(options: z.ZodObject<any>) {
+    return new Map<string, any>([
+      [
+        'audio',
+        {
+          _group: true,
+          commands: new Map<string, any>([
+            [
+              'record',
+              {
+                options,
+                run: (c: any) => ({
+                  globals: c.globals,
+                  middleware: c.var.url,
+                  options: c.options,
+                }),
+              },
+            ],
+          ]),
+        },
+      ],
+    ])
+  }
+
+  const globals = z.object({
+    rpcUrl: z
+      .string()
+      .default('https://default.example')
+      .transform((value) => new URL(value)),
+  })
+  const middlewares = [
+    async (c: any, next: () => Promise<void>) => {
+      c.set('url', c.globals.rpcUrl.href)
+      await next()
+    },
+  ]
+  const vars = z.object({ url: z.string().optional() })
+
+  async function callRecord(
+    discovery: 'direct' | 'progressive',
+    args: Record<string, unknown>,
+    options: z.ZodObject<any> = z.object({ sampleRate: z.number().default(44100) }),
+    defaults: Mcp.Defaults = {},
+  ) {
+    const params =
+      discovery === 'direct'
+        ? { name: 'audio_record', arguments: args }
+        : { name: 'call_write_tool', arguments: { name: 'audio_record', arguments: args } }
+    const [, res] = await mcpSession(
+      commands(options),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/call', params },
+      ],
+      { defaults, globals, middlewares, tools: { discovery }, vars },
+    )
+    return res.result
+  }
+
+  describe.each(['direct', 'progressive'] as const)('%s discovery', (discovery) => {
+    test('applies default globals and option defaults below the call arguments', async () => {
+      const path = vi.fn((_path: string[]) => ({ 'sample-rate': 22050 }))
+      const defaults = { globals: { rpcUrl: new URL('https://server.example') }, options: path }
+      const omitted = await callRecord(discovery, {}, undefined, defaults)
+      expect(JSON.parse(omitted.content[0].text)).toEqual({
+        globals: { rpcUrl: 'https://server.example/' },
+        middleware: 'https://server.example/',
+        options: { sampleRate: 22050 },
+      })
+      expect(path).toHaveBeenCalledWith(['audio', 'record'])
+
+      const passed = await callRecord(
+        discovery,
+        { rpcUrl: 'https://call.example', sampleRate: 8000 },
+        undefined,
+        defaults,
+      )
+      expect(JSON.parse(passed.content[0].text)).toEqual({
+        globals: { rpcUrl: 'https://call.example/' },
+        middleware: 'https://call.example/',
+        options: { sampleRate: 8000 },
+      })
+    })
+
+    test('parses option defaults with the option schema and keeps its refinements', async () => {
+      const options = z
+        .object({ max: z.number().default(10), min: z.number().default(0) })
+        .refine((value) => value.min <= value.max, { message: 'min must not exceed max' })
+      const defaults = { options: () => ({ min: 20 }) }
+      const result = await callRecord(discovery, {}, options, defaults)
+      expect(result.isError).toBe(true)
+      expect(result.content[0].text).toContain('min must not exceed max')
+      const valid = await callRecord(discovery, { max: 30 }, options, defaults)
+      expect(JSON.parse(valid.content[0].text).options).toEqual({ max: 30, min: 20 })
+    })
+  })
+
+  test('rejects option defaults for unknown options', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    await expect(
+      Mcp.serve('test-cli', '1.0.0', commands(z.object({ sampleRate: z.number() })), {
+        defaults: { options: () => ({ bogus: 1 }) },
+        input,
+        output,
+      }),
+    ).rejects.toThrow('Unknown config option: bogus')
+  })
+})
