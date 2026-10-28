@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 
 import * as Command from './internal/command.js'
@@ -7943,5 +7944,211 @@ describe('--mcp', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('--mcp tool calls', () => {
+  let cwd: string
+  let dir: string
+
+  beforeEach(async () => {
+    cwd = process.cwd()
+    dir = await mkdtemp(join(tmpdir(), 'incur-mcp-config-'))
+    process.chdir(dir)
+    await writeConfig('test.json', 22050)
+  })
+
+  afterEach(async () => {
+    process.chdir(cwd)
+    await rm(dir, { force: true, recursive: true })
+  })
+
+  /** Writes a config file that sets `audio record --rate`. */
+  function writeConfig(file: string, rate: unknown) {
+    const config = { commands: { audio: { commands: { record: { options: { rate } } } } } }
+    return writeFile(join(dir, file), JSON.stringify(config))
+  }
+
+  function createMcpCli(
+    globals: z.ZodObject<any> = z.object({ display: z.enum(['auto', 'xvfb']).optional() }),
+  ) {
+    return Cli.create('test', {
+      config: { flag: 'config', files: ['test.json'] },
+      globals,
+      vars: z.object({ display: z.string().optional() }),
+    })
+      .use(async (c, next) => {
+        c.set('display', (c.globals as { display?: string | undefined }).display)
+        await next()
+      })
+      .command(
+        Cli.create('audio').command('record', {
+          options: z.object({ rate: z.number().default(44100), seconds: z.number().default(1) }),
+          // A mounted CLI does not see the root's vars and globals types
+          run: (c: any) => ({ display: c.var.display ?? null, options: c.options }),
+        }),
+      )
+  }
+
+  type Discovery = 'direct' | 'progressive'
+
+  /** Starts `test --mcp ...argv` through `cli.serve()`, sends `requests` after the handshake, and returns the responses. */
+  async function mcpServe(
+    argv: string[],
+    requests: { method: string; params: unknown }[],
+    { cli = createMcpCli(), discovery = 'direct' as Discovery } = {},
+  ) {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk) => chunks.push(chunk.toString()))
+    const lines = () => chunks.join('').split('\n').filter(Boolean)
+    const original = Mcp.serve
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation((name, version, commands, options) =>
+        original(name, version, commands, { ...options, input, output, tools: { discovery } }),
+      )
+    try {
+      // `Mcp.serve` resolves once connected, so only a CLI that exited is finished early
+      let failed = false
+      const done = serve(cli, ['--mcp', ...argv]).then((result) => {
+        failed = result.exitCode !== undefined
+        return result
+      })
+      const clientInfo = { name: 'test-client', version: '1.0.0' }
+      const messages = [
+        {
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo },
+        },
+        { method: 'notifications/initialized' },
+        ...requests.map((request, i) => ({ id: i + 2, ...request })),
+      ]
+      for (const message of messages)
+        input.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
+      const started = Date.now()
+      while (!failed && lines().length < requests.length + 1 && Date.now() - started < 2_000)
+        await new Promise((r) => setTimeout(r, 5))
+      input.end()
+      const { exitCode, output: stdout } = await done
+      const responses = lines().map((line) => JSON.parse(line))
+      return { exitCode, responses: responses.slice(1), stdout }
+    } finally {
+      spy.mockRestore()
+    }
+  }
+
+  /** Calls `audio record` through `test --mcp ...argv` and returns the parsed tool output. */
+  async function callRecord(
+    argv: string[],
+    args: Record<string, unknown> = {},
+    options: { cli?: ReturnType<typeof createMcpCli>; discovery?: Discovery } = {},
+  ) {
+    const params =
+      options.discovery === 'progressive'
+        ? { name: 'call_write_tool', arguments: { name: 'audio_record', arguments: args } }
+        : { name: 'audio_record', arguments: args }
+    const { responses } = await mcpServe(argv, [{ method: 'tools/call', params }], options)
+    const { result } = responses[0]
+    expect(result.isError).toBeUndefined()
+    return JSON.parse(result.content[0].text)
+  }
+
+  test('a CLI run applies the global and the config default', async () => {
+    const { output } = await serve(createMcpCli(), [
+      'audio',
+      'record',
+      '--display',
+      'xvfb',
+      '--json',
+    ])
+    expect(JSON.parse(output)).toEqual({ display: 'xvfb', options: { rate: 22050, seconds: 1 } })
+  })
+
+  describe.each(['direct', 'progressive'] as const)('%s discovery', (discovery) => {
+    test('applies server-level globals and config defaults', async () => {
+      expect(await callRecord(['--display', 'xvfb'], {}, { discovery })).toEqual({
+        display: 'xvfb',
+        options: { rate: 22050, seconds: 1 },
+      })
+    })
+
+    test('lets call arguments override server-level globals and config defaults', async () => {
+      const args = { display: 'auto', rate: 8000, seconds: 2 }
+      expect(await callRecord(['--display', 'xvfb'], args, { discovery })).toEqual({
+        display: 'auto',
+        options: { rate: 8000, seconds: 2 },
+      })
+    })
+
+    test('--no-config skips the config file', async () => {
+      expect(await callRecord(['--no-config'], {}, { discovery })).toEqual({
+        display: null,
+        options: { rate: 44100, seconds: 1 },
+      })
+    })
+
+    test('--config <path> loads another config file', async () => {
+      await writeConfig('other.json', 16000)
+      expect(await callRecord(['--config', 'other.json'], {}, { discovery })).toEqual({
+        display: null,
+        options: { rate: 16000, seconds: 1 },
+      })
+    })
+
+    test('a required global can still come with each call', async () => {
+      const cli = createMcpCli(z.object({ display: z.string() }))
+      expect(await callRecord([], { display: 'xvfb' }, { cli, discovery })).toEqual({
+        display: 'xvfb',
+        options: { rate: 22050, seconds: 1 },
+      })
+    })
+  })
+
+  test('tool schemas advertise the server-level defaults', async () => {
+    const { responses } = await mcpServe(
+      ['--display', 'xvfb'],
+      [{ method: 'tools/list', params: {} }],
+    )
+    expect(responses[0].result.tools[0].inputSchema.properties).toMatchObject({
+      display: { default: 'xvfb' },
+      rate: { default: 22050 },
+      seconds: { default: 1 },
+    })
+  })
+
+  test.each([
+    {
+      name: 'an invalid server-level global',
+      argv: ['--display', 'wayland'],
+      setup: async () => {},
+      message: /VALIDATION_ERROR[\s\S]*display/,
+    },
+    {
+      name: 'a missing --config file',
+      argv: ['--config', 'missing.json'],
+      setup: async () => {},
+      message: /Config file not found: .*missing\.json/,
+    },
+    {
+      name: 'an unknown config option',
+      argv: [],
+      setup: () =>
+        writeFile(
+          join(dir, 'test.json'),
+          JSON.stringify({
+            commands: { audio: { commands: { record: { options: { bogus: 1 } } } } },
+          }),
+        ),
+      message: /Unknown config option: bogus/,
+    },
+  ])('reports $name and exits before serving', async ({ argv, setup, message }) => {
+    await setup()
+    const { exitCode, responses, stdout } = await mcpServe(argv, [])
+    expect(exitCode).toBe(1)
+    expect(responses).toEqual([])
+    expect(stdout).toMatch(message)
   })
 })

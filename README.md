@@ -505,6 +505,8 @@ MCP servers use progressive discovery by default: clients search a compact catal
 Cli.create('my-cli', { mcp: { tools: { discovery: 'direct' } } })
 ```
 
+Over HTTP, tool calls receive globals from their own arguments only, and the config file is not loaded. The stdio server started with `--mcp` also applies the globals passed to it and the config file (see [Global options](#global-options) and [Config file](#config-file)).
+
 Set `mcp: false` on a command to hide it from MCP clients. On a CLI mounted as a command group, it hides the group's root command and all of its subcommands:
 
 ```ts
@@ -1042,6 +1044,19 @@ Every incur CLI includes these flags automatically:
 | `--update`               | Update to the latest version                           |
 | `--version`              | Print CLI version                                      |
 
+Declare your own global options with `globals` on `Cli.create()`. They are parsed for every command and passed to middleware and commands as `c.globals`:
+
+```ts
+const cli = Cli.create('my-cli', {
+  globals: z.object({ display: z.enum(['auto', 'xvfb']).optional() }),
+}).use(async (c, next) => {
+  if (c.globals.display === 'xvfb') startXvfb()
+  await next()
+})
+```
+
+Over MCP, every tool accepts the globals as arguments. Globals passed when starting the server (`my-cli --mcp --display xvfb`) apply to every tool call that does not pass its own value, and are validated at startup.
+
 ### Config file
 
 Load option defaults from a JSON config file. Opt in with `config` on `Cli.create()`:
@@ -1100,6 +1115,8 @@ Config files use a structured format with `options` and `commands` keys, mirrori
 ```
 
 Precedence is `argv > config > zod defaults`. Only command `options` are loaded — `args`, `env`, and built-in commands are unaffected.
+
+`--mcp` loads the config file once at startup, honoring `--config <path>` and `--no-config` passed to the server, and applies the same precedence to every tool call: `tool arguments > config > zod defaults`. Tool input schemas advertise the config values as the option defaults. An unreadable config file or an invalid section stops the server at startup.
 
 Use `incur gen` to auto-generate a `config.schema.json` to distribute with your CLI for consumer autocomplete.
 
