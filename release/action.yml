@@ -76,7 +76,7 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/scripts/validate-source.sh"
 
     - name: Set up Bun compiler
-      uses: wevm/actions/vendor/oven-sh/setup-bun/v2.2.0@73e899a58d51092d694fbaf94b7a1d8c09bfea28 # v2
+      uses: wevm/actions/vendor/oven-sh/setup-bun/v2.2.0@73e899a58d51092d694fbaf94b7a1d8c09bfea28
       with:
         bun-version: ${{ inputs.bun_version }}
 
