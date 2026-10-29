@@ -67,6 +67,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -89,6 +90,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -118,6 +120,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -269,6 +272,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --no-config                         Disable JSON option defaults for this run
         --schema                            Show JSON Schema for command
@@ -304,6 +308,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -329,6 +334,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -358,6 +364,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -387,6 +394,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -420,6 +428,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --no-config                         Disable JSON option defaults for this run

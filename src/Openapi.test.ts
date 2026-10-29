@@ -591,6 +591,7 @@ describe('cli integration', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -703,6 +704,7 @@ describe('cli integration', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
