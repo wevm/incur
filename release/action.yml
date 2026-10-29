@@ -91,13 +91,13 @@ runs:
       if: >-
         ${{ steps.package-manager.outputs.name == 'pnpm' &&
         steps.package-manager.outputs.pnpm_declared == 'true' }}
-      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      uses: wevm/actions/vendor/pnpm/action-setup/v6@73e899a58d51092d694fbaf94b7a1d8c09bfea28
 
     - name: Set up fallback pnpm
       if: >-
         ${{ steps.package-manager.outputs.name == 'pnpm' &&
         steps.package-manager.outputs.pnpm_declared != 'true' }}
-      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      uses: wevm/actions/vendor/pnpm/action-setup/v6@73e899a58d51092d694fbaf94b7a1d8c09bfea28
       with:
         version: ${{ inputs.pnpm_version }}
 
