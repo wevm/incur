@@ -76,7 +76,7 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/scripts/validate-source.sh"
 
     - name: Set up Bun compiler
-      uses: wevm/actions/vendor/oven-sh/setup-bun/v2.2.0@73e899a58d51092d694fbaf94b7a1d8c09bfea28
+      uses: wevm/actions/vendor/oven-sh/setup-bun/v2.2.0@8963daf30237417f873c8e2f17e3bf9415e3a7b9
       with:
         bun-version: ${{ inputs.bun_version }}
 
@@ -91,13 +91,13 @@ runs:
       if: >-
         ${{ steps.package-manager.outputs.name == 'pnpm' &&
         steps.package-manager.outputs.pnpm_declared == 'true' }}
-      uses: wevm/actions/vendor/pnpm/action-setup/v6@73e899a58d51092d694fbaf94b7a1d8c09bfea28
+      uses: wevm/actions/vendor/pnpm/action-setup/v6@8963daf30237417f873c8e2f17e3bf9415e3a7b9
 
     - name: Set up fallback pnpm
       if: >-
         ${{ steps.package-manager.outputs.name == 'pnpm' &&
         steps.package-manager.outputs.pnpm_declared != 'true' }}
-      uses: wevm/actions/vendor/pnpm/action-setup/v6@73e899a58d51092d694fbaf94b7a1d8c09bfea28
+      uses: wevm/actions/vendor/pnpm/action-setup/v6@8963daf30237417f873c8e2f17e3bf9415e3a7b9
       with:
         version: ${{ inputs.pnpm_version }}
 
