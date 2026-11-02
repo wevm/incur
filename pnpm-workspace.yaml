@@ -5,3 +5,6 @@ packages:
 
 overrides:
   incur: workspace:*
+allowBuilds:
+  bun: true
+  esbuild: false

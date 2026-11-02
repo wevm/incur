@@ -24,12 +24,7 @@
     "vitest": "latest",
     "zile": "latest"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "bun"
-    ]
-  },
-  "packageManager": "pnpm@10.30.2",
+  "packageManager": "pnpm@12.16.1",
   "[!start-pkg]": "",
   "name": "incur",
   "type": "module",
