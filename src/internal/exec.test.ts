@@ -23,14 +23,19 @@ beforeEach(() => {
   }
 })
 
-/** Installs a package manager that, like npm and pnpm on Windows, is a script shim and not an executable. */
+/**
+ * Installs a package manager that, like npm and pnpm on Windows, is a script shim and not an executable.
+ * Like theirs, the Windows shim finds its own files through `%~dp0`, which cmd.exe resolves to the
+ * working directory when the command name is quoted.
+ */
 function setupPackageManager(name: string, exitCode: number) {
-  if (process.platform === 'win32')
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(directory, `${name}.marker`), '')
     fs.writeFileSync(
       path.join(directory, `${name}.cmd`),
-      `@echo off\r\necho %* > "%INCUR_TEST_ARGS%"\r\necho shim says no 1>&2\r\nexit /b ${exitCode}\r\n`,
+      `@echo off\r\nif not exist "%~dp0${name}.marker" exit /b 3\r\necho %* > "%INCUR_TEST_ARGS%"\r\necho shim says no 1>&2\r\nexit /b ${exitCode}\r\n`,
     )
-  else
+  } else
     fs.writeFileSync(
       path.join(directory, name),
       `#!/bin/sh\necho "$@" > "$INCUR_TEST_ARGS"\necho "shim says no" >&2\nexit ${exitCode}\n`,

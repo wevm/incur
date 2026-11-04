@@ -401,8 +401,10 @@ export function exec(command: string, args: string[]): Promise<void> {
     }
     // npm and pnpm are `.cmd` shims on Windows: `execFile` cannot find them, and Node refuses to
     // spawn a `.cmd` without a shell. Arguments are package-manager flags and a validated package name.
+    // The command name stays unquoted: npm's shim finds its files through `%~dp0`, which cmd.exe resolves
+    // to the working directory for a quoted name.
     if (process.platform === 'win32')
-      return childProcess.exec([command, ...args].map(quote).join(' '), done)
+      return childProcess.exec([command, ...args.map(quote)].join(' '), done)
     childProcess.execFile(command, args, done)
   })
 }

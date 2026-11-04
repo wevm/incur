@@ -246,7 +246,7 @@ test('installs through the shell on Windows, where package managers are script s
   try {
     await install('frog')
     expect(childProcess.exec).toHaveBeenCalledWith(
-      '"npm" "install" "--global" "frog@latest"',
+      'npm "install" "--global" "frog@latest"',
       expect.any(Function),
     )
     expect(childProcess.execFile).not.toHaveBeenCalled()
