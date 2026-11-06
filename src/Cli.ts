@@ -1316,12 +1316,48 @@ async function serveImpl(
     const rest = filtered.slice(mcpIdx + 2)
     const global = rest.includes('--no-global') ? false : true
 
-    // Parse --command / -c and --agent flags from argv
+    // Parse mcp add options separately so malformed values cannot consume another flag.
     let command = options.mcp?.command
     const agents: string[] = [...(options.mcp?.agents ?? [])]
-    for (let i = 0; i < rest.length; i++) {
-      if ((rest[i] === '--command' || rest[i] === '-c') && rest[i + 1]) command = rest[++i]!
-      else if (rest[i] === '--agent' && rest[i + 1]) agents.push(rest[++i]!)
+    const readValue = (flag: string, value: string | undefined) => {
+      if (
+        value === undefined ||
+        value.trim().length === 0 ||
+        value.startsWith('--') ||
+        (value.startsWith('-') && value.length > 1)
+      )
+        throw new ParseError({ message: `Missing value for flag: ${flag}` })
+      return value
+    }
+
+    try {
+      for (let i = 0; i < rest.length; i++) {
+        const token = rest[i]!
+        if (token === '--agent' || token === '--command' || token === '-c') {
+          const value = readValue(token, rest[i + 1])
+          if (token === '--agent') agents.push(value)
+          else command = value
+          i++
+        } else if (token.startsWith('--agent=')) {
+          agents.push(readValue('--agent', token.slice('--agent='.length)))
+        } else if (token.startsWith('--command=')) {
+          command = readValue('--command', token.slice('--command='.length))
+        } else if (token.startsWith('-c=')) {
+          command = readValue('-c', token.slice('-c='.length))
+        }
+      }
+    } catch (err) {
+      writeln(
+        Formatter.format(
+          {
+            code: 'UNKNOWN',
+            message: err instanceof Error ? err.message : String(err),
+          },
+          formatExplicit ? formatFlag : 'toon',
+        ),
+      )
+      exit(1)
+      return
     }
 
     try {
