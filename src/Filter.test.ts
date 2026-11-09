@@ -127,6 +127,15 @@ describe('parse', () => {
       ]
     `)
   })
+
+  test('throws on an unclosed bracket', () => {
+    expect(() => Filter.parse('a[')).toThrowErrorMatchingInlineSnapshot(
+      `[Incur.ParseError: Unclosed bracket in filter expression: "a["]`,
+    )
+    expect(() => Filter.parse('name,items[0,3')).toThrowErrorMatchingInlineSnapshot(
+      `[Incur.ParseError: Unclosed bracket in filter expression: "items[0,3"]`,
+    )
+  })
 })
 
 describe('apply', () => {
