@@ -1,5 +1,39 @@
 # incur
 
+## 0.8.0
+
+### Minor Changes
+
+- 737644e: Added `globals` support to MCP tools and the generated OpenAPI document. Global options are now merged into every MCP tool's input schema (stdio `--mcp` and HTTP `/mcp`) and into each OpenAPI operation's query parameters or request body. MCP tool calls split them back out, apply the globals schema's defaults and validation once, and pass them to commands and middleware as `globals`. `Mcp.serve` accepts a `globals` schema for CLIs that serve their command map directly, and types `c.globals` in its middlewares from it. A global wins over a command option of the same name, as on the CLI.
+- 67a09c6: Added `cta` to `IncurError` and `hint` to `c.error()`. A thrown `IncurError` now renders exactly like a returned `c.error()` with the same fields, in every output format, streaming, `cli.fetch`, and MCP, instead of dropping its `cta` and `hint`. A `hint` appears as `error.hint` in structured output (and in the generated OpenAPI error schema) and as a `Hint:` line after the message in human and MCP text. Streaming commands also render the `cta` of a yielded or returned `c.error()`.
+
+  ```ts
+  throw new Errors.IncurError({
+    code: "NOT_AUTHENTICATED",
+    message: "GitHub token not found",
+    hint: "Tokens expire after 30 days.",
+    cta: { commands: ["auth login"] },
+  });
+  ```
+
+  Added `_meta.error` to MCP tool error results, carrying the error's `code`, `retryable`, and `exitCode` so clients can branch on them without parsing the text.
+
+  Fixed MCP tool calls of streaming commands reporting a yielded or returned `c.error()` as a successful chunk array. They now return a tool error, and the `cta` of a returned `c.ok()` is appended like it is for non-streaming commands.
+
+### Patch Changes
+
+- be33f71: Fixed agent output for commands that return an array (or other non-plain object) alongside a CTA, including framework notices such as the stale skills CTA. The data is now wrapped as `{ data, cta }`, matching scalar outputs, instead of being spread into index keys (`{ "0": ..., "1": ..., cta }`). Plain object outputs are unchanged.
+- 2b99cdc: Fixed shell completions reading the values of global and built-in flags as command words. `cli --network testnet com<TAB>` now completes `completions`, `cli --network testnet skills <TAB>` suggests the `skills` subcommands, and `cli --format json <TAB>` includes the built-in commands. A partial value at the cursor (e.g. `cli --format j<TAB>`) no longer writes an error into the completion output.
+- e0c4a1a: Fixed CTA prefixing for multi-word CLI names (e.g. `Cli.create('tempo request')`): CTA commands that start with the program name (e.g. `tempo wallet login`) are now kept as full command lines instead of being rendered as `tempo request tempo wallet login`. String CTAs now follow the same rule as object CTAs, so a string CTA that already starts with the CLI name is no longer prefixed twice.
+- f9cf9c6: Fixed global options being read out of command option values. Globals are now parsed with the resolved command's option arity, so in `cli send -d --network=testnet` the token `--network=testnet` is the value of `-d` instead of setting the global `--network`. Stacked short flags can mix global and command aliases (e.g. `-sn testnet`). Global option errors are now reported like command option errors: an invalid value reports `VALIDATION_ERROR` with `fieldErrors` instead of `UNKNOWN`, and errors respect `--format`/`--json`.
+- 8ec8334: Fixed command groups created with `Cli.create()` not being able to opt out of MCP. `Cli.create(name, { mcp: false })` now hides the mounted group's root command and all of its subcommands, including nested groups, from MCP tools, matching per-command `mcp: false`. The commands remain available through the CLI and HTTP routes.
+- 4932611: Fixed the default `mcp add` command for CLI names that are not npm package names (e.g. `Cli.create('tempo wallet')`). The registered command no longer runs the name as a package (e.g. `npx tempo wallet --mcp`), and runs the installed binary (`tempo wallet --mcp`) unless `package` is set.
+- 702b2f5: Fixed MCP servers (`--mcp` and `/mcp`) for CLIs that expose no tools, such as a CLI with only a root command: the `tools` capability is now always advertised and `tools/list` returns an empty list instead of a `-32601` (method not found) error that was written before the `initialize` response.
+- cce80f5: Fixed the stale-skills CTA for CLI names that are not npm package names (e.g. `Cli.create('tempo wallet')`). Under a package manager, the CTA no longer suggests running the name as a package (e.g. `pnpx tempo wallet skills add`), and suggests the installed binary (`tempo wallet skills add`) unless `package` is set.
+- 7e6b917: Fixed TOON, YAML, and Markdown output diverging from JSON output. Command data is now normalized the same way as JSON before rendering, so `undefined` object values are omitted instead of rendered as `null` (or `undefined` in Markdown), BigInt values are rendered as strings instead of numbers, and `Date` values are rendered as ISO strings.
+- fd03ea8: Fixed `update: false` to also disable the built-in `--update` flag. Root help no longer lists `--update`, and `--update` is parsed like any other flag: it is rejected as unknown unless a command option or global option named `update` is declared.
+- 991579d: Allowed custom global options named `verbose`, which was still reserved after the built-in `--verbose` flag was renamed to `--full-output`. A global named `fullOutput` now throws at `Cli.create()` time instead, since `--full-output` is consumed by the built-in flag.
+
 ## 0.7.1
 
 ### Patch Changes
