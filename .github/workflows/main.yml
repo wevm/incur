@@ -32,7 +32,7 @@ jobs:
 
       - name: PR or publish
         id: changesets
-        uses: wevm/actions/vendor/changesets/action/v1@9bf103bd47b43c77baa02648201039b6ef3d713b
+        uses: wevm/actions/vendor/changesets/action/v1@e1f868d7ecd1c5a1eaaca871c42180d9c37badbb
         with:
           title: 'chore: version packages'
           commit: 'chore: version packages'
