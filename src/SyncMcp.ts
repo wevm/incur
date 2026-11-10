@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { detectRunner } from './internal/pm.js'
+import { resolveCommand } from './internal/spawn.js'
 
 const exactVersionPattern =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/
@@ -201,8 +202,9 @@ function splitCommand(input: string): string[] {
 
 /** Promisified execFile with stderr in error message. */
 function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const { args: argv, command, windowsVerbatimArguments } = resolveCommand(cmd, args)
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (error, stdout, stderr) => {
+    execFile(command, argv, { windowsVerbatimArguments }, (error, stdout, stderr) => {
       if (error) {
         const msg = stderr?.trim() || stdout?.trim() || error.message
         reject(new Error(msg))
