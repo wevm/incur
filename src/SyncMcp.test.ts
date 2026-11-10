@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { detectPackageSpecifier, isPackageName, register } from './SyncMcp.js'
 
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
+  execFile: vi.fn((_cmd: string, _args: string[], _options: object, cb: Function) => {
     cb(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
   }),
 }))
@@ -129,6 +129,34 @@ test('register calls add-mcp and writes amp config', async () => {
     command: 'npx',
     args: ['my-cli', '--mcp'],
   })
+})
+
+test('register runs Windows package-runner shims through cmd.exe', async () => {
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+  const bin = join(tmp, 'bin')
+  mkdirSync(bin)
+  writeFileSync(join(bin, 'npx.cmd'), '')
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const { PATH, PATHEXT, npm_config_user_agent } = process.env
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  process.env.PATH = bin
+  process.env.PATHEXT = '.cmd'
+  process.env.npm_config_user_agent = 'npm/11.0.0'
+
+  try {
+    await register('my-cli', { agents: ['codex'], command: 'npx my-cli --mcp' })
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+    Object.assign(process.env, { PATH, PATHEXT, npm_config_user_agent })
+  }
+
+  const [command, args, options] = vi.mocked(execFile).mock.calls[0]! as any[]
+  expect(command).toMatch(/cmd\.exe$/i)
+  expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c'])
+  expect(args[3]).toContain('npx.cmd')
+  expect(args[3]).toContain('^^^"npx^^^ my-cli^^^ --mcp^^^"')
+  expect(options).toEqual({ windowsVerbatimArguments: true })
 })
 
 test('register with agents: ["amp"] skips add-mcp', async () => {
