@@ -76,7 +76,12 @@ function columnarTable(items: Record<string, unknown>[]): string {
   const keys = [...new Set(items.flatMap(Object.keys))]
   return table(
     keys,
-    items.map((item) => keys.map((k) => String(item[k] ?? ''))),
+    items.map((item) =>
+      keys.map((k) => {
+        const value = item[k]
+        return isScalar(value) ? String(value ?? '') : Json.stringify(value).replaceAll('|', '\\|')
+      }),
+    ),
   )
 }
 
