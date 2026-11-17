@@ -421,6 +421,18 @@ Cli.create('my-cli', { description: 'My CLI' })
 
 Commands are named as if excluded operations were never in the document. Excluded operations stay reachable through the fetch gateway.
 
+For path-versioned APIs, set `openapiConfig.versions` to `'latest'` to name commands without the version segment. Each operation generates from its highest version, matching routes across versions by method and path shape, so `users get` calls `/v2/users` when it exists and `/v1/users` otherwise:
+
+```ts
+Cli.create('my-cli', { description: 'My CLI' })
+  .command('api', {
+    fetch: app.fetch,
+    openapi: spec,
+    openapiConfig: { mode: 'namespace', versions: 'latest' },
+  })
+  .serve()
+```
+
 When served with `cli.fetch`, the generated spec is available at `/openapi.json`, `/openapi.yml`, `/openapi.yaml`, and `/.well-known/openapi.json`. Methods are inferred from command names: read-like commands use `GET`, update-like commands use `PATCH`, delete-like commands use `DELETE`, and other commands use `POST`.
 
 #### MCP command sources
