@@ -7809,6 +7809,19 @@ test('--token-offset with non-numeric value errors', async () => {
   expect(output).not.toContain('NaN')
 })
 
+test('--token-offset past the end of output clamps the footer range', async () => {
+  const cli = Cli.create('test').command('hello', {
+    run: () => ({ message: 'one two three four five six seven eight nine ten' }),
+  })
+
+  const { output: count } = await serve(cli, ['hello', '--token-count'])
+  const total = Number(count.trim())
+
+  const { output } = await serve(cli, ['hello', '--token-offset', '100000'])
+  expect(output).toContain(`[truncated: showing tokens ${total}–${total} of ${total}]`)
+  expect(output).not.toContain('100000')
+})
+
 describe('command aliases', () => {
   function makeAliasedCli() {
     return Cli.create('gh').command('extension', {
