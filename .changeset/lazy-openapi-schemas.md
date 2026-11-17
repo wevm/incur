@@ -2,4 +2,4 @@
 'incur': patch
 ---
 
-OpenAPI-generated commands now build their Zod schemas on first read, and generation no longer clones the document before dereferencing it.
+Changed OpenAPI-generated commands to build their Zod schemas on first read, and removed the document clone before dereferencing.
