@@ -39,7 +39,8 @@
     "examples",
     "dist",
     "src",
-    "SKILL.md"
+    "SKILL.md",
+    "!examples/*/node_modules"
   ],
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
