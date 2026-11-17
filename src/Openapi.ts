@@ -411,7 +411,8 @@ export async function generateCommands(
   fetch: FetchHandler,
   options: generateCommands.Options = {},
 ): Promise<Map<string, GeneratedEntry>> {
-  const resolved = dereference(structuredClone(spec)) as OpenAPISpec
+  // `dereference` builds a new tree and never mutates its input, so no clone is needed.
+  const resolved = dereference(spec) as OpenAPISpec
   const commands = new Map<string, GeneratedEntry>()
   const paths = (resolved.paths ?? {}) as Record<string, Record<string, unknown>>
   const { config } = options
@@ -445,45 +446,55 @@ export async function generateCommands(
     const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
     const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
 
-    // Build args Zod schema from path params
-    let argsSchema: z.ZodObject<any> | undefined
-    if (pathParams.length > 0) {
-      const shape: Record<string, z.ZodType> = {}
-      for (const p of pathParams) {
-        let zodType = p.schema ? toZod(p.schema) : z.string()
-        if (p.description) zodType = zodType.describe(p.description)
-        // Path params need coercion from string argv
-        shape[p.name] = coerceIfNeeded(zodType)
-      }
-      argsSchema = z.object(shape)
+    // Header options take names that query parameters and body properties leave free.
+    const usedOptionNames = new Set([...queryParams.map((p) => p.name), ...Object.keys(bodyProps)])
+    for (const p of headerParams) {
+      p.optionName = resolveHeaderOptionName(p.optionName, usedOptionNames)
+      usedOptionNames.add(p.optionName)
     }
 
-    // Build options Zod schema from query params + body properties
-    const optShape: Record<string, z.ZodType> = {}
-    const usedOptionNames = new Set<string>()
-    for (const p of queryParams) {
-      let zodType = p.schema ? toZod(p.schema) : z.string()
-      if (!p.required) zodType = zodType.optional()
-      if (p.description) zodType = zodType.describe(p.description)
-      optShape[p.name] = coerceIfNeeded(zodType)
-      usedOptionNames.add(p.name)
+    // Zod schemas build on first read, so a run only converts the commands it reaches.
+    let schemas:
+      | { args: z.ZodObject<any> | undefined; options: z.ZodObject<any> | undefined }
+      | undefined
+    const getSchemas = () => {
+      if (schemas) return schemas
+      // Build args Zod schema from path params
+      let argsSchema: z.ZodObject<any> | undefined
+      if (pathParams.length > 0) {
+        const shape: Record<string, z.ZodType> = {}
+        for (const p of pathParams) {
+          let zodType = p.schema ? toZod(p.schema) : z.string()
+          if (p.description) zodType = zodType.describe(p.description)
+          // Path params need coercion from string argv
+          shape[p.name] = coerceIfNeeded(zodType)
+        }
+        argsSchema = z.object(shape)
+      }
+
+      // Build options Zod schema from query params + body properties
+      const optShape: Record<string, z.ZodType> = {}
+      for (const p of queryParams) {
+        let zodType = p.schema ? toZod(p.schema) : z.string()
+        if (!p.required) zodType = zodType.optional()
+        if (p.description) zodType = zodType.describe(p.description)
+        optShape[p.name] = coerceIfNeeded(zodType)
+      }
+      for (const [key, schema] of Object.entries(bodyProps)) {
+        let zodType = toZod(schema)
+        if (!bodyRequired.has(key)) zodType = zodType.optional()
+        optShape[key] = zodType
+      }
+      for (const p of headerParams) {
+        let zodType = p.schema ? toZod(p.schema) : z.string()
+        if (!p.required) zodType = zodType.optional()
+        zodType = zodType.describe(p.description ?? `${p.name} header`)
+        optShape[p.optionName] = coerceIfNeeded(zodType)
+      }
+      const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
+      schemas = { args: argsSchema, options: optionsSchema }
+      return schemas
     }
-    for (const [key, schema] of Object.entries(bodyProps)) {
-      let zodType = toZod(schema)
-      if (!bodyRequired.has(key)) zodType = zodType.optional()
-      optShape[key] = zodType
-      usedOptionNames.add(key)
-    }
-    for (const p of headerParams) {
-      const optionName = resolveHeaderOptionName(p.optionName, usedOptionNames)
-      p.optionName = optionName
-      let zodType = p.schema ? toZod(p.schema) : z.string()
-      if (!p.required) zodType = zodType.optional()
-      zodType = zodType.describe(p.description ?? `${p.name} header`)
-      optShape[optionName] = coerceIfNeeded(zodType)
-      usedOptionNames.add(optionName)
-    }
-    const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
 
     setCommand(commands, segments, {
       description: op.summary ?? op.description,
@@ -494,8 +505,12 @@ export async function generateCommands(
           ? { description: `${op.summary}\n\n${op.description}` }
           : undefined),
       },
-      args: argsSchema,
-      options: optionsSchema,
+      get args() {
+        return getSchemas().args
+      },
+      get options() {
+        return getSchemas().options
+      },
       run: createHandler({
         basePath: options.basePath,
         fetch,

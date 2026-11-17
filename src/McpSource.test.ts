@@ -70,6 +70,58 @@ describe('remote MCP command sources', () => {
     `)
   })
 
+  test('contacts the remote server only for invocations that reach the group', async () => {
+    const remote = createRemoteCli()
+    const methods: string[] = []
+    const cli = Cli.create('local').command('docs', {
+      description: 'Docs tools',
+      mcp: {
+        url: new URL('http://mcp.local/mcp'),
+        fetch: async (request) => {
+          methods.push(((await request.clone().json()) as { method: string }).method)
+          return remote.fetch(request)
+        },
+      },
+    })
+
+    expect((await serve(cli, ['--help'])).output).toContain('docs  Docs tools')
+    await serve(cli, ['--version'])
+    expect(methods).toEqual([])
+
+    await serve(cli, ['docs', 'search', '--query', 'tempo', '--json'])
+    await serve(cli, ['docs', 'search', '--query', 'tempo', '--json'])
+    // The group resolves once and reuses its session.
+    expect(methods.filter((method) => method === 'initialize')).toHaveLength(1)
+  })
+
+  test('completes remote commands only once the group is named', async () => {
+    const remote = createRemoteCli()
+    let requests = 0
+    const cli = Cli.create('local').command('docs', {
+      description: 'Docs tools',
+      mcp: {
+        url: new URL('http://mcp.local/mcp'),
+        fetch: (request) => {
+          requests += 1
+          return remote.fetch(request)
+        },
+      },
+    })
+
+    expect(await complete(cli, ['local', 'd'])).toContain('docs')
+    expect(requests).toBe(0)
+    expect(await complete(cli, ['local', 'docs', 's'])).toContain('search')
+    expect(await complete(cli, ['local', 'docs', 'search', '--'])).toContain('--query')
+  })
+
+  test('resolves every remote group for tree-wide modes', async () => {
+    const cli = mountRemote()
+
+    const result = await serve(cli, ['--llms'])
+
+    expect(result.output).toContain('docs search')
+  })
+
   test('proxies generated subcommands through cli.fetch', async () => {
     const cli = mountRemote()
     const response = await cli.fetch(
@@ -244,3 +296,14 @@ describe('remote MCP command sources', () => {
     `)
   })
 })
+
+async function complete(cli: { serve: Cli.Cli['serve'] }, words: string[]) {
+  const env = { ...process.env }
+  process.env.COMPLETE = 'bash'
+  process.env._COMPLETE_INDEX = String(words.length - 1)
+  try {
+    return (await serve(cli, ['--', ...words])).output
+  } finally {
+    process.env = env
+  }
+}

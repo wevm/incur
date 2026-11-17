@@ -28,6 +28,8 @@ export async function importCli(input: string): Promise<Cli.Cli> {
       throw new Error(`Expected default export to be a \`Cli\` instance: ${input}`)
     const pending = Cli.toPending.get(cli)
     if (pending?.length) await Promise.all(pending)
+    const lazy = Cli.toLazy.get(cli)
+    if (lazy?.size) await Promise.all([...lazy.values()].map((load) => load()))
     return cli
   } finally {
     process.argv = savedArgv
