@@ -298,6 +298,10 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
+  // Remote MCP groups resolve on first use, keyed by their command name.
+  const lazy = new Map<string, () => Promise<void>>()
+  const loadAll = () =>
+    Promise.all([...pending, ...[...lazy.values()].map((load) => load())]).then(() => {})
   const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
     instructions: def.mcp?.instructions,
     stateless: def.mcp?.stateless,
@@ -326,20 +330,24 @@ export function create(
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
         if (isMcpSourceDefinition(def)) {
-          pending.push(
-            (async () => {
+          const entry = {
+            _group: true,
+            description: def.description,
+            commands: new Map<string, CommandEntry>(),
+            ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+          } as InternalGroup
+          commands.set(nameOrCli, entry)
+          // Invocations that never reach this group skip the MCP handshake entirely.
+          let loading: Promise<void> | undefined
+          lazy.set(nameOrCli, () => {
+            loading ??= (async () => {
               const resolved = await McpSource.resolve(def.mcp)
-              const generated = McpSource.generateCommands(resolved)
-              const entry = {
-                _group: true,
-                description: def.description,
-                commands: generated as Map<string, CommandEntry>,
-                ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-              } as InternalGroup
+              for (const [key, command] of McpSource.generateCommands(resolved))
+                entry.commands.set(key, command as CommandEntry)
               assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
-              commands.set(nameOrCli, entry)
-            })(),
-          )
+            })()
+            return loading
+          })
           return cli
         }
         if (def && 'fetch' in def && isFetchSource(def.fetch)) {
@@ -389,7 +397,11 @@ export function create(
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMcpDisabled = toMcpDisabled.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
-      const subPending = toPending.get(sub)
+      // Mounted CLIs resolve their remote groups up front; only the root CLI defers them.
+      const subPending = [
+        ...(toPending.get(sub) ?? []),
+        ...[...(toLazy.get(sub)?.values() ?? [])].map((load) => load()),
+      ]
       const entry =
         mountedRootDef && subCommands.size === 0
           ? mountedRootDef
@@ -420,7 +432,7 @@ export function create(
     },
 
     async fetch(req: Request) {
-      if (pending.length > 0) await Promise.all(pending)
+      await loadAll()
       const globalsDesc = toGlobals.get(cli)
       return fetchImpl(name, commands, req, {
         description: def.description,
@@ -460,6 +472,7 @@ export function create(
       const globalsDesc = toGlobals.get(cli)
       return serveImpl(name, commands, argv, {
         ...serveOptions,
+        load: (command) => (command === undefined ? loadAll() : lazy.get(command)?.()),
         aliases: def.aliases,
         banner: def.banner,
         config: def.config,
@@ -536,6 +549,7 @@ export function create(
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
   toPending.set(cli, pending)
+  toLazy.set(cli, lazy)
   return cli
 }
 
@@ -939,6 +953,19 @@ async function serveImpl(
   const filtered = parseGlobalOptions(false, {})
   if (!filtered) return
 
+  // Load deferred groups only when this invocation can reach them: by name, or through tree-wide modes.
+  if (options.load) {
+    const first = filtered[0]
+    const all =
+      mcpFlag ||
+      process.env.COMPLETE !== undefined ||
+      ((llms || llmsFull) && first === undefined) ||
+      first === name ||
+      (first !== undefined && findBuiltin(first) !== undefined)
+    if (all) await options.load()
+    else if (first !== undefined) await options.load(first)
+  }
+
   if (updateCheck) {
     if (options.update !== false)
       try {
@@ -1003,6 +1030,8 @@ async function serveImpl(
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
       if (stored && SyncSkills.hasInstalledSkills(name, { cwd: sync?.cwd })) {
+        // The stored hash covers every command, deferred groups included.
+        await options.load?.()
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
@@ -2695,6 +2724,8 @@ function resolveCommand(
 /** @internal Options for serveImpl, extending public serve.Options with internal metadata. */
 declare namespace serveImpl {
   type Options = serve.Options & {
+    /** Loads one deferred command group by name, or every group when omitted. */
+    load?: ((command?: string) => Promise<void> | undefined) | undefined
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
     config?:
@@ -3461,6 +3492,9 @@ export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
 /** @internal Maps CLI instances to asynchronous command registrations. */
 export const toPending = new WeakMap<Cli, Promise<void>[]>()
+
+/** @internal Maps CLI instances to command groups that load on first use. */
+export const toLazy = new WeakMap<Cli, Map<string, () => Promise<void>>>()
 
 /** @internal Maps CLI instances to their middleware arrays. */
 const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()

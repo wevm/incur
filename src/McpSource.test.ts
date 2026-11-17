@@ -70,6 +70,38 @@ describe('remote MCP command sources', () => {
     `)
   })
 
+  test('contacts the remote server only for invocations that reach the group', async () => {
+    const remote = createRemoteCli()
+    const methods: string[] = []
+    const cli = Cli.create('local').command('docs', {
+      description: 'Docs tools',
+      mcp: {
+        url: new URL('http://mcp.local/mcp'),
+        fetch: async (request) => {
+          methods.push(((await request.clone().json()) as { method: string }).method)
+          return remote.fetch(request)
+        },
+      },
+    })
+
+    expect((await serve(cli, ['--help'])).output).toContain('docs  Docs tools')
+    await serve(cli, ['--version'])
+    expect(methods).toEqual([])
+
+    await serve(cli, ['docs', 'search', '--query', 'tempo', '--json'])
+    await serve(cli, ['docs', 'search', '--query', 'tempo', '--json'])
+    // The group resolves once and reuses its session.
+    expect(methods.filter((method) => method === 'initialize')).toHaveLength(1)
+  })
+
+  test('resolves every remote group for tree-wide modes', async () => {
+    const cli = mountRemote()
+
+    const result = await serve(cli, ['--llms'])
+
+    expect(result.output).toContain('docs search')
+  })
+
   test('proxies generated subcommands through cli.fetch', async () => {
     const cli = mountRemote()
     const response = await cli.fetch(
