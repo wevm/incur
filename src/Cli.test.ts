@@ -5577,6 +5577,19 @@ describe('fetch', async () => {
     expect(output).toContain("Did you mean 'upgrade'?")
   })
 
+  test('root-level fetch with a path resembling a known command → fetches the path', async () => {
+    const cli = Cli.create('api', {
+      description: 'API',
+      fetch: (request) => Response.json({ url: request.url }),
+    }).command('user', { run: () => ({ native: true }) })
+    const { output, exitCode } = await serve(cli, ['/users', '--limit', '5'])
+    expect(exitCode).toBeUndefined()
+    expect(output).toMatchInlineSnapshot(`
+      "url: "http://localhost/users?limit=5"
+      "
+    `)
+  })
+
   test('root-level fetch with no args → root path', async () => {
     const cli = Cli.create('api', { description: 'API', fetch: app.fetch })
     // Hono returns 404 for / since we don't have a root route

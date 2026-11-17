@@ -417,6 +417,64 @@ describe('generateCommands', () => {
     `)
   })
 
+  test('versions latest names commands without versions and calls the highest version', async () => {
+    const operation = (summary: string, parameters: string[] = []) => ({
+      parameters: parameters.map((name) => ({
+        in: 'path',
+        name,
+        required: true,
+        schema: { type: 'string' },
+      })), // prettier-ignore
+      responses: { '200': { description: 'OK' } },
+      summary,
+    })
+    const versioned = {
+      openapi: '3.0.0',
+      info: { title: 'Versioned API', version: '1.0.0' },
+      paths: {
+        '/health': { get: operation('Unversioned health') },
+        '/v1/health': { get: operation('Versioned health') },
+        '/v1/users': { get: operation('List users'), post: operation('Create user (old)') },
+        '/v1/users/{id}': { get: operation('Get user (old)', ['id']) },
+        '/v1/users/{id}/avatar': { get: operation('Get avatar', ['id']) },
+        '/v10/users/{userId}': { get: operation('Get user', ['userId']) },
+        '/v2/users': { post: operation('Create user') },
+        '/v2/users/{key}': { get: operation('Get user (older)', ['key']) },
+      },
+    }
+    const requests: string[] = []
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch(request) {
+        requests.push(`${request.method} ${new URL(request.url).pathname}`)
+        return Response.json({ ok: true })
+      },
+      openapi: versioned,
+      openapiConfig: { mode: 'namespace', versions: 'latest' },
+    })
+
+    const { output } = await serve(cli, ['api', '--help'])
+    expect(output).toContain('health')
+    expect(output).toContain('users')
+    expect(output).not.toMatch(/\bv\d+\b/)
+    for (const argv of [
+      ['health'],
+      ['users', 'get'],
+      ['users', 'post'],
+      ['users', 'userId', '42'],
+      ['users', 'id', 'avatar', '42'],
+    ])
+      await serve(cli, ['api', ...argv])
+    expect(requests).toMatchInlineSnapshot(`
+      [
+        "GET /v1/health",
+        "GET /v1/users",
+        "POST /v2/users",
+        "GET /v10/users/42",
+        "GET /v1/users/42/avatar",
+      ]
+    `)
+  })
+
   test('groups describes generated command groups', async () => {
     const commands = await Openapi.generateCommands(spec, app.fetch, {
       config: {

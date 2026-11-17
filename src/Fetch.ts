@@ -131,7 +131,8 @@ export function parseArgv(argv: string[]): FetchInput {
   }
 
   return {
-    path: segments.length > 0 ? `/${segments.join('/')}` : '/',
+    // Collapse slashes so a path token like `/users` cannot become a protocol-relative `//users`.
+    path: `/${segments.join('/')}`.replace(/\/{2,}/g, '/'),
     method: method ?? (body !== undefined ? 'POST' : 'GET'),
     headers,
     body,

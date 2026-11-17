@@ -45,6 +45,8 @@ export type Config = {
   mode?: Mode | undefined
   /** Generates credential options from the document's `security` requirements. Defaults to `true`. */
   security?: boolean | undefined
+  /** Which versions of path-versioned operations (`/v1/users`, `/v2/users`) generate commands. `'latest'` keeps each operation's highest version and drops the version segment from namespace command names. Defaults to `'all'`. */
+  versions?: 'all' | 'latest' | undefined
 }
 
 /** An OpenAPI operation passed to `Config.include`. */
@@ -170,6 +172,8 @@ type OperationEntry = {
   method: string
   operation: Operation
   path: string
+  /** Path that names the command; differs from `path` when its version segment is dropped. */
+  route: string
 }
 
 function addEntry(
@@ -412,19 +416,21 @@ export async function generateCommands(
   const paths = (resolved.paths ?? {}) as Record<string, Record<string, unknown>>
   const { config } = options
   // Filter before naming so commands read as if excluded operations were never in the document.
-  const operations = openapiOperations(paths).filter(
+  const included = openapiOperations(paths).filter(
     ({ method, operation, path }) => config?.include?.({ method, operation, path }) ?? true,
   )
+  const operations = config?.versions === 'latest' ? latestVersions(included) : included
   const namespaceInfo = getNamespaceInfo(operations)
   if (config?.compact) compactOperations(operations)
 
-  for (const { method, operation: op, path } of operations) {
+  for (const { method, operation: op, path, route } of operations) {
     const segments = commandSegments({
       method,
       mode: config?.mode ?? 'operation',
       namespaceInfo,
       operation: op,
       path,
+      route,
     })
     const httpMethod = method.toUpperCase()
 
@@ -558,8 +564,27 @@ function openapiOperations(paths: Record<string, Record<string, unknown>>) {
   for (const [path, methods] of Object.entries(paths))
     for (const [method, operation] of Object.entries(methods))
       if (openapiMethods.has(method))
-        operations.push({ method, operation: operation as Operation, path })
+        operations.push({ method, operation: operation as Operation, path, route: path })
   return operations
+}
+
+/** Leading version segment of a path: `/v2/users` has version `2`. */
+const versionPattern = /^\/v(\d+)(?=\/|$)/
+
+// Same method and path shape, ignoring parameter names, is one operation across versions.
+// Unversioned paths count as version 0, so a versioned operation with the same route replaces them.
+function latestVersions(operations: OperationEntry[]) {
+  const latest = new Map<string, { entry: OperationEntry; version: number }>()
+  for (const entry of operations) {
+    const match = versionPattern.exec(entry.path)
+    const version = match ? Number(match[1]) : 0
+    const route = match ? entry.path.slice(match[0].length) || '/' : entry.path
+    const key = `${entry.method} ${route.replace(/\{[^}]+\}/g, '{}')}`
+    const existing = latest.get(key)
+    if (!existing || version > existing.version)
+      latest.set(key, { entry: { ...entry, route }, version })
+  }
+  return [...latest.values()].map(({ entry }) => entry)
 }
 
 function securityHeaderParams(spec: OpenAPISpec, operation: Operation): Parameter[] {
@@ -701,10 +726,10 @@ function getNamespaceInfo(operations: OperationEntry[]) {
   const pathOperations = new Map<string, number>()
   const parentPaths = new Set<string>()
 
-  for (const { path } of operations) {
-    pathOperations.set(path, (pathOperations.get(path) ?? 0) + 1)
+  for (const { route } of operations) {
+    pathOperations.set(route, (pathOperations.get(route) ?? 0) + 1)
 
-    const segments = namespaceNames(path)
+    const segments = namespaceNames(route)
     for (let i = 1; i < segments.length; i++) parentPaths.add(`/${segments.slice(0, i).join('/')}`)
   }
 
@@ -712,15 +737,15 @@ function getNamespaceInfo(operations: OperationEntry[]) {
 }
 
 function commandSegments(options: commandSegments.Options): CommandSegment[] {
-  const { method, mode, namespaceInfo, operation, path } = options
+  const { method, mode, namespaceInfo, operation, path, route } = options
   if (mode === 'operation')
     return [{ name: operation.operationId ?? `${method}_${path.replace(/[/{}]/g, '_')}` }]
 
-  const segments = namespaceSegments(path, operation)
+  const segments = namespaceSegments(route, operation)
   const needsMethod =
     segments.length === 0 ||
-    namespaceInfo.parentPaths.has(namespacePath(path)) ||
-    (namespaceInfo.pathOperations.get(path) ?? 0) > 1
+    namespaceInfo.parentPaths.has(namespacePath(route)) ||
+    (namespaceInfo.pathOperations.get(route) ?? 0) > 1
   const describedSegments = describeNamespaceLeaf(
     segments,
     operation.summary ?? operation.description,
@@ -741,6 +766,7 @@ declare namespace commandSegments {
     }
     operation: Operation
     path: string
+    route: string
   }
 }
 
