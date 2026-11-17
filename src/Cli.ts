@@ -1621,9 +1621,11 @@ async function serveImpl(
 
   // Fall back to root fetch/command when no subcommand matches,
   // but only if the token doesn't look like a typo of a known command.
+  // A token starting with `/` is a request path, never a mistyped command.
   const rootFallbackBlocked =
     'error' in resolved &&
     !resolved.path &&
+    !resolved.error.startsWith('/') &&
     (() => {
       const candidates = [...resolved.commands.keys()]
       for (const b of builtins) candidates.push(b.name)
