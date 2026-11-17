@@ -94,6 +94,26 @@ describe('remote MCP command sources', () => {
     expect(methods.filter((method) => method === 'initialize')).toHaveLength(1)
   })
 
+  test('completes remote commands only once the group is named', async () => {
+    const remote = createRemoteCli()
+    let requests = 0
+    const cli = Cli.create('local').command('docs', {
+      description: 'Docs tools',
+      mcp: {
+        url: new URL('http://mcp.local/mcp'),
+        fetch: (request) => {
+          requests += 1
+          return remote.fetch(request)
+        },
+      },
+    })
+
+    expect(await complete(cli, ['local', 'd'])).toContain('docs')
+    expect(requests).toBe(0)
+    expect(await complete(cli, ['local', 'docs', 's'])).toContain('search')
+    expect(await complete(cli, ['local', 'docs', 'search', '--'])).toContain('--query')
+  })
+
   test('resolves every remote group for tree-wide modes', async () => {
     const cli = mountRemote()
 
@@ -276,3 +296,14 @@ describe('remote MCP command sources', () => {
     `)
   })
 })
+
+async function complete(cli: { serve: Cli.Cli['serve'] }, words: string[]) {
+  const env = { ...process.env }
+  process.env.COMPLETE = 'bash'
+  process.env._COMPLETE_INDEX = String(words.length - 1)
+  try {
+    return (await serve(cli, ['--', ...words])).output
+  } finally {
+    process.env = env
+  }
+}

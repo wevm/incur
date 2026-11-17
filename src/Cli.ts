@@ -846,6 +846,8 @@ async function serveImpl(
           return undefined
         }
       })()
+      // Groups named before the cursor load so their commands complete; root completion needs none.
+      for (const word of before ?? words.slice(0, index)) await options.load?.(word)
       const candidates = Completions.complete(
         commands,
         options.rootCommand,
@@ -958,7 +960,6 @@ async function serveImpl(
     const first = filtered[0]
     const all =
       mcpFlag ||
-      process.env.COMPLETE !== undefined ||
       ((llms || llmsFull) && first === undefined) ||
       first === name ||
       (first !== undefined && findBuiltin(first) !== undefined)
