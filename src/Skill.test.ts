@@ -1,4 +1,5 @@
 import { Skill, z } from 'incur'
+import { createHash } from 'node:crypto'
 
 test('generates skill file with frontmatter and heading', () => {
   const result = Skill.generate('test', [{ name: 'ping', description: 'Health check' }])
@@ -459,5 +460,42 @@ describe('split', () => {
     expect(files).toHaveLength(1)
     expect(files[0]!.content).toContain('# test\n\nFetch a URL')
     expect(files[0]!.content).toContain('# test ping')
+  })
+})
+
+describe('discovery', () => {
+  test('lists each skill with the SHA-256 of its UTF-8 SKILL.md', async () => {
+    const content = '---\nname: café\n---\n\n# Café ☕'
+    const index = await Skill.discovery({
+      origin: 'https://example.com',
+      skills: [
+        { name: 'abc', description: 'Letters.', content: 'abc' },
+        { name: 'cafe', description: 'Coffee.', content, url: '/skills/cafe/SKILL.md' },
+      ],
+    })
+    expect(index.skills[1]!.digest).toBe(
+      `sha256:${createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex')}`,
+    )
+    expect(index).toMatchInlineSnapshot(`
+      {
+        "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+        "skills": [
+          {
+            "description": "Letters.",
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "name": "abc",
+            "type": "skill-md",
+            "url": "https://example.com/.well-known/agent-skills/abc/SKILL.md",
+          },
+          {
+            "description": "Coffee.",
+            "digest": "sha256:7ade1653abe586294efb847dc6623faca05e94d68bcbfd0fc00448189eee62f1",
+            "name": "cafe",
+            "type": "skill-md",
+            "url": "/skills/cafe/SKILL.md",
+          },
+        ],
+      }
+    `)
   })
 })

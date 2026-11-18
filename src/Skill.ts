@@ -260,6 +260,77 @@ export function hash(commands: CommandInfo[]): string {
   return createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
 }
 
+/**
+ * Returns the [Agent Skills discovery](https://github.com/cloudflare/agent-skills-discovery-rfc)
+ * index (v0.2.0) that a server serves at `/.well-known/agent-skills/index.json`. Each skill lists the
+ * SHA-256 digest of its `SKILL.md`, computed with WebCrypto so the function runs in any runtime
+ * with `crypto.subtle`, such as Cloudflare Workers.
+ */
+export async function discovery(options: discovery.Options): Promise<discovery.Index> {
+  const { origin, skills } = options
+  return {
+    $schema: 'https://schemas.agentskills.io/discovery/0.2.0/schema.json',
+    skills: await Promise.all(
+      skills.map(async (skill) => {
+        const { name, description, content } = skill
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content))
+        const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+        return {
+          name,
+          type: 'skill-md' as const,
+          description,
+          url: skill.url ?? `${origin}/.well-known/agent-skills/${name}/SKILL.md`,
+          digest: `sha256:${hex}`,
+        }
+      }),
+    ),
+  }
+}
+
+export declare namespace discovery {
+  /** Options for `discovery()`. */
+  type Options = {
+    /** Origin of the default skill URLs, such as `https://example.com`. */
+    origin: string
+    /** Skills to list, in index order. */
+    skills: Skill[]
+  }
+
+  /** A skill to list in the index. */
+  type Skill = {
+    /** Skill name: 1-64 lowercase alphanumeric characters and hyphens. */
+    name: string
+    /** What the skill does and when to use it, matching its `SKILL.md` frontmatter. */
+    description: string
+    /** The `SKILL.md` exactly as the server serves it; the digest covers its UTF-8 bytes. */
+    content: string
+    /** URL of the served `SKILL.md`. Defaults to `{origin}/.well-known/agent-skills/{name}/SKILL.md`. */
+    url?: string | undefined
+  }
+
+  /** The discovery index. */
+  type Index = {
+    /** Schema URI identifying the index version. */
+    $schema: string
+    /** One entry per skill. */
+    skills: Entry[]
+  }
+
+  /** A skill entry in the index. */
+  type Entry = {
+    /** Skill name. */
+    name: string
+    /** Distribution type; always a single `SKILL.md`. */
+    type: 'skill-md'
+    /** What the skill does and when to use it. */
+    description: string
+    /** URL of the skill's `SKILL.md`. */
+    url: string
+    /** SHA-256 of the `SKILL.md` bytes, formatted as `sha256:{hex}`. */
+    digest: string
+  }
+}
+
 /** @internal Renders a JSON Schema object as a Markdown table. Returns `undefined` for non-object schemas. */
 function schemaToTable(schema: Record<string, unknown>, prefix = ''): string | undefined {
   if (schema.type !== 'object') return undefined

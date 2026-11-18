@@ -1,4 +1,5 @@
 import { Cli, Errors, Fetch, Skill, Typegen, z } from 'incur'
+import { createHash } from 'node:crypto'
 
 import { app as honoApp } from '../test/fixtures/hono-api.js'
 import { spec as openapiSpec } from '../test/fixtures/openapi-spec.js'
@@ -3294,7 +3295,7 @@ describe('globals', () => {
   })
 })
 
-describe('.well-known/skills', () => {
+describe('.well-known/agent-skills', () => {
   async function fetchSkills(cli: Cli.Cli<any, any, any>, path: string) {
     const res = await cli.fetch(new Request(`http://localhost${path}`))
     const contentType = res.headers.get('content-type')
@@ -3302,12 +3303,13 @@ describe('.well-known/skills', () => {
     return { status: res.status, contentType, cacheControl: res.headers.get('cache-control'), body }
   }
 
-  test('GET /.well-known/skills/index.json returns skill index', async () => {
+  test('GET /.well-known/agent-skills/index.json returns v0.2.0 index', async () => {
     const cli = createApp()
-    const result = await fetchSkills(cli, '/.well-known/skills/index.json')
+    const result = await fetchSkills(cli, '/.well-known/agent-skills/index.json')
     expect(result.status).toBe(200)
     expect(result.contentType).toBe('application/json')
     expect(result.cacheControl).toBe('public, max-age=300')
+    expect(result.body.$schema).toBe('https://schemas.agentskills.io/discovery/0.2.0/schema.json')
     const names = result.body.skills.map((s: any) => s.name)
     expect(names).toMatchInlineSnapshot(`
       [
@@ -3329,6 +3331,33 @@ describe('.well-known/skills', () => {
         "validate-fail",
       ]
     `)
+    const ping = result.body.skills.find((s: any) => s.name === 'ping')
+    expect({ ...ping, digest: undefined }).toMatchInlineSnapshot(`
+      {
+        "description": "Health check. Run \`app ping --help\` for usage details.",
+        "digest": undefined,
+        "name": "ping",
+        "type": "skill-md",
+        "url": "http://localhost/.well-known/agent-skills/ping/SKILL.md",
+      }
+    `)
+
+    // Each digest is the SHA-256 of the SKILL.md that its URL serves.
+    for (const skill of result.body.skills) {
+      const res = await cli.fetch(new Request(skill.url))
+      expect(res.status).toBe(200)
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      expect(skill.digest).toBe(`sha256:${createHash('sha256').update(bytes).digest('hex')}`)
+    }
+  })
+
+  test('GET /.well-known/skills/index.json returns v0.1.0 index', async () => {
+    const cli = createApp()
+    const result = await fetchSkills(cli, '/.well-known/skills/index.json')
+    expect(result.status).toBe(200)
+    expect(result.contentType).toBe('application/json')
+    expect(result.body.$schema).toBeUndefined()
+    expect(result.body.skills).toHaveLength(16)
     expect(result.body.skills[0]).toMatchInlineSnapshot(`
       {
         "description": "Proxy to HTTP API. Run \`app api --help\` for usage details.",
@@ -3340,37 +3369,39 @@ describe('.well-known/skills', () => {
     `)
   })
 
-  test('GET /.well-known/skills/{name}/SKILL.md returns skill markdown', async () => {
-    const cli = createApp()
-    const result = await fetchSkills(cli, '/.well-known/skills/ping/SKILL.md')
-    expect(result.status).toBe(200)
-    expect(result.contentType).toBe('text/markdown')
-    expect(result.cacheControl).toBe('public, max-age=300')
-    expect(result.body).toMatchInlineSnapshot(`
-      "---
-      name: app-ping
-      description: Health check. Run \`app ping --help\` for usage details.
-      requires_bin: app
-      command: app ping
-      ---
+  for (const base of ['/.well-known/agent-skills', '/.well-known/skills']) {
+    test(`GET ${base}/{name}/SKILL.md returns skill markdown`, async () => {
+      const cli = createApp()
+      const result = await fetchSkills(cli, `${base}/ping/SKILL.md`)
+      expect(result.status).toBe(200)
+      expect(result.contentType).toBe('text/markdown')
+      expect(result.cacheControl).toBe('public, max-age=300')
+      expect(result.body).toMatchInlineSnapshot(`
+        "---
+        name: app-ping
+        description: Health check. Run \`app ping --help\` for usage details.
+        requires_bin: app
+        command: app ping
+        ---
 
-      # app ping
+        # app ping
 
-      Health check"
-    `)
-  })
+        Health check"
+      `)
+    })
 
-  test('GET /.well-known/skills/unknown/SKILL.md → 404', async () => {
-    const cli = createApp()
-    const result = await fetchSkills(cli, '/.well-known/skills/nonexistent/SKILL.md')
-    expect(result.status).toBe(404)
-  })
+    test(`GET ${base}/unknown/SKILL.md → 404`, async () => {
+      const cli = createApp()
+      const result = await fetchSkills(cli, `${base}/nonexistent/SKILL.md`)
+      expect(result.status).toBe(404)
+    })
 
-  test('GET /.well-known/skills/unknown-path → 404', async () => {
-    const cli = createApp()
-    const result = await fetchSkills(cli, '/.well-known/skills/bad-path')
-    expect(result.status).toBe(404)
-  })
+    test(`GET ${base}/unknown-path → 404`, async () => {
+      const cli = createApp()
+      const result = await fetchSkills(cli, `${base}/bad-path`)
+      expect(result.status).toBe(404)
+    })
+  }
 })
 
 async function serve(
