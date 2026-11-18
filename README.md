@@ -550,6 +550,17 @@ Cli.create('my-cli', { package: '@example/my-cli', version: '1.0.0' })
 
 Set `mcp.command` when agents should run a different command.
 
+When served with `cli.fetch`, the generated skills are also published for [Agent Skills discovery](https://github.com/cloudflare/agent-skills-discovery-rfc) at `/.well-known/agent-skills/index.json` (v0.2.0, with `sha256:` digests) and `/.well-known/skills/index.json` (v0.1.0, for older clients). Other servers can build the same index with `Skill.discovery`, which uses WebCrypto and runs on Cloudflare Workers:
+
+```ts
+import { Skill } from 'incur'
+
+const index = await Skill.discovery({
+  origin: 'https://example.com',
+  skills: [{ name: 'deploy', description: 'Deploy the app.', content: skillMd }],
+})
+```
+
 If a CLI distributes hand-authored skills through another installer, disable incur's generated skills integration entirely:
 
 ```ts

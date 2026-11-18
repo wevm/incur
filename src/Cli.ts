@@ -2262,10 +2262,11 @@ async function fetchImpl(
       vars: options.vars,
     })
 
-  // .well-known/skills/ — Agent Skills Discovery (RFC)
+  // Agent Skills Discovery (RFC): v0.2.0 at /.well-known/agent-skills/, and the v0.1.0 index at
+  // /.well-known/skills/ for clients that predate v0.2.0.
   if (
     segments[0] === '.well-known' &&
-    segments[1] === 'skills' &&
+    (segments[1] === 'agent-skills' || segments[1] === 'skills') &&
     segments.length >= 3 &&
     req.method === 'GET'
   ) {
@@ -2273,30 +2274,36 @@ async function fetchImpl(
     await Yaml.load()
     const groups = new Map<string, string>()
     const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
+    const files = Skill.split(name, cmds, 1, groups)
 
-    // GET /.well-known/skills/index.json
+    // GET /.well-known/{agent-skills,skills}/index.json
     if (segments[2] === 'index.json' && segments.length === 3) {
-      const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
         const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
         const meta = fmMatch ? (Yaml.loadSync().parse(fmMatch[1]!) as Record<string, string>) : {}
-        return {
-          name: f.dir || name,
-          description: meta.description ?? '',
-          files: ['SKILL.md'],
-        }
+        return { name: f.dir || name, description: meta.description ?? '', content: f.content }
       })
-      return new Response(JSON.stringify({ skills }), {
+      const index = await (async () => {
+        // v0.2.0: SKILL.md URLs with digests
+        if (segments[1] === 'agent-skills') return Skill.discovery({ origin: url.origin, skills })
+        // v0.1.0: file lists without digests
+        return {
+          skills: skills.map(({ name, description }) => ({
+            name,
+            description,
+            files: ['SKILL.md'],
+          })),
+        }
+      })()
+      return new Response(JSON.stringify(index), {
         status: 200,
         headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' },
       })
     }
 
-    // GET /.well-known/skills/{skill-name}/SKILL.md
+    // GET /.well-known/{agent-skills,skills}/{skill-name}/SKILL.md
     if (segments.length === 4 && segments[3] === 'SKILL.md') {
-      const skillName = segments[2]!
-      const files = Skill.split(name, cmds, 1, groups)
-      const file = files.find((f) => (f.dir || name) === skillName)
+      const file = files.find((f) => (f.dir || name) === segments[2])
       if (file)
         return new Response(file.content, {
           status: 200,
