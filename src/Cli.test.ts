@@ -3514,6 +3514,64 @@ describe('built-in commands', () => {
     }
   })
 
+  test('mcp add supports equals syntax for long and short options', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'second command', agents: ['Cursor', 'Amp'] })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { exitCode } = await serve(cli, [
+        'mcp',
+        'add',
+        '--agent=cursor',
+        '--agent',
+        'amp',
+        '--command=first command',
+        '-c=second command',
+        '--json',
+      ])
+
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('test', {
+        command: 'second command',
+        global: true,
+        agents: ['cursor', 'amp'],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test.each([
+    ['--agent'],
+    ['--command'],
+    ['-c'],
+    ['--command', '--agent', 'amp'],
+    ['--agent', '--command', 'amp'],
+    ['-c', '--agent', 'amp'],
+    ['--agent', ''],
+    ['--command', ''],
+    ['-c', ''],
+    ['--agent='],
+    ['--command='],
+    ['-c='],
+  ])('mcp add rejects missing values: %s', async (...args) => {
+    const spy = vi.spyOn(SyncMcp, 'register')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add', ...args, '--json'])
+
+      expect(exitCode).toBe(1)
+      expect(output).toContain('"code": "UNKNOWN"')
+      expect(spy).not.toHaveBeenCalled()
+      expect(output).not.toContain('Registering MCP server...')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp add registers an overridden MCP name with the CLI command', async () => {
     const spy = vi
       .spyOn(SyncMcp, 'register')
