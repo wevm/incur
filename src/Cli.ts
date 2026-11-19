@@ -1694,11 +1694,12 @@ async function serveImpl(
     const offset = tokenOffset ?? 0
     const end = tokenLimit != null ? offset + tokenLimit : total
     if (offset === 0 && end >= total) return { text: s, truncated: false }
+    const start = Math.min(offset, total)
     const sliced = sliceByTokens(s, offset, end)
     const actualEnd = Math.min(end, total)
     const nextOffset = actualEnd < total ? actualEnd : undefined
     return {
-      text: `${sliced}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
+      text: `${sliced}\n[truncated: showing tokens ${start}–${actualEnd} of ${total}]`,
       truncated: true,
       nextOffset,
     }
