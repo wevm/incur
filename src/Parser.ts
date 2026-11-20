@@ -310,11 +310,19 @@ export function parseEnv<const env extends z.ZodObject<any>>(
   return zodParse(schema, raw) as z.output<env>
 }
 
+/**
+ * Checks if an inner type is a number schema. Zod 4 number formats (`z.int()`, `z.float64()`,
+ * `z.uint32()`, ...) are `ZodNumberFormat` instances that share `def.type === 'number'`.
+ */
+function isNumberSchema(inner: z.ZodType): boolean {
+  return (inner as any).def?.type === 'number'
+}
+
 /** Coerces an env var string to the type expected by the schema field. */
 function coerceEnv(value: string, field: z.ZodType): unknown {
   const inner = unwrap(field)
   const typeName = inner.constructor.name
-  if (typeName === 'ZodNumber') return Number(value)
+  if (isNumberSchema(inner)) return Number(value)
   if (typeName === 'ZodBoolean') return value === 'true' || value === '1'
   return value
 }
@@ -326,7 +334,7 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   const inner = unwrap(field)
   const typeName = inner.constructor.name
 
-  if (typeName === 'ZodNumber' && typeof value === 'string') {
+  if (isNumberSchema(inner) && typeof value === 'string') {
     return Number(value)
   }
   if (typeName === 'ZodBoolean' && typeof value === 'string') {
