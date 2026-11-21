@@ -185,6 +185,14 @@ function normalizeOptionName(raw: string, options: OptionNames): string | undefi
   return options.knownOptions.has(name) ? name : undefined
 }
 
+/** @internal Normalizes config-backed option defaults to schema keys (accepting kebab-case) and rejects unknown keys. */
+export function normalizeDefaults(
+  defaults: unknown,
+  schema: z.ZodObject<any> | undefined,
+): Record<string, unknown> {
+  return normalizeOptionDefaults(defaults, schema, createOptionNames(schema, undefined))
+}
+
 /** Normalizes config-backed defaults and validates config structure/key names. */
 function normalizeOptionDefaults(
   defaults: unknown,
