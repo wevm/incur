@@ -211,11 +211,25 @@ function normalizeOptionDefaults(
   return normalized
 }
 
-/** Unwraps ZodDefault/ZodOptional to get the inner type. */
+/** Unwraps ZodDefault/ZodOptional/ZodNullable and nullable unions to get the inner type. */
 function unwrap(schema: z.ZodType): z.ZodType {
   let s = schema as any
-  while (s.def?.innerType) s = s.def.innerType
+  for (let inner = innerOf(s); inner; inner = innerOf(s)) s = inner
   return s
+}
+
+/**
+ * Returns the wrapped type of an optional/default/nullable schema, or the sole non-nullish
+ * member of a `T | null` union. `z.fromJSONSchema` converts OpenAPI 3.1 `type: ['array', 'null']`
+ * into a union rather than a `ZodNullable`, so such a schema has no `innerType` to unwrap.
+ */
+function innerOf(schema: any): any {
+  if (schema?.def?.innerType) return schema.def.innerType
+  if (schema?.def?.type !== 'union') return undefined
+  const options = (schema.def.options ?? []).filter(
+    (o: any) => o?.def?.type !== 'null' && o?.def?.type !== 'undefined',
+  )
+  return options.length === 1 ? options[0] : undefined
 }
 
 /** Checks if an option's inner type is boolean. */
