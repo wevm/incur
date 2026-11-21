@@ -409,3 +409,61 @@ describe('format normalization', () => {
     `)
   })
 })
+
+describe('nested Markdown table cells', () => {
+  test.each([
+    {
+      row: { details: { path: 'alpha.txt' }, entries: [{ path: 'beta.txt' }] },
+      facts: ['{"path":"alpha.txt"}', '[{"path":"beta.txt"}]'],
+    },
+    {
+      row: { details: { nested: { enabled: false, count: 0 } } },
+      facts: ['{"nested":{"enabled":false,"count":0}}'],
+    },
+    {
+      row: { details: [{ name: 'first' }, { name: 'second' }] },
+      facts: ['[{"name":"first"},{"name":"second"}]'],
+    },
+    { row: { details: {}, entries: [] }, facts: ['{}', '[]'] },
+    { row: { details: ['one', null, false, 0] }, facts: ['["one",null,false,0]'] },
+    { row: { details: { text: 'left|right\nnext' } }, facts: ['{"text":"left\\|right\\nnext"}'] },
+  ])('preserves nested values in %j', ({ row, facts }) => {
+    const md = Formatter.format([row], 'md')
+    for (const fact of facts) expect(md).toContain(fact)
+    expect(md).not.toContain('[object Object]')
+    expect(md.split('\n')).toHaveLength(3)
+  })
+
+  test('keeps scalar, missing and null cells unchanged', () => {
+    expect(
+      Formatter.format(
+        [{ name: 'one', count: 0, enabled: false, extra: null }, { name: 'two' }],
+        'md',
+      ),
+    ).toMatchInlineSnapshot(`
+      "| name | count | enabled | extra |
+      |------|-------|---------|-------|
+      | one  | 0     | false   |       |
+      | two  |       |         |       |"
+    `)
+  })
+
+  test('keeps nested tables under their heading', () => {
+    expect(Formatter.format({ result: [{ details: { path: 'alpha.txt' } }] }, 'md'))
+      .toMatchInlineSnapshot(`
+      "## result
+
+      | details              |
+      |----------------------|
+      | {"path":"alpha.txt"} |"
+    `)
+  })
+
+  test('normalizes nested values consistently with JSON', () => {
+    const rows = [
+      { details: { count: 2n, date: new Date('2026-01-01T00:00:00Z'), omitted: undefined } },
+    ]
+    const normalized = JSON.parse(Formatter.format(rows, 'json'))
+    expect(Formatter.format(rows, 'md')).toContain(JSON.stringify(normalized[0].details))
+  })
+})
