@@ -4,7 +4,7 @@
     "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
     "changeset:version": "changeset version",
     "check": "oxlint --fix --ignore-pattern package.json && oxfmt",
-    "check:types": "tsc -b src test",
+    "check:types": "tsc -b src test && tsc -p langs/differential",
     "incur": "node --import tsx src/cli/index.ts",
     "cli:skills": "pnpm incur skills add",
     "dev": "zile dev",

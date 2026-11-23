@@ -1,0 +1,6 @@
+{
+  "commands": {
+    "echo": { "options": { "upper": true, "prefix": "cfg" } },
+    "project": { "commands": { "list": { "options": { "limit": 25 } } } }
+  }
+}
