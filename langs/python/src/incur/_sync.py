@@ -302,8 +302,9 @@ def _generated(
     files = _skill.split(name, infos, options.depth, groups)
     out: list[tuple[_skill.File, str, str | None]] = []
     for file in files:
-        skill, description = frontmatter(file.content)
-        out.append((file, skill or file.dir or name, description))
+        # The rendered description, which a block scalar in the frontmatter would obscure.
+        skill, _ = frontmatter(file.content)
+        out.append((file, skill or file.dir or name, file.description))
     return out
 
 

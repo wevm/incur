@@ -1082,10 +1082,8 @@ class _Run:
         return UpdateOptions(update, self.cli.version)
 
     async def install_update(self, human: bool, flags: _Flags) -> None:
-        """Handles `--update`."""
+        """Handles `--update`, which is only a flag when updates are enabled."""
         cli = self.cli
-        if cli.update is None:
-            return
         try:
             result = await install_update(cli.name, self.update_options(), self.env_map)
         except Exception as error:

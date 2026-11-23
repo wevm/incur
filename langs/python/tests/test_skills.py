@@ -221,3 +221,47 @@ Agents can now use kit tools.
   }
 }
 """)
+
+
+def test_lists_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    cli = incur.Cli("kit", update=False, sync=incur.Sync(cwd=str(tmp_path)))
+
+    @cli.command("ping", description="Line one\nLine two")
+    def ping(c: Context) -> str:
+        return "pong"
+
+    # A block scalar description in the frontmatter lists as written.
+    assert serve(cli, home, "skills", "list") == snapshot(
+        (
+            0,
+            """\
+  ✗ kit-ping  Line one
+Line two. Run `kit ping --help` for usage details.
+
+1 skill (0 installed)
+""",
+        )
+    )
+    assert serve(cli, home, "skills", "add")[0] == 0
+    # Up-to-date skills add no notice.
+    assert serve(cli, home, "ping") == (0, "pong\n")
+    empty = incur.Cli("kit", update=False, sync=incur.Sync(cwd=str(tmp_path)))
+    assert serve(empty, home, "skills", "list") == snapshot((0, "No skills found.\n"))
+    # The working directory is gone, as when a shell deletes it.
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    gone.rmdir()
+    assert serve(kit(tmp_path, "a"), home, "skills", "list")[0] == 0
+    unrooted = incur.Cli("kit", update=False)
+    assert serve(unrooted, home, "skills", "list") == snapshot(
+        (
+            1,
+            """\
+code: LIST_SKILLS_FAILED
+message: "[Errno 2] No such file or directory"
+""",
+        )
+    )

@@ -57,6 +57,7 @@ fieldErrors[1]{code,missing,path,expected,received,message}:
 def test_gateway_manifest() -> None:
     cli = incur.Cli("tool", update=False)
     cli.gateway("api", echo)
+    cli.gateway("upstream", echo, description="Upstream API")
     assert serve(cli, "--llms", "--format", "json") == snapshot(
         (
             0,
@@ -66,9 +67,43 @@ def test_gateway_manifest() -> None:
   "commands": [
     {
       "name": "api"
+    },
+    {
+      "name": "upstream",
+      "description": "Upstream API"
     }
   ]
 }
+""",
+        )
+    )
+
+
+def test_gateway_handler_exceptions() -> None:
+    def broken(request: incur.Request) -> incur.Response:
+        raise RuntimeError("upstream unavailable")
+
+    def refusing(request: incur.Request) -> incur.Response:
+        raise incur.Error("REFUSED", "upstream refused")
+
+    cli = incur.Cli("tool", update=False)
+    cli.gateway("api", broken)
+    cli.gateway("refusing", refusing)
+    assert serve(cli, "refusing") == snapshot(
+        (
+            1,
+            """\
+code: REFUSED
+message: upstream refused
+""",
+        )
+    )
+    assert serve(cli, "api", "users") == snapshot(
+        (
+            1,
+            """\
+code: UNKNOWN
+message: upstream unavailable
 """,
         )
     )
@@ -180,6 +215,9 @@ PROBE: dict[str, Any] = {
             "when": {"type": "string", "format": "date-time", "pattern": "^2"},
             "bag": {"type": "object", "properties": {"a": {"type": "string"}}},
             "count": {"type": "number"},
+            "nil": {"const": None},
+            "yes": {"const": True},
+            "void": {"enum": [None]},
             "clash": {"type": "array", "items": {"allOf": [_DEFAULT_A, _DEFAULT_B]}},
             "pair": {
                 "type": "array",
@@ -335,6 +373,18 @@ def test_mcp_source_schemas() -> None:
       "count": {
         "type": "number"
       },
+      "nil": {
+        "type": "null",
+        "const": null
+      },
+      "yes": {
+        "type": "boolean",
+        "const": true
+      },
+      "void": {
+        "type": "null",
+        "const": null
+      },
       "clash": {
         "type": "array",
         "items": {
@@ -419,6 +469,8 @@ def test_mcp_source_schemas() -> None:
         {"mixed": 1, "three": 3.0, "clash": [{"x": "z"}], "pair": [{"x": "z"}]},
         {"clash": [{}]},
         {"pair": [{}]},
+        {"nil": None, "yes": True, "void": None},
+        {"nil": 0, "yes": 1, "void": False},
     ]
     results: list[object] = []
     for body in bodies:
@@ -473,6 +525,12 @@ def test_mcp_source_schemas() -> None:
             ),
             (400, "Validation failed", []),
             (400, "Validation failed", []),
+            (200, {"nil": None, "yes": True, "void": None}),
+            (
+                400,
+                "Invalid input: expected null; Invalid input: expected true; Invalid input: expected null",
+                ["nil", "yes", "void"],
+            ),
         ]
     )
 

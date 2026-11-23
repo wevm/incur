@@ -83,3 +83,20 @@ message: spawn npm ENOENT
 """,
         )
     )
+
+
+def test_reports_package_manager_commands(tmp_path: Path) -> None:
+    npm = tmp_path / "npm"
+    npm.write_text("#!/bin/sh\n")
+    npm.chmod(0o755)
+    cli = kit(incur.Update(package="kit"))
+    env = {"HOME": str(tmp_path), "PATH": f"{tmp_path}:/usr/bin:/bin"}
+    assert serve(cli, env, "--update", tty=True) == snapshot(
+        (
+            0,
+            """\
+✓ Updated kit
+  npm install --global kit@latest
+""",
+        )
+    )

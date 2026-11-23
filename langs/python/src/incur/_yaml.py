@@ -559,26 +559,93 @@ def _scalar(text: str) -> Json:
     return plain
 
 
-def parse_mapping(text: str) -> dict[str, Json]:
-    r"""Parses a block mapping of scalars, such as skill frontmatter.
+_BLOCK_HEADER = re.compile(r"^([|>])([1-9+-]{0,2})(?:\s+#.*)?$")
 
-    Supports `key: value` lines with plain, single-quoted, and double-quoted scalars, which is
-    what skill frontmatter uses. Comments and lines of any other form are skipped.
+
+def _fold_lines(lines: list[str]) -> str:
+    """Folds lines as a folded scalar does.
+
+    A break between two normal lines becomes a space, empty lines keep their breaks, and breaks
+    around more-indented lines stay as written.
+    """
+    parts: list[str] = []
+    previous: str | None = None
+    empty = 0
+    for line in lines:
+        if not line:
+            empty += 1
+            continue
+        kind = "more" if line[0] in " \t" else "normal"
+        if previous is None:
+            parts.append("\n" * empty)
+        elif previous == kind == "normal":
+            parts.append("\n" * empty or " ")
+        else:
+            parts.append("\n" * (empty + 1))
+        parts.append(line)
+        previous, empty = kind, 0
+    return "".join(parts)
+
+
+def _block_scalar(header: re.Match[str], lines: list[str]) -> str:
+    """Reads the body of a top-level block scalar (`|` literal or `>` folded)."""
+    style, indicators = header[1], header[2]
+    digits = [c for c in indicators if c.isdigit()]
+    chomp = next((c for c in indicators if c in "+-"), "")
+    width = int(digits[0]) if digits else None
+    if width is None:
+        # The first non-empty line sets the indentation.
+        width = next((len(ln) - len(ln.lstrip(" ")) for ln in lines if ln.strip()), 0)
+    body = [ln[width:] if ln.strip() else "" for ln in lines]
+    trailing = len(body) - len([*itertools.dropwhile(lambda ln: not ln, reversed(body))])
+    body = body[: len(body) - trailing]
+    content = "\n".join(body) if style == "|" else _fold_lines(body)
+    if chomp == "-" or not content:
+        return content
+    return content + "\n" * (1 + (trailing if chomp == "+" else 0))
+
+
+def parse_mapping(text: str) -> dict[str, Json]:
+    r"""Parses a block mapping of scalars, such as skill frontmatter, as `yaml` reads it.
+
+    Supports `key: value` lines with plain, single-quoted, and double-quoted scalars, plain
+    scalars continued on indented lines, and `|` literal and `>` folded block scalars with
+    chomping and indentation indicators. Comments and lines of any other form are skipped.
 
     >>> parse_mapping('name: demo\ndescription: "Say \\"hi\\""')
     {'name': 'demo', 'description': 'Say "hi"'}
     >>> parse_mapping("'a b': 'it''s'\n\"k\": ~\non: true\noff: FALSE\nn: -3\nx: y # c\n- z")
     {'a b': "it's", 'k': None, 'on': True, 'off': False, 'n': -3, 'x': 'y'}
+    >>> parse_mapping("a: |\n  one\n   two\n\nb: >-\n  folded\n  text\n\n  more\nc: |+\n  kept\n\n")
+    {'a': 'one\n two\n', 'b': 'folded text\nmore', 'c': 'kept\n\n'}
+    >>> parse_mapping("d: >\n  a\n    indented\n  b\ne: |2-\n    x\nf: |\ng: a\n  b\n\n\n  c")
+    {'d': 'a\n  indented\nb\n', 'e': '  x', 'f': '', 'g': 'a b\n\nc'}
 
     Raises:
         ValueError: When a double-quoted scalar has an invalid escape, as `yaml` rejects it.
     """
     out: dict[str, Json] = {}
-    for line in text.splitlines():
-        match = _PAIR.match(line.rstrip())
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        match = _PAIR.match(lines[i].rstrip())
+        i += 1
         if match is None:
             continue
+        # A value's continuation: the indented and empty lines that follow its key.
+        start = i
+        while i < len(lines) and (not lines[i].strip() or lines[i][0] in " \t"):
+            i += 1
+        rest = lines[start:i]
         key = match[1].strip()
-        quoted = key[0] in "'\""
-        out[str(_scalar(key)) if quoted else key] = _scalar(match[2] or "")
+        name = str(_scalar(key)) if key[0] in "'\"" else key
+        value = match[2] or ""
+        header = _BLOCK_HEADER.match(value)
+        if header is not None:
+            out[name] = _block_scalar(header, rest)
+        elif value[:1] not in ("'", '"') and any(ln.strip() for ln in rest):
+            # A multi-line plain scalar folds its lines.
+            out[name] = _scalar(_fold_lines([value, *(ln.strip() for ln in rest)]))
+        else:
+            out[name] = _scalar(value)
     return out
