@@ -10,8 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 # Main verifies every port before changesets publishes, and a manual run releases `main`, which CI
-# has verified. Calling verify.yml again here would put two copies of its concurrency group in one
-# run, which GitHub rejects at startup.
+# has verified.
 jobs:
   rust:
     name: Publish Rust
@@ -31,7 +30,7 @@ jobs:
       # Exchanges the workflow's OIDC token for a short-lived crates.io token (trusted publishing).
       - name: Authenticate with crates.io
         id: auth
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: wevm/actions/vendor/rust-lang/crates-io-auth-action/rev-3268eb413133@73e899a58d51092d694fbaf94b7a1d8c09bfea28
 
       # `incur` pins `incur-macros` exactly, so the macros publish first.
       - name: Publish crates
