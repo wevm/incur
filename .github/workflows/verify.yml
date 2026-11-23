@@ -88,3 +88,68 @@ jobs:
         run: cargo llvm-cov --workspace --fail-uncovered-lines 0 --show-missing-lines
         env:
           CARGO_INCREMENTAL: 1
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: langs/python
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      # The differential suite runs the TypeScript reference with Node.js.
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/0.12.9/install.sh | sh
+
+      - name: Sync environment
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check && uv run ruff format --check
+
+      - name: Check types
+        run: uv run pyright
+
+      # Differential, API, schema, and doc tests, failing below 100% branch coverage.
+      - name: Test with coverage
+        run: uv run coverage run -m pytest && uv run coverage report
+
+  zig:
+    name: Zig
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: langs/zig
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      # The differential suite runs the TypeScript reference with Node.js.
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Install Zig and kcov
+        run: |
+          curl -fsSLo /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
+          echo "3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a  /tmp/zig.tar.xz" | sha256sum -c -
+          tar xJf /tmp/zig.tar.xz -C "$HOME"
+          echo "$HOME/zig-x86_64-linux-0.17.1" >> "$GITHUB_PATH"
+          sudo apt-get update && sudo apt-get install -y kcov
+
+      - name: Check formatting
+        run: zig fmt --check .
+
+      # API, README, compile-error, and differential tests.
+      - name: Test
+        run: zig build test
+
+      # The same tests under kcov, failing on any uncovered line in src/.
+      - name: Test with coverage
+        run: zig build coverage
