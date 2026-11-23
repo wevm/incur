@@ -91,6 +91,7 @@ node --import tsx langs/_differential/run.ts > /tmp/reference.json
 cd langs/rust
 cargo test --workspace                                           # differential, API, and derive tests
 cargo clippy --workspace --all-targets --features incur/client   # with the optional ureq HTTP client
+cargo test --workspace --no-default-features                     # without tokio: std-only blocking executor
 cargo llvm-cov --workspace --fail-uncovered-lines 0 --show-missing-lines
 ```
 
