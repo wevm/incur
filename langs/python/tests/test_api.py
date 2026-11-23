@@ -1,14 +1,17 @@
 """Python-only behavior that the differential suite cannot compare with TypeScript: built-ins this
-port does not implement, process I/O defaults, handler and middleware failures, and inputs the
-TypeScript reference treats differently by design.
+port does not implement, process I/O defaults, handler and middleware failures, the async API,
+typed middleware state, and inputs the TypeScript reference treats differently by design, such as
+exact integers beyond 2^53.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import sys
-from collections.abc import Generator
+import typing
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Annotated
 
@@ -210,11 +213,10 @@ def test_streams_without_suggestions() -> None:
 
 def test_formats_edge_values() -> None:
     app = fixtures.cli("app")
-    huge = "1" + "0" * 400
     outputs = [
         serve(app, "data", '{"a": null}', "--filter-output", "a"),
         serve(app, "data", '{"a": null}', "--filter-output", "a", "--full-output", "--json"),
-        serve(app, "data", f"[9007199254740993, {huge}, -{huge}]", "--json"),
+        serve(app, "data", "[1e400, -1e400]", "--json"),
         serve(app, "status", "--full-output", "--token-offset", "1"),
     ]
     outputs = [(code, text.split("duration")[0]) for code, text in outputs]
@@ -222,7 +224,7 @@ def test_formats_edge_values() -> None:
         [
             (0, ""),
             (0, '{\n  "ok": true,\n  "data": null,\n  "meta": {\n    "command": "data",\n    "'),
-            (0, "[\n  9007199254740992,\n  null,\n  null\n]\n"),
+            (0, "[\n  null,\n  null\n]\n"),
             (
                 0,
                 """\
@@ -278,3 +280,366 @@ def test_serves_the_process(monkeypatch: pytest.MonkeyPatch) -> None:
         fixtures.cli("app").serve()
     assert exit_info.value.code == 0
     assert stdout.getvalue() == "clean: true\nbranch: main\n"
+
+
+BIG = {"safe": 9007199254740993, "max": 2**64 - 1, "min": -(2**63)}
+
+
+def big_cli() -> incur.Cli:
+    @incur.schema
+    class Options:
+        count: Annotated[int | None, field("Count")] = None
+        wide: Annotated[int | None, field("Wide", max=2**64)] = None
+        ratio: Annotated[float | None, field("Ratio")] = None
+
+    cli = incur.Cli("big", config=incur.Config(loader=lambda path: {"options": {"wide": 2**63}}))
+
+    @cli.root()
+    def root(c: Context[None, Options]) -> dict[str, object]:
+        return {**BIG, "list": list(BIG.values()), "options": incur.dump(c.options)}
+
+    @cli.command("chunks")
+    async def chunks(c: Context) -> AsyncGenerator[object, None]:
+        for value in BIG.values():
+            yield value
+
+    @cli.command("text")
+    def text(c: Context) -> str:
+        return '{"max": 18446744073709551615}'
+
+    return cli
+
+
+def test_keeps_exact_integers_in_every_format() -> None:
+    cli = big_cli()
+    outputs = [serve(cli, "--format", fmt)[1] for fmt in ("toon", "json", "yaml", "md", "jsonl")]
+    assert outputs == snapshot(
+        [
+            """\
+safe: 9007199254740993
+max: 18446744073709551615
+min: -9223372036854775808
+list[3]: 9007199254740993,18446744073709551615,-9223372036854775808
+options:
+  wide: 9223372036854775808
+""",
+            """\
+{
+  "safe": 9007199254740993,
+  "max": 18446744073709551615,
+  "min": -9223372036854775808,
+  "list": [
+    9007199254740993,
+    18446744073709551615,
+    -9223372036854775808
+  ],
+  "options": {
+    "wide": 9223372036854775808
+  }
+}
+""",
+            """\
+safe: 9007199254740993
+max: 18446744073709551615
+min: -9223372036854775808
+list:
+  - 9007199254740993
+  - 18446744073709551615
+  - -9223372036854775808
+options:
+  wide: 9223372036854775808
+""",
+            """\
+## safe
+
+9007199254740993
+
+## max
+
+18446744073709551615
+
+## min
+
+-9223372036854775808
+
+## list
+
+9007199254740993,18446744073709551615,-9223372036854775808
+
+## options
+
+| Key  | Value               |
+|------|---------------------|
+| wide | 9223372036854775808 |
+""",
+            '{"safe":9007199254740993,"max":18446744073709551615,"min":-9223372036854775808,"list":[9007199254740993,18446744073709551615,-9223372036854775808],"options":{"wide":9223372036854775808}}\n',
+        ]
+    )
+
+
+def test_keeps_exact_integers_in_filters_tokens_and_streams() -> None:
+    cli = big_cli()
+    outputs = [
+        serve(cli, "--filter-output", "max,list[1,3]")[1],
+        serve(cli, "--token-count")[1],
+        serve(cli, "--token-limit", "4")[1],
+        serve(cli, "chunks")[1],
+        serve(cli, "chunks", "--format", "jsonl")[1].split('"duration"')[0],
+        serve(cli, "chunks", "--json")[1],
+        serve(cli, "text", "--json")[1],
+    ]
+    assert outputs == snapshot(
+        [
+            """\
+max: 18446744073709551615
+list[2]: 18446744073709551615,-9223372036854775808
+""",
+            "25\n",
+            """\
+safe: 9007199254740993
+max
+[truncated: showing tokens 0–4 of 25]
+""",
+            """\
+9007199254740993
+18446744073709551615
+-9223372036854775808
+""",
+            """\
+{"type":"chunk","data":9007199254740993}
+{"type":"chunk","data":18446744073709551615}
+{"type":"chunk","data":-9223372036854775808}
+{"type":"done","ok":true,"meta":{"command":"chunks",\
+""",
+            """\
+[
+  9007199254740993,
+  18446744073709551615,
+  -9223372036854775808
+]
+""",
+            """\
+{
+  "max": 18446744073709551615
+}
+""",
+        ]
+    )
+
+
+def test_reads_exact_integer_options() -> None:
+    cli = big_cli()
+    outputs = [
+        serve(cli, "--wide", "18446744073709551615", "--ratio", "18446744073709551615", "--json"),
+        serve(cli, "--count", "9007199254740991", "--filter-output", "options"),
+        serve(cli, "--count", "9007199254740993"),
+        serve(cli, "--count", "-9007199254740993", "--json"),
+        serve(cli, "--count", "1.5"),
+    ]
+    assert outputs == snapshot(
+        [
+            (
+                0,
+                """\
+{
+  "safe": 9007199254740993,
+  "max": 18446744073709551615,
+  "min": -9223372036854775808,
+  "list": [
+    9007199254740993,
+    18446744073709551615,
+    -9223372036854775808
+  ],
+  "options": {
+    "wide": 18446744073709551615,
+    "ratio": 18446744073709552000
+  }
+}
+""",
+            ),
+            (
+                0,
+                """\
+options:
+  count: 9007199254740991
+  wide: 9223372036854775808
+""",
+            ),
+            (
+                1,
+                """\
+code: VALIDATION_ERROR
+message: "Too big: expected int to be <=9007199254740991\\n\\nDetails: [\\n  {\\n    \\"code\\": \\"too_big\\",\\n    \\"maximum\\": 9007199254740991,\\n    \\"note\\": \\"Integers must be within the safe integer range.\\",\\n    \\"origin\\": \\"int\\",\\n    \\"inclusive\\": true,\\n    \\"path\\": [\\n      \\"count\\"\\n    ],\\n    \\"message\\": \\"Too big: expected int to be <=9007199254740991\\"\\n  }\\n]"
+fieldErrors[1]{code,missing,path,expected,received,message}:
+  too_big,false,count,"","","Too big: expected int to be <=9007199254740991"
+""",
+            ),
+            (
+                1,
+                """\
+{
+  "code": "VALIDATION_ERROR",
+  "message": "Too small: expected int to be >=-9007199254740991\\n\\nDetails: [\\n  {\\n    \\"code\\": \\"too_small\\",\\n    \\"minimum\\": -9007199254740991,\\n    \\"note\\": \\"Integers must be within the safe integer range.\\",\\n    \\"origin\\": \\"int\\",\\n    \\"inclusive\\": true,\\n    \\"path\\": [\\n      \\"count\\"\\n    ],\\n    \\"message\\": \\"Too small: expected int to be >=-9007199254740991\\"\\n  }\\n]",
+  "fieldErrors": [
+    {
+      "code": "too_small",
+      "missing": false,
+      "path": "count",
+      "expected": "",
+      "received": "",
+      "message": "Too small: expected int to be >=-9007199254740991"
+    }
+  ]
+}
+""",
+            ),
+            (
+                1,
+                """\
+code: VALIDATION_ERROR
+message: "Invalid input: expected int, received number\\n\\nDetails: [\\n  {\\n    \\"expected\\": \\"int\\",\\n    \\"format\\": \\"safeint\\",\\n    \\"code\\": \\"invalid_type\\",\\n    \\"path\\": [\\n      \\"count\\"\\n    ],\\n    \\"message\\": \\"Invalid input: expected int, received number\\"\\n  }\\n]"
+fieldErrors[1]{code,missing,path,expected,received,message}:
+  invalid_type,false,count,int,"","Invalid input: expected int, received number"
+""",
+            ),
+        ]
+    )
+
+
+@incur.schema
+class Session:
+    user: str = "anonymous"
+    trail: list[str] = []
+
+
+@incur.schema
+class Verbosity:
+    verbose: Annotated[bool | None, field("Verbose")] = None
+
+
+def test_runs_async_handlers_and_middleware() -> None:
+    cli = incur.Cli("tool", vars=Session, globals=Verbosity)
+
+    @cli.use
+    async def outer(
+        c: incur.MiddlewareContext[Session, None, Verbosity], next_: incur.Next
+    ) -> None:
+        c.var.trail.append("async before")
+        await next_()
+        c.var.trail.append("async after")
+
+    @cli.use
+    def inner(c: incur.MiddlewareContext[Session], next_: incur.Next) -> None:
+        c.var.trail.append("sync before")
+        next_()
+        c.var.trail.append(f"sync after: {c.var.trail[-1]}")
+
+    seen: list[Session] = []
+
+    @cli.command("whoami")
+    async def whoami(c: Context[None, None, None, Session, Verbosity]) -> dict[str, object]:
+        typing.assert_type(c.var, Session)
+        typing.assert_type(c.globals, Verbosity)
+        await asyncio.sleep(0)
+        c.var.trail.append("handler")
+        seen.append(c.var)
+        return {"user": c.var.user, "verbose": c.globals.verbose}
+
+    @cli.command("count")
+    def count(c: Context) -> Stream:
+        yield 1
+        yield incur.ok(cta=CtaBlock(["whoami"]))
+        yield 2
+
+    async def main() -> list[tuple[int, str]]:
+        # `run` works inside a running event loop, where `serve_with` cannot.
+        outputs: list[tuple[int, str]] = []
+        for argv in (["whoami", "--verbose"], ["count"]):
+            out = io.StringIO()
+            outputs.append((await cli.run(argv, stdout=out), out.getvalue()))
+        return outputs
+
+    assert asyncio.run(main()) == snapshot(
+        [
+            (
+                0,
+                """\
+user: anonymous
+verbose: true
+""",
+            ),
+            (
+                0,
+                """\
+1
+
+Suggested command:
+  tool whoami
+""",
+            ),
+        ]
+    )
+    assert seen[0].trail == snapshot(
+        ["async before", "sync before", "handler", "sync after: handler", "async after"]
+    )
+
+
+def test_nests_plain_middleware_beyond_thread_pools() -> None:
+    cli = incur.Cli("tool", vars={"depth": 0})
+    for _ in range(64):
+        cli.use(lambda c, next_: c.set("depth", c.var["depth"] + 1) or next_())
+
+    @cli.command("depth")
+    def depth(c: Context) -> int:
+        return c.var["depth"]
+
+    assert serve(cli, "depth") == snapshot((0, "64\n"))
+
+
+def test_awaits_loaders_and_banners() -> None:
+    async def loader(path: str | None) -> object:
+        await asyncio.sleep(0)
+        return {"commands": {"echo": {"options": {"text": "loaded"}}}}
+
+    async def banner() -> str:
+        return "Async banner"
+
+    @incur.schema
+    class EchoOptions:
+        text: str = ""
+
+    cli = incur.Cli("tool", config=incur.Config(loader=loader), banner=banner)
+
+    @cli.command("echo")
+    def echo(c: Context[None, EchoOptions]) -> str:
+        return c.options.text
+
+    assert [serve(cli, "echo"), serve(cli, tty=True)[1].splitlines()[0]] == snapshot(
+        [(0, "loaded\n"), "Async banner"]
+    )
+
+
+def test_serves_the_process_inside_a_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    stdout = io.StringIO()
+    monkeypatch.setattr(sys, "argv", ["app", "whoami"])
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(os, "environ", {"APP_USER": "root"})
+    assert asyncio.run(fixtures.cli("app").serve_async()) == 0
+    assert stdout.getvalue() == "user: root\n"
+
+
+def test_rejects_mismatched_state_classes() -> None:
+    @incur.schema
+    class Other:
+        user: str = ""
+
+    cli = incur.Cli("tool", vars=Session, globals=Verbosity)
+    with pytest.raises(incur.SchemaError, match="Context vars must be Session, the CLI's vars"):
+
+        @cli.command("vars")
+        def wrong_vars(c: Context[None, None, None, Other]) -> None: ...
+
+    with pytest.raises(incur.SchemaError, match="Context globals must be Verbosity"):
+
+        @cli.command("globals")
+        def wrong_globals(c: Context[None, None, None, Session, Other]) -> None: ...

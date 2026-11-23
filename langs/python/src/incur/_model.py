@@ -210,7 +210,7 @@ def _describe(hint: Any, label: str) -> Type:
     if hint is bool:
         return Type("boolean")
     if hint is int:
-        return Type("integer")
+        return Type("integer", py=int)
     if hint is float:
         return Type("number", py=float)
     if hint is Any:

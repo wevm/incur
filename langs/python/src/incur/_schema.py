@@ -12,8 +12,8 @@ from ._js import Json
 #: The shape of a schema node.
 Kind = Literal["array", "boolean", "enum", "integer", "number", "object", "string", "unknown"]
 
-#: The largest integer a JavaScript number represents exactly.
-MAX_SAFE_INTEGER = 9_007_199_254_740_991.0
+#: The largest integer a JavaScript number represents exactly, which bounds Zod's `z.int()`.
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 @dataclass
@@ -134,7 +134,7 @@ def _metadata(ty: Type, out: dict[str, Json]) -> None:
 def _bound(out: dict[str, Json], key: str, value: float | None) -> None:
     """Writes a numeric bound when present."""
     if value is not None:
-        out[key] = _js.number(value)
+        out[key] = value
 
 
 @dataclass
@@ -169,13 +169,13 @@ class Issue:
             # Zod's safe-integer check reports its issue with a note and a different key order.
             if self.origin == "int":
                 out["code"] = self.code
-                out[key] = _js.number(self.bound)
+                out[key] = self.bound
                 out["note"] = "Integers must be within the safe integer range."
                 out["origin"] = self.origin
             else:
                 out["origin"] = self.origin
                 out["code"] = self.code
-                out[key] = _js.number(self.bound)
+                out[key] = self.bound
             out["inclusive"] = True
         out["path"] = list(self.path)
         out["message"] = self.message
@@ -238,11 +238,11 @@ def _parse_present(ty: Type, value: Json, path: list[str | int], issues: list[Is
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             _invalid_type(ty, _received(value), None, path, issues)
             return _ABSENT
-        if math.isnan(value):
+        if isinstance(value, float) and math.isnan(value):
             # Zod names NaN in the message but reports infinities as numbers.
             _invalid_type(ty, "NaN", "NaN", path, issues)
             return _ABSENT
-        if math.isinf(value):
+        if isinstance(value, float) and math.isinf(value):
             _invalid_type(ty, "number", "Infinity", path, issues)
             return _ABSENT
         if kind == "integer":
@@ -263,9 +263,9 @@ def _parse_present(ty: Type, value: Json, path: list[str | int], issues: list[Is
                 high == MAX_SAFE_INTEGER and value > high
             )
             _check_bounds(value, low, high, "int" if unsafe else "number", path, issues)
-        else:
-            _check_bounds(value, ty.min, ty.max, "number", path, issues)
-        return _js.number(value)
+            return int(value)
+        _check_bounds(value, ty.min, ty.max, "number", path, issues)
+        return value
     if kind == "object" and isinstance(value, dict):
         result: dict[str, Json] = {}
         for f in ty.fields:

@@ -1,19 +1,22 @@
-"""Commands, their run context, results, and middleware."""
+"""Commands, their run context, results, middleware, and the transport-independent executor."""
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import dataclasses
 import inspect
+import threading
 import typing
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
-from ._errors import CtaBlock
+from ._errors import CtaBlock, Error, unknown
 from ._formatter import Format
 from ._help import Example, Usage
 from ._js import Json
-from ._model import SchemaError, schema_of
+from ._model import SchemaError, build, schema_of, to_json
 from ._schema import Type
 
 if TYPE_CHECKING:
@@ -29,17 +32,21 @@ else:
 A = TypeVar("A", default=None)
 O = TypeVar("O", default=None)  # noqa: E741
 E = TypeVar("E", default=None)
+V = TypeVar("V", default=Any)
+G = TypeVar("G", default=Any)
+CE = TypeVar("CE", default=Any)
 
 #: Where a command's output may appear: everywhere, or only to agents.
 OutputPolicy = Literal["all", "agent-only"]
 
 
 @dataclass
-class Context(Generic[A, O, E]):
+class Context(Generic[A, O, E, V, G]):
     """The context a command handler receives.
 
     Parameterize the handler's annotation with the schema classes it reads:
-    `Context[Args, Options, Env]`, where omitted parameters default to `None` (no input).
+    `Context[Args, Options, Env, Vars, Globals]`. Omitted input parameters default to `None` (no
+    input); omitted `Vars` and `Globals` are untyped.
     """
 
     agent: bool
@@ -54,30 +61,36 @@ class Context(Generic[A, O, E]):
     """The resolved output format."""
     format_explicit: bool
     """Whether the user passed `--format` or `--json`."""
-    globals: dict[str, Json]
-    """Global options, as parsed JSON data."""
+    globals: G
+    """Global options: an instance of the CLI's `globals` class, or `None` without one."""
     name: str
     """The CLI name."""
     options: O
     """Named options."""
-    var: dict[str, Any]
-    """Variables set by middleware or as CLI defaults."""
+    var: V
+    """Variables set by middleware: an instance of the CLI's `vars` class, or a `dict`."""
     version: str | None
     """The CLI version."""
 
     def __class_getitem__(cls, params: object) -> Any:
-        """Fills omitted type parameters with `None`."""
-        items = typing.cast(
-            "tuple[object, ...]", params if isinstance(params, tuple) else (params,)
-        )
-        padded = (*items, *(None,) * (3 - len(items)))
+        """Fills omitted input parameters with `None`, and omitted state parameters with `Any`."""
+        padded = _pad(params, (None, None, None, Any, Any))
         # `Generic` implements `__class_getitem__` at runtime only.
         return super().__class_getitem__(padded)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
 
 
+def _pad(params: object, fill: tuple[object, ...]) -> tuple[object, ...]:
+    """Fills omitted type parameters, which runtime `Generic` subscription requires."""
+    items = typing.cast("tuple[object, ...]", params if isinstance(params, tuple) else (params,))
+    return (*items, *fill[len(items) :])
+
+
 @dataclass
-class MiddlewareContext:
-    """The context middleware receives."""
+class MiddlewareContext(Generic[V, CE, G]):
+    """The context middleware receives.
+
+    Parameterize the annotation with the CLI's classes: `MiddlewareContext[Vars, Env, Globals]`.
+    """
 
     agent: bool
     """Whether the consumer is an agent."""
@@ -85,31 +98,42 @@ class MiddlewareContext:
     """The resolved command path."""
     display_name: str
     """The binary name the user invoked."""
-    env: dict[str, Json]
-    """CLI-level environment variables, as parsed JSON data."""
+    env: CE
+    """CLI-level environment variables: an instance of the CLI's `env` class, or `None`."""
     format: Format
     """The resolved output format."""
     format_explicit: bool
     """Whether the user passed `--format` or `--json`."""
-    globals: dict[str, Json]
-    """Global options, as parsed JSON data."""
+    globals: G
+    """Global options: an instance of the CLI's `globals` class, or `None` without one."""
     name: str
     """The CLI name."""
-    var: dict[str, Any]
-    """Variables for downstream middleware and handlers."""
+    var: V
+    """Variables for downstream middleware and handlers: assign attributes, or keys of a `dict`."""
     version: str | None
     """The CLI version."""
 
+    def __class_getitem__(cls, params: object) -> Any:
+        """Fills omitted parameters with `Any`."""
+        padded = _pad(params, (Any, Any, Any))
+        return super().__class_getitem__(padded)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+
     def set(self, key: str, value: object) -> None:
-        """Sets a variable for downstream middleware and handlers."""
-        self.var[key] = value
+        """Sets a variable for downstream middleware and handlers, as `c.var.<key> = value` does."""
+        var: object = self.var
+        if isinstance(var, dict):
+            typing.cast("dict[str, object]", var)[key] = value
+        else:
+            setattr(var, key, value)
 
 
-#: Runs the rest of the middleware chain and the command.
-Next = Callable[[], None]
+#: Runs the rest of the middleware chain and the command. `async def` middleware awaits it;
+#: plain functions call it, and it returns once the rest of the chain has finished.
+Next = Callable[[], Awaitable[None]]
 
 #: Middleware: runs around command handlers in registration order. Raise `incur.Error` to fail.
-Middleware = Callable[[MiddlewareContext, Next], None]
+#: Plain functions run in a worker thread, so their blocking `next()` cannot stall the event loop.
+Middleware = Callable[[MiddlewareContext[Any, Any, Any], Next], Awaitable[None] | None]
 
 
 @dataclass
@@ -125,14 +149,10 @@ class Outcome:
 def ok(data: object = None, *, cta: CtaBlock | None = None) -> Outcome:
     """Returns data with suggested next commands.
 
-    Return it from a handler, or from a streaming handler (a generator) to attach suggestions
-    after the stream.
+    Return it from a handler. A streaming handler yields it last, or a generator returns it, to
+    attach suggestions after the stream; its data is ignored.
     """
     return Outcome(data, cta)
-
-
-#: A command handler. Generators stream their yielded chunks.
-Handler = Callable[[Context[Any, Any, Any]], object]
 
 
 @dataclass
@@ -156,9 +176,13 @@ class Command:
 
 
 def inputs(
-    fn: Callable[..., object], scope: dict[str, Any]
+    fn: Callable[..., object], scope: dict[str, Any], state: tuple[type | None, type | None]
 ) -> tuple[Type | None, Type | None, Type | None]:
-    """Reads the args, options, and env schemas from a handler's `Context[...]` annotation."""
+    """Reads the args, options, and env schemas from a handler's `Context[...]` annotation.
+
+    `state` holds the vars and globals classes of the registering CLI, which the annotation's
+    `Vars` and `Globals` must match when both name a class.
+    """
     label = getattr(fn, "__qualname__", repr(fn))
     params = list(inspect.signature(fn).parameters.values())
     if len(params) != 1:
@@ -168,8 +192,16 @@ def inputs(
         return None, None, None
     if typing.get_origin(hint) is not Context:
         raise SchemaError(f"{label}: annotate the parameter as incur.Context[...]")
+    *schemas, vars_, globals_ = typing.get_args(hint)
+    for name, declared, expected in (("vars", vars_, state[0]), ("globals", globals_, state[1])):
+        # `Any` is a class too, from Python 3.11.
+        typed = isinstance(declared, type) and declared is not Any
+        if typed and expected is not None and declared is not expected:
+            raise SchemaError(
+                f"{label}: Context {name} must be {expected.__qualname__}, the CLI's {name} class"
+            )
     found: list[Type | None] = []
-    for arg in typing.get_args(hint):
+    for arg in schemas:
         if arg is type(None):
             found.append(None)
             continue
@@ -178,3 +210,199 @@ def inputs(
             raise SchemaError(f"{label}: Context parameters must be @incur.schema classes or None")
         found.append(dataclasses.replace(ty, py=arg))
     return found[0], found[1], found[2]
+
+
+class Stream:
+    """The chunks a streaming handler yields, from a generator or an async generator.
+
+    Iteration ends at the first yielded `incur.ok(...)`, which becomes `final`, as does the
+    value a generator returns.
+    """
+
+    def __init__(
+        self, source: Generator[object, None, object] | AsyncGenerator[object, None]
+    ) -> None:
+        self.source = source
+        self.final: object = None
+        """The stream's result: an `Outcome` with suggestions, or `None`."""
+
+    def __aiter__(self) -> Stream:
+        return self
+
+    async def __anext__(self) -> object:
+        source = self.source
+        if isinstance(source, Generator):
+            try:
+                value = next(source)
+            except StopIteration as stop:
+                self.final = stop.value
+                raise StopAsyncIteration from None
+        else:
+            value = await anext(source)
+        if isinstance(value, Outcome):
+            self.final = value
+            if isinstance(source, Generator):
+                source.close()
+            else:
+                await source.aclose()
+            raise StopAsyncIteration
+        return value
+
+
+@dataclass
+class Success:
+    """The data of a command that succeeded, with its suggestions."""
+
+    data: Json
+    """The data as JSON, `None` for no data."""
+    cta: CtaBlock | None
+    """Suggested next commands."""
+
+
+#: Parses a command's args, options, and env as JSON data. Raises `incur.Error` on bad input.
+Parse = Callable[[], tuple[dict[str, Json], dict[str, Json], dict[str, Json]]]
+
+#: Consumes a handler's stream: writes chunks to a terminal, a response, or a protocol message.
+Sink = Callable[[Stream], Awaitable[None]]
+
+
+async def execute(
+    command: Command,
+    context: MiddlewareContext[Any, Any, Any],
+    chain: list[Middleware],
+    parse: Parse,
+    sink: Sink,
+) -> Success | Error | None:
+    """Runs the middleware chain around a command, as every transport does.
+
+    Input parses inside the chain, after middleware has run. A stream goes to `sink` while
+    middleware waits in `next()`, and the result is then `None`. The outermost error wins.
+    """
+    result: Success | Error | None = Success(None, None)
+
+    async def last() -> None:
+        nonlocal result
+        try:
+            args, options, env = parse()
+        except Error as error:
+            result = error
+            return
+        result = await _invoke(command, context, args, options, env, sink)
+
+    failure = await _run_chain(chain, context, last)
+    return result if failure is None else failure
+
+
+async def _invoke(
+    command: Command,
+    c: MiddlewareContext[Any, Any, Any],
+    args: dict[str, Json],
+    options: dict[str, Json],
+    env: dict[str, Json],
+    sink: Sink,
+) -> Success | Error | None:
+    """Runs a handler, awaiting coroutines and passing streams to `sink`."""
+    handler = command.handler
+    assert handler is not None
+    cta: CtaBlock | None = None
+    try:
+        context = Context(
+            agent=c.agent,
+            args=build(command.args, args) if command.args else None,
+            display_name=c.display_name,
+            env=build(command.env, env) if command.env else None,
+            format=c.format,
+            format_explicit=c.format_explicit,
+            globals=c.globals,
+            name=c.name,
+            options=build(command.options, options) if command.options else None,
+            var=c.var,
+            version=c.version,
+        )
+        result = handler(context)
+        if inspect.isawaitable(result):
+            result = await result
+        if inspect.isgenerator(result) or inspect.isasyncgen(result):
+            source = typing.cast(
+                "Generator[object, None, object] | AsyncGenerator[object, None]", result
+            )
+            await sink(Stream(source))
+            return None
+        if isinstance(result, Outcome):
+            cta = result.cta
+            result = result.data
+        return Success(to_json(result), cta)
+    except Error as error:
+        if error.cta is None and cta is not None:
+            error.cta = cta
+        return error
+    except Exception as error:
+        return unknown(str(error))
+
+
+class _Done:
+    """The finished awaitable a plain-function middleware's `next()` returns."""
+
+    def __await__(self) -> Generator[None, None, None]:
+        yield from ()
+
+
+async def _run_chain(
+    chain: list[Middleware],
+    context: MiddlewareContext[Any, Any, Any],
+    last: Callable[[], Awaitable[None]],
+) -> Error | None:
+    """Runs a middleware chain around `last`. The outermost error wins."""
+    if not chain:
+        await last()
+        return None
+    first, rest = chain[0], chain[1:]
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    inner: Error | None = None
+
+    async def run_rest() -> None:
+        nonlocal inner
+        inner = await _run_chain(rest, context, last)
+
+    def call_next() -> Awaitable[None]:
+        if threading.get_ident() == loop_thread:
+            return run_rest()
+        # A plain function's `next()` blocks its worker thread until the chain has finished.
+        asyncio.run_coroutine_threadsafe(run_rest(), loop).result()
+        return _Done()
+
+    try:
+        if inspect.iscoroutinefunction(first):
+            returned = first(context, call_next)
+        else:
+            returned = await _in_thread(lambda: first(context, call_next))
+        if inspect.isawaitable(returned):
+            await returned
+    except Error as error:
+        return error
+    except Exception as error:
+        return unknown(str(error))
+    return inner
+
+
+async def _in_thread(fn: Callable[[], object]) -> object:
+    """Runs a blocking function in a new thread and returns its result.
+
+    Each call gets its own thread: nested middleware blocks one thread per level, which could
+    exhaust a fixed pool.
+    """
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[object] = loop.create_future()
+    context = contextvars.copy_context()
+
+    def target() -> None:
+        try:
+            value = context.run(fn)
+        except BaseException as error:
+            loop.call_soon_threadsafe(done.set_exception, error)
+        else:
+            loop.call_soon_threadsafe(done.set_result, value)
+
+    threading.Thread(target=target, daemon=True).start()
+    return await done

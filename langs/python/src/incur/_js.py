@@ -2,7 +2,8 @@
 
 The TypeScript package formats values with `String(number)`, `JSON.stringify`, and
 `localeCompare`, and JavaScript objects list integer-like keys first. Every module that formats
-output reuses these functions, so the Python port prints the same bytes.
+output reuses these functions, so the Python port prints the same bytes. Floats format as
+JavaScript numbers do; integers keep their exact value.
 """
 
 from __future__ import annotations
@@ -56,9 +57,8 @@ def from_utf16(units: list[int]) -> str:
 
 
 def number_to_string(value: float) -> str:
-    """Formats a number as ECMAScript `Number.prototype.toString` does."""
+    """Formats a number as ECMAScript `Number.prototype.toString` does, and integers exactly."""
     if isinstance(value, int):
-        # `normalize` stores integers beyond 2^53 as floats.
         return str(value)
     # Data is finite: `normalize` and `to_json` store non-finite numbers as `None`.
     if not value:
@@ -81,13 +81,6 @@ def number_to_string(value: float) -> str:
     e = n - 1
     rest = f".{digits[1:]}" if k > 1 else ""
     return f"{sign}{digits[0]}{rest}e{'+' if e >= 0 else '-'}{abs(e)}"
-
-
-def number(value: float) -> Json:
-    """Converts a finite number to JSON data, storing integral values as integers."""
-    if value == int(value) and abs(value) < 9.0e15:
-        return int(value)
-    return float(value)
 
 
 _PREFIXES = {"0x": 16, "0X": 16, "0o": 8, "0O": 8, "0b": 2, "0B": 2}
@@ -153,7 +146,9 @@ def stringify(value: Json, step: str | None = None, indent: str = "") -> str:
         return "true"
     if value is False:
         return "false"
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
         return number_to_string(value) if math.isfinite(value) else "null"
     if isinstance(value, str):
         return _quote(value)
@@ -187,15 +182,7 @@ def array_index(key: str) -> int | None:
 
 
 def normalize(value: Json) -> Json:
-    """Reorders object keys as JavaScript stores them: integer-like keys first, ascending.
-
-    Integers beyond 2^53 become floats, as JavaScript numbers are, and non-finite numbers `None`,
-    as `JSON.stringify` writes them.
-    """
-    if isinstance(value, int) and not isinstance(value, bool) and abs(value) >= 2**53:
-        value = float(value) if abs(value) < 2**1024 - 2**970 else math.inf
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
+    """Reorders object keys as JavaScript stores them: integer-like keys first, ascending."""
     if isinstance(value, list):
         return [normalize(item) for item in value]
     if isinstance(value, dict):

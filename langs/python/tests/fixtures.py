@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import json
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Awaitable, Generator
 from typing import Annotated, Any, Literal
 
 import incur
@@ -12,6 +12,7 @@ from incur import Context, Cta, CtaBlock, Error, Example, Usage, field
 
 Data = dict[str, object]
 Stream = Generator[object, None, incur.Outcome | None]
+AsyncStream = AsyncGenerator[object, None]
 
 USERS: list[Data] = [
     {"name": "Alice", "email": "alice@example.com", "role": "admin"},
@@ -50,6 +51,11 @@ MIXED: Data = {
 @incur.schema(rename_all="SCREAMING_SNAKE_CASE")
 class AppEnv:
     app_user: Annotated[str | None, field("Acting user")] = None
+
+
+@incur.schema
+class UserVars:
+    user: str = "anonymous"
 
 
 @incur.schema
@@ -185,16 +191,16 @@ class DbArgs:
 
 
 def app() -> incur.Cli:
-    pr = incur.Cli("pr", description="Pull request commands", vars={"user": "anonymous"})
+    pr = incur.Cli("pr", description="Pull request commands", vars=UserVars)
 
     @pr.use
-    def prefix_user(c: incur.MiddlewareContext, next_: incur.Next) -> None:
-        c.set("user", f"pr:{c.var['user']}")
-        next_()
+    async def prefix_user(c: incur.MiddlewareContext[UserVars], next_: incur.Next) -> None:
+        c.var.user = f"pr:{c.var.user}"
+        await next_()
 
     @pr.command("list", description="List pull requests")
-    def pr_list(c: Context[None, PrListOptions]) -> Data:
-        return {"prs": [], "state": c.options.state, "user": c.var["user"]}
+    def pr_list(c: Context[None, PrListOptions, None, UserVars]) -> Data:
+        return {"prs": [], "state": c.options.state, "user": c.var.user}
 
     @pr.command("view", description="View a pull request")
     def pr_view(c: Context[PrViewArgs]) -> Data:
@@ -221,15 +227,16 @@ def app() -> incur.Cli:
         description="A differential test CLI",
         version="1.2.3",
         env=AppEnv,
-        vars={"user": "anonymous"},
+        vars=UserVars,
     )
 
     @cli.use
-    def acting_user(c: incur.MiddlewareContext, next_: incur.Next) -> None:
-        user = c.env.get("APP_USER")
-        if user:
-            c.set("user", user)
-        next_()
+    def acting_user(
+        c: incur.MiddlewareContext[UserVars, AppEnv], next_: incur.Next
+    ) -> Awaitable[None]:
+        if c.env.app_user:
+            c.set("user", c.env.app_user)
+        return next_()
 
     @cli.command("status", description="Show repo status", examples=[Example("", "Show status")])
     def status(c: Context) -> Data:
@@ -246,7 +253,7 @@ def app() -> incur.Cli:
         examples=[Example("world", "Greet the world"), Example("bob --loud true")],
         hint="Names are case-sensitive.",
     )
-    def greet(c: Context[GreetArgs, GreetOptions]) -> Data:
+    async def greet(c: Context[GreetArgs, GreetOptions]) -> Data:
         message = f"hello {c.args.name}{c.options.suffix or ''}"
         if c.options.loud:
             message = message.upper()
@@ -308,14 +315,14 @@ def app() -> incur.Cli:
         }
 
     @cli.command("logs", description="Tail logs")
-    def logs(c: Context) -> Stream:
+    async def logs(c: Context) -> AsyncStream:
         yield "connecting..."
         yield {"progress": 50}
         yield {"progress": 100}
-        return incur.ok(cta=CtaBlock(["status"]))
+        yield incur.ok(cta=CtaBlock(["status"]))
 
     @cli.command("stream-fail", description="Stream then fail")
-    def stream_fail(c: Context) -> Stream:
+    async def stream_fail(c: Context) -> AsyncStream:
         yield {"step": 1}
         raise Error("STREAM_BROKE", "stream broke", cta=CtaBlock(["status"]))
 
@@ -381,11 +388,11 @@ def app() -> incur.Cli:
         return {"ok": True}
 
     @cli.command("whoami", description="Show the acting user")
-    def whoami(c: Context) -> Data:
-        return {"user": c.var["user"]}
+    def whoami(c: Context[None, None, None, UserVars]) -> Data:
+        return {"user": c.var.user}
 
-    def root_only(c: incur.MiddlewareContext, next_: incur.Next) -> None:
-        if c.var["user"] != "root":
+    def root_only(c: incur.MiddlewareContext[UserVars], next_: incur.Next) -> None:
+        if c.var.user != "root":
             raise Error("FORBIDDEN", "admin only")
         next_()
 
@@ -457,19 +464,23 @@ def load_config(file: str | None) -> object:
     return {"commands": {"show": {"options": {"name": "loaded"}}}}
 
 
+async def glob_banner() -> str:
+    return "Glob banner"
+
+
 def globals_cli() -> incur.Cli:
     cli = incur.Cli(
         "glob",
         description="Global options",
-        banner=lambda: "Glob banner",
+        banner=glob_banner,
         banner_mode="human",
         config=incur.Config(flag="config", loader=load_config),
         globals=Globals,
     )
 
     @cli.command("show", description="Show globals")
-    def show(c: Context[None, ShowOptions]) -> Data:
-        return {"globals": c.globals, "name": c.options.name}
+    def show(c: Context[None, ShowOptions, None, Any, Globals]) -> Data:
+        return {"globals": incur.dump(c.globals), "name": c.options.name}
 
     @cli.command("pick", description="Pick a color")
     def pick(c: Context[None, PickOptions]) -> Data:

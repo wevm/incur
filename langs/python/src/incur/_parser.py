@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 
 from . import _js
@@ -70,15 +69,23 @@ def _coerce(value: Json, ty: Type | None) -> Json:
     """Coerces a raw string to the option's type before validation."""
     if ty is not None and isinstance(value, str):
         if ty.kind in ("number", "integer"):
-            return _number_value(_js.to_number(value))
+            return _number(value, ty)
         if ty.kind == "boolean":
             return value == "true"
     return value
 
 
-def _number_value(number: float) -> Json:
-    """Wraps a coerced number, keeping non-finite results for validation to report."""
-    return _js.number(number) if math.isfinite(number) else number
+def _number(text: str, ty: Type) -> Json:
+    """Converts text to a number as `Number(text)` does; integer fields read integers exactly.
+
+    Non-finite results stay for validation to report.
+    """
+    if ty.kind == "integer":
+        trimmed = _js.trim(text)
+        digits = trimmed[1:] if trimmed.startswith(("+", "-")) else trimmed
+        if digits.isascii() and digits.isdigit():
+            return int(trimmed)
+    return _js.to_number(text)
 
 
 def check(schema: Type, data: dict[str, Json]) -> dict[str, Json]:
@@ -201,7 +208,7 @@ def parse_env(schema: Type, env: EnvSource) -> dict[str, Json]:
         if value is None:
             continue
         if f.ty.kind in ("number", "integer"):
-            raw[f.name] = _number_value(_js.to_number(value))
+            raw[f.name] = _number(value, f.ty)
         elif f.ty.kind == "boolean":
             raw[f.name] = value in ("true", "1")
         else:

@@ -2,28 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import math
 import os
 import sys
 import time
 import typing
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, NoReturn, Protocol, TypeVar
 
 from . import _completions, _filter, _js, _parser, _skill, _tokens
 from ._command import (
     Command,
-    Context,
     Middleware,
     MiddlewareContext,
     Outcome,
     OutputPolicy,
+    Stream,
+    Success,
+    execute,
     inputs,
 )
 from ._errors import (
-    CtaBlock,
     Error,
     FormattedCta,
     FormattedCtaBlock,
@@ -69,8 +71,10 @@ class Config:
     """Global flag that names a config file, such as `config` for `--config <path>`."""
     files: list[str] = field(default_factory=list[str])
     """Ordered search paths. The first existing file wins. Defaults to `<cli>.json`."""
-    loader: Callable[[str | None], object] | None = None
-    """Custom loader, called with the resolved path or `None`. Returns an object or `None`."""
+    loader: Callable[[str | None], object | Awaitable[object]] | None = None
+    """Custom loader, called with the resolved path or `None`. Returns an object or `None`.
+
+    It may be an `async def` function."""
 
 
 @dataclass
@@ -109,7 +113,7 @@ class _Spec:
     description: str | None = None
     version: str | None = None
     aliases: list[str] = field(default_factory=list[str])
-    banner: Callable[[], str | None] | None = None
+    banner: Callable[[], str | Awaitable[str | None] | None] | None = None
     banner_mode: BannerMode = "all"
     config: Config | None = None
     env: Type | None = None
@@ -117,7 +121,7 @@ class _Spec:
     globals: Type | None = None
     output_policy: OutputPolicy | None = None
     sync: bool = True
-    vars: dict[str, Any] = field(default_factory=dict[str, Any])
+    vars: type | dict[str, Any] = field(default_factory=dict[str, Any])
     commands: dict[str, _Entry] = field(default_factory=dict[str, "_Entry"])
     middleware: list[Middleware] = field(default_factory=list[Middleware])
     root: Command | None = None
@@ -134,6 +138,10 @@ class Cli:
     >>> cli.serve_with(["status"], stdout=sys.stdout)
     clean: true
     0
+
+    Handlers and middleware may be `async def` functions, and streaming handlers async
+    generators. `serve()` runs the event loop; `await cli.serve_async()` and `await cli.run(...)`
+    run inside one that is already running.
     """
 
     def __init__(
@@ -143,7 +151,7 @@ class Cli:
         description: str | None = None,
         version: str | None = None,
         aliases: Sequence[str] = (),
-        banner: Callable[[], str | None] | None = None,
+        banner: Callable[[], str | Awaitable[str | None] | None] | None = None,
         banner_mode: BannerMode = "all",
         config: Config | None = None,
         env: type | None = None,
@@ -151,7 +159,7 @@ class Cli:
         globals: type | None = None,
         output_policy: OutputPolicy | None = None,
         sync: bool = True,
-        vars: Mapping[str, Any] | None = None,
+        vars: type | Mapping[str, Any] | None = None,
     ) -> None:
         """Creates a CLI.
 
@@ -160,15 +168,19 @@ class Cli:
             description: What the CLI does.
             version: Version printed by `--version`.
             aliases: Alternative binary names. Completions register every name.
-            banner: Renders text shown above root help.
+            banner: Renders text shown above root help. It may be an `async def` function.
             banner_mode: Who sees the banner.
             config: Enables config-file option defaults.
             env: A schema class of CLI-level environment variables, parsed before middleware.
+                Middleware reads an instance as `c.env`.
             format: The default output format.
-            globals: A schema class of global options available to every command.
+            globals: A schema class of global options available to every command. Middleware and
+                handlers read an instance as `c.globals`.
             output_policy: The default output policy, inherited by every command.
             sync: Enables the built-in skills integration.
-            vars: Default variables that middleware may replace.
+            vars: Variables that middleware sets for handlers: a class whose fields all have
+                defaults, such as an `@incur.schema` class, instantiated for every run as
+                `c.var`; or a mapping of defaults, copied into a `dict`.
 
         Raises:
             SchemaError: When a global option collides with a built-in flag.
@@ -189,7 +201,7 @@ class Cli:
         )
         self._spec.output_policy = output_policy
         self._spec.sync = sync
-        self._spec.vars = dict(vars or {})
+        self._spec.vars = vars if isinstance(vars, type) else dict(vars or {})
 
     def _check_globals(self, schema: Type) -> Type:
         """Rejects global options that collide with built-in flags."""
@@ -241,9 +253,10 @@ class Cli:
     ) -> Callable[[_F], _F]:
         """Registers the decorated function as a command handler.
 
-        The handler takes one parameter annotated `incur.Context[Args, Options, Env]`, whose
-        schema classes declare the command's input. It returns data, `incur.ok(...)`, or a
-        generator that streams chunks, and raises `incur.Error` to fail.
+        The handler, a plain or `async def` function, takes one parameter annotated
+        `incur.Context[Args, Options, Env, Vars, Globals]`, whose schema classes declare the
+        command's input. It returns data or `incur.ok(...)`, or is a generator or async generator
+        that streams chunks, and raises `incur.Error` to fail.
 
         Args:
             name: The command name.
@@ -262,7 +275,7 @@ class Cli:
         scope = caller_locals()
 
         def register(fn: _F) -> _F:
-            command = _make_command(
+            command = self._make_command(
                 fn,
                 scope,
                 description=description,
@@ -300,7 +313,7 @@ class Cli:
         scope = caller_locals()
 
         def register(fn: _F) -> _F:
-            self._spec.root = _make_command(
+            self._spec.root = self._make_command(
                 fn,
                 scope,
                 description=description,
@@ -336,18 +349,41 @@ class Cli:
         self._spec.commands[cli.name] = entry
         return self
 
+    def _make_command(
+        self, fn: Callable[..., object], scope: dict[str, Any], **settings: Any
+    ) -> Command:
+        spec = self._spec
+        state = (
+            spec.vars if isinstance(spec.vars, type) else None,
+            spec.globals.py if spec.globals else None,
+        )
+        args, options, env = inputs(fn, scope, state)
+        return Command(handler=fn, args=args, options=options, env=env, **settings)
+
     def use(self, middleware: Middleware) -> Middleware:
         """Adds middleware, which runs around every command in registration order.
 
-        Usable as a decorator. Middleware calls `next()` to run the rest of the chain.
+        Usable as a decorator. Middleware takes the context and `next`, and calls `next()` to
+        run the rest of the chain: `async def` middleware awaits it, and a plain function, which
+        runs in a worker thread, calls it.
         """
         self._spec.middleware.append(middleware)
         return middleware
 
     def serve(self) -> NoReturn:
-        """Runs the CLI with the process arguments, environment, and streams, then exits."""
+        """Runs the CLI with the process arguments, environment, and streams, then exits.
+
+        Runs the event loop with `asyncio.run`. Inside a running loop, await `serve_async`.
+        """
+        raise SystemExit(asyncio.run(self.serve_async()))
+
+    async def serve_async(self) -> int:
+        """Runs the CLI with the process arguments, environment, and streams.
+
+        Returns the exit code.
+        """
         display = os.path.basename(sys.argv[0]) if sys.argv else None
-        code = self._serve(
+        code = await self._serve(
             sys.argv[1:],
             os.environ,
             sys.stdout,
@@ -356,7 +392,24 @@ class Cli:
             display,
         )
         sys.stdout.flush()
-        raise SystemExit(code)
+        return code
+
+    async def run(
+        self,
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdout: Writer | None = None,
+        stderr: Writer | None = None,
+        tty: bool = False,
+    ) -> int:
+        """Runs the CLI with explicit arguments and I/O inside a running event loop.
+
+        Returns the exit code. Takes the same arguments as `serve_with`.
+        """
+        return await self._serve(
+            list(argv), env or {}, stdout or _Null(), stderr or _Null(), tty, None
+        )
 
     def serve_with(
         self,
@@ -369,6 +422,8 @@ class Cli:
     ) -> int:
         """Runs the CLI with explicit arguments and I/O. Returns the exit code.
 
+        Runs the event loop with `asyncio.run`. Inside a running loop, await `run`.
+
         Args:
             argv: Arguments after the binary name.
             env: Environment variables. Defaults to none.
@@ -376,9 +431,9 @@ class Cli:
             stderr: Receives warnings. Defaults to discarding them.
             tty: Whether stdout is a terminal, which selects human output.
         """
-        return self._serve(list(argv), env or {}, stdout or _Null(), stderr or _Null(), tty, None)
+        return asyncio.run(self.run(argv, env=env, stdout=stdout, stderr=stderr, tty=tty))
 
-    def _serve(
+    async def _serve(
         self,
         argv: list[str],
         env: Mapping[str, str],
@@ -392,7 +447,7 @@ class Cli:
         if root is not None and root.description is None:
             root = replace(root, description=self._spec.description)
         run = _Run(self._spec, display or self.name, env, stdout, stderr, tty, root)
-        run.serve(argv)
+        await run.serve(argv)
         return run.exit
 
 
@@ -401,11 +456,6 @@ class _Null:
 
     def write(self, text: str, /) -> int:
         return len(text)
-
-
-def _make_command(fn: Callable[..., object], scope: dict[str, Any], **settings: Any) -> Command:
-    args, options, env = inputs(fn, scope)
-    return Command(handler=fn, args=args, options=options, env=env, **settings)
 
 
 @dataclass
@@ -808,13 +858,15 @@ class _Run:
         self.writeln(human_error(error) if human else format_value(error.to_json(), fmt))
         self.exit = 1
 
-    def banner(self, human: bool, show_help: bool) -> None:
+    async def banner(self, human: bool, show_help: bool) -> None:
         render = self.cli.banner
         if render is None or show_help:
             return
         mode = self.cli.banner_mode
         if mode == "all" or (mode == "human") == human:
             text = render()
+            if inspect.isawaitable(text):
+                text = await text
             if text:
                 self.writeln(text)
 
@@ -839,7 +891,7 @@ class _Run:
             ),
         )
 
-    def serve(self, argv: list[str]) -> None:
+    async def serve(self, argv: list[str]) -> None:
         cli = self.cli
         shell = self.env("COMPLETE")
         if shell is not None:
@@ -916,13 +968,13 @@ class _Run:
                 and any(not f.ty.is_optional() for f in root.args.fields)
             )
             if root is not None and human and required:
-                self.banner(human, flags.help)
+                await self.banner(human, flags.help)
                 commands = _help_entries(cli.commands)
                 options = self.command_help(root, cli.aliases, version, commands, True)
                 self.writeln(format_command(cli.name, options))
                 return
             if root is None:
-                self.banner(human, flags.help)
+                await self.banner(human, flags.help)
                 self.writeln(self.root_help())
                 return
 
@@ -963,7 +1015,7 @@ class _Run:
         if isinstance(resolved, _NotFound):
             self.not_found(resolved.error, resolved.path, resolved.commands, argv, output)
         elif isinstance(resolved, _Resolved):
-            self.execute(resolved, filtered, output)
+            await self.execute(resolved, filtered, output)
         else:
             self.writeln(self.group_help(resolved, hide_skills=False))
 
@@ -1409,7 +1461,7 @@ class _Run:
             truncated, done, nxt = self.truncate(flags, text)
             if done:
                 if nxt is not None:
-                    meta["nextOffset"] = _js.number(nxt)
+                    meta["nextOffset"] = nxt
                 envelope[key] = truncated
             elif not isinstance(body, Missing):
                 envelope[key] = body
@@ -1452,7 +1504,7 @@ class _Run:
                     if kebab is not None:
                         self.stderr.write(f"Warning: --{kebab} is deprecated\n")
 
-    def config_defaults(self, path: str, flags: _Flags) -> dict[str, Json] | None:
+    async def config_defaults(self, path: str, flags: _Flags) -> dict[str, Json] | None:
         """Loads config-file defaults for a command path."""
         cli = self.cli
         config = cli.config
@@ -1477,6 +1529,8 @@ class _Run:
         if config.loader is not None:
             try:
                 parsed = config.loader(target)
+                if inspect.isawaitable(parsed):
+                    parsed = await parsed
             except Error:
                 raise
             except Exception as error:
@@ -1518,7 +1572,7 @@ class _Run:
             raise unknown(f"Invalid config 'options' for '{path}': expected an object")
         return dict(options)
 
-    def execute(self, resolved: _Resolved, filtered: list[str], output: _Output) -> None:
+    async def execute(self, resolved: _Resolved, filtered: list[str], output: _Output) -> None:
         """Parses input, runs middleware and the handler, and writes the result."""
         cli = self.cli
         command = resolved.command
@@ -1539,102 +1593,51 @@ class _Run:
         if output.human:
             self.deprecations(argv, command.options)
         try:
-            defaults = self.config_defaults(path, output.flags)
+            defaults = await self.config_defaults(path, output.flags)
         except Error as error:
             self.write_failure(output, error, path)
             return
 
-        chain = [*cli.middleware, *resolved.middleware, *command.middleware]
-        context = MiddlewareContext(
+        context = MiddlewareContext[Any, Any, Any](
             agent=not output.human,
             command=path,
             display_name=self.display_name,
-            env={},
+            env=None,
             format=output.format,
             format_explicit=output.flags.format_explicit,
-            globals=globals_,
+            globals=build(globals_schema, globals_) if globals_schema else None,
             name=cli.name,
-            var=dict(cli.vars),
+            var=cli.vars() if isinstance(cli.vars, type) else dict(cli.vars),
             version=cli.version,
         )
-        state: dict[str, Any] = {"result": None, "streamed": False}
 
-        def last() -> None:
-            try:
-                args, options = _parser.parse(argv, command.args, command.options, defaults)
-                env = _parser.parse_env(command.env, self.env) if command.env else {}
-            except Error as error:
-                state["result"] = error
-                return
-            state["result"] = self.invoke(command, context, args, options, env, path, output, state)
+        def parse() -> tuple[dict[str, Json], dict[str, Json], dict[str, Json]]:
+            args, options = _parser.parse(argv, command.args, command.options, defaults)
+            env = _parser.parse_env(command.env, self.env) if command.env else {}
+            return args, options, env
 
-        cli_env = cli.env
+        async def sink(chunks: Stream) -> None:
+            await self.stream(chunks, path, output)
+
+        result: Success | Error | None
         try:
-            context.env = _parser.parse_env(cli_env, self.env) if cli_env else {}
+            if cli.env is not None:
+                context.env = build(cli.env, _parser.parse_env(cli.env, self.env))
         except Error as error:
-            state["result"] = error
+            result = error
         else:
-            failure = _run_chain(chain, context, last)
-            if failure is not None:
-                state["result"] = failure
-                state["streamed"] = False
-        if state["streamed"]:
+            chain = [*cli.middleware, *resolved.middleware, *command.middleware]
+            result = await execute(command, context, chain, parse, sink)
+        if result is None:
             return
-        result = state["result"]
         if isinstance(result, Error):
             if output.human and not output.flags.format_explicit and result.field_errors:
                 self.validation_help(command, path, result)
             else:
                 self.write_failure(output, result, path)
             return
-        data, cta = result if result is not None else (MISSING, None)
-        self.write_output(output, True, data, path, cta)
-
-    def invoke(
-        self,
-        command: Command,
-        c: MiddlewareContext,
-        args: dict[str, Json],
-        options: dict[str, Json],
-        env: dict[str, Json],
-        path: str,
-        output: _Output,
-        state: dict[str, Any],
-    ) -> Error | tuple[_filter.Filtered, FormattedCtaBlock | None] | None:
-        """Runs a handler. Streams write directly and set `state["streamed"]`."""
-        handler = command.handler
-        assert handler is not None
-        cta: CtaBlock | None = None
-        try:
-            context = Context(
-                agent=c.agent,
-                args=build(command.args, args) if command.args else None,
-                display_name=c.display_name,
-                env=build(command.env, env) if command.env else None,
-                format=c.format,
-                format_explicit=c.format_explicit,
-                globals=c.globals,
-                name=c.name,
-                options=build(command.options, options) if command.options else None,
-                var=c.var,
-                version=c.version,
-            )
-            result = handler(context)
-            if inspect.isgenerator(result):
-                state["streamed"] = True
-                self.stream(result, path, output)
-                return None
-            if isinstance(result, Outcome):
-                cta = result.cta
-                result = result.data
-            data = to_json(result)
-            return (MISSING if data is None else data), format_cta(c.display_name, cta)
-        except Error as error:
-            if error.cta is None and cta is not None:
-                error.cta = cta
-            return error
-        except Exception as error:
-            return unknown(str(error))
+        data = MISSING if result.data is None else result.data
+        self.write_output(output, True, data, path, format_cta(self.display_name, result.cta))
 
     def validation_help(self, command: Command, path: str, error: Error) -> None:
         """Writes human validation errors followed by command help."""
@@ -1676,7 +1679,7 @@ class _Run:
         self.writeln("\n".join(lines))
         self.exit = 1
 
-    def stream(self, chunks: Iterator[object], path: str, output: _Output) -> None:
+    async def stream(self, chunks: Stream, path: str, output: _Output) -> None:
         """Writes a streamed result."""
         jsonl = output.format == "jsonl"
         incremental = jsonl or (not output.flags.format_explicit and output.format == "toon")
@@ -1698,26 +1701,24 @@ class _Run:
             self.exit = error.exit_code if error.exit_code is not None else 1
 
         buffered: list[Json] = []
-        final: object = None
-        while True:
-            try:
-                value = to_json(next(chunks))
-            except StopIteration as stop:
-                final = stop.value
-                break
-            except Error as error:
-                fail(error)
-                return
-            except Exception as error:
-                fail(unknown(str(error)))
-                return
-            if jsonl:
-                self.writeln(_js.stringify({"type": "chunk", "data": value}))
-            elif incremental:
-                if output.render:
-                    self.writeln(self.truncate(output.flags, format_value(value, output.format))[0])
-            else:
-                buffered.append(value)
+        try:
+            async for chunk in chunks:
+                value = to_json(chunk)
+                if jsonl:
+                    self.writeln(_js.stringify({"type": "chunk", "data": value}))
+                elif incremental:
+                    if output.render:
+                        text = format_value(value, output.format)
+                        self.writeln(self.truncate(output.flags, text)[0])
+                else:
+                    buffered.append(value)
+        except Error as error:
+            fail(error)
+            return
+        except Exception as error:
+            fail(unknown(str(error)))
+            return
+        final = chunks.final
         cta = format_cta(name, final.cta if isinstance(final, Outcome) else None)
         if jsonl:
             meta: dict[str, Json] = {"command": path, "duration": self.duration()}
@@ -1738,28 +1739,6 @@ def _exists(path: str) -> bool:
     except OSError:
         return False
     return True
-
-
-def _run_chain(
-    chain: list[Middleware], context: MiddlewareContext, last: Callable[[], None]
-) -> Error | None:
-    """Runs a middleware chain around `last`. The outermost error wins."""
-    if not chain:
-        last()
-        return None
-    first, rest = chain[0], chain[1:]
-    inner: list[Error | None] = [None]
-
-    def nxt() -> None:
-        inner[0] = _run_chain(rest, context, last)
-
-    try:
-        first(context, nxt)
-    except Error as error:
-        return error
-    except Exception as error:
-        return unknown(str(error))
-    return inner[0]
 
 
 def _tree(

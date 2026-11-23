@@ -176,7 +176,7 @@ def test_renames_like_serde() -> None:
 
 
 def test_pads_context_parameters() -> None:
-    assert typing.get_args(Context[Options]) == (Options, type(None), type(None))
+    assert typing.get_args(Context[Options]) == (Options, type(None), type(None), Any, Any)
 
 
 def rejects(match: str) -> pytest.RaisesExc[incur.SchemaError]:
