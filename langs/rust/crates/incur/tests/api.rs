@@ -2251,6 +2251,206 @@ fn reads_skill_metadata() {
     "#);
 }
 
+/// Skill frontmatter is read as YAML: block and flow scalars over several lines, escapes, core
+/// schema scalars, collections, and indented documents. Invalid YAML skips the file, and
+/// descriptions display as JavaScript displays them.
+#[test]
+fn reads_structured_frontmatter() {
+    let sandbox = Sandbox::new("structured");
+    let files = [
+        ("badescape", "---\ndescription: \"\\q\"\n---\n"),
+        ("badheader", "---\ndescription: |x\n  a\n---\n"),
+        ("big", "---\ndescription: 12345678901234567890\n---\n"),
+        (
+            "blockseq",
+            "---\ndescription:\n  - a\n  - 'b'\n  - 3\n---\n",
+        ),
+        ("blockseq0", "---\ndescription:\n- x\n- y\n---\n"),
+        ("boolfalse", "---\ndescription: False\n---\n"),
+        ("booltrue", "---\ndescription: true\n---\n"),
+        ("broken", "---\nnot a mapping\n---\n"),
+        ("colonnospace", "---\ndescription:value\n---\n"),
+        ("comment", "---\ndescription: plain # trailing\n---\n"),
+        ("commentnested", "---\ndescription: # c\n  - z\n---\n"),
+        ("crlf", "---\r\ndescription: crlf\r\n---\r\n"),
+        ("duplicate", "---\nname: a\nname: b\n---\n"),
+        ("emptyclip", "---\ndescription: >\n---\n"),
+        ("emptykeep", "---\ndescription: |+\n\n\nname: k\n---\n"),
+        ("emptystr", "---\ndescription: ''\n---\n"),
+        ("emptystrip", "---\ndescription: |-\nname: e\n---\n"),
+        (
+            "escapes",
+            "---\ndescription: \"\\x41\\u0042\\U00000043 \\0\\a\\b\\t\\n\\v\\f\\r\\e\\ \\\"\\/\\\\\\N\\_\\L\\P\\\tend\"\n---\n",
+        ),
+        ("exp", "---\ndescription: 1.5e3\n---\n"),
+        ("float", "---\ndescription: -2.50\n---\n"),
+        ("flow", "---\ndescription: [a, b]\n---\n"),
+        ("flowempty", "---\ndescription: []\n---\n"),
+        ("flowmap", "---\ndescription: {a: 1}\n---\n"),
+        ("flowmulti", "---\ndescription: [x,\n  y]\n---\n"),
+        ("flowtrail", "---\ndescription: [x, \"y\", ]\n---\n"),
+        ("flowunclosed", "---\ndescription: [x, y\n---\n"),
+        (
+            "foldkeep",
+            "---\ndescription: >+\n  a\n  b\n\n    c\n  d\n\nname: f\n---\n",
+        ),
+        ("hashheader", "---\ndescription: |#x\n  a\n---\n"),
+        ("hex", "---\ndescription: 0x1A\n---\n"),
+        ("indented", "---\n  description: indented\n---\n"),
+        ("indentedbad", "---\n  description: dd\n name: n\n---\n"),
+        (
+            "indentedcomment",
+            "---\n# top\n  name: n\n  description: dd\n---\n",
+        ),
+        ("inf", "---\ndescription: -.Inf\n---\n"),
+        ("innerquote", "---\ndescription: \"a\"b\"\n---\n"),
+        ("lessindent", "---\ndescription: |\n    a\n  b\n---\n"),
+        (
+            "literalcomment",
+            "---\ndescription: | # note\n  x\n\n\n---\n",
+        ),
+        ("literalindent", "---\ndescription: |2\n    x\n  y\n---\n"),
+        ("lonequote", "---\ndescription: 'it's'\n---\n"),
+        ("nan", "---\ndescription: .NaN\n---\n"),
+        ("nestedmap", "---\ndescription:\n  key: value\n---\n"),
+        ("notpair", "---\ndescription: a\nnot a pair\n---\n"),
+        ("nullname", "---\nname: ~\ndescription: nullname\n---\n"),
+        ("number", "---\ndescription: 42\n---\n"),
+        ("octal", "---\ndescription: 0o17\n---\n"),
+        ("open", "---\nname: open\n"),
+        (
+            "plainmulti",
+            "---\ndescription: one\n  two\n\n  three # c\nname: x\n---\n",
+        ),
+        ("plus", "---\ndescription: +12\n---\n"),
+        ("posinf", "---\ndescription: +.inf\n---\n"),
+        (
+            "quoted",
+            "---\n# comment\nname: 'it''s'\ndescription: \"double \\\"quoted\\\"\"\nempty:\nnested:\n  key: value\n---\n",
+        ),
+        ("quotedkey", "---\n\"description\": keyed\n---\n"),
+        ("quotedmulti", "---\ndescription: \"a\n  b\"\n---\n"),
+        ("rootname", "---\nname: 42\ndescription: numname\n---\n"),
+        ("scalarmulti", "---\njust\ntext\n---\n"),
+        ("shorthex", "---\ndescription: \"\\x4\"\n---\n"),
+        ("singlemulti", "---\ndescription: 'a\n\n  b'\n---\n"),
+        ("strip", "---\ndescription: |-\n  s\n\n---\n"),
+        ("tabbed", "---\ndescription: |\n\ta\n---\n"),
+        ("tilde", "---\ndescription: ~\n---\n"),
+        ("trailingblank", "---\ndescription: tb\n\nname: t\n---\n"),
+        ("unterminated", "---\ndescription: \"abc\n---\n"),
+        ("zero", "---\ndescription: 0\n---\n"),
+        ("zerostr", "---\ndescription: '0'\n---\n"),
+    ];
+    for (name, content) in files {
+        sandbox.write(&format!("skills/{name}/SKILL.md"), content);
+    }
+    sandbox.write("SKILL.md", "---\nname: 42\n---\n");
+    let home = sandbox.root();
+    let env = [("HOME", home.as_str())];
+    let sync = |include: &[&str]| {
+        Cli::new("kit")
+            .update(false)
+            .sync(
+                incur::SkillSync::new()
+                    .cwd(sandbox.path(""))
+                    .include(include.iter().copied()),
+            )
+            .command("a", Command::new().run(|_: Context| incur::ok(1)))
+    };
+    let listed = run(&sync(&["skills/*"]), &["skills", "list"], &env, &[], false).1;
+    let root = run(&sync(&["_root"]), &["skills", "list"], &env, &[], false).1;
+    let added = run(&sync(&["_root"]), &["skills", "add"], &env, &[], false).1;
+    // Control characters are escaped to keep the snapshot readable.
+    let output = format!("{listed}---\n{root}---\n{added}")
+        .chars()
+        .map(|c| match c {
+            '\n' => c.to_string(),
+            c if c.is_control() || matches!(c, '\u{a0}' | '\u{2028}' | '\u{2029}') => {
+                c.escape_unicode().to_string()
+            }
+            c => c.to_string(),
+        })
+        .collect::<String>();
+    assert_snapshot!(output, @r#"
+      ✗ big              12345678901234567000
+      ✗ blockseq         a,b,3
+      ✗ blockseq0        x,y
+      ✗ boolfalse
+      ✗ booltrue         true
+      ✗ broken
+      ✗ colonnospace
+      ✗ comment          plain
+      ✗ commentnested    z
+      ✗ crlf             crlf
+      ✗ emptyclip
+      ✗ emptykeep        
+
+
+      ✗ emptystr
+      ✗ emptystrip
+      ✗ escapes          ABC \u{0}\u{7}\u{8}\u{9}
+    \u{b}\u{c}\u{d}\u{1b} "/\\u{85}\u{a0}\u{2028}\u{2029}\u{9}end
+      ✗ exp              1500
+      ✗ float            -2.5
+      ✗ flow             a,b
+      ✗ flowempty        
+      ✗ flowmap          [object Object]
+      ✗ flowmulti        x,y
+      ✗ flowtrail        x,y
+      ✗ foldkeep         a b
+
+      c
+    d
+
+
+      ✗ hex              26
+      ✗ indented         indented
+      ✗ indentedcomment  dd
+      ✗ inf              -Infinity
+      ✗ kit-a            Run `kit a --help` for usage details.
+      ✗ literalcomment   x
+
+      ✗ literalindent      x
+    y
+
+      ✗ nan
+      ✗ nestedmap        [object Object]
+      ✗ nullname         nullname
+      ✗ number           42
+      ✗ octal            15
+      ✗ open
+      ✗ plainmulti       one two
+    three
+      ✗ plus             12
+      ✗ posinf           Infinity
+      ✗ quoted           double "quoted"
+      ✗ quotedkey        keyed
+      ✗ quotedmulti      a b
+      ✗ rootname         numname
+      ✗ scalarmulti
+      ✗ singlemulti      a
+    b
+      ✗ strip            s
+      ✗ tilde
+      ✗ trailingblank    tb
+      ✗ zero
+      ✗ zerostr          0
+
+    50 skills (0 installed)
+    ---
+      ✗ kit-a  Run `kit a --help` for usage details.
+
+    1 skill (0 installed)
+    ---
+    Syncing...\u{d}\u{1b}[K  ✓ kit-a  Run `kit a --help` for usage details.
+
+    1 skill synced
+
+    Run `kit --help` to see the full command reference.
+    "#);
+}
+
 #[derive(Deserialize, Schema)]
 struct EchoOptions {
     /// Limit option

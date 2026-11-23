@@ -2,6 +2,8 @@
 //! options (core schema, block collections, two-space indentation).
 //!
 //! String folding indexes UTF-16 code units, as the JavaScript implementation does.
+//!
+//! [`frontmatter`] reads skill frontmatter back structurally, as `yaml`'s `parse` does.
 
 use std::fmt::Write as _;
 
@@ -752,30 +754,319 @@ fn consume_more_indented(units: &[u16], mut i: isize, indent: usize) -> isize {
     end
 }
 
-/// Parses the top-level `key: value` pairs of a YAML mapping whose values are single-line
-/// scalars, as skill frontmatter holds. Plain scalars stay strings, quoted scalars are
-/// unquoted, and nested or multi-line values read as `null`. Returns `None` when a top-level
-/// line is not a pair.
-pub(crate) fn parse_mapping(text: &str) -> Option<serde_json::Map<String, Value>> {
+/// Single-character escapes of double-quoted scalars and the characters they stand for.
+const ESCAPES: [(char, char); 18] = [
+    ('0', '\0'),
+    ('a', '\u{7}'),
+    ('b', '\u{8}'),
+    ('t', '\t'),
+    ('\t', '\t'),
+    ('n', '\n'),
+    ('v', '\u{b}'),
+    ('f', '\u{c}'),
+    ('r', '\r'),
+    ('e', '\u{1b}'),
+    (' ', ' '),
+    ('"', '"'),
+    ('/', '/'),
+    ('\\', '\\'),
+    ('N', '\u{85}'),
+    ('_', '\u{a0}'),
+    ('L', '\u{2028}'),
+    ('P', '\u{2029}'),
+];
+
+/// Parses the YAML frontmatter of a skill file: the text between a leading `---` line and the
+/// next line starting with `---`, as `parseSkillFrontmatter` matches it.
+///
+/// Supports what frontmatter holds: top-level `key: value` pairs, indented or not, whose values
+/// are plain, single-quoted, double-quoted, literal (`|`), or folded (`>`) scalars over any
+/// number of lines, with comments and blank lines. Plain scalars resolve with the core schema.
+/// Sequences of scalars, block or flow, are read; mappings read as empty objects, since
+/// consumers only display them. Infinities, which JSON cannot hold, read as the strings
+/// JavaScript displays, and `NaN` reads as `null`.
+///
+/// Returns an empty mapping when there is no frontmatter or it is a lone scalar, and `None`
+/// when it is not valid YAML, as when the `yaml` package throws.
+pub(crate) fn frontmatter(content: &str) -> Option<serde_json::Map<String, Value>> {
     let mut out = serde_json::Map::new();
-    for line in text.lines() {
-        let trimmed = line.trim_end();
-        if trimmed.is_empty() || trimmed.starts_with('#') || line.starts_with([' ', '\t']) {
+    let Some(block) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+        .and_then(|rest| rest.find("\n---").map(|end| &rest[..end]))
+    else {
+        return Some(out);
+    };
+    let blank = |line: &str| line.trim_matches([' ', '\t']).is_empty();
+    let comment = |line: &str| line.trim_start_matches([' ', '\t']).starts_with('#');
+    let lines = block
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect::<Vec<_>>();
+    // An indented document is dedented by its first content line's indentation.
+    let base = lines
+        .iter()
+        .find(|line| !blank(line) && !comment(line))
+        .map_or(0, |line| line.len() - line.trim_start_matches(' ').len());
+    let lines = lines
+        .into_iter()
+        .map(|line| match line.get(base..) {
+            Some(rest) if line[..base].bytes().all(|b| b == b' ') => Some(rest),
+            _ => (blank(line) || comment(line)).then_some(""),
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let indented = |line: &str| line.starts_with([' ', '\t']);
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        i += 1;
+        if blank(line) || comment(line) {
             continue;
         }
-        let (key, value) = trimmed.split_once(':')?;
-        let value = value.trim();
-        let value = if value.is_empty() {
-            Value::Null
-        } else if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
-            Value::String(inner.replace("''", "'"))
-        } else if value.starts_with('"') {
-            serde_json::from_str::<String>(value).map_or(Value::Null, Value::String)
-        } else {
-            let plain = value.split(" #").next().unwrap_or(value).trim_end();
-            Value::String(plain.to_owned())
+        let Some((key, value)) = split_pair(line) else {
+            // A document without pairs is a scalar, which reads as no metadata.
+            return (out.is_empty() && lines.iter().all(|line| split_pair(line).is_none()))
+                .then_some(out);
         };
-        out.insert(key.trim().to_owned(), value);
+        // The value continues on the indented and blank lines that follow, and a nested
+        // sequence may sit at the key's indentation.
+        let nested = value.is_empty() || value.starts_with('#');
+        let item = |line: &str| nested && (line == "-" || line.starts_with("- "));
+        let start = i;
+        while i < lines.len() && (blank(lines[i]) || indented(lines[i]) || item(lines[i])) {
+            i += 1;
+        }
+        let value = pair_value(value, &lines[start..i])?;
+        // Duplicate keys are an error.
+        if out.insert(unquote(key)?, value).is_some() {
+            return None;
+        }
     }
+    Some(out)
+}
+
+/// Splits a top-level `key: value` line at its first `: `, or a `key:` line at its colon.
+fn split_pair(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line
+        .split_once(": ")
+        .or_else(|| line.strip_suffix(':').map(|key| (key, "")))?;
+    Some((
+        key.trim_matches([' ', '\t']),
+        value.trim_matches([' ', '\t']),
+    ))
+}
+
+/// Parses the value of a pair from the rest of its line and its continuation lines.
+fn pair_value(value: &str, rest: &[&str]) -> Option<Value> {
+    if value.starts_with(['|', '>']) {
+        return block_scalar(value, rest).map(Value::String);
+    }
+    // A key without a value on its line holds a nested collection, or null.
+    if value.is_empty() || value.starts_with('#') {
+        let Some(first) = rest
+            .iter()
+            .map(|line| line.trim_matches([' ', '\t']))
+            .find(|line| !line.is_empty())
+        else {
+            return Some(Value::Null);
+        };
+        if first != "-" && !first.starts_with("- ") {
+            return Some(Value::Object(serde_json::Map::new()));
+        }
+        return rest
+            .iter()
+            .filter_map(|line| line.trim_matches([' ', '\t']).strip_prefix('-'))
+            .map(|item| pair_value(item.trim_start_matches([' ', '\t']), &[]))
+            .collect::<Option<Vec<_>>>()
+            .map(Value::Array);
+    }
+    let mut parts = std::iter::once(value)
+        .chain(rest.iter().map(|line| line.trim_matches([' ', '\t'])))
+        .collect::<Vec<_>>();
+    while parts.len() > 1 && parts.last() == Some(&"") {
+        parts.pop();
+    }
+    // Flow lines fold: a line break is a space, and each empty line is a newline.
+    let mut text = String::new();
+    let mut space = false;
+    for part in parts {
+        if part.is_empty() {
+            text.push('\n');
+        } else {
+            if space {
+                text.push(' ');
+            }
+            text.push_str(part);
+        }
+        space = !part.is_empty();
+    }
+    if value.starts_with(['"', '\'']) {
+        return unquote(&text).map(Value::String);
+    }
+    if value.starts_with('{') {
+        return Some(Value::Object(serde_json::Map::new()));
+    }
+    if let Some(inner) = value
+        .starts_with('[')
+        .then(|| text.strip_prefix('[')?.strip_suffix(']'))
+    {
+        // A flow sequence of scalars, with an optional trailing comma.
+        let items = inner?
+            .split(',')
+            .map(|item| item.trim_matches([' ', '\t', '\n']))
+            .collect::<Vec<_>>();
+        let count = items.len() - usize::from(items.last() == Some(&""));
+        return items[..count]
+            .iter()
+            .map(|item| pair_value(item, &[]))
+            .collect::<Option<Vec<_>>>()
+            .map(Value::Array);
+    }
+    Some(resolve(
+        text.split(" #").next().unwrap_or_default().trim_end(),
+    ))
+}
+
+/// Resolves a plain scalar with the core schema.
+fn resolve(plain: &str) -> Value {
+    if !resolves_as_non_string(plain) {
+        return Value::String(plain.to_owned());
+    }
+    let signed = plain.strip_prefix(['+', '-']).unwrap_or(plain);
+    match plain {
+        "~" | "null" | "Null" | "NULL" => Value::Null,
+        "true" | "True" | "TRUE" => Value::Bool(true),
+        "false" | "False" | "FALSE" => Value::Bool(false),
+        _ if signed.len() == 4
+            && signed.starts_with('.')
+            && signed[1..].eq_ignore_ascii_case("inf") =>
+        {
+            Value::String(
+                if plain.starts_with('-') {
+                    "-Infinity"
+                } else {
+                    "Infinity"
+                }
+                .into(),
+            )
+        }
+        _ => js::number(js::to_number(plain)),
+    }
+}
+
+/// Removes the quotes of a single- or double-quoted scalar and resolves its escapes, or returns
+/// plain text as is.
+fn unquote(text: &str) -> Option<String> {
+    let Some(quote) = text.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+        return Some(text.to_owned());
+    };
+    let inner = text
+        .strip_prefix(quote)
+        .and_then(|rest| rest.strip_suffix(quote))?;
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        let resolved = match (quote, ch) {
+            // A quote inside single quotes is doubled.
+            ('\'', '\'') => chars.next().filter(|&next| next == '\'')?,
+            ('"', '\\') => escape(&mut chars)?,
+            // An unescaped double quote ends the scalar early.
+            ('"', '"') => return None,
+            _ => ch,
+        };
+        out.push(resolved);
+    }
+    Some(out)
+}
+
+/// Resolves the escape after a backslash in a double-quoted scalar.
+fn escape(chars: &mut std::str::Chars<'_>) -> Option<char> {
+    let ch = chars.next()?;
+    if let Some(&(_, resolved)) = ESCAPES.iter().find(|(escape, _)| *escape == ch) {
+        return Some(resolved);
+    }
+    let width = match ch {
+        'x' => 2,
+        'u' => 4,
+        'U' => 8,
+        _ => return None,
+    };
+    let hex = chars.by_ref().take(width).collect::<String>();
+    u32::from_str_radix(&hex, 16)
+        .ok()
+        .filter(|_| hex.len() == width)
+        .and_then(char::from_u32)
+}
+
+/// Parses a literal (`|`) or folded (`>`) block scalar from its header and content lines.
+fn block_scalar(header: &str, lines: &[&str]) -> Option<String> {
+    let literal = header.starts_with('|');
+    let indicators = &header[1..];
+    let end = indicators
+        .find(|c: char| !matches!(c, '-' | '+' | '1'..='9'))
+        .unwrap_or(indicators.len());
+    let (indicators, comment) = indicators.split_at(end);
+    // Only a comment may follow the indicators.
+    let comment_only = comment.starts_with([' ', '\t'])
+        && comment.trim_start_matches([' ', '\t']).starts_with('#');
+    if !comment.is_empty() && !comment_only {
+        return None;
+    }
+    let blank = |line: &str| line.trim_matches([' ', '\t']).is_empty();
+    let indent = indicators
+        .chars()
+        .find_map(|c| c.to_digit(10))
+        .map(|digit| digit as usize)
+        .or_else(|| {
+            lines
+                .iter()
+                .find(|line| !blank(line))
+                .map(|line| line.len() - line.trim_start_matches(' ').len())
+        })
+        .unwrap_or(1);
+    // Content is indented past its key; tabs cannot indent.
+    if indent == 0 {
+        return None;
+    }
+    let mut out = String::new();
+    let mut breaks = 0;
+    let mut started = false;
+    let mut previous_normal = false;
+    for line in lines {
+        if blank(line) {
+            breaks += 1;
+            continue;
+        }
+        // Content lines are indented at least as much as the first.
+        let text = line
+            .get(indent..)
+            .filter(|_| line[..indent].bytes().all(|b| b == b' '))?;
+        let normal = !text.starts_with([' ', '\t']);
+        // Folding turns one line break between two normal lines into a space.
+        if started && !literal && previous_normal && normal && breaks == 0 {
+            out.push(' ');
+        } else {
+            let separator = usize::from(started && (literal || !previous_normal || !normal));
+            out.push_str(&"\n".repeat(breaks + separator));
+        }
+        out.push_str(text);
+        started = true;
+        previous_normal = normal;
+        breaks = 0;
+    }
+    // Chomping: strip drops the final line break, keep also keeps trailing empty lines.
+    let keep = indicators.contains('+');
+    let trailing = match (indicators.contains('-'), started) {
+        (true, _) => 0,
+        (false, true) => 1 + if keep { breaks } else { 0 },
+        (false, false) => {
+            if keep {
+                breaks
+            } else {
+                0
+            }
+        }
+    };
+    out.push_str(&"\n".repeat(trailing));
     Some(out)
 }

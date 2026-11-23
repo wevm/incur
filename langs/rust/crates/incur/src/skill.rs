@@ -497,22 +497,19 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
-/// Reads the `name` and `description` of a skill file's YAML frontmatter.
-pub(crate) fn frontmatter(content: &str) -> (Option<String>, Option<String>) {
-    let Some(rest) = content
-        .strip_prefix("---\n")
-        .or_else(|| content.strip_prefix("---\r\n"))
-    else {
-        return (None, None);
-    };
-    let end = rest.match_indices("\n---").map(|(index, _)| index).next();
-    let Some(end) = end else {
-        return (None, None);
-    };
-    let block = rest[..end].strip_suffix('\r').unwrap_or(&rest[..end]);
-    let Some(meta) = crate::yaml::parse_mapping(block) else {
-        return (None, None);
-    };
-    let text = |key: &str| meta.get(key).and_then(Value::as_str).map(str::to_owned);
-    (text("name"), text("description"))
+/// Reads the `name` and `description` of a skill file's YAML frontmatter, or returns `None`
+/// when the frontmatter is not valid YAML.
+///
+/// The description is the text JavaScript displays for it, and `None` when it is falsy.
+pub(crate) fn frontmatter(content: &str) -> Option<(Option<Value>, Option<String>)> {
+    let mut meta = crate::yaml::frontmatter(content)?;
+    let description = meta
+        .get("description")
+        .filter(|value| {
+            !matches!(value, Value::Null | Value::Bool(false))
+                && value.as_f64() != Some(0.0)
+                && value.as_str() != Some("")
+        })
+        .map(crate::js::to_string);
+    Some((meta.remove("name"), description))
 }

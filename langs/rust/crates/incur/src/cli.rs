@@ -2412,7 +2412,7 @@ impl Run<'_, '_> {
             .iter()
             .map(|s| {
                 let icon = if s.installed { '\u{2713}' } else { '\u{2717}' };
-                match s.description.as_deref().filter(|d| !d.is_empty()) {
+                match s.description.as_deref() {
                     Some(description) => format!(
                         "  {icon} {}{}  {description}",
                         s.name,
@@ -2471,16 +2471,14 @@ impl Run<'_, '_> {
         let mut lines = synced
             .skills
             .iter()
-            .map(
-                |s| match s.description.as_deref().filter(|d| !d.is_empty()) {
-                    Some(description) => format!(
-                        "  \u{2713} {}{}  {description}",
-                        s.name,
-                        " ".repeat(width - js::utf16_len(&s.name))
-                    ),
-                    None => format!("  \u{2713} {}", s.name),
-                },
-            )
+            .map(|s| match s.description.as_deref() {
+                Some(description) => format!(
+                    "  \u{2713} {}{}  {description}",
+                    s.name,
+                    " ".repeat(width - js::utf16_len(&s.name))
+                ),
+                None => format!("  \u{2713} {}", s.name),
+            })
             .collect::<Vec<_>>();
         lines.push(String::new());
         lines.push(format!(

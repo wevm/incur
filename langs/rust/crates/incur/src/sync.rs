@@ -789,7 +789,7 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
             write_skill(&tmp.join(&file.dir), &format!("{}\n", file.content))?;
             skills.push(Skill {
                 name: file.name.clone(),
-                description: Some(file.description.clone()),
+                description: Some(file.description.clone()).filter(|d| !d.is_empty()),
                 installed: false,
             });
         }
@@ -798,11 +798,9 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
                 let Ok(content) = std::fs::read_to_string(cwd.join(&found)) else {
                     continue;
                 };
-                let (declared, description) = skill::frontmatter(&content);
-                let name = if pattern == "_root" {
-                    declared.unwrap_or_else(|| source.name.to_owned())
-                } else {
-                    parent_name(&found)
+                let Some((name, description)) = included(pattern, &found, &content, source.name)
+                else {
+                    continue;
                 };
                 let _ = write_skill(&tmp.join(&name), &content);
                 if !skills.iter().any(|s| s.name == name) {
@@ -845,6 +843,26 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
     })();
     let _ = std::fs::remove_dir_all(&tmp);
     result.map_err(|error| Error::unknown(error.to_string()))
+}
+
+/// Names an included skill file and reads its description. A skill is named after its
+/// directory, or for `_root`, after its frontmatter name or the CLI. Returns `None` when the file
+/// is skipped: its frontmatter is not valid YAML, or a `_root` name is neither a string nor
+/// null, which makes TypeScript's path join throw.
+fn included(
+    pattern: &str,
+    found: &Path,
+    content: &str,
+    cli: &str,
+) -> Option<(String, Option<String>)> {
+    let (declared, description) = skill::frontmatter(content)?;
+    let name = match (pattern, declared) {
+        ("_root", None | Some(Value::Null)) => cli.to_owned(),
+        ("_root", Some(Value::String(name))) => name,
+        ("_root", Some(_)) => return None,
+        _ => parent_name(found),
+    };
+    Some((name, description))
 }
 
 /// Returns the name of a match's parent directory.
@@ -890,7 +908,7 @@ pub(crate) fn list(source: &Source<'_>, depth_value: f64) -> Vec<Skill> {
         .map(|file| Skill {
             installed: installed.contains(&file.name),
             name: file.name,
-            description: Some(file.description),
+            description: Some(file.description).filter(|d| !d.is_empty()),
         })
         .collect::<Vec<_>>();
     for pattern in &source.settings.include {
@@ -898,11 +916,8 @@ pub(crate) fn list(source: &Source<'_>, depth_value: f64) -> Vec<Skill> {
             let Ok(content) = std::fs::read_to_string(cwd.join(&found)) else {
                 continue;
             };
-            let (declared, description) = skill::frontmatter(&content);
-            let name = if pattern == "_root" {
-                declared.unwrap_or_else(|| source.name.to_owned())
-            } else {
-                parent_name(&found)
+            let Some((name, description)) = included(pattern, &found, &content, source.name) else {
+                continue;
             };
             if !skills.iter().any(|s| s.name == name) {
                 skills.push(Skill {
