@@ -125,22 +125,19 @@ node tools/unicode_tables.mjs > src/unicode.zig && zig fmt src/unicode.zig   # r
 
 ## Releasing
 
-Each port releases on its own tag, from `.github/workflows/release-langs.yml`. The workflow reruns
-every gate, checks that the tag matches the port's manifest version, and then publishes:
+The ports share the npm package's version. `changeset:version` runs `node langs/version.ts`, which
+writes `package.json`'s version into every port's manifest, lockfile, and install instructions, and
+the Checks job fails when they drift (`node langs/version.ts --check`).
 
-| Tag             | Version from                                  | Publishes                                                       |
-| --------------- | --------------------------------------------- | --------------------------------------------------------------- |
-| `rust-v1.2.3`   | `langs/rust/Cargo.toml` (`workspace.package`) | `incur-macros`, then `incur`, to crates.io (trusted publishing) |
-| `python-v1.2.3` | `langs/python/pyproject.toml`                 | `incur` to PyPI (trusted publishing)                            |
-| `zig-v1.2.3`    | `langs/zig/build.zig.zon`                     | a GitHub release with `incur-zig-1.2.3.tar.gz` of `langs/zig`   |
+When changesets publishes `incur` to npm, `main.yml` runs `.github/workflows/release-langs.yml`,
+which reruns every gate and publishes the same version:
 
-To release, bump the version, merge, then push the tag:
+- Rust: `incur-macros`, then `incur`, to crates.io (trusted publishing, environment `crates-io`).
+- Python: `incur` to PyPI (trusted publishing, environment `pypi`).
+- Zig: `incur-zig-<version>.tar.gz` of `langs/zig`, attached to the `incur@<version>` GitHub release.
 
-```sh
-git tag rust-v0.1.0 && git push origin rust-v0.1.0
-```
-
-One-time setup:
+Run the workflow by hand (Actions → Release Language Ports → Run workflow on `main`) to release the
+current version, for example after the one-time setup:
 
 - crates.io: publish the first versions of `incur-macros` and `incur` by hand
   (`cargo publish -p incur-macros && cargo publish -p incur`), then add `wevm/incur` with workflow
@@ -148,4 +145,3 @@ One-time setup:
 - PyPI: add a pending trusted publisher for project `incur` with workflow `release-langs.yml` and
   environment `pypi`.
 - GitHub: create the `crates-io` and `pypi` environments (optionally with required reviewers).
-- Zig needs no setup. Bump the version in the Zig README's install URL with each release.
