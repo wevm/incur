@@ -347,7 +347,13 @@ fn app() -> Cli {
         .env::<AppEnv>()
         .var(User("anonymous".into()))
         .middleware(|c, next| {
-            if let Some(user) = c.env.get("APP_USER").and_then(Value::as_str) {
+            // An empty value is falsy in JavaScript, so it leaves the default user.
+            if let Some(user) = c
+                .env
+                .get("APP_USER")
+                .and_then(Value::as_str)
+                .filter(|user| !user.is_empty())
+            {
                 c.set(User(user.to_owned()));
             }
             next.run(c);
