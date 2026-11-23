@@ -1,0 +1,13 @@
+.{
+    .name = .incur,
+    .version = "0.1.0",
+    .fingerprint = 0x2f2b8acbdc287c66,
+    .minimum_zig_version = "0.17.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}
