@@ -1594,7 +1594,6 @@
 {"cli": "globals", "argv": ["--debug=abc", "show"], "tty": true},
 {"cli": "globals", "argv": ["--profile", "", "show"], "tty": true},
 {"cli": "globals", "argv": ["-D", "show"], "tty": true},
-{"cli": "cfg", "argv": ["echo", "hi", "--config", "config"]},
 {"cli": "plain", "argv": ["--help"], "bin": "pl"},
 {"cli": "plain", "argv": ["hello"], "bin": "pl"},
 {"cli": "plain", "argv": ["--help"], "bin": "plain"},

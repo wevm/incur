@@ -142,6 +142,20 @@ fn formats_and_filters_values_directly() {
     assert!(String::schema().fields().is_empty());
 }
 
+/// TypeScript reports Node's `fs` message for an unreadable config path, which varies by Node
+/// version; the port reports the operating system's.
+#[test]
+fn reports_unreadable_config_files() {
+    let dir = std::env::temp_dir();
+    let cli = Cli::new("tool")
+        .config(incur::Config {
+            files: vec![dir.to_string_lossy().into_owned()],
+            ..incur::Config::default()
+        })
+        .command("echo", Command::new().run(|_: Context| incur::ok(1)));
+    assert_snapshot!(format!("{:?}", serve(&cli, &["echo"])), @r#"(1, "code: UNKNOWN\nmessage: Is a directory (os error 21)\n")"#);
+}
+
 /// V8 parses numbers beyond the double range as `Infinity`; `serde_json` rejects them, and the
 /// port reports its message.
 #[test]

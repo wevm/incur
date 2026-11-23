@@ -2108,17 +2108,8 @@ impl Run<'_, '_> {
                         format!("Config file not found: {display}"),
                     ));
                 }
-                Err(error) => {
-                    // Node's message for a directory, which the TypeScript implementation reports.
-                    let eisdir = error.kind() == std::io::ErrorKind::IsADirectory;
-                    let message = eisdir.then(|| {
-                        format!("EISDIR: illegal operation on a directory, read '{display}'")
-                    });
-                    return Err(Error::new(
-                        "UNKNOWN",
-                        message.unwrap_or_else(|| error.to_string()),
-                    ));
-                }
+                // TypeScript reports Node's `fs` message here, whose wording varies by Node version.
+                Err(error) => return Err(Error::new("UNKNOWN", error.to_string())),
             };
             let parsed = serde_json::from_str::<Value>(&raw).map_err(|error| {
                 // V8 accepts some JSON that serde_json rejects, such as out-of-range numbers.
