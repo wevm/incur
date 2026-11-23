@@ -82,5 +82,9 @@ jobs:
         run: cargo test --workspace --doc
 
       # Differential, API, and derive tests, failing on any uncovered line.
+      # rust-cache disables incremental builds, which inline small functions across crates and
+      # leave llvm-cov with mismatched copies that it reports as uncovered.
       - name: Test crates with coverage
         run: cargo llvm-cov --workspace --fail-uncovered-lines 0 --show-missing-lines
+        env:
+          CARGO_INCREMENTAL: 1
