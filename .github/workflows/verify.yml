@@ -77,6 +77,8 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy --workspace --all-targets --features incur/client -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features --features incur/client -- -D warnings
 
       - name: Check docs
         run: cargo doc --workspace --no-deps
@@ -85,6 +87,10 @@ jobs:
 
       - name: Test docs
         run: cargo test --workspace --doc
+
+      # Without the default tokio feature, the blocking entries use a std-only executor.
+      - name: Test without default features
+        run: cargo test --workspace --no-default-features
 
       # Differential, API, and derive tests, failing on any uncovered line.
       # rust-cache disables incremental builds, which inline small functions across crates and

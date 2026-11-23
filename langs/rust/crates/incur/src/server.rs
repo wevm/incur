@@ -108,7 +108,7 @@ impl Cli {
     /// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
     /// let cli = Cli::new("tool").command(
     ///     "ping",
-    ///     Command::new().run(|_: Context| Ok::<_, incur::Error>("pong")),
+    ///     Command::new().run(|_: Context| "pong"),
     /// );
     /// let request = http::Request::get("http://localhost/ping").body(Body::empty()).unwrap();
     /// let response = cli.fetch(request).await;

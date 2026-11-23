@@ -485,7 +485,66 @@ fn main() {
         }
         return;
     }
+    if let Ok(entry) = std::env::var("INCUR_DERIVED") {
+        derived(&entry);
+        return;
+    }
     matches_typescript();
+    serves_derived_entries();
+}
+
+/// Runs the `greet` fixture through a process entry of its derived type: `parse` prints the
+/// parsed command, and `serve` and `serve-async` run a handler.
+fn derived(entry: &str) {
+    use incur::Parser;
+
+    let handler = |fixtures::Greet { name, .. }, _| fixtures::Greeting {
+        message: format!("hello {name}"),
+    };
+    match entry {
+        "parse" => {
+            let fixtures::Greet { name, loud } = fixtures::Greet::parse();
+            let line = format!("parsed {name} {loud:?}\n");
+            std::io::stdout().write_all(line.as_bytes()).unwrap();
+        }
+        "serve" => fixtures::Greet::serve(handler),
+        _ => futures::executor::block_on(fixtures::Greet::serve_async(handler)),
+    }
+}
+
+/// The process entries of a derived CLI, which read the process arguments and exit, run in a
+/// child process like the cases with a `bin`.
+fn serves_derived_entries() {
+    let run = |entry: &str, argv: &[&str]| {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(argv).env_clear().env("INCUR_DERIVED", entry);
+        profile(&mut command);
+        let output = command.output().unwrap();
+        format!(
+            "{entry} {argv:?}: {}\n{}",
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap()
+        )
+    };
+    let outputs = [
+        run("parse", &["world", "--loud"]),
+        run("parse", &["--version"]),
+        run("serve", &["world"]),
+        run("serve-async", &["world"]),
+    ];
+    insta::assert_snapshot!(outputs.join(""), @r#"
+    parse ["world", "--loud"]: 0
+    parsed world Some(true)
+    parse ["--version"]: 1
+    code: VALIDATION_ERROR
+    message: "Invalid input: expected string, received undefined\n\nDetails: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"name\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+    fieldErrors[1]{code,missing,path,expected,received,message}:
+      invalid_type,true,name,string,"","Invalid input: expected string, received undefined"
+    serve ["world"]: 0
+    message: hello world
+    serve-async ["world"]: 0
+    message: hello world
+    "#);
 }
 
 /// Loads the reference results: from `INCUR_REFERENCE` when set, otherwise by running Node.

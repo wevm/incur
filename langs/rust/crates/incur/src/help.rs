@@ -66,6 +66,8 @@ pub struct Options<'a> {
     pub globals: Option<&'a Type>,
     /// Hide the global options section.
     pub hide_global_options: bool,
+    /// Hide the MCP integration and the `--mcp` flag.
+    pub hide_mcp: bool,
     /// Hide the skills integration.
     pub hide_skills: bool,
     /// Hide the root `--update` flag.
@@ -345,6 +347,7 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         let builtins = INTEGRATIONS
             .iter()
             .filter(|(name, _)| !options.hide_skills || *name != "skills")
+            .filter(|(name, _)| !options.hide_mcp || *name != "mcp")
             .collect::<Vec<_>>();
         let width = builtins.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
         lines.push(String::new());
@@ -389,7 +392,9 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         ("--full-output".into(), "Show full output envelope"),
     ]);
     if options.root {
-        flags.push(("--mcp".into(), "Start as MCP stdio server"));
+        if !options.hide_mcp {
+            flags.push(("--mcp".into(), "Start as MCP stdio server"));
+        }
         if !options.hide_update {
             flags.push(("--update".into(), "Update to latest version"));
         }

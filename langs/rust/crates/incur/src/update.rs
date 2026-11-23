@@ -66,8 +66,8 @@ type Install = Arc<dyn Fn(InstallContext) -> BoxFuture<Result<(), Error>> + Send
 ///
 /// let cli = Cli::new("tool").version("1.0.0").update(
 ///     Update::new()
-///         .check(|c: incur::update::CheckContext| Ok::<_, incur::Error>(Some(format!("{}-next", c.current))))
-///         .install(|_| async { Ok::<_, incur::Error>(()) }),
+///         .check(|c: incur::update::CheckContext| Ok(Some(format!("{}-next", c.current))))
+///         .install(|_| async { Ok(()) }),
 /// );
 /// let disabled = Cli::new("tool").update(false);
 /// ```

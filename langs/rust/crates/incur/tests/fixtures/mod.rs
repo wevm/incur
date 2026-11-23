@@ -9,7 +9,8 @@ use std::sync::Arc;
 use futures::{StreamExt, stream};
 use incur::help::Usage;
 use incur::{
-    BannerMode, Cli, Command, Config, Context, Cta, CtaBlock, Error, Format, OutputPolicy, Schema,
+    BannerMode, Cli, Command, Config, Context, Cta, CtaBlock, Error, Format, OutputPolicy, Parser,
+    Schema,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -198,17 +199,6 @@ enum PrState {
     All,
 }
 
-#[derive(Deserialize, Schema)]
-struct PrListOptions {
-    /// State
-    #[serde(default = "pr_open")]
-    state: PrState,
-}
-
-fn pr_open() -> PrState {
-    PrState::Open
-}
-
 #[derive(Schema)]
 #[expect(dead_code, reason = "Only the schema is used.")]
 struct UserRow {
@@ -255,12 +245,6 @@ struct DataArgs {
 }
 
 #[derive(Deserialize, Schema)]
-struct PrViewArgs {
-    /// PR number
-    number: f64,
-}
-
-#[derive(Deserialize, Schema)]
 struct DbArgs {
     /// Table
     table: Option<String>,
@@ -304,29 +288,50 @@ fn mixed() -> Value {
     })
 }
 
+/// Pull request commands
+#[derive(Parser)]
+#[incur(name = "pr", middleware = pr_user)]
+enum Pr {
+    /// List pull requests
+    List {
+        /// State
+        #[incur(default = PrState::Open)]
+        state: PrState,
+    },
+    /// View a pull request
+    View {
+        /// PR number
+        #[incur(arg, coerce = false)]
+        number: f64,
+    },
+}
+
+/// Prefixes the acting user for pull request commands.
+fn pr_user(
+    mut c: incur::MiddlewareContext,
+    next: incur::Next,
+) -> impl Future<Output = Result<(), Error>> + Send + 'static {
+    let user = c.var::<User>().map_or("", |u| u.0.as_str()).to_owned();
+    c.set(User(format!("pr:{user}")));
+    next.run(c)
+}
+
+#[derive(Serialize)]
+struct PrList {
+    prs: Vec<Value>,
+    state: PrState,
+    user: Option<String>,
+}
+
 fn app() -> Cli {
-    let pr = Cli::new("pr")
-        .description("Pull request commands")
-        .middleware(|mut c, next| {
-            let user = c.var::<User>().map_or("", |u| u.0.as_str()).to_owned();
-            c.set(User(format!("pr:{user}")));
-            next.run(c)
-        })
-        .command(
-            "list",
-            Command::new().description("List pull requests").run(
-                |c: Context<(), PrListOptions>| {
-                    let user = c.var::<User>().map(|u| u.0.clone());
-                    data(json!({ "prs": [], "state": c.options.state, "user": user }))
-                },
-            ),
-        )
-        .command(
-            "view",
-            Command::new()
-                .description("View a pull request")
-                .run(|c: Context<PrViewArgs>| data(json!({ "number": c.args.number }))),
-        );
+    let pr = Pr::cli().handle(|command, c| match command {
+        Pr::List { state } => incur::ok(PrList {
+            prs: Vec::new(),
+            state,
+            user: c.var::<User>().map(|u| u.0.clone()),
+        }),
+        Pr::View { number } => incur::ok(json!({ "number": number })),
+    });
     let db = Cli::new("db")
         .description("Database commands")
         .output_policy(OutputPolicy::AgentOnly)
@@ -641,25 +646,33 @@ fn app() -> Cli {
         )
 }
 
-#[derive(Deserialize, Schema)]
-struct LoudOptions {
+/// A greeting CLI
+#[derive(Parser)]
+#[incur(name = "greet")]
+pub(crate) struct Greet {
+    /// Name to greet
+    #[incur(arg)]
+    pub(crate) name: String,
     /// Shout
-    loud: Option<bool>,
+    pub(crate) loud: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct Greeting {
+    pub(crate) message: String,
 }
 
 fn greet() -> Cli {
-    Cli::new("greet")
+    Greet::cli()
         .update(false)
-        .description("A greeting CLI")
         .banner(BannerMode::Agent, || Some("Greet banner".into()))
-        .root(Command::new().run(|c: Context<GreetArgs, LoudOptions>| {
-            let message = if c.options.loud == Some(true) {
-                format!("HELLO {}", c.args.name)
+        .handle(|Greet { name, loud }, _| Greeting {
+            message: if loud == Some(true) {
+                format!("HELLO {name}")
             } else {
-                format!("hello {}", c.args.name)
-            };
-            data(json!({ "message": message }))
-        }))
+                format!("hello {name}")
+            },
+        })
 }
 
 #[derive(Deserialize, Schema)]
@@ -858,40 +871,37 @@ fn cfg() -> Cli {
         )
 }
 
+/// No skills, JSON by default
+#[derive(Parser)]
+#[incur(name = "plain", aliases = ["pl", "plain-cli"])]
+enum Plain {
+    /// Say hello
+    Hello,
+    Ping,
+    /// Say hello loudly
+    #[incur(name = "Hello")]
+    HelloLoud,
+    /// Version two
+    V2,
+    /// Katakana ping
+    #[incur(name = "ピン")]
+    Pin,
+}
+
 fn plain() -> Cli {
-    Cli::new("plain")
+    Plain::cli()
         .update(false)
-        .description("No skills, JSON by default")
         .sync(false)
         .format(Format::Json)
-        .aliases(["pl", "plain-cli"])
         .config(Config::default())
         .banner(BannerMode::All, || Some("Welcome to plain".into()))
-        .command(
-            "hello",
-            Command::new()
-                .description("Say hello")
-                .run(|_: Context| data(json!({ "hello": "world" }))),
-        )
-        .command("ping", Command::new().run(|_: Context| data(json!("pong"))))
-        .command(
-            "Hello",
-            Command::new()
-                .description("Say hello loudly")
-                .run(|_: Context| data(json!({ "hello": "WORLD" }))),
-        )
-        .command(
-            "v2",
-            Command::new()
-                .description("Version two")
-                .run(|_: Context| data(json!({ "v": 2 }))),
-        )
-        .command(
-            "ピン",
-            Command::new()
-                .description("Katakana ping")
-                .run(|_: Context| data(json!("ポン"))),
-        )
+        .handle(|command, _| match command {
+            Plain::Hello => incur::ok(json!({ "hello": "world" })),
+            Plain::Ping => incur::ok("pong"),
+            Plain::HelloLoud => incur::ok(json!({ "hello": "WORLD" })),
+            Plain::V2 => incur::ok(json!({ "v": 2 })),
+            Plain::Pin => incur::ok("ポン"),
+        })
 }
 
 #[derive(Deserialize, Schema)]
