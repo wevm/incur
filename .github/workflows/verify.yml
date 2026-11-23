@@ -120,7 +120,7 @@ jobs:
 
       # Differential, API, schema, and doc tests, failing below 100% branch coverage.
       - name: Test with coverage
-        run: uv run coverage run -m pytest && uv run coverage report
+        run: uv run coverage erase && uv run coverage run -m pytest && uv run coverage report
 
   zig:
     name: Zig

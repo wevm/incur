@@ -100,7 +100,7 @@ cargo llvm-cov --workspace --fail-uncovered-lines 0 --show-missing-lines
 cd langs/python
 uv sync
 uv run ruff check && uv run ruff format --check && uv run pyright
-uv run coverage run -m pytest && uv run coverage report        # fails below 100% branch coverage
+uv run coverage erase && uv run coverage run -m pytest && uv run coverage report   # 100% branch coverage
 ```
 
 ## Zig
