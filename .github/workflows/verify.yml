@@ -41,4 +41,4 @@ jobs:
           CI: true
 
       - name: Upload coverage reports to Codecov
-        uses: wevm/actions/vendor/codecov/codecov-action/v4.6.0@b518cf981b50a4c745a8b7335fc693f34b108a75
+        uses: wevm/actions/vendor/codecov/codecov-action/v4.6.0@e0e99cfdac7c74eadc3ee7281015c0bf0496d6ac
