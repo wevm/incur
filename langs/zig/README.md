@@ -39,13 +39,13 @@
 Requires Zig 0.17.1.
 
 ```sh
-zig fetch --save=incur git+https://github.com/wevm/incur
+zig fetch --save https://github.com/wevm/incur/releases/download/zig-v0.1.0/incur-zig-0.1.0.tar.gz
 ```
 
 ```zig
 // build.zig
-const incur = b.dependency("incur", .{});
-exe.root_module.addImport("incur", b.createModule(.{ .root_source_file = incur.path("langs/zig/src/root.zig") }));
+const incur = b.dependency("incur", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("incur", incur.module("incur"));
 ```
 
 ## Usage
