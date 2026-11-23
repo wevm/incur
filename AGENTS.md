@@ -52,6 +52,14 @@
 - **Install musl runtime libraries** — Bun musl executables require `libstdc++` and `libgcc`; install both before Alpine smoke tests.
 - **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
 
+## Language Port Conventions
+
+- **TypeScript is the reference** — ports in `langs/<language>` match its stdout, stderr, and exit codes byte for byte. Fix a port, never the expectation.
+- **Shared differential suite** — `langs/differential` holds the reference CLIs (`fixtures.ts`), the cases (`cases.json`, one per line), and config fixtures. Every port mirrors the fixtures and runs every case. A TypeScript behavior change adds cases there.
+- **Cover through cases** — reach port code through new fixture behavior and cases before anything else. Port-only APIs (trait impls, typed failures, unsupported built-ins) get public-API integration tests; unreachable code is restructured away, not excluded.
+- **Mirror JavaScript semantics** — numbers are doubles, `slice` and element reads follow ECMAScript, and dependency output (zod, yaml, toon, tokenx) is ported from the pinned version, key order included.
+- **Rust gate** — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo llvm-cov --workspace --fail-uncovered-lines 0` in `langs/rust`.
+
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).

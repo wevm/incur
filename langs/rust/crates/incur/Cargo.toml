@@ -1,0 +1,34 @@
+[package]
+name = "incur"
+description = "Build CLIs for agents and humans: TOON output, LLM manifests, skills, and shell completions."
+categories = ["command-line-interface"]
+edition.workspace = true
+keywords = ["agents", "cli", "llm", "mcp", "toon"]
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+# Runtime coverage is integration-only: tests live in `tests/`.
+test = false
+
+[dependencies]
+incur-macros = { workspace = true }
+indexmap = { workspace = true }
+ryu-js = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+trybuild = { workspace = true }
+
+[[test]]
+name = "differential"
+# `main` either runs the suite or, when re-executed with `INCUR_FIXTURE`, serves a fixture CLI.
+harness = false
+
+[lints]
+workspace = true

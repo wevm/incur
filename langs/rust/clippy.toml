@@ -1,0 +1,5 @@
+doc-valid-idents = ["JavaScript", "TypeScript", "TOON", "YAML", "JSONL", "ECMAScript", "OpenAPI", ".."]
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "Iteration order reaches output. Use indexmap::IndexMap." },
+  { path = "std::collections::HashSet", reason = "Iteration order reaches output. Use indexmap::IndexSet." },
+]

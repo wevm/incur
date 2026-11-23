@@ -42,3 +42,45 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: wevm/actions/vendor/codecov/codecov-action/v4.6.0@b518cf981b50a4c745a8b7335fc693f34b108a75
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: langs/rust
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      # The differential suite runs the TypeScript reference with Node.js.
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Cache Rust builds
+        uses: wevm/actions/vendor/Swatinem/rust-cache/v2.9.2@8963daf30237417f873c8e2f17e3bf9415e3a7b9
+        with:
+          workspaces: langs/rust
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install cargo-llvm-cov
+        run: curl -fsSL https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.2/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz | tar xzf - -C "$HOME/.cargo/bin"
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint crates
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Check docs
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Test docs
+        run: cargo test --workspace --doc
+
+      # Differential, API, and derive tests, failing on any uncovered line.
+      - name: Test crates with coverage
+        run: cargo llvm-cov --workspace --fail-uncovered-lines 0 --show-missing-lines
