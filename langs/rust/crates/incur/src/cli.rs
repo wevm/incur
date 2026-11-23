@@ -3,57 +3,171 @@
 use std::future::poll_fn;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::pin::pin;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Instant;
 
-use futures_channel::oneshot;
+use futures_channel::mpsc;
+use futures_core::Stream;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
+use crate::body::Body;
 use crate::command::{
-    self, Chunks, Command, Inner, Invocation, Middleware, MiddlewareContext, Next, Outcome,
-    OutputPolicy, Terminal, Vars,
+    self, Chunks, Command, Middleware, MiddlewareContext, Next, Outcome, OutputPolicy, Vars,
 };
 use crate::completions::{self, Shell};
 use crate::errors::{CtaBlock, Error, FormattedCta, FormattedCtaBlock, human_error};
+use crate::execute::{self, Executed};
+use crate::fetch::{self, Fetch, FetchCommand};
 use crate::filter;
 use crate::formatter::{self, Format};
 use crate::help::{self, Entry as HelpEntry, Example};
 use crate::js;
+use crate::mcp::{self, Mcp};
+use crate::openapi;
 use crate::parser::{self, GlobalsOptions};
+use crate::remote::McpSource;
 use crate::schema::{self, Schema, Type};
+use crate::server;
 use crate::skill::{self, CommandInfo};
+use crate::sync::{self, SkillSync};
 use crate::tokens;
+use crate::update::{self, Update};
 
 /// The hint appended to destructive commands in agent skills.
 const DESTRUCTIVE_HINT: &str = "Confirm with the user before executing this destructive command.";
 
 /// A command tree entry.
 #[derive(Clone)]
-enum Entry {
+pub(crate) enum Entry {
     /// Another name for a sibling command, holding a copy of it.
     Alias(Command),
     /// A command.
     Command(Command),
+    /// A command that forwards curl-style arguments to a fetch handler.
+    Fetch(Gateway),
     /// A group of commands.
     Group(Group),
 }
 
 /// A mounted command group.
-#[derive(Clone, Default)]
-struct Group {
+#[derive(Clone)]
+pub(crate) struct Group {
     /// Subcommands.
-    commands: IndexMap<String, Entry>,
+    pub(crate) commands: IndexMap<String, Entry>,
     /// Description.
-    description: Option<String>,
+    pub(crate) description: Option<String>,
+    /// Commands generated on first use: an OpenAPI document or a remote MCP server.
+    pub(crate) generated: Option<Arc<dyn Generate>>,
+    /// Whether MCP clients see the group.
+    pub(crate) mcp: bool,
     /// Group middleware.
-    middleware: Vec<Middleware>,
+    pub(crate) middleware: Vec<Middleware>,
     /// Output policy inherited by children.
-    output_policy: Option<OutputPolicy>,
+    pub(crate) output_policy: Option<OutputPolicy>,
     /// The group's own command.
-    root: Option<Command>,
+    pub(crate) root: Option<Command>,
+}
+
+impl Default for Group {
+    fn default() -> Self {
+        Self {
+            commands: IndexMap::new(),
+            description: None,
+            generated: None,
+            mcp: true,
+            middleware: Vec::new(),
+            output_policy: None,
+            root: None,
+        }
+    }
+}
+
+/// Generates the commands of a group on first use.
+pub(crate) trait Generate: Send + Sync {
+    /// Whether generation waits until an invocation reaches the group. Groups that are not
+    /// lazy generate before every invocation.
+    fn lazy(&self) -> bool;
+
+    /// Returns the generated commands.
+    fn generate<'a>(
+        &'a self,
+        client: &'a fetch::Handler,
+    ) -> futures_util::future::BoxFuture<'a, Result<IndexMap<String, Entry>, Error>>;
+}
+
+/// Which lazy groups an invocation loads.
+pub(crate) enum Scope {
+    /// Every group.
+    All,
+    /// No lazy group.
+    None,
+    /// The top-level group with this name.
+    Only(String),
+}
+
+/// A fetch command: forwards curl-style arguments to a handler.
+#[derive(Clone)]
+pub(crate) struct Gateway {
+    /// Prefix for request paths.
+    pub(crate) base_path: Option<String>,
+    /// Description.
+    pub(crate) description: Option<String>,
+    /// The handler.
+    pub(crate) fetch: Fetch,
+    /// Output policy.
+    pub(crate) output_policy: Option<OutputPolicy>,
+}
+
+impl Gateway {
+    /// Returns a handler that sends the request curl-style arguments describe, and returns the
+    /// response data, an error, or a stream of NDJSON lines.
+    pub(crate) fn handler(&self, argv: Vec<String>, client: fetch::Handler) -> command::Handler {
+        let fetch = self.fetch.clone();
+        let base_path = self.base_path.clone();
+        Arc::new(move |_| {
+            let fetch = fetch.clone();
+            let base_path = base_path.clone();
+            let client = client.clone();
+            let argv = argv.clone();
+            Box::pin(async move {
+                let result = async {
+                    let mut input = fetch::parse_argv(&argv)?;
+                    if let Some(base_path) = &base_path {
+                        input.path = format!("{base_path}{}", input.path);
+                    }
+                    fetch.send(fetch::build_request(input)?, &client).await
+                }
+                .await;
+                match result {
+                    Err(error) => Outcome::from(error),
+                    Ok(response) if fetch::is_streaming(&response) => {
+                        command::stream(fetch::ndjson(response.into_body()))
+                    }
+                    Ok(response) => {
+                        let status = response.status();
+                        let data = fetch::json_or_text(&response.into_body().text().await);
+                        if status.is_success() {
+                            command::ok(data)
+                        } else {
+                            Outcome::from(fetch::parse_error(&data, status.as_u16()))
+                        }
+                    }
+                }
+            })
+        })
+    }
+
+    /// Returns the command an MCP tool sees for the gateway, which has no handler of its own.
+    pub(crate) fn as_command(&self) -> Command {
+        let mut command = Command::new().run(|_: command::Context| {
+            Err::<Value, _>(Error::unknown("command.run is not a function"))
+        });
+        command.description.clone_from(&self.description);
+        command
+    }
 }
 
 /// Config-file option defaults.
@@ -88,6 +202,9 @@ pub struct Io<'a> {
     pub env: &'a (dyn Fn(&str) -> Option<String> + Sync),
     /// Standard error.
     pub stderr: &'a mut (dyn Write + Send),
+    /// Standard input lines, without line endings. `--mcp` reads JSON-RPC messages from it.
+    /// Pass `&mut futures::stream::empty()` when there is no input.
+    pub stdin: &'a mut (dyn Stream<Item = String> + Send + Unpin),
     /// Standard output.
     pub stdout: &'a mut (dyn Write + Send),
     /// Whether standard output is a terminal.
@@ -109,36 +226,57 @@ pub struct Io<'a> {
 #[derive(Clone)]
 pub struct Cli {
     /// Alternative binary names.
-    aliases: Vec<String>,
+    pub(crate) aliases: Vec<String>,
     /// Banner shown above root help.
     #[expect(clippy::type_complexity, reason = "The banner is a plain callback.")]
-    banner: Option<(Arc<dyn Fn() -> Option<String> + Send + Sync>, BannerMode)>,
+    pub(crate) banner: Option<(Arc<dyn Fn() -> Option<String> + Send + Sync>, BannerMode)>,
+    /// The HTTP client outgoing requests go through.
+    pub(crate) client: Option<fetch::Handler>,
     /// Commands.
-    commands: IndexMap<String, Entry>,
+    pub(crate) commands: IndexMap<String, Entry>,
     /// Config-file defaults.
-    config: Option<Config>,
+    pub(crate) config: Option<Config>,
     /// Description.
-    description: Option<String>,
+    pub(crate) description: Option<String>,
     /// CLI-level environment schema.
-    env: Option<Type>,
+    pub(crate) env: Option<Type>,
     /// Default output format.
-    format: Option<Format>,
+    pub(crate) format: Option<Format>,
     /// Global options schema.
-    globals: Option<Type>,
+    pub(crate) globals: Option<Type>,
+    /// MCP server settings.
+    pub(crate) mcp: Mcp,
     /// Middleware.
-    middleware: Vec<Middleware>,
+    pub(crate) middleware: Vec<Middleware>,
     /// The CLI name.
-    name: String,
+    pub(crate) name: String,
     /// Default output policy.
-    output_policy: Option<OutputPolicy>,
+    pub(crate) output_policy: Option<OutputPolicy>,
+    /// The trusted npm package that provides the CLI.
+    pub(crate) package: Option<String>,
     /// The root command.
-    root: Option<Command>,
-    /// Whether the skills integration is enabled.
-    sync: bool,
+    pub(crate) root: Option<Command>,
+    /// The root fetch handler, which runs when no command matches.
+    pub(crate) root_fetch: Option<Gateway>,
+    /// Commands generated from the root fetch handler's OpenAPI document.
+    pub(crate) root_generated: Option<Arc<dyn Generate>>,
+    /// State shared between invocations: the MCP HTTP session and generated commands.
+    pub(crate) state: Arc<State>,
+    /// Skills integration settings.
+    pub(crate) sync: SkillSync,
+    /// Update settings.
+    pub(crate) update: Update,
     /// Default variables.
-    vars: Vars,
+    pub(crate) vars: Vars,
     /// Version.
-    version: Option<String>,
+    pub(crate) version: Option<String>,
+}
+
+/// State a CLI keeps between invocations.
+#[derive(Default)]
+pub(crate) struct State {
+    /// The stateful MCP HTTP session.
+    pub(crate) session: futures_util::lock::Mutex<Option<server::Session>>,
 }
 
 impl Cli {
@@ -147,17 +285,24 @@ impl Cli {
         Self {
             aliases: Vec::new(),
             banner: None,
+            client: None,
             commands: IndexMap::new(),
             config: None,
             description: None,
             env: None,
             format: None,
             globals: None,
+            mcp: Mcp::new(),
             middleware: Vec::new(),
             name: name.into(),
             output_policy: None,
+            package: None,
             root: None,
-            sync: true,
+            root_fetch: None,
+            root_generated: None,
+            state: Arc::default(),
+            sync: SkillSync::new(),
+            update: Update::new(),
             vars: Vars::default(),
             version: None,
         }
@@ -241,6 +386,8 @@ impl Cli {
             "llmsFull",
             "mcp",
             "help",
+            "incurBinaryApply",
+            "incurUpdateCheck",
             "version",
             "schema",
             "filterOutput",
@@ -251,6 +398,9 @@ impl Cli {
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
+        if self.update.enabled {
+            builtins.push("update".into());
+        }
         // The config flag and its `--no-` form are built-ins too.
         builtins.extend(
             self.config
@@ -300,6 +450,8 @@ impl Cli {
             root => Entry::Group(Group {
                 commands: cli.commands,
                 description: cli.description,
+                generated: None,
+                mcp: cli.mcp.enabled,
                 middleware: cli.middleware,
                 output_policy: cli.output_policy,
                 root,
@@ -363,10 +515,94 @@ impl Cli {
         self
     }
 
-    /// Enables or disables the built-in skills integration.
+    /// Configures the built-in skills integration: `skills add`, `skills list`, and staleness
+    /// notices. `false` disables it.
     #[must_use]
-    pub fn sync(mut self, enabled: bool) -> Self {
-        self.sync = enabled;
+    pub fn sync(mut self, sync: impl Into<SkillSync>) -> Self {
+        self.sync = sync.into();
+        self
+    }
+
+    /// Configures update checks and the `--update` flag. `false` disables both.
+    #[must_use]
+    pub fn update(mut self, update: impl Into<Update>) -> Self {
+        self.update = update.into();
+        self
+    }
+
+    /// Configures the MCP server behind `--mcp`, MCP over HTTP, and `mcp add`. On a mounted CLI,
+    /// `false` hides the group from MCP clients.
+    #[must_use]
+    pub fn mcp(mut self, mcp: impl Into<Mcp>) -> Self {
+        self.mcp = mcp.into();
+        self
+    }
+
+    /// Sets the trusted npm package that provides the CLI, used in generated commands such as
+    /// `npx <package> --mcp`.
+    #[must_use]
+    pub fn package(mut self, package: impl Into<String>) -> Self {
+        self.package = Some(package.into());
+        self
+    }
+
+    /// Sets the HTTP client every outgoing request goes through: hosted fetch sources, OpenAPI
+    /// documents and MCP servers fetched by URL, and npm registry update checks.
+    ///
+    /// Defaults to a real client with the `client` cargo feature, and otherwise to one that
+    /// fails every request.
+    #[must_use]
+    pub fn client<F, R>(mut self, f: F) -> Self
+    where
+        F: Fn(http::Request<Body>) -> R + Send + Sync + 'static,
+        R: Future<Output = Result<http::Response<Body>, Error>> + Send + 'static,
+    {
+        self.client = Some(fetch::handler(f));
+        self
+    }
+
+    /// Mounts a fetch command: curl-style arguments become a request to the source.
+    ///
+    /// ```
+    /// use incur::{Body, Cli, Fetch, FetchCommand};
+    ///
+    /// let cli = Cli::new("tool").fetch_command(
+    ///     "api",
+    ///     FetchCommand::new(Fetch::url("https://api.example.com")).description("The API"),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn fetch_command(mut self, name: impl Into<String>, command: FetchCommand) -> Self {
+        let entry = command.into_entry();
+        self.commands.insert(name.into(), entry);
+        self
+    }
+
+    /// Sets a root fetch handler that receives the arguments when no command matches, and
+    /// optionally an OpenAPI document whose operations become commands.
+    #[must_use]
+    pub fn root_fetch(mut self, command: FetchCommand) -> Self {
+        let FetchCommand {
+            base_path,
+            fetch,
+            openapi,
+            config,
+            ..
+        } = command;
+        if let Some(spec) = openapi {
+            self.root_generated = Some(Arc::new(openapi::Generator::new(
+                spec,
+                config,
+                fetch.clone(),
+                base_path.clone(),
+            )));
+        }
+        self.root_fetch = Some(Gateway {
+            base_path,
+            description: None,
+            fetch,
+            output_policy: None,
+        });
         self
     }
 
@@ -382,6 +618,39 @@ impl Cli {
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
         self
+    }
+
+    /// Mounts a remote MCP server as a command group: each tool becomes a command. The server
+    /// is contacted only when an invocation reaches the group.
+    ///
+    /// ```
+    /// use incur::{Cli, McpSource};
+    ///
+    /// let cli = Cli::new("tool").mcp_source(
+    ///     "docs",
+    ///     McpSource::new("https://mcp.example.com/mcp").description("Documentation search"),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn mcp_source(mut self, name: impl Into<String>, source: McpSource) -> Self {
+        self.commands.insert(name.into(), source.into_entry());
+        self
+    }
+
+    /// Returns the HTTP client outgoing requests go through.
+    pub(crate) fn http_client(&self) -> fetch::Handler {
+        self.client.clone().unwrap_or_else(fetch::default_client)
+    }
+
+    /// Returns the command tree with generated groups loaded: every non-lazy group, and the lazy
+    /// top-level groups `scope` names. Groups inside mounted CLIs always load.
+    pub(crate) async fn tree(&self, scope: &Scope) -> Result<IndexMap<String, Entry>, Error> {
+        let client = self.http_client();
+        let mut tree = expand(&self.commands, &client, Some(scope)).await?;
+        if let Some(generator) = &self.root_generated {
+            tree.extend(generator.generate(&client).await?);
+        }
+        Ok(tree)
     }
 
     /// Runs the CLI with the process arguments, environment, and standard streams, then exits
@@ -413,36 +682,32 @@ impl Cli {
     ///
     /// The future is [`Send`], so it may run on any executor, including multi-threaded ones.
     pub async fn run(&self, argv: &[String], io: &mut Io<'_>) -> i32 {
-        self.serve_impl(argv, io, None).await
+        self.serve_impl(argv, io).await
     }
 
     /// Serves the process arguments with process I/O. Returns the exit code.
     async fn serve_process(&self) -> i32 {
-        let mut args = std::env::args();
-        let bin = args.next();
-        let argv = args.collect::<Vec<_>>();
+        let argv = std::env::args().skip(1).collect::<Vec<_>>();
         let env = |key: &str| std::env::var(key).ok();
         let mut stdout = std::io::stdout();
         let mut stderr = std::io::stderr();
+        let mut stdin = ProcessLines::default();
         let tty = std::io::IsTerminal::is_terminal(&stdout);
-        let display = bin
-            .as_deref()
-            .and_then(|bin| Path::new(bin).file_name()?.to_str().map(str::to_owned));
         self.serve_impl(
             &argv,
             &mut Io {
                 env: &env,
                 stderr: &mut stderr,
+                stdin: &mut stdin,
                 stdout: &mut stdout,
                 tty,
             },
-            display.as_deref(),
         )
         .await
     }
 
     /// Returns the root command with the CLI description as its fallback.
-    fn root_command(&self) -> Option<Command> {
+    pub(crate) fn root_command(&self) -> Option<Command> {
         self.root.clone().map(|mut root| {
             if root.description.is_none() {
                 root.description.clone_from(&self.description);
@@ -451,9 +716,11 @@ impl Cli {
         })
     }
 
-    /// The shared serve implementation.
-    async fn serve_impl(&self, argv: &[String], io: &mut Io<'_>, bin: Option<&str>) -> i32 {
-        let display_name = match bin {
+    /// The shared serve implementation. The display name is the executing program's file name
+    /// when it matches the CLI name or an alias.
+    async fn serve_impl(&self, argv: &[String], io: &mut Io<'_>) -> i32 {
+        let bin = update::program().and_then(|bin| bin.file_name()?.to_str().map(str::to_owned));
+        let display_name = match bin.as_deref() {
             Some(bin) if bin == self.name || self.aliases.iter().any(|a| a == bin) => {
                 bin.to_owned()
             }
@@ -462,14 +729,78 @@ impl Cli {
         let root = self.root_command();
         let mut run = Run {
             cli: self,
+            commands: Arc::new(self.commands.clone()),
             display_name,
             exit: 0,
             io,
+            notice: None,
             root: root.as_ref(),
             start: Instant::now(),
         };
         run.serve(argv).await;
         run.exit
+    }
+}
+
+/// Loads the generated groups of a command tree. `scope` limits lazy groups at the top level;
+/// nested groups always load.
+fn expand<'a>(
+    commands: &'a IndexMap<String, Entry>,
+    client: &'a fetch::Handler,
+    scope: Option<&'a Scope>,
+) -> futures_util::future::BoxFuture<'a, Result<IndexMap<String, Entry>, Error>> {
+    Box::pin(async move {
+        let mut out = IndexMap::new();
+        for (name, entry) in commands {
+            let entry = match entry {
+                Entry::Group(group) => {
+                    let mut group = group.clone();
+                    if let Some(generator) = &group.generated {
+                        let load = !generator.lazy()
+                            || match scope {
+                                None | Some(Scope::All) => true,
+                                Some(Scope::None) => false,
+                                Some(Scope::Only(only)) => only == name,
+                            };
+                        if load {
+                            group.commands = generator.generate(client).await?;
+                        }
+                    }
+                    group.commands = expand(&group.commands, client, None).await?;
+                    Entry::Group(group)
+                }
+                entry => entry.clone(),
+            };
+            out.insert(name.clone(), entry);
+        }
+        Ok(out)
+    })
+}
+
+/// Process standard input as lines, read on a thread started at the first poll so commands that
+/// never read input leave it untouched.
+#[derive(Default)]
+struct ProcessLines(Option<mpsc::UnboundedReceiver<String>>);
+
+impl Stream for ProcessLines {
+    type Item = String;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<String>> {
+        let receiver = self.0.get_or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded();
+            std::thread::spawn(move || {
+                // Reading stops at a read error or once the receiver is gone.
+                let _ = std::io::stdin()
+                    .lines()
+                    .map_while(Result::ok)
+                    .try_for_each(|line| tx.unbounded_send(line));
+            });
+            rx
+        });
+        Pin::new(receiver).poll_next(cx)
     }
 }
 
@@ -504,7 +835,7 @@ fn fail(out: &mut dyn Write, error: &Error) -> i32 {
 }
 
 /// The resolved target of an invocation.
-enum Resolved<'a> {
+pub(crate) enum Resolved<'a> {
     /// A command to run.
     Command {
         /// The command.
@@ -518,6 +849,19 @@ enum Resolved<'a> {
         /// The command path.
         path: String,
         /// Remaining tokens.
+        rest: Vec<String>,
+    },
+    /// A fetch command.
+    Fetch {
+        /// The gateway.
+        gateway: &'a Gateway,
+        /// Group middleware collected on the way.
+        middleware: Vec<Middleware>,
+        /// Inherited output policy.
+        output_policy: Option<OutputPolicy>,
+        /// The command path.
+        path: String,
+        /// Remaining tokens, forwarded as the request.
         rest: Vec<String>,
     },
     /// An unknown command.
@@ -543,7 +887,10 @@ enum Resolved<'a> {
 }
 
 /// Walks tokens down the command tree.
-fn resolve<'a>(commands: &'a IndexMap<String, Entry>, tokens: &[String]) -> Resolved<'a> {
+pub(crate) fn resolve<'a>(
+    commands: &'a IndexMap<String, Entry>,
+    tokens: &[String],
+) -> Resolved<'a> {
     let Some((first, rest, mut entry)) = tokens
         .split_first()
         .and_then(|(first, rest)| Some((first, rest, commands.get(first)?)))
@@ -562,6 +909,15 @@ fn resolve<'a>(commands: &'a IndexMap<String, Entry>, tokens: &[String]) -> Reso
     let command = loop {
         let group = match entry {
             Entry::Command(command) | Entry::Alias(command) => break command,
+            Entry::Fetch(gateway) => {
+                return Resolved::Fetch {
+                    gateway,
+                    middleware,
+                    output_policy: gateway.output_policy.or(inherited),
+                    path: path.join(" "),
+                    rest: remaining,
+                };
+            }
             Entry::Group(group) => group,
         };
         if group.output_policy.is_some() {
@@ -616,7 +972,10 @@ fn resolve<'a>(commands: &'a IndexMap<String, Entry>, tokens: &[String]) -> Reso
 }
 
 /// Suggests the closest candidate by prefix, substring, then edit distance.
-fn suggest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+pub(crate) fn suggest<'a>(
+    input: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
     let threshold = if js::utf16_len(input) <= 4 {
         2
     } else {
@@ -666,9 +1025,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
     dp[b.len()]
 }
 
-/// A handler's data and suggested commands, ready to write.
-type Rendered = (Option<Value>, Option<FormattedCtaBlock>);
-
 /// Built-in flags extracted from argv.
 #[derive(Default)]
 #[expect(
@@ -706,12 +1062,16 @@ struct Flags {
     token_limit: Option<f64>,
     /// `--token-offset`.
     token_offset: Option<f64>,
+    /// `--update`.
+    update: bool,
+    /// The hidden flag of a detached update check.
+    update_check: bool,
     /// `--version`.
     version: bool,
 }
 
 /// Extracts built-in flags from argv.
-fn extract_flags(argv: &[String], config_flag: Option<&str>) -> Result<Flags, Error> {
+fn extract_flags(argv: &[String], config_flag: Option<&str>, update: bool) -> Result<Flags, Error> {
     let mut flags = Flags::default();
     let config = config_flag.map(|flag| {
         (
@@ -730,6 +1090,8 @@ fn extract_flags(argv: &[String], config_flag: Option<&str>) -> Result<Flags, Er
             "--llms-full" => flags.llms_full = true,
             "--mcp" => flags.mcp = true,
             "--help" | "-h" => flags.help = true,
+            "--update" if update => flags.update = true,
+            update::CHECK_FLAG => flags.update_check = true,
             // A following value belongs to a command-local `--version` option.
             "--version" if next.is_none_or(|next| next.starts_with('-')) => flags.version = true,
             "--schema" => flags.schema = true,
@@ -811,6 +1173,7 @@ fn help_entries(commands: &IndexMap<String, Entry>) -> Vec<HelpEntry> {
             let description = match entry {
                 Entry::Alias(_) => return None,
                 Entry::Command(command) => command.description.clone(),
+                Entry::Fetch(gateway) => gateway.description.clone(),
                 Entry::Group(group) => group.description.clone(),
             };
             Some(HelpEntry {
@@ -823,9 +1186,18 @@ fn help_entries(commands: &IndexMap<String, Entry>) -> Vec<HelpEntry> {
     out
 }
 
-/// Whether the command is destructive.
+/// Returns the command hint, with the destructive notice when the command is destructive or its
+/// MCP annotations say so.
 fn hint_with_destructive(command: &Command) -> Option<String> {
-    if !command.destructive {
+    let annotated = command.mcp.as_ref().is_some_and(|tool| {
+        tool.enabled
+            && tool
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get("destructiveHint"))
+                == Some(&Value::Bool(true))
+    });
+    if !command.destructive && !annotated {
         return command.hint.clone();
     }
     Some(match command.hint.as_deref().filter(|h| !h.is_empty()) {
@@ -869,7 +1241,7 @@ fn command_info(name: Option<String>, command: &Command) -> CommandInfo {
 }
 
 /// Collects commands for Markdown manifests, sorted by name.
-fn skill_commands(
+pub(crate) fn skill_commands(
     commands: &IndexMap<String, Entry>,
     prefix: &[String],
     groups: &mut IndexMap<String, String>,
@@ -886,6 +1258,19 @@ fn skill_commands(
         match entry {
             Entry::Alias(_) => {}
             Entry::Command(command) => out.push(command_info(Some(joined), command)),
+            Entry::Fetch(gateway) => out.push(CommandInfo {
+                args: None,
+                description: gateway.description.clone(),
+                env: None,
+                examples: Vec::new(),
+                hint: Some(
+                    "Fetch gateway. Pass path segments and curl-style flags (-X, -H, -d, --key value)."
+                        .into(),
+                ),
+                name: Some(joined),
+                options: None,
+                output: None,
+            }),
             Entry::Group(group) => {
                 if let Some(description) = &group.description {
                     groups.insert(joined.clone(), description.clone());
@@ -961,6 +1346,14 @@ fn manifest_commands(
         match entry {
             Entry::Alias(_) => {}
             Entry::Command(command) => out.push(manifest_entry(&joined, command, full)),
+            Entry::Fetch(gateway) => {
+                let mut entry = Map::new();
+                entry.insert("name".into(), joined.into());
+                if let Some(description) = gateway.description.as_ref().filter(|d| !d.is_empty()) {
+                    entry.insert("description".into(), description.clone().into());
+                }
+                out.push(Value::Object(entry));
+            }
             Entry::Group(group) => {
                 if let Some(root) = &group.root {
                     out.push(manifest_entry(&joined, root, full));
@@ -1011,12 +1404,16 @@ fn find_builtin(token: &str) -> Option<&'static str> {
 struct Run<'a, 'b> {
     /// The CLI.
     cli: &'a Cli,
+    /// The command tree, with generated commands this invocation reaches.
+    commands: Arc<IndexMap<String, Entry>>,
     /// The invoked binary name.
     display_name: String,
     /// The exit code.
     exit: i32,
     /// Process I/O.
     io: &'a mut Io<'b>,
+    /// Skills and update notices appended to suggestions.
+    notice: Option<FormattedCtaBlock>,
     /// The root command.
     root: Option<&'a Command>,
     /// When the invocation started.
@@ -1063,7 +1460,8 @@ impl Run<'_, '_> {
         help::Options {
             config_flag: self.config_flag(),
             globals: self.cli.globals.as_ref(),
-            hide_skills: !self.cli.sync,
+            hide_skills: !self.cli.sync.enabled,
+            hide_update: !self.cli.update.enabled,
             ..help::Options::default()
         }
     }
@@ -1102,11 +1500,14 @@ impl Run<'_, '_> {
     async fn serve(&mut self, argv: &[String]) {
         let cli = self.cli;
         if let Some(shell) = self.env("COMPLETE") {
+            if let Ok(tree) = cli.tree(&Scope::None).await {
+                self.commands = Arc::new(tree);
+            }
             self.complete(&shell, argv);
             return;
         }
         let tty = self.io.tty;
-        let flags = match extract_flags(argv, self.config_flag()) {
+        let flags = match extract_flags(argv, self.config_flag(), cli.update.enabled) {
             Ok(flags) => flags,
             Err(error) => {
                 self.early_error(&error, tty, Format::Toon);
@@ -1133,10 +1534,61 @@ impl Run<'_, '_> {
             },
         };
 
-        if flags.mcp {
-            self.unsupported("--mcp", human);
+        // Generated commands load only when this invocation can reach them.
+        let first = filtered.first();
+        let scope = if flags.mcp
+            || ((flags.llms || flags.llms_full) && first.is_none())
+            || first == Some(&cli.name)
+            || first.is_some_and(|t| find_builtin(t).is_some())
+        {
+            Scope::All
+        } else {
+            first.map_or(Scope::None, |first| Scope::Only(first.clone()))
+        };
+        match cli.tree(&scope).await {
+            Ok(tree) => self.commands = Arc::new(tree),
+            Err(error) => {
+                self.early_error(&error, human, flags.format);
+                return;
+            }
+        }
+
+        if flags.update_check {
+            if cli.update.enabled {
+                let client = cli.http_client();
+                let machine = update::Machine {
+                    client: &client,
+                    env: self.io.env,
+                };
+                update::refresh(&cli.name, &cli.update, cli.version.as_deref(), &machine).await;
+            }
             return;
         }
+
+        // `--help` takes precedence over `--update`.
+        if flags.update && !flags.help {
+            self.install(&flags, human).await;
+            return;
+        }
+
+        if flags.mcp {
+            self.mcp_stdio().await;
+            return;
+        }
+
+        let skills_cta = if cli.sync.enabled
+            && !flags.llms
+            && !flags.llms_full
+            && !flags.schema
+            && !flags.help
+            && !flags.update
+            && !flags.update_check
+            && !flags.version
+        {
+            self.skills_notice(&filtered).await
+        } else {
+            None
+        };
 
         if flags.llms || flags.llms_full {
             self.llms(&flags, &filtered);
@@ -1182,7 +1634,7 @@ impl Run<'_, '_> {
         }
 
         for builtin in ["skills", "mcp"] {
-            if builtin == "skills" && !cli.sync {
+            if builtin == "skills" && !cli.sync.enabled {
                 continue;
             }
             if let Some(index) = builtin_index(builtin) {
@@ -1199,6 +1651,7 @@ impl Run<'_, '_> {
             return;
         }
 
+        let commands = self.commands.clone();
         if filtered.is_empty() {
             let required_args = self
                 .root
@@ -1206,28 +1659,28 @@ impl Run<'_, '_> {
                 .is_some_and(|args| args.fields().iter().any(|f| !f.ty.is_optional()));
             if let Some(root) = self.root.filter(|_| human && required_args) {
                 self.banner(human, flags.help);
-                let commands = help_entries(&cli.commands);
+                let entries = help_entries(&commands);
                 let text = help::format_command(
                     &cli.name,
                     &self.command_help(
                         root,
                         &cli.aliases,
                         cli.version.as_deref(),
-                        Some(&commands),
+                        Some(&entries),
                         true,
                     ),
                 );
                 self.writeln(&text);
                 return;
             }
-            if self.root.is_none() {
+            if self.root.is_none() && cli.root_fetch.is_none() {
                 self.banner(human, flags.help);
-                let commands = help_entries(&cli.commands);
+                let entries = help_entries(&commands);
                 let text = help::format_root(
                     &cli.name,
                     &help::Options {
                         aliases: &cli.aliases,
-                        commands: Some(&commands),
+                        commands: Some(&entries),
                         description: cli.description.as_deref(),
                         root: true,
                         version: cli.version.as_deref(),
@@ -1239,8 +1692,12 @@ impl Run<'_, '_> {
             }
         }
 
-        let resolved = match self.root {
-            Some(root) if filtered.is_empty() => Resolved::Command {
+        let root_fetch = cli.root_fetch.as_ref().map(|gateway| Gateway {
+            description: cli.description.clone(),
+            ..gateway.clone()
+        });
+        let resolved = match (self.root, &root_fetch) {
+            (Some(root), _) if filtered.is_empty() => Resolved::Command {
                 command: root,
                 commands: None,
                 middleware: Vec::new(),
@@ -1248,7 +1705,14 @@ impl Run<'_, '_> {
                 path: cli.name.clone(),
                 rest: Vec::new(),
             },
-            _ => resolve(&cli.commands, &filtered),
+            (None, Some(gateway)) if filtered.is_empty() => Resolved::Fetch {
+                gateway,
+                middleware: Vec::new(),
+                output_policy: None,
+                path: cli.name.clone(),
+                rest: Vec::new(),
+            },
+            _ => resolve(&commands, &filtered),
         };
 
         if flags.help {
@@ -1261,6 +1725,31 @@ impl Run<'_, '_> {
             return;
         }
 
+        let group_help = matches!(resolved, Resolved::Help { .. });
+
+        let update_cta = if human && cli.update.enabled && !group_help {
+            let client = cli.http_client();
+            let machine = update::Machine {
+                client: &client,
+                env: self.io.env,
+            };
+            update::check(&cli.name, &cli.update, cli.version.as_deref(), &machine).map(
+                |available| FormattedCtaBlock {
+                    description: format!("Update available for {}:", available.name),
+                    commands: vec![FormattedCta {
+                        command: format!("{} --update", self.display_name),
+                        description: Some(format!(
+                            "upgrade from {} to {}",
+                            available.current, available.latest
+                        )),
+                    }],
+                },
+            )
+        } else {
+            None
+        };
+        self.notice = FormattedCtaBlock::merge(skills_cta, update_cta);
+
         let command_format = match &resolved {
             Resolved::Command { command, .. } => command.format,
             _ => None,
@@ -1271,7 +1760,8 @@ impl Run<'_, '_> {
             command_format.or(cli.format).unwrap_or_default()
         };
 
-        // A token that is not a typo of a known command falls back to the root command.
+        // A token that is not a typo of a known command falls back to the root fetch handler or
+        // command. A token starting with `/` is a request path, never a mistyped command.
         let resolved = match resolved {
             Resolved::Error {
                 error,
@@ -1284,11 +1774,18 @@ impl Run<'_, '_> {
                     BUILTINS
                         .iter()
                         .map(|(name, _)| *name)
-                        .filter(|n| cli.sync || *n != "skills"),
+                        .filter(|n| cli.sync.enabled || *n != "skills"),
                 );
-                let blocked = suggest(&error, candidates).is_some();
-                match self.root {
-                    Some(root) if !blocked => Resolved::Command {
+                let blocked = !error.starts_with('/') && suggest(&error, candidates).is_some();
+                match (&root_fetch, self.root) {
+                    (Some(gateway), _) if !blocked => Resolved::Fetch {
+                        gateway,
+                        middleware: Vec::new(),
+                        output_policy: None,
+                        path: cli.name.clone(),
+                        rest: filtered.clone(),
+                    },
+                    (None, Some(root)) if !blocked => Resolved::Command {
                         command: root,
                         commands: None,
                         middleware: Vec::new(),
@@ -1308,7 +1805,9 @@ impl Run<'_, '_> {
         };
 
         let policy = match &resolved {
-            Resolved::Command { output_policy, .. } => output_policy.or(cli.output_policy),
+            Resolved::Command { output_policy, .. } | Resolved::Fetch { output_policy, .. } => {
+                output_policy.or(cli.output_policy)
+            }
             _ => cli.output_policy,
         };
         let output = Output {
@@ -1338,6 +1837,16 @@ impl Run<'_, '_> {
                 self.execute(command, middleware, &path, &filtered, &rest, &output)
                     .await;
             }
+            Resolved::Fetch {
+                gateway,
+                middleware,
+                path,
+                rest,
+                ..
+            } => {
+                self.fetch(gateway, middleware, &path, &filtered, &rest, &output)
+                    .await;
+            }
             Resolved::Help {
                 commands,
                 description,
@@ -1350,6 +1859,7 @@ impl Run<'_, '_> {
                         commands: Some(&entries),
                         description,
                         hide_skills: false,
+                        hide_update: false,
                         ..self.help_options()
                     },
                 );
@@ -1387,7 +1897,32 @@ impl Run<'_, '_> {
     /// Prints help for the resolved target.
     fn help(&mut self, resolved: &Resolved<'_>) {
         let cli = self.cli;
+        let commands = self.commands.clone();
         let text = match resolved {
+            Resolved::Fetch { gateway, path, .. } => {
+                if *path == cli.name && !commands.is_empty() {
+                    let entries = help_entries(&commands);
+                    help::format_root(
+                        &cli.name,
+                        &help::Options {
+                            aliases: &cli.aliases,
+                            commands: Some(&entries),
+                            description: cli.description.as_deref(),
+                            globals: None,
+                            root: true,
+                            version: cli.version.as_deref(),
+                            ..self.help_options()
+                        },
+                    )
+                } else {
+                    let name = if *path == cli.name {
+                        cli.name.clone()
+                    } else {
+                        format!("{} {path}", cli.name)
+                    };
+                    fetch::help(&name, gateway.description.as_deref())
+                }
+            }
             Resolved::Help {
                 path,
                 description,
@@ -1404,7 +1939,7 @@ impl Run<'_, '_> {
                 )
             }
             Resolved::Error { .. } => {
-                let entries = help_entries(&cli.commands);
+                let entries = help_entries(&commands);
                 match self.root.filter(|_| !entries.is_empty()) {
                     Some(root) => help::format_command(
                         &cli.name,
@@ -1442,8 +1977,8 @@ impl Run<'_, '_> {
                     format!("{} {path}", cli.name)
                 };
                 let entries = match commands {
-                    Some(commands) if !commands.is_empty() => help_entries(commands),
-                    _ if is_root => help_entries(&cli.commands),
+                    Some(group) if !group.is_empty() => help_entries(group),
+                    _ if is_root => help_entries(&self.commands.clone()),
                     _ => Vec::new(),
                 };
                 let aliases = if is_root {
@@ -1469,6 +2004,10 @@ impl Run<'_, '_> {
     fn schema(&mut self, resolved: &Resolved<'_>, flags: &Flags) {
         let cli = self.cli;
         match resolved {
+            Resolved::Fetch { .. } => {
+                self.writeln("--schema is not supported for fetch commands.");
+                self.exit = 1;
+            }
             Resolved::Help {
                 path,
                 description,
@@ -1530,7 +2069,8 @@ impl Run<'_, '_> {
     /// Prints `--llms` or `--llms-full` output.
     fn llms(&mut self, flags: &Flags, filtered: &[String]) {
         let cli = self.cli;
-        let mut commands = &cli.commands;
+        let tree = self.commands.clone();
+        let mut commands = &*tree;
         let mut prefix: Vec<String> = Vec::new();
         let mut description = cli.description.as_deref();
         let mut root = self.root;
@@ -1549,6 +2089,13 @@ impl Run<'_, '_> {
                 Entry::Alias(command) | Entry::Command(command) => {
                     let mut map = IndexMap::new();
                     map.insert(token.clone(), Entry::Command(command.clone()));
+                    single = Some(map);
+                    root = None;
+                    break;
+                }
+                Entry::Fetch(_) => {
+                    let mut map = IndexMap::new();
+                    map.insert(token.clone(), raw.clone());
                     single = Some(map);
                     root = None;
                     break;
@@ -1651,8 +2198,7 @@ impl Run<'_, '_> {
         self.writeln(&text);
     }
 
-    /// Handles the `skills` and `mcp` built-ins: help output, and an error for actions this port
-    /// does not implement.
+    /// Handles the `skills` and `mcp` built-ins.
     fn builtin(
         &mut self,
         builtin: &str,
@@ -1796,16 +2342,414 @@ impl Run<'_, '_> {
             self.writeln(&text);
             return;
         }
-        self.unsupported(&format!("{builtin} {}", found.1), human);
+        let rest = filtered.get(index + 2..).unwrap_or_default();
+        match (builtin, found.1) {
+            ("skills", "list") => self.skills_list(flags),
+            ("skills", "add") => self.skills_add(rest, flags),
+            ("mcp", "doctor") => self.mcp_doctor(flags),
+            _ => self.mcp_add(rest, flags),
+        }
     }
 
-    /// Reports a built-in this port does not implement yet.
-    fn unsupported(&mut self, feature: &str, human: bool) {
-        let error = Error::new(
-            "UNSUPPORTED",
-            format!("'{feature}' is not supported by the Rust port of incur yet."),
-        );
-        self.early_error(&error, human, Format::Toon);
+    /// The format built-in actions print data in: the explicit format, or TOON.
+    fn action_format(flags: &Flags) -> Format {
+        if flags.format_explicit {
+            flags.format
+        } else {
+            Format::Toon
+        }
+    }
+
+    /// Reports a failed built-in action and sets the exit code.
+    fn action_failed(&mut self, code: &str, error: &Error, flags: &Flags) {
+        let mut value = Map::new();
+        value.insert("code".into(), code.into());
+        value.insert("message".into(), error.message.clone().into());
+        self.writeln(&formatter::format(
+            &Value::Object(value),
+            Self::action_format(flags),
+        ));
+        self.exit = 1;
+    }
+
+    /// What `skills add` and `skills list` read: skill commands with the CLI description as a
+    /// group, and the hash of the commands without groups.
+    fn skill_source(&self) -> (Vec<CommandInfo>, IndexMap<String, String>, String) {
+        let cli = self.cli;
+        let mut groups = IndexMap::new();
+        if let Some(description) = &cli.description {
+            groups.insert(cli.name.clone(), description.clone());
+        }
+        let infos = skill_commands(&self.commands, &[], &mut groups, self.root);
+        let plain = skill_commands(&self.commands, &[], &mut IndexMap::new(), self.root);
+        (infos, groups, skill::hash(&plain))
+    }
+
+    /// Runs `skills list`.
+    fn skills_list(&mut self, flags: &Flags) {
+        let _ = flags;
+        let cli = self.cli;
+        let (infos, groups, hash) = self.skill_source();
+        let source = sync::Source {
+            name: &cli.name,
+            commands: &infos,
+            groups: &groups,
+            hash,
+            env: self.io.env,
+            settings: &cli.sync,
+        };
+        let skills = sync::list(&source, cli.sync.depth.unwrap_or(1.0));
+        if skills.is_empty() {
+            self.writeln("No skills found.");
+            return;
+        }
+        let width = skills
+            .iter()
+            .map(|s| js::utf16_len(&s.name))
+            .max()
+            .unwrap_or(0);
+        let mut lines = skills
+            .iter()
+            .map(|s| {
+                let icon = if s.installed { '\u{2713}' } else { '\u{2717}' };
+                match s.description.as_deref().filter(|d| !d.is_empty()) {
+                    Some(description) => format!(
+                        "  {icon} {}{}  {description}",
+                        s.name,
+                        " ".repeat(width - js::utf16_len(&s.name))
+                    ),
+                    None => format!("  {icon} {}", s.name),
+                }
+            })
+            .collect::<Vec<_>>();
+        let installed = skills.iter().filter(|s| s.installed).count();
+        lines.push(String::new());
+        lines.push(format!(
+            "{} skill{} ({installed} installed)",
+            skills.len(),
+            if skills.len() == 1 { "" } else { "s" }
+        ));
+        self.writeln(&lines.join("\n"));
+    }
+
+    /// Runs `skills add`.
+    fn skills_add(&mut self, rest: &[String], flags: &Flags) {
+        let cli = self.cli;
+        let depth = if let Some(index) = rest.iter().position(|t| t == "--depth") {
+            rest.get(index + 1)
+                .map_or(f64::NAN, |raw| js::to_number(raw))
+        } else if let Some(token) = rest.iter().find(|t| t.starts_with("--depth=")) {
+            js::to_number(token.split('=').nth(1).unwrap_or_default())
+        } else {
+            cli.sync.depth.unwrap_or(1.0)
+        };
+        let global = !rest.iter().any(|t| t == "--no-global");
+        let (infos, groups, hash) = self.skill_source();
+        let source = sync::Source {
+            name: &cli.name,
+            commands: &infos,
+            groups: &groups,
+            hash,
+            env: self.io.env,
+            settings: &cli.sync,
+        };
+        self.write("Syncing...");
+        let synced = match sync::sync(&source, depth, global) {
+            Ok(synced) => synced,
+            Err(error) => {
+                self.action_failed("SYNC_SKILLS_FAILED", &error, flags);
+                return;
+            }
+        };
+        self.write("\r\x1b[K");
+        let width = synced
+            .skills
+            .iter()
+            .map(|s| js::utf16_len(&s.name))
+            .max()
+            .unwrap_or(0);
+        let mut lines = synced
+            .skills
+            .iter()
+            .map(
+                |s| match s.description.as_deref().filter(|d| !d.is_empty()) {
+                    Some(description) => format!(
+                        "  \u{2713} {}{}  {description}",
+                        s.name,
+                        " ".repeat(width - js::utf16_len(&s.name))
+                    ),
+                    None => format!("  \u{2713} {}", s.name),
+                },
+            )
+            .collect::<Vec<_>>();
+        lines.push(String::new());
+        lines.push(format!(
+            "{} skill{} synced",
+            synced.skills.len(),
+            if synced.skills.len() == 1 { "" } else { "s" }
+        ));
+        let body = cli.sync.body.as_deref().filter(|b| !b.is_empty());
+        if let Some(body) = body {
+            lines.push(String::new());
+            lines.push(body.to_owned());
+        }
+        if !cli.sync.suggestions.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("Your agent can now use {}. Try asking:", cli.name));
+            for suggestion in &cli.sync.suggestions {
+                lines.push(format!("  \"{suggestion}\""));
+            }
+        }
+        lines.push(String::new());
+        lines.push(format!(
+            "Run `{} --help` to see the full command reference.",
+            cli.name
+        ));
+        self.writeln(&lines.join("\n"));
+        if flags.full_output || flags.format_explicit {
+            let mut out = Map::new();
+            out.insert(
+                "skills".into(),
+                synced
+                    .paths
+                    .iter()
+                    .map(|p| Value::String(p.to_string_lossy().into_owned()))
+                    .collect(),
+            );
+            if let Some(body) = body {
+                out.insert("body".into(), body.into());
+            }
+            let agents = synced.agents();
+            if flags.full_output && !agents.is_empty() {
+                out.insert("agents".into(), agents.into());
+            }
+            self.writeln(&formatter::format(
+                &Value::Object(out),
+                Self::action_format(flags),
+            ));
+        }
+    }
+
+    /// Runs `mcp add`.
+    fn mcp_add(&mut self, rest: &[String], flags: &Flags) {
+        let cli = self.cli;
+        let global = !rest.iter().any(|t| t == "--no-global");
+        let mut command = cli.mcp.command.clone();
+        let mut agents = cli.mcp.agents.clone();
+        let mut i = 0;
+        while i < rest.len() {
+            let next = rest.get(i + 1).filter(|n| !n.is_empty());
+            match (rest[i].as_str(), next) {
+                ("--command" | "-c", Some(value)) => {
+                    command = Some(value.clone());
+                    i += 1;
+                }
+                ("--agent", Some(value)) => {
+                    agents.push(value.clone());
+                    i += 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let name = cli.mcp.name.clone().unwrap_or_else(|| cli.name.clone());
+        self.write("Registering MCP server...");
+        let registered = sync::register(sync::Register {
+            name: &name,
+            cli: &cli.name,
+            command,
+            global,
+            agents,
+            package: cli
+                .package
+                .as_deref()
+                .map(|package| (package, cli.version.as_deref())),
+            env: self.io.env,
+        });
+        let (command, agents) = match registered {
+            Ok(registered) => registered,
+            Err(error) => {
+                self.action_failed("MCP_ADD_FAILED", &error, flags);
+                return;
+            }
+        };
+        self.write("\r\x1b[K");
+        let mut lines = vec![format!("\u{2713} Registered {name} as MCP server")];
+        if !agents.is_empty() {
+            lines.push(format!("  Agents: {}", agents.join(", ")));
+        }
+        lines.push(String::new());
+        lines.push(format!("Agents can now use {name} tools."));
+        if !cli.sync.suggestions.is_empty() {
+            lines.push(String::new());
+            lines.push("Try asking:".into());
+            for suggestion in &cli.sync.suggestions {
+                lines.push(format!("  \"{suggestion}\""));
+            }
+        }
+        self.writeln(&lines.join("\n"));
+        if flags.full_output || flags.format_explicit {
+            let mut out = Map::new();
+            out.insert("name".into(), name.into());
+            out.insert("command".into(), command.into());
+            out.insert(
+                "agents".into(),
+                agents.into_iter().map(Value::String).collect(),
+            );
+            self.writeln(&formatter::format(
+                &Value::Object(out),
+                Self::action_format(flags),
+            ));
+        }
+    }
+
+    /// Runs `mcp doctor`: starts the server in process, initializes it, and lists its tools.
+    fn mcp_doctor(&mut self, flags: &Flags) {
+        let mut warnings = Vec::new();
+        let mut errors = Vec::new();
+        let mut tools = Vec::new();
+        match self.cli.mcp_server(&self.commands, self.io.env, true) {
+            Err(message) => errors.push(json_error("MCP_SERVER_FAILED", &message)),
+            Ok(server) => {
+                for tool in server.list() {
+                    let mut entry = Map::new();
+                    entry.insert("name".into(), tool["name"].clone());
+                    if let Some(description) = tool.get("description") {
+                        entry.insert("description".into(), description.clone());
+                    }
+                    tools.push(Value::Object(entry));
+                }
+            }
+        }
+        if errors.is_empty() && tools.is_empty() {
+            warnings.push(Value::from("No MCP tools exposed."));
+        }
+        let ok = errors.is_empty();
+        let mut out = Map::new();
+        out.insert("ok".into(), ok.into());
+        out.insert("toolCount".into(), tools.len().into());
+        out.insert("tools".into(), tools.into());
+        out.insert("warnings".into(), warnings.into());
+        out.insert("errors".into(), errors.into());
+        self.writeln(&formatter::format(
+            &Value::Object(out),
+            Self::action_format(flags),
+        ));
+        if !ok {
+            self.exit = 1;
+        }
+    }
+
+    /// Serves MCP over standard input and output until input ends.
+    async fn mcp_stdio(&mut self) {
+        let server = match self.cli.mcp_server(&self.commands, self.io.env, false) {
+            Ok(server) => server,
+            Err(message) => {
+                let human = self.io.tty;
+                self.early_error(&Error::unknown(message), human, Format::Toon);
+                return;
+            }
+        };
+        while let Some(line) = futures_util::StreamExt::next(&mut *self.io.stdin).await {
+            let Ok(value) = js::json_parse(&line, |_| Value::Null) else {
+                continue;
+            };
+            let Some(mcp::Message::Request { id, method, params }) = mcp::message(&value) else {
+                continue;
+            };
+            let mut notifications = Vec::new();
+            let response = server
+                .handle(&id, &method, &params, None, &mut |n| notifications.push(n))
+                .await;
+            for notification in notifications {
+                self.writeln(&js::stringify(&notification));
+            }
+            self.writeln(&js::stringify(&response));
+            let _ = self.io.stdout.flush();
+        }
+    }
+
+    /// Runs `--update`.
+    async fn install(&mut self, flags: &Flags, human: bool) {
+        let cli = self.cli;
+        let client = cli.http_client();
+        let machine = update::Machine {
+            client: &client,
+            env: self.io.env,
+        };
+        match update::install(&cli.name, &cli.update, cli.version.as_deref(), &machine).await {
+            Ok(installed) if human => {
+                let mut lines = vec![if installed.deferred {
+                    format!("\u{2713} Update staged for {}", installed.name)
+                } else {
+                    format!("\u{2713} Updated {}", installed.name)
+                }];
+                lines.extend(
+                    installed
+                        .command
+                        .iter()
+                        .map(|command| format!("  {command}")),
+                );
+                if installed.deferred {
+                    lines.push("  Installation will finish after this process exits.".into());
+                }
+                self.writeln(&lines.join("\n"));
+            }
+            Ok(installed) => {
+                self.writeln(&formatter::format(&installed.to_value(), flags.format));
+            }
+            Err(error) => {
+                let error = Error::new("UPDATE_FAILED", error.message);
+                self.early_error(&error, human, flags.format);
+            }
+        }
+    }
+
+    /// Returns the notice that installed skills are out of date, when they are.
+    async fn skills_notice(&mut self, filtered: &[String]) -> Option<FormattedCtaBlock> {
+        let cli = self.cli;
+        let builtin = |name: &str| {
+            filtered.first().and_then(|t| find_builtin(t)) == Some(name)
+                || (filtered.first() == Some(&cli.name)
+                    && filtered.get(1).and_then(|t| find_builtin(t)) == Some(name))
+        };
+        if builtin("skills") || builtin("mcp") {
+            return None;
+        }
+        let env = self.io.env;
+        let stored = sync::read_hash(&cli.name, env)?;
+        let cwd = cli
+            .sync
+            .cwd
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        if !sync::has_installed(&cli.name, env, &cwd) {
+            return None;
+        }
+        let tree = cli.tree(&Scope::All).await.ok()?;
+        let infos = skill_commands(&tree, &[], &mut IndexMap::new(), self.root);
+        if skill::hash(&infos) == stored {
+            return None;
+        }
+        let present = |key: &str| env(key).is_some_and(|v| !v.is_empty());
+        let runnable = (present("npm_config_user_agent") || present("npm_execpath"))
+            && (cli.package.is_some() || sync::is_package_name(&cli.name));
+        let command = if runnable {
+            match sync::package_specifier(&cli.name, cli.package.as_deref(), cli.version.as_deref())
+            {
+                Ok(specifier) => format!("{} {specifier} skills add", update::runner(env)),
+                Err(_) => format!("{} skills add", self.display_name),
+            }
+        } else {
+            format!("{} skills add", self.display_name)
+        };
+        Some(FormattedCtaBlock {
+            description: "Skills are out of date:".into(),
+            commands: vec![FormattedCta {
+                command,
+                description: Some("sync outdated skills".into()),
+            }],
+        })
     }
 
     /// Answers a shell completion request.
@@ -1835,7 +2779,9 @@ impl Run<'_, '_> {
             .map_or((words.len() - 1) as f64, |raw| js::to_number(&raw));
         let cut = js::relative_index(index, words.len());
         let before = (|| {
-            let mut rest = extract_flags(&words[..cut], self.config_flag()).ok()?.rest;
+            let mut rest = extract_flags(&words[..cut], self.config_flag(), true)
+                .ok()?
+                .rest;
             if js::element(words, index - 1.0).is_some_and(|w| w == "--version") {
                 rest.push("--version".into());
             }
@@ -1850,7 +2796,8 @@ impl Run<'_, '_> {
             Some(before) => ([before.as_slice(), &words[cut..]].concat(), before.len()),
             None => (words.to_vec(), cut),
         };
-        let tree = tree(&cli.commands, self.root, None);
+        let commands = self.commands.clone();
+        let tree = tree(&commands, self.root, None);
         let mut candidates = completions::complete(&tree, &input, at, cli.globals.as_ref());
         let current = js::element(words, index).map_or("", String::as_str);
         let non_flags = before
@@ -1859,7 +2806,7 @@ impl Run<'_, '_> {
         match non_flags.as_deref() {
             Some(words) if words.len() <= 1 => {
                 for (name, description) in BUILTINS {
-                    if name == "skills" && !cli.sync {
+                    if name == "skills" && !cli.sync.enabled {
                         continue;
                     }
                     if name.starts_with(current) && !candidates.iter().any(|c| c.value == name) {
@@ -1873,7 +2820,7 @@ impl Run<'_, '_> {
             }
             Some([_, parent]) => {
                 if let Some(builtin) = find_builtin(parent)
-                    .filter(|b| *b != "completions" && (cli.sync || *b != "skills"))
+                    .filter(|b| *b != "completions" && (cli.sync.enabled || *b != "skills"))
                 {
                     for sub in BUILTIN_SUBCOMMANDS.iter().filter(|s| s.0 == builtin) {
                         for value in std::iter::once(sub.1).chain(sub.3.iter().copied()) {
@@ -1920,7 +2867,7 @@ impl Run<'_, '_> {
                 BUILTINS
                     .iter()
                     .map(|b| b.0)
-                    .filter(|n| cli.sync || *n != "skills"),
+                    .filter(|n| cli.sync.enabled || *n != "skills"),
             );
         }
         let suggestion = suggest(error, candidates);
@@ -1954,7 +2901,10 @@ impl Run<'_, '_> {
         let failure = Error::new("COMMAND_NOT_FOUND", message);
         if output.human && !output.flags.full_output {
             self.writeln(&human_error(&failure));
-            self.writeln(&cta.human());
+            let merged = FormattedCtaBlock::merge(Some(cta), self.notice.clone());
+            if let Some(merged) = merged {
+                self.writeln(&merged.human());
+            }
         } else {
             self.write_output(output, false, Some(failure.to_value()), error, Some(&cta));
         }
@@ -1997,6 +2947,8 @@ impl Run<'_, '_> {
         command: &str,
         cta: Option<&FormattedCtaBlock>,
     ) {
+        let merged = FormattedCtaBlock::merge(cta.cloned(), self.notice.clone());
+        let cta = merged.as_ref();
         let flags = output.flags;
         let format = output.format;
         let body = match (&output.filter, ok, body) {
@@ -2141,7 +3093,7 @@ impl Run<'_, '_> {
                 .strip_prefix('~')
                 .filter(|rest| rest.is_empty() || rest.starts_with('/'))
             {
-                let home = PathBuf::from(self.env("HOME").unwrap_or_default());
+                let home = sync::home(&|key| self.env(key));
                 let rest = rest.trim_start_matches('/');
                 if rest.is_empty() {
                     home
@@ -2299,7 +3251,8 @@ impl Run<'_, '_> {
         let env = match cli_env {
             Ok(env) => env,
             Err(error) => {
-                self.finish(command, path, output, Err(error));
+                self.report(Executed::Error(error), Some(command), path, output)
+                    .await;
                 return;
             }
         };
@@ -2312,6 +3265,7 @@ impl Run<'_, '_> {
             format_explicit: output.flags.format_explicit,
             globals,
             name: cli.name.clone(),
+            request: None,
             vars: cli.vars.clone(),
             version: cli.version.clone(),
         };
@@ -2330,71 +3284,108 @@ impl Run<'_, '_> {
             };
             Ok((parsed, env))
         });
-        let (outcome_tx, mut outcome_rx) = oneshot::channel();
-        let (stream_tx, mut stream_rx) = oneshot::channel();
-        let terminal = terminal(command.handler.clone(), parsed, outcome_tx, stream_tx);
-
-        // Run the chain until it finishes or hands over a stream. The chain then waits until the
-        // stream is written, so middleware code after `next.run(c)` runs after the stream ends.
-        let mut chain = pin!(Next::new(chain, terminal).run(context));
-        let mut finished = None;
-        let mut stream = None;
-        poll_fn(|cx| {
-            if let Poll::Ready(result) = chain.as_mut().poll(cx) {
-                finished = Some(result);
-                return Poll::Ready(());
-            }
-            stream = stream_rx.try_recv().ok().flatten();
-            if stream.is_some() {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await;
-        // Middleware may abandon the chain after the handler hands over its stream.
-        let stream = stream.or_else(|| stream_rx.try_recv().ok().flatten());
-        let streamed = stream.is_some();
-        if let Some((chunks, cta, done)) = stream {
-            self.stream(chunks, cta.as_ref(), path, output).await;
-            drop(done);
-        }
-        let result = match finished {
-            Some(result) => result,
-            None => chain.await,
-        };
-        let result = match result {
-            // A middleware error replaces the result.
-            Err(error) => Err(error),
-            Ok(()) if streamed => return,
-            // Middleware that skips `next.run(c)` leaves no result.
-            Ok(()) => outcome_rx
-                .try_recv()
-                .ok()
-                .flatten()
-                .unwrap_or(Ok((None, None))),
-        };
-        self.finish(command, path, output, result);
+        let executed = execute::execute(chain, context, command.handler.clone(), parsed).await;
+        self.report(executed, Some(command), path, output).await;
     }
 
-    /// Writes a command's data or failure.
-    fn finish(
+    /// Forwards curl-style arguments to a fetch command through middleware, and writes the
+    /// response.
+    async fn fetch(
         &mut self,
-        command: &Command,
+        gateway: &Gateway,
+        group_middleware: Vec<Middleware>,
+        path: &str,
+        filtered: &[String],
+        rest: &[String],
+        output: &Output<'_>,
+    ) {
+        let cli = self.cli;
+        let depth = filtered.len() - rest.len();
+        let mut globals = Value::Object(Map::new());
+        let argv = match &cli.globals {
+            None => output.flags.rest.clone(),
+            Some(schema) => match parser::parse_globals(
+                &output.flags.rest,
+                schema,
+                GlobalsOptions {
+                    command: Some(None),
+                    validate: true,
+                },
+            ) {
+                Ok((parsed, rest)) => {
+                    globals = parsed;
+                    rest
+                }
+                Err(error) => {
+                    self.early_error(&error, output.human, output.flags.format);
+                    return;
+                }
+            },
+        };
+        let argv = argv.get(depth..).unwrap_or_default().to_vec();
+        let mut chain = cli.middleware.clone();
+        chain.extend(group_middleware);
+        let env = match execute::parse_env(cli.env.as_ref(), self.io.env) {
+            Ok(env) => env,
+            Err(error) => {
+                self.write_failure(output, &error, path);
+                return;
+            }
+        };
+        let context = MiddlewareContext {
+            agent: !output.human,
+            command: path.to_owned(),
+            display_name: self.display_name.clone(),
+            env,
+            format: output.format,
+            format_explicit: output.flags.format_explicit,
+            globals,
+            name: cli.name.clone(),
+            request: None,
+            vars: cli.vars.clone(),
+            version: cli.version.clone(),
+        };
+        let handler = gateway.handler(argv, cli.http_client());
+        let input = Ok((
+            parser::Parsed {
+                args: Value::Object(Map::new()),
+                options: Value::Object(Map::new()),
+            },
+            Value::Object(Map::new()),
+        ));
+        let executed = execute::execute(chain, context, Some(handler), input).await;
+        self.report(executed, None, path, output).await;
+    }
+
+    /// Writes an execution result.
+    async fn report(
+        &mut self,
+        executed: Executed,
+        command: Option<&Command>,
         path: &str,
         output: &Output<'_>,
-        result: Result<Rendered, Error>,
     ) {
-        match result {
-            Ok((data, cta)) => self.write_output(output, true, data, path, cta.as_ref()),
-            Err(error)
-                if output.human
-                    && !output.flags.format_explicit
-                    && error.field_errors.is_some() =>
-            {
-                self.validation_help(command, path, &error);
+        match executed {
+            Executed::Data { cta, data } => {
+                let cta = FormattedCtaBlock::new(&self.display_name, cta.as_ref());
+                self.write_output(output, true, data, path, cta.as_ref());
             }
-            Err(error) => self.write_failure(output, &error, path),
+            Executed::Error(error) => match command {
+                Some(command)
+                    if output.human
+                        && !output.flags.format_explicit
+                        && error.field_errors.is_some() =>
+                {
+                    self.validation_help(command, path, &error);
+                }
+                _ => self.write_failure(output, &error, path),
+            },
+            Executed::Stream { chunks, cta, rest } => {
+                self.stream(chunks, cta.as_ref(), path, output).await;
+                if let Err(error) = rest.finish().await {
+                    self.write_failure(output, &error, path);
+                }
+            }
         }
     }
 
@@ -2547,61 +3538,12 @@ impl Run<'_, '_> {
     }
 }
 
-/// A stream a handler returned, its suggested commands, and a sender the runner drops once the
-/// stream is written.
-type Handover = (Chunks, Option<CtaBlock>, oneshot::Sender<()>);
-
-/// Builds the final step of the middleware chain: reports the parse result, runs the handler,
-/// and sends its result to the runner. A stream is handed over, and the step waits until it is
-/// written.
-fn terminal(
-    handler: Option<command::Handler>,
-    parsed: Result<(parser::Parsed, Value), Error>,
-    outcome_tx: oneshot::Sender<Result<Rendered, Error>>,
-    stream_tx: oneshot::Sender<Handover>,
-) -> Terminal {
-    Box::new(move |c| {
-        Box::pin(async move {
-            let outcome = match (parsed, handler) {
-                (Err(error), _) => Outcome::from(error),
-                (Ok(_), None) => Outcome(Inner::Data {
-                    cta: None,
-                    data: None,
-                }),
-                (Ok((parsed, env)), Some(handler)) => {
-                    handler(Invocation {
-                        agent: c.agent,
-                        args: parsed.args,
-                        display_name: c.display_name.clone(),
-                        env,
-                        format: c.format,
-                        format_explicit: c.format_explicit,
-                        globals: c.globals,
-                        name: c.name,
-                        options: parsed.options,
-                        vars: c.vars,
-                        version: c.version,
-                    })
-                    .await
-                }
-            };
-            let result = match outcome.0 {
-                Inner::Data { cta, data } => {
-                    Ok((data, FormattedCtaBlock::new(&c.display_name, cta.as_ref())))
-                }
-                Inner::Error(error) => Err(error),
-                Inner::Stream { chunks, cta } => {
-                    let (done_tx, done_rx) = oneshot::channel();
-                    let _ = stream_tx.send((chunks, cta, done_tx));
-                    // Resolves with `Canceled` once the runner drops the sender.
-                    let _ = done_rx.await;
-                    return Ok(());
-                }
-            };
-            let _ = outcome_tx.send(result);
-            Ok(())
-        })
-    })
+/// Builds a `{ code, message }` error entry.
+fn json_error(code: &str, message: &str) -> Value {
+    let mut out = Map::new();
+    out.insert("code".into(), code.into());
+    out.insert("message".into(), message.into());
+    Value::Object(out)
 }
 
 /// Rebuilds an error from its output value, for terminal rendering. Errors with field errors
@@ -2630,6 +3572,10 @@ fn tree<'a>(
                     Entry::Alias(command) | Entry::Command(command) => completions::Node::Leaf {
                         description: command.description.as_deref(),
                         options: command.options.as_ref(),
+                    },
+                    Entry::Fetch(gateway) => completions::Node::Leaf {
+                        description: gateway.description.as_deref(),
+                        options: None,
                     },
                     Entry::Group(group) => tree(
                         &group.commands,

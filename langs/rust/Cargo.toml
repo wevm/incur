@@ -10,20 +10,27 @@ rust-version = "1.97.0"
 version = "0.1.0"
 
 [workspace.dependencies]
+bytes = "1"
 futures = "0.3"
-futures-channel = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-channel = { version = "0.3", default-features = false, features = ["alloc", "std"] }
 futures-core = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "std"] }
+http = "1"
+http-body = "1"
 incur-macros = { path = "crates/incur-macros", version = "=0.1.0" }
 indexmap = "2"
 insta = "1"
 proc-macro2 = "1"
 quote = "1"
+regex-lite = "0.1"
 ryu-js = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = { version = "0.10", default-features = false }
 syn = { version = "2", features = ["full"] }
 tokio = { version = "1", default-features = false }
 trybuild = "1"
+ureq = "3"
 
 [workspace.lints.rust]
 absolute_paths_not_starting_with_crate = "warn"

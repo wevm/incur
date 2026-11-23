@@ -1,5 +1,8 @@
 //! Rust mirror of the reference CLIs in `langs/differential/fixtures.ts`.
 
+mod sandboxed;
+mod services;
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -342,6 +345,7 @@ fn app() -> Cli {
         );
 
     Cli::new("app")
+        .update(false)
         .description("A differential test CLI")
         .version("1.2.3")
         .env::<AppEnv>()
@@ -544,7 +548,7 @@ fn app() -> Cli {
             "data",
             Command::new()
                 .description("Return parsed JSON")
-                .run(|c: Context<DataArgs>| data(serde_json::from_str(&c.args.json)?)),
+                .run(|c: Context<DataArgs>| data(incur::json::parse(&c.args.json)?)),
         )
         .command(
             "secret",
@@ -645,6 +649,7 @@ struct LoudOptions {
 
 fn greet() -> Cli {
     Cli::new("greet")
+        .update(false)
         .description("A greeting CLI")
         .banner(BannerMode::Agent, || Some("Greet banner".into()))
         .root(Command::new().run(|c: Context<GreetArgs, LoudOptions>| {
@@ -711,6 +716,7 @@ enum Mode {
 
 fn globals() -> Cli {
     Cli::new("glob")
+        .update(false)
         .description("Global options")
         .banner(BannerMode::Human, || Some("Glob banner".into()))
         .config(Config {
@@ -814,6 +820,7 @@ fn ten() -> f64 {
 
 fn cfg() -> Cli {
     Cli::new("cfg")
+        .update(false)
         .description("Config defaults")
         .config(Config {
             flag: Some("config".into()),
@@ -853,6 +860,7 @@ fn cfg() -> Cli {
 
 fn plain() -> Cli {
     Cli::new("plain")
+        .update(false)
         .description("No skills, JSON by default")
         .sync(false)
         .format(Format::Json)
@@ -894,6 +902,7 @@ struct RootedArgs {
 
 fn rooted() -> Cli {
     Cli::new("rooted")
+        .update(false)
         .description("Root with subcommands")
         .config(Config {
             files: vec!["config/cfg.json".into()],
@@ -925,6 +934,29 @@ pub(crate) fn cli(name: &str) -> Cli {
         "greet" => greet(),
         "plain" => plain(),
         "rooted" => rooted(),
+        "bare" => sandboxed::bare(),
+        "catalog" => sandboxed::catalog(),
+        "dupe" => sandboxed::dupe(),
+        "gateway" => sandboxed::gateway(),
+        "kit" => sandboxed::kit(),
+        "kitbad" => sandboxed::kitbad(),
+        "kitcmd" => sandboxed::kitcmd(),
+        "kitpkg" => sandboxed::kitpkg(),
+        "kitver" => sandboxed::kitver(),
+        "oa" => sandboxed::oa(),
+        "oaroot" => sandboxed::oaroot(),
+        "proxy" => sandboxed::proxy(),
+        "raw" => sandboxed::raw(),
+        "remote" => sandboxed::remote(),
+        "spaced" => sandboxed::spaced(),
+        "tools" => sandboxed::tools(),
+        "upd" => sandboxed::upd(),
+        "updbad" => sandboxed::updbad(),
+        "updbeta" => sandboxed::updbeta(),
+        "updcheck" => sandboxed::updcheck(),
+        "updnone" => sandboxed::updnone(),
+        "updpkg" => sandboxed::updpkg(),
+        "web" => sandboxed::web(),
         other => panic!("unknown fixture CLI: {other}"),
     }
 }

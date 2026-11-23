@@ -3,9 +3,17 @@
 //!
 //! String folding indexes UTF-16 code units, as the JavaScript implementation does.
 
+use std::fmt::Write as _;
+
 use serde_json::Value;
 
 use crate::js;
+
+/// The marker key of a node with an anchor: `{ ANCHOR: name, "value": node }`.
+pub(crate) const ANCHOR: &str = "\u{0}anchor";
+
+/// The marker key of an alias: `{ ALIAS: name }`.
+pub(crate) const ALIAS: &str = "\u{0}alias";
 
 /// Maximum line width before folding.
 const LINE_WIDTH: usize = 80;
@@ -24,15 +32,28 @@ struct Ctx {
     indent_at_start: Option<usize>,
     /// Whether a top-level block scalar must be indented.
     force_block_indent: bool,
+    /// Whether long lines fold.
+    fold: bool,
 }
 
 /// Serializes a value as a YAML document, ending with a newline.
 pub(crate) fn stringify(value: &Value) -> String {
+    serialize(value, true)
+}
+
+/// Serializes a value as a YAML document without folding long lines, as `lineWidth: 0` does.
+pub(crate) fn stringify_unfolded(value: &Value) -> String {
+    serialize(value, false)
+}
+
+/// Serializes a value as a YAML document, ending with a newline.
+fn serialize(value: &Value, fold: bool) -> String {
     let ctx = Ctx {
         implicit_key: false,
         indent: String::new(),
         indent_at_start: None,
         force_block_indent: false,
+        fold,
     };
     format!("{}\n", node(value, &ctx))
 }
@@ -60,6 +81,9 @@ fn node(value: &Value, ctx: &Ctx) -> String {
             lines.join(&format!("\n{}", ctx.indent))
         }
         Value::Object(map) => {
+            if let Some(name) = map.get(ALIAS).and_then(Value::as_str) {
+                return format!("*{name}");
+            }
             if map.is_empty() {
                 return "{}".into();
             }
@@ -89,7 +113,18 @@ fn pair(key: &str, value: &Value, ctx: &Ctx) -> String {
         format!("{key_str}:")
     };
     pair_ctx.implicit_key = false;
-    let collection = matches!(value, Value::Array(_) | Value::Object(_));
+    let (anchor, value) = match value {
+        Value::Object(map) if map.contains_key(ANCHOR) => (
+            map.get(ANCHOR).and_then(Value::as_str),
+            map.get("value").unwrap_or(&Value::Null),
+        ),
+        value => (None, value),
+    };
+    if let Some(name) = anchor {
+        let _ = write!(out, " &{name}");
+    }
+    let alias = matches!(value, Value::Object(map) if map.contains_key(ALIAS));
+    let collection = !alias && matches!(value, Value::Array(_) | Value::Object(_));
     if !explicit && !collection {
         pair_ctx.indent_at_start = Some(js::utf16_len(&out) + 1);
     }
@@ -163,7 +198,14 @@ fn plain(value: &str, ctx: &Ctx) -> String {
     if ctx.implicit_key {
         return value.to_owned();
     }
-    fold(value, &ctx.indent, Mode::Flow, ctx.indent_at_start, None)
+    fold(
+        ctx.fold,
+        value,
+        &ctx.indent,
+        Mode::Flow,
+        ctx.indent_at_start,
+        None,
+    )
 }
 
 /// Matches the indicator characters that forbid a plain scalar.
@@ -257,7 +299,14 @@ fn single_quoted(value: &str, ctx: &Ctx) -> String {
     if ctx.implicit_key {
         return res;
     }
-    fold(&res, &indent, Mode::Flow, ctx.indent_at_start, None)
+    fold(
+        ctx.fold,
+        &res,
+        &indent,
+        Mode::Flow,
+        ctx.indent_at_start,
+        None,
+    )
 }
 
 /// Stringifies a double-quoted scalar.
@@ -337,7 +386,14 @@ fn double_quoted(value: &str, ctx: &Ctx) -> String {
     if ctx.implicit_key {
         return out;
     }
-    fold(&out, &indent, Mode::Quoted, ctx.indent_at_start, None)
+    fold(
+        ctx.fold,
+        &out,
+        &indent,
+        Mode::Quoted,
+        ctx.indent_at_start,
+        None,
+    )
 }
 
 /// Stringifies a block scalar (`|` literal or `>` folded).
@@ -356,7 +412,7 @@ fn block(value: &str, ctx: &Ctx) -> String {
     } else {
         String::new()
     };
-    let literal = !line_over_limit(value, indent.len());
+    let literal = !ctx.fold || !line_over_limit(value, indent.len());
 
     // Chomping from trailing whitespace.
     let units = value.encode_utf16().collect::<Vec<_>>();
@@ -408,6 +464,7 @@ fn block(value: &str, ctx: &Ctx) -> String {
         let folded = fold_block_body(&body, &indent);
         let mut overflow = false;
         let folded = fold(
+            true,
             &format!("{start}{folded}{end}"),
             &indent,
             Mode::Block,
@@ -540,12 +597,16 @@ enum Mode {
 
 /// Folds long lines at spaces, as `foldFlowLines` does.
 fn fold(
+    enabled: bool,
     text: &str,
     indent: &str,
     mode: Mode,
     indent_at_start: Option<usize>,
     on_overflow: Option<&mut bool>,
 ) -> String {
+    if !enabled {
+        return text.to_owned();
+    }
     let units = text.encode_utf16().collect::<Vec<_>>();
     let at = |i: usize| units.get(i).copied();
     let indent_len = indent.len();
@@ -689,4 +750,32 @@ fn consume_more_indented(units: &[u16], mut i: isize, indent: usize) -> isize {
         }
     }
     end
+}
+
+/// Parses the top-level `key: value` pairs of a YAML mapping whose values are single-line
+/// scalars, as skill frontmatter holds. Plain scalars stay strings, quoted scalars are
+/// unquoted, and nested or multi-line values read as `null`. Returns `None` when a top-level
+/// line is not a pair.
+pub(crate) fn parse_mapping(text: &str) -> Option<serde_json::Map<String, Value>> {
+    let mut out = serde_json::Map::new();
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() || trimmed.starts_with('#') || line.starts_with([' ', '\t']) {
+            continue;
+        }
+        let (key, value) = trimmed.split_once(':')?;
+        let value = value.trim();
+        let value = if value.is_empty() {
+            Value::Null
+        } else if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+            Value::String(inner.replace("''", "'"))
+        } else if value.starts_with('"') {
+            serde_json::from_str::<String>(value).map_or(Value::Null, Value::String)
+        } else {
+            let plain = value.split(" #").next().unwrap_or(value).trim_end();
+            Value::String(plain.to_owned())
+        };
+        out.insert(key.trim().to_owned(), value);
+    }
+    Some(out)
 }

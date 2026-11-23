@@ -325,3 +325,194 @@ fn schema_table(schema: &Value, prefix: &str) -> Option<String> {
         rows.join("\n")
     ))
 }
+
+/// A generated skill file.
+pub(crate) struct File {
+    /// The directory relative to the skills root, empty for a root-level file.
+    pub(crate) dir: String,
+    /// The `SKILL.md` contents, without a trailing newline.
+    pub(crate) content: String,
+    /// The skill name from the frontmatter.
+    pub(crate) name: String,
+    /// The skill description from the frontmatter.
+    pub(crate) description: String,
+}
+
+/// Splits commands into skill files, one per group of `depth` leading command segments. Depth
+/// 0 puts every command in one root-level file.
+pub(crate) fn split(
+    name: &str,
+    commands: &[CommandInfo],
+    depth: usize,
+    groups: &IndexMap<String, String>,
+) -> Vec<File> {
+    if depth == 0 {
+        return vec![render_group(
+            name,
+            name,
+            commands,
+            groups,
+            Some(name),
+            String::new(),
+        )];
+    }
+    let mut buckets: IndexMap<String, Vec<CommandInfo>> = IndexMap::new();
+    for cmd in commands {
+        let key = match &cmd.name {
+            None => slugify(name),
+            Some(path) => path.split(' ').take(depth).collect::<Vec<_>>().join("-"),
+        };
+        buckets.entry(key).or_default().push(cmd.clone());
+    }
+    let mut buckets = buckets.into_iter().collect::<Vec<_>>();
+    buckets.sort_by(|a, b| crate::js::locale_compare(&a.0, &b.0));
+    buckets
+        .into_iter()
+        .map(|(dir, cmds)| {
+            let prefix = cmds[0]
+                .name
+                .as_deref()
+                .map(|path| path.split(' ').take(depth).collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+            let title = if prefix.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{name} {prefix}")
+            };
+            let prefix = (!prefix.is_empty()).then_some(prefix.as_str());
+            render_group(name, &title, &cmds, groups, prefix, dir)
+        })
+        .collect()
+}
+
+/// Renders a skill file: frontmatter, then command bodies.
+fn render_group(
+    cli: &str,
+    title: &str,
+    cmds: &[CommandInfo],
+    groups: &IndexMap<String, String>,
+    prefix: Option<&str>,
+    dir: String,
+) -> File {
+    let fallback = match cmds {
+        [only] => only.description.clone().filter(|d| !d.is_empty()),
+        _ => None,
+    };
+    let desc = prefix.and_then(|p| groups.get(p).cloned()).or(fallback);
+    let description = match desc {
+        Some(desc) => format!(
+            "{}. Run `{title} --help` for usage details.",
+            desc.strip_suffix('.').unwrap_or(&desc)
+        ),
+        None => format!("Run `{title} --help` for usage details."),
+    };
+    let name = slugify(title);
+    let mut meta = serde_json::Map::new();
+    meta.insert("name".into(), name.clone().into());
+    meta.insert("description".into(), description.clone().into());
+    meta.insert("requires_bin".into(), cli.into());
+    meta.insert("command".into(), title.into());
+    let frontmatter = crate::yaml::stringify_unfolded(&Value::Object(meta));
+    let body = cmds
+        .iter()
+        .map(|cmd| body(cli, cmd, 1))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    File {
+        dir,
+        content: format!("---\n{}\n---\n\n{body}", frontmatter.trim_end()),
+        name,
+        description,
+    }
+}
+
+/// Converts text to a lowercase slug of letters, digits, and single hyphens.
+pub(crate) fn slugify(value: &str) -> String {
+    let mut out = String::new();
+    let mut gap = false;
+    for ch in value.to_lowercase().chars() {
+        if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' {
+            if gap {
+                out.push('-');
+                gap = false;
+            }
+            out.push(ch);
+        } else {
+            gap = true;
+        }
+    }
+    if gap {
+        out.push('-');
+    }
+    let mut collapsed = String::new();
+    for ch in out.chars() {
+        if !(ch == '-' && collapsed.ends_with('-')) {
+            collapsed.push(ch);
+        }
+    }
+    let trimmed = collapsed.strip_prefix('-').unwrap_or(&collapsed);
+    trimmed.strip_suffix('-').unwrap_or(trimmed).to_owned()
+}
+
+/// Returns a deterministic hash of the command structure, for skill staleness checks.
+pub(crate) fn hash(commands: &[CommandInfo]) -> String {
+    let data = commands
+        .iter()
+        .map(|cmd| {
+            let mut out = serde_json::Map::new();
+            if let Some(name) = &cmd.name {
+                out.insert("name".into(), name.clone().into());
+            }
+            if let Some(description) = &cmd.description {
+                out.insert("description".into(), description.clone().into());
+            }
+            if let Some(hint) = &cmd.hint {
+                out.insert("hint".into(), hint.clone().into());
+            }
+            for (key, ty) in [
+                ("args", &cmd.args),
+                ("env", &cmd.env),
+                ("options", &cmd.options),
+                ("output", &cmd.output),
+            ] {
+                if let Some(ty) = ty {
+                    out.insert(key.into(), schema::json_schema(ty));
+                }
+            }
+            Value::Object(out)
+        })
+        .collect();
+    let digest = sha256_hex(crate::js::stringify(&Value::Array(data)).as_bytes());
+    digest[..16].to_owned()
+}
+
+/// Returns the lowercase hexadecimal SHA-256 digest of bytes.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+}
+
+/// Reads the `name` and `description` of a skill file's YAML frontmatter.
+pub(crate) fn frontmatter(content: &str) -> (Option<String>, Option<String>) {
+    let Some(rest) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    else {
+        return (None, None);
+    };
+    let end = rest.match_indices("\n---").map(|(index, _)| index).next();
+    let Some(end) = end else {
+        return (None, None);
+    };
+    let block = rest[..end].strip_suffix('\r').unwrap_or(&rest[..end]);
+    let Some(meta) = crate::yaml::parse_mapping(block) else {
+        return (None, None);
+    };
+    let text = |key: &str| meta.get(key).and_then(Value::as_str).map(str::to_owned);
+    (text("name"), text("description"))
+}

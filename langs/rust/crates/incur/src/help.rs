@@ -41,6 +41,10 @@ pub type EnvSource<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
 /// Options for [`format_root`] and [`format_command`].
 #[derive(Clone, Copy, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent display switches, set by name at call sites."
+)]
 pub struct Options<'a> {
     /// Alternative binary names.
     pub aliases: &'a [String],
@@ -64,6 +68,8 @@ pub struct Options<'a> {
     pub hide_global_options: bool,
     /// Hide the skills integration.
     pub hide_skills: bool,
+    /// Hide the root `--update` flag.
+    pub hide_update: bool,
     /// Text shown after examples.
     pub hint: Option<&'a str>,
     /// Options schema.
@@ -384,6 +390,9 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
     ]);
     if options.root {
         flags.push(("--mcp".into(), "Start as MCP stdio server"));
+        if !options.hide_update {
+            flags.push(("--update".into(), "Update to latest version"));
+        }
         flags.push(("--version".into(), "Show version"));
     }
     flags.sort_by(|a, b| js::locale_compare(&a.0, &b.0));

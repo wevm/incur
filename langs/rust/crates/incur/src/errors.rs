@@ -379,6 +379,29 @@ impl FormattedCtaBlock {
         Value::Object(out)
     }
 
+    /// Renders the block as plain text for MCP tool output.
+    pub(crate) fn text(&self) -> String {
+        let mut lines = vec![self.description.clone()];
+        for cta in &self.commands {
+            match &cta.description {
+                Some(description) => lines.push(format!("  {} - {description}", cta.command)),
+                None => lines.push(format!("  {}", cta.command)),
+            }
+        }
+        lines.join("\n")
+    }
+
+    /// Appends the commands of another block.
+    pub(crate) fn merge(first: Option<Self>, second: Option<Self>) -> Option<Self> {
+        match (first, second) {
+            (Some(mut first), Some(second)) => {
+                first.commands.extend(second.commands);
+                Some(first)
+            }
+            (first, second) => first.or(second),
+        }
+    }
+
     /// Renders the block for a terminal.
     pub(crate) fn human(&self) -> String {
         let width = self

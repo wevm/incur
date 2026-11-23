@@ -99,6 +99,9 @@ pub struct Context<A = (), O = (), E = ()> {
     pub name: String,
     /// Named options.
     pub options: O,
+    /// The HTTP request, when the command runs through [`Cli::fetch`](crate::Cli::fetch) or MCP
+    /// over HTTP. Its body has already been read into the arguments and options.
+    pub request: Option<Arc<http::request::Parts>>,
     /// Variables set by middleware.
     pub vars: Vars,
     /// The CLI version.
@@ -267,6 +270,30 @@ where
     }
 }
 
+/// Values a callback may return: a `T` directly, or a [`Future`] that resolves to one.
+///
+/// The marker `M` is inferred: [`marker::Immediate`] for direct values and [`marker::Deferred`]
+/// for futures.
+pub trait MaybeFuture<T, M> {
+    /// Resolves the value.
+    fn resolve(self) -> impl Future<Output = T> + Send + 'static;
+}
+
+impl<T: Send + 'static> MaybeFuture<T, marker::Immediate> for T {
+    fn resolve(self) -> impl Future<Output = T> + Send + 'static {
+        std::future::ready(self)
+    }
+}
+
+impl<F, T> MaybeFuture<T, marker::Deferred> for F
+where
+    F: Future<Output = T> + Send + 'static,
+{
+    fn resolve(self) -> impl Future<Output = T> + Send + 'static {
+        self
+    }
+}
+
 /// Values that convert to an outcome: an [`Outcome`], or a `Result` of serializable data.
 pub trait IntoOutcome {
     /// Converts the value into an outcome.
@@ -324,6 +351,8 @@ pub(crate) struct Invocation {
     pub(crate) name: String,
     /// Parsed options.
     pub(crate) options: Value,
+    /// The HTTP request.
+    pub(crate) request: Option<Arc<http::request::Parts>>,
     /// Variables.
     pub(crate) vars: Vars,
     /// CLI version.
@@ -367,6 +396,8 @@ pub struct Command {
     pub(crate) handler: Option<Handler>,
     /// Extra guidance.
     pub(crate) hint: Option<String>,
+    /// MCP tool settings.
+    pub(crate) mcp: Option<crate::mcp::Tool>,
     /// Per-command middleware.
     pub(crate) middleware: Vec<Middleware>,
     /// Options schema.
@@ -443,6 +474,7 @@ impl Command {
                     globals: input.globals,
                     name: input.name,
                     options: O::from_value(input.options)?,
+                    request: input.request,
                     vars: input.vars,
                     version: input.version,
                 })
@@ -526,6 +558,14 @@ impl Command {
         self
     }
 
+    /// Configures the command's MCP tool: its name, description, annotations, and
+    /// instructions. `false` hides the command from MCP clients.
+    #[must_use]
+    pub fn mcp(mut self, tool: impl Into<crate::mcp::Tool>) -> Self {
+        self.mcp = Some(tool.into());
+        self
+    }
+
     /// Adds an alternative usage line.
     #[must_use]
     pub fn usage(mut self, usage: Usage) -> Self {
@@ -554,6 +594,9 @@ pub struct MiddlewareContext {
     pub globals: Value,
     /// The CLI name.
     pub name: String,
+    /// The HTTP request, when the command runs through [`Cli::fetch`](crate::Cli::fetch) or MCP
+    /// over HTTP.
+    pub request: Option<Arc<http::request::Parts>>,
     /// Variables for downstream middleware and handlers.
     pub vars: Vars,
     /// The CLI version.

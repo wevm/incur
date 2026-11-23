@@ -55,6 +55,23 @@ pub struct Type {
     pub kind: Kind,
     /// Whether the input may omit the field.
     pub optional: bool,
+    /// What a schema converted from JSON Schema keeps beyond its kind.
+    pub(crate) converted: Option<Box<Converted>>,
+}
+
+/// What a schema converted from JSON Schema, such as an OpenAPI parameter or a remote MCP
+/// tool's input, keeps beyond its [`Kind`].
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Converted {
+    /// The JSON Schema Zod emits for the converted schema.
+    pub(crate) json: Value,
+    /// A pattern strings must match, with Zod's format name: `regex` or `datetime`.
+    pub(crate) pattern: Option<(String, &'static str)>,
+    /// Whether objects keep unknown keys.
+    pub(crate) loose: bool,
+    /// Whether input converts to the kind first, as `z.coerce` does with `Number()` and
+    /// `Boolean()`.
+    pub(crate) coerce: bool,
 }
 
 /// The shape of a schema node.
@@ -124,6 +141,7 @@ impl Type {
             description: None,
             kind,
             optional: false,
+            converted: None,
         }
     }
 
@@ -215,8 +233,9 @@ impl Type {
     }
 
     /// Whether the input may omit the field without a default, as Zod's `optout` reports.
+    /// Converted schemas wrap defaults in `.optional()`, so they stay optional.
     pub(crate) fn is_optional(&self) -> bool {
-        self.optional && self.default.is_none()
+        self.optional && (self.default.is_none() || self.converted.is_some())
     }
 
     /// Whether the option reads no value from the next token.
@@ -317,6 +336,9 @@ numbers!(Number: f32, f64);
 
 /// Converts a schema to the JSON Schema Zod's `z.toJSONSchema()` emits, with the same key order.
 pub fn json_schema(ty: &Type) -> Value {
+    if let Some(converted) = &ty.converted {
+        return converted.json.clone();
+    }
     let mut out = Map::new();
     let wrapped = ty.optional || ty.default.is_some();
 
@@ -426,6 +448,13 @@ pub(crate) enum IssueKind {
     },
     /// The value is not one of the enum values.
     InvalidValue(Vec<String>),
+    /// A string does not match a pattern.
+    InvalidFormat {
+        /// Zod's format name: `regex` or `datetime`.
+        format: &'static str,
+        /// The pattern as Zod reports it.
+        pattern: String,
+    },
     /// The value exceeds a maximum.
     TooBig {
         /// The bound.
@@ -448,6 +477,7 @@ impl Issue {
         match self.kind {
             IssueKind::InvalidType { .. } => "invalid_type",
             IssueKind::InvalidValue(_) => "invalid_value",
+            IssueKind::InvalidFormat { .. } => "invalid_format",
             IssueKind::TooBig { .. } => "too_big",
             IssueKind::TooSmall { .. } => "too_small",
         }
@@ -474,6 +504,12 @@ impl Issue {
             IssueKind::InvalidValue(values) => {
                 out.insert("code".into(), self.code().into());
                 out.insert("values".into(), values.clone().into());
+            }
+            IssueKind::InvalidFormat { format, pattern } => {
+                out.insert("origin".into(), "string".into());
+                out.insert("code".into(), self.code().into());
+                out.insert("format".into(), (*format).into());
+                out.insert("pattern".into(), pattern.clone().into());
             }
             IssueKind::TooBig {
                 maximum: bound,
@@ -537,6 +573,34 @@ fn finite(value: &Value) -> Value {
     }
 }
 
+/// Converts input as JavaScript's `Boolean()` or `Number()` does for `z.coerce` schemas.
+fn coerce(kind: &Kind, value: Option<&Value>) -> Value {
+    let Some(value) = value else {
+        return if *kind == Kind::Boolean {
+            Value::Bool(false)
+        } else {
+            crate::parser::number_value(f64::NAN)
+        };
+    };
+    if *kind == Kind::Boolean {
+        return Value::Bool(match value {
+            Value::Null => false,
+            Value::Bool(b) => *b,
+            Value::Number(n) => n.as_f64().is_some_and(|n| n != 0.0),
+            Value::String(s) => !s.is_empty(),
+            Value::Array(_) | Value::Object(_) => true,
+        });
+    }
+    let number = match value {
+        Value::Null => 0.0,
+        Value::Bool(b) => f64::from(u8::from(*b)),
+        Value::Number(_) => return value.clone(),
+        Value::String(s) => js::to_number(s),
+        Value::Array(_) | Value::Object(_) => f64::NAN,
+    };
+    crate::parser::number_value(number)
+}
+
 /// Validates `value` against `ty`, applying defaults and stripping unknown object keys.
 ///
 /// Returns `None` when an optional value is absent.
@@ -554,6 +618,13 @@ pub(crate) fn parse(
             return None;
         }
     }
+    // `z.coerce` also converts a missing value: `Number(undefined)` is `NaN`.
+    let coerced = ty
+        .converted
+        .as_ref()
+        .filter(|c| c.coerce)
+        .map(|_| coerce(&ty.kind, value));
+    let value = coerced.as_ref().or(value);
     match (&ty.kind, value) {
         (Kind::Enum(values), _) => {
             if let Some(Value::String(string)) = value
@@ -671,6 +742,13 @@ fn parse_present(
                 }
                 path.pop();
             }
+            if ty.converted.as_ref().is_some_and(|c| c.loose) {
+                for (key, value) in map {
+                    if !out.contains_key(key) && fields.iter().all(|f| &f.name != key) {
+                        out.insert(key.clone(), value.clone());
+                    }
+                }
+            }
             Some(Value::Object(out))
         }
         (Kind::String { max, min }, Value::String(string)) if !is_non_finite(value) => {
@@ -680,6 +758,26 @@ fn parse_present(
             )]
             let len = js::utf16_len(string) as f64;
             check_bounds(len, *min, *max, "string", path, issues);
+            if let Some((pattern, format)) = ty.converted.as_ref().and_then(|c| c.pattern.as_ref())
+                && regex_lite::Regex::new(pattern).is_ok_and(|regex| !regex.is_match(string))
+            {
+                let (message, reported) = if *format == "datetime" {
+                    ("Invalid ISO datetime".to_owned(), pattern.clone())
+                } else {
+                    (
+                        format!("Invalid string: must match pattern /{pattern}/"),
+                        format!("/{pattern}/"),
+                    )
+                };
+                issues.push(Issue {
+                    kind: IssueKind::InvalidFormat {
+                        format,
+                        pattern: reported,
+                    },
+                    message,
+                    path: path.clone(),
+                });
+            }
             Some(value.clone())
         }
         _ => {

@@ -15,16 +15,28 @@ version.workspace = true
 test = false
 
 [dependencies]
+bytes = { workspace = true }
 futures-channel = { workspace = true }
 futures-core = { workspace = true }
+futures-util = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
 incur-macros = { workspace = true }
 indexmap = { workspace = true }
+regex-lite = { workspace = true }
 ryu-js = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 # The blocking entries drive the CLI on a current-thread runtime. `enable_all` turns on every
 # driver the dependency graph enables, so handlers can use tokio timers and IO.
 tokio = { workspace = true, features = ["rt"] }
+ureq = { workspace = true, optional = true }
+
+[features]
+# A real HTTP client for hosted fetch sources, OpenAPI documents and MCP servers fetched by URL,
+# and npm registry update checks. Without it, those requests fail unless `Cli::client` sets one.
+client = ["dep:ureq"]
 
 [dev-dependencies]
 futures = { workspace = true }
