@@ -2,8 +2,11 @@
 
 use std::any::{Any, TypeId};
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
 
+use futures_core::Stream;
 use indexmap::IndexMap;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -118,6 +121,12 @@ impl<A, O, E> Context<A, O, E> {
     }
 }
 
+/// A boxed future that can move between threads.
+pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// Streamed chunks, converted to JSON.
+pub(crate) type Chunks = Pin<Box<dyn Stream<Item = Result<Value, Error>> + Send>>;
+
 /// A command result: data, an error, or a stream of chunks.
 pub struct Outcome(pub(crate) Inner);
 
@@ -135,7 +144,7 @@ pub(crate) enum Inner {
     /// Streamed chunks.
     Stream {
         /// Chunks, ending early at the first error.
-        chunks: Box<dyn Iterator<Item = Result<Value, Error>>>,
+        chunks: Chunks,
         /// Suggested next commands, shown after the stream.
         cta: Option<CtaBlock>,
     },
@@ -177,24 +186,88 @@ pub fn ok<T: Serialize>(data: T) -> Outcome {
     })
 }
 
-/// Streams chunks. Human and TOON output writes each chunk as it arrives; JSONL writes one
-/// `chunk` record per item; other explicit formats buffer the chunks into one array.
-pub fn stream<I, T>(chunks: I) -> Outcome
+/// Streams chunks from any [`Stream`], such as `futures::stream::iter` over a vector or a
+/// channel receiver. Human and TOON output writes each chunk as it arrives; JSONL writes one
+/// `chunk` record per item; other explicit formats buffer the chunks into one array. The first
+/// error ends the stream.
+///
+/// ```
+/// use incur::{Command, Context, Error};
+/// use serde_json::json;
+///
+/// let command = Command::new().run(|_: Context| {
+///     incur::stream(futures::stream::iter([
+///         Ok::<_, Error>(json!({ "progress": 50 })),
+///         Ok(json!({ "progress": 100 })),
+///     ]))
+/// });
+/// ```
+pub fn stream<S, T>(chunks: S) -> Outcome
 where
-    I: IntoIterator<Item = Result<T, Error>>,
-    I::IntoIter: 'static,
+    S: Stream<Item = Result<T, Error>> + Send + 'static,
     T: Serialize,
 {
-    let chunks = chunks
-        .into_iter()
-        .map(|chunk| chunk.and_then(|value| Ok(js::normalize(serde_json::to_value(value)?))));
     Outcome(Inner::Stream {
-        chunks: Box::new(chunks),
+        chunks: Box::pin(ToJson(Box::pin(chunks))),
         cta: None,
     })
 }
 
-/// Values a handler may return.
+/// A stream adapter that converts serializable chunks to JSON.
+struct ToJson<S>(Pin<Box<S>>);
+
+impl<S, T> Stream for ToJson<S>
+where
+    S: Stream<Item = Result<T, Error>>,
+    T: Serialize,
+{
+    type Item = Result<Value, Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        self.0.as_mut().poll_next(cx).map(|chunk| {
+            chunk.map(|chunk| {
+                chunk.and_then(|value| Ok(js::normalize(serde_json::to_value(value)?)))
+            })
+        })
+    }
+}
+
+/// Marker types that tell [`HandlerOutput`] implementations apart, so one `run` method accepts
+/// both plain and `async` handlers.
+pub mod marker {
+    /// Marks values a handler returns directly.
+    pub enum Immediate {}
+
+    /// Marks futures a handler returns, resolved by awaiting them.
+    pub enum Deferred {}
+}
+
+/// Values a handler may return: anything [`IntoOutcome`], or a [`Future`] that resolves to one.
+///
+/// The marker `M` is inferred: [`marker::Immediate`] for direct values and [`marker::Deferred`]
+/// for futures.
+pub trait HandlerOutput<M> {
+    /// Resolves the value to an outcome.
+    fn resolve(self) -> impl Future<Output = Outcome> + Send + 'static;
+}
+
+impl<R: IntoOutcome> HandlerOutput<marker::Immediate> for R {
+    fn resolve(self) -> impl Future<Output = Outcome> + Send + 'static {
+        std::future::ready(self.into_outcome())
+    }
+}
+
+impl<F> HandlerOutput<marker::Deferred> for F
+where
+    F: Future + Send + 'static,
+    F::Output: IntoOutcome,
+{
+    async fn resolve(self) -> Outcome {
+        self.await.into_outcome()
+    }
+}
+
+/// Values that convert to an outcome: an [`Outcome`], or a `Result` of serializable data.
 pub trait IntoOutcome {
     /// Converts the value into an outcome.
     fn into_outcome(self) -> Outcome;
@@ -258,11 +331,20 @@ pub(crate) struct Invocation {
 }
 
 /// A type-erased handler.
-pub(crate) type Handler = Arc<dyn Fn(Invocation) -> Outcome + Send + Sync>;
+pub(crate) type Handler = Arc<dyn Fn(Invocation) -> BoxFuture<Outcome> + Send + Sync>;
 
-/// Middleware: runs around command handlers in registration order.
-pub type Middleware =
-    Arc<dyn Fn(&mut MiddlewareContext, Next<'_>) -> Result<(), Error> + Send + Sync>;
+/// Type-erased middleware: runs around command handlers in registration order.
+pub(crate) type Middleware =
+    Arc<dyn Fn(MiddlewareContext, Next) -> BoxFuture<Result<(), Error>> + Send + Sync>;
+
+/// Erases a middleware function.
+pub(crate) fn middleware<F, R>(f: F) -> Middleware
+where
+    F: Fn(MiddlewareContext, Next) -> R + Send + Sync + 'static,
+    R: Future<Output = Result<(), Error>> + Send + 'static,
+{
+    Arc::new(move |context, next| Box::pin(f(context, next)))
+}
 
 /// A command definition.
 #[derive(Clone, Default)]
@@ -314,9 +396,13 @@ impl Command {
     /// Sets the handler. The argument, option, and environment schemas come from the context
     /// type the closure declares.
     ///
+    /// The handler returns anything [`IntoOutcome`], such as a `Result` of serializable data,
+    /// or a future that resolves to one, such as an `async` block.
+    ///
     /// ```
     /// use incur::{Command, Context, Schema};
     /// use serde::Deserialize;
+    /// use serde_json::json;
     ///
     /// #[derive(Deserialize, Schema)]
     /// struct Args {
@@ -324,23 +410,28 @@ impl Command {
     ///     name: String,
     /// }
     ///
-    /// let command = Command::new().run(|c: Context<Args>| {
-    ///     Ok::<_, incur::Error>(serde_json::json!({ "message": format!("hello {}", c.args.name) }))
+    /// let greet = Command::new().run(|c: Context<Args>| {
+    ///     Ok::<_, incur::Error>(json!({ "message": format!("hello {}", c.args.name) }))
+    /// });
+    ///
+    /// let fetch = Command::new().run(|c: Context<Args>| async move {
+    ///     // Await IO here.
+    ///     Ok::<_, incur::Error>(json!({ "fetched": c.args.name }))
     /// });
     /// ```
     #[must_use]
-    pub fn run<A, O, E, F, R>(mut self, f: F) -> Self
+    pub fn run<A, O, E, F, R, M>(mut self, f: F) -> Self
     where
         A: Input + 'static,
         O: Input + 'static,
         E: Input + 'static,
         F: Fn(Context<A, O, E>) -> R + Send + Sync + 'static,
-        R: IntoOutcome,
+        R: HandlerOutput<M>,
     {
         self.args = A::schema();
         self.options = O::schema();
         self.env = E::schema();
-        self.handler = Some(Arc::new(move |input: Invocation| {
+        self.handler = Some(Arc::new(move |input: Invocation| -> BoxFuture<Outcome> {
             let context = (|| {
                 Ok::<_, Error>(Context {
                     agent: input.agent,
@@ -357,8 +448,8 @@ impl Command {
                 })
             })();
             match context {
-                Ok(context) => f(context).into_outcome(),
-                Err(error) => error.into(),
+                Ok(context) => Box::pin(f(context).resolve()),
+                Err(error) => Box::pin(std::future::ready(error.into())),
             }
         }));
         self
@@ -409,13 +500,15 @@ impl Command {
         self
     }
 
-    /// Adds per-command middleware, which runs after CLI and group middleware.
+    /// Adds per-command middleware, which runs after CLI and group middleware. See
+    /// [`Cli::middleware`](crate::Cli::middleware).
     #[must_use]
-    pub fn middleware<F>(mut self, f: F) -> Self
+    pub fn middleware<F, R>(mut self, f: F) -> Self
     where
-        F: Fn(&mut MiddlewareContext, Next<'_>) -> Result<(), Error> + Send + Sync + 'static,
+        F: Fn(MiddlewareContext, Next) -> R + Send + Sync + 'static,
+        R: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        self.middleware.push(Arc::new(f));
+        self.middleware.push(middleware(f));
         self
     }
 
@@ -441,7 +534,8 @@ impl Command {
     }
 }
 
-/// The context middleware receives.
+/// The context middleware receives. Middleware owns it and passes it on with [`Next::run`], so
+/// variables it sets reach downstream middleware and the handler.
 #[derive(Debug)]
 pub struct MiddlewareContext {
     /// Whether the consumer is an agent.
@@ -478,37 +572,47 @@ impl MiddlewareContext {
     }
 }
 
-/// Runs the rest of the middleware chain and the command.
-pub struct Next<'a>(&'a mut dyn FnMut(&mut MiddlewareContext));
+/// The final step of a middleware chain: parses input and runs the command.
+pub(crate) type Terminal =
+    Box<dyn FnOnce(MiddlewareContext) -> BoxFuture<Result<(), Error>> + Send>;
 
-impl Next<'_> {
-    /// Runs downstream middleware and the command handler.
-    pub fn run(self, context: &mut MiddlewareContext) {
-        (self.0)(context);
+/// Runs the rest of the middleware chain and the command.
+pub struct Next {
+    /// The middleware that has not run yet.
+    rest: std::vec::IntoIter<Middleware>,
+    /// The command step.
+    terminal: Terminal,
+}
+
+impl Next {
+    /// Creates a chain that runs `middleware` in order around `terminal`.
+    pub(crate) fn new(middleware: Vec<Middleware>, terminal: Terminal) -> Self {
+        Self {
+            rest: middleware.into_iter(),
+            terminal,
+        }
+    }
+
+    /// Runs downstream middleware and the command handler with the given context.
+    ///
+    /// Resolves to the first error downstream middleware returns. Handler failures are the
+    /// command's result, not middleware errors, so they resolve to `Ok(())`. A streamed result
+    /// resolves after the stream has been written.
+    pub fn run(
+        mut self,
+        context: MiddlewareContext,
+    ) -> impl Future<Output = Result<(), Error>> + Send + 'static {
+        match self.rest.next() {
+            Some(middleware) => middleware(context, self),
+            None => (self.terminal)(context),
+        }
     }
 }
 
-/// Runs a middleware chain around `last`. A middleware error replaces the result, and the
-/// outermost error wins, as the last `c.error()` call does in TypeScript.
-pub(crate) fn run_chain(
-    chain: &[Middleware],
-    context: &mut MiddlewareContext,
-    error: &mut Option<Error>,
-    last: &mut dyn FnMut(&mut MiddlewareContext),
-) {
-    let Some((first, rest)) = chain.split_first() else {
-        last(context);
-        return;
-    };
-    let mut inner_error = None;
-    let result = {
-        let mut next = |c: &mut MiddlewareContext| run_chain(rest, c, &mut inner_error, last);
-        first(context, Next(&mut next))
-    };
-    if inner_error.is_some() {
-        *error = inner_error;
-    }
-    if let Err(failure) = result {
-        *error = Some(failure);
+impl fmt::Debug for Next {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Next")
+            .field("remaining", &self.rest.len())
+            .finish_non_exhaustive()
     }
 }

@@ -17,8 +17,8 @@ mod yaml;
 
 pub use cli::{BannerMode, Cli, Config, Io};
 pub use command::{
-    Command, Context, Input, IntoOutcome, Middleware, MiddlewareContext, Next, Outcome,
-    OutputPolicy, Vars, ok, stream,
+    Command, Context, HandlerOutput, Input, IntoOutcome, MiddlewareContext, Next, Outcome,
+    OutputPolicy, Vars, marker, ok, stream,
 };
 pub use errors::{Cta, CtaBlock, Error, FieldError};
 pub use formatter::Format;

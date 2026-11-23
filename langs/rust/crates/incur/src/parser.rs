@@ -109,7 +109,7 @@ fn coerce(value: Value, ty: Option<&Type>) -> Value {
 }
 
 /// Wraps a coerced number, marking non-finite results for validation.
-fn number_value(number: f64) -> Value {
+pub(crate) fn number_value(number: f64) -> Value {
     if number.is_finite() {
         js::number(number)
     } else {

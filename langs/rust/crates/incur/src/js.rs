@@ -28,10 +28,12 @@ pub(crate) fn number(value: f64) -> Value {
     Number::from_f64(value).map_or(Value::Null, Value::Number)
 }
 
-/// Formats a JSON number as JavaScript does.
+/// Formats a JSON number: integers exactly, and floats as JavaScript does.
 pub(crate) fn format_number(number: &Number) -> String {
-    // JavaScript numbers are doubles, so integers beyond 2^53 print rounded.
-    number_to_string(number.as_f64().unwrap_or(f64::NAN))
+    match number.as_f64() {
+        Some(value) if number.is_f64() => number_to_string(value),
+        _ => number.to_string(),
+    }
 }
 
 /// Converts a string to a number as ECMAScript `Number(string)` does.
@@ -357,24 +359,28 @@ fn primary_weight(ch: char) -> u32 {
     1000 + u32::from(ch)
 }
 
-/// Returns the message V8's `JSON.parse` throws for invalid JSON text, or `None` when V8 accepts
-/// the text.
-pub(crate) fn json_parse_error(source: &str) -> Option<String> {
+/// Parses JSON text as `JSON.parse` does, failing with V8's message for invalid text.
+///
+/// Integer literals that fit `i64` or `u64` stay exact; other numbers are doubles. Numbers beyond
+/// the double range become infinities, which JSON values cannot hold, so `non_finite` maps them
+/// to a value. Unpaired surrogate escapes, which Rust strings cannot hold, become U+FFFD as when
+/// Node writes such a string.
+pub(crate) fn json_parse(source: &str, non_finite: fn(f64) -> Value) -> Result<Value, String> {
     let chars = source.encode_utf16().collect::<Vec<_>>();
-    let mut parser = JsonSyntax {
+    let mut parser = JsonParser {
         chars: &chars,
+        non_finite,
         pos: 0,
     };
-    let result = parser.value().and_then(|()| {
+    let result = parser.value().and_then(|value| {
         parser.whitespace();
         match parser.peek() {
-            None => Ok(()),
+            None => Ok(value),
             Some(ch) if (0x30..=0x39).contains(&ch) => Err(parser.at("Unexpected number in JSON")),
             Some(_) => Err(parser.at("Unexpected non-whitespace character after JSON")),
         }
     });
-    let failure = result.err()?;
-    Some(match failure {
+    result.map_err(|failure| match failure {
         Failure::End => "Unexpected end of JSON input".into(),
         Failure::Message(message) => message,
         Failure::Token => {
@@ -406,15 +412,17 @@ enum Failure {
     Token,
 }
 
-/// A JSON syntax checker that reports failures the way V8 does.
-struct JsonSyntax<'a> {
+/// A JSON parser that follows `JSON.parse` and reports failures the way V8 does.
+struct JsonParser<'a> {
     /// UTF-16 code units.
     chars: &'a [u16],
+    /// Maps numbers beyond the double range to a value.
+    non_finite: fn(f64) -> Value,
     /// Current position.
     pos: usize,
 }
 
-impl JsonSyntax<'_> {
+impl JsonParser<'_> {
     /// Returns the current code unit.
     fn peek(&self) -> Option<u16> {
         self.chars.get(self.pos).copied()
@@ -428,6 +436,13 @@ impl JsonSyntax<'_> {
     /// Whether the current code unit is an ASCII digit.
     fn digit(&self) -> bool {
         self.peek().is_some_and(|c| (0x30..=0x39).contains(&c))
+    }
+
+    /// Skips ASCII digits.
+    fn digits(&mut self) {
+        while self.digit() {
+            self.pos += 1;
+        }
     }
 
     /// Skips JSON whitespace.
@@ -448,8 +463,8 @@ impl JsonSyntax<'_> {
         ))
     }
 
-    /// Checks one value.
-    fn value(&mut self) -> Result<(), Failure> {
+    /// Parses one value.
+    fn value(&mut self) -> Result<Value, Failure> {
         self.whitespace();
         let Some(ch) = self.peek() else {
             return Err(Failure::End);
@@ -457,22 +472,23 @@ impl JsonSyntax<'_> {
         match u8::try_from(ch).unwrap_or(0) {
             b'{' => self.object(),
             b'[' => self.array(),
-            b'"' => self.string(),
+            b'"' => self.string().map(Value::String),
             b'-' | b'0'..=b'9' => self.number(),
-            b't' => self.literal("true"),
-            b'f' => self.literal("false"),
-            b'n' => self.literal("null"),
+            b't' => self.literal("true", Value::Bool(true)),
+            b'f' => self.literal("false", Value::Bool(false)),
+            b'n' => self.literal("null", Value::Null),
             _ => Err(Failure::Token),
         }
     }
 
-    /// Checks an object.
-    fn object(&mut self) -> Result<(), Failure> {
+    /// Parses an object. A repeated key keeps its first position and its last value.
+    fn object(&mut self) -> Result<Value, Failure> {
+        let mut map = Map::new();
         self.pos += 1;
         self.whitespace();
         if self.is(b'}') {
             self.pos += 1;
-            return Ok(());
+            return Ok(Value::Object(map));
         }
         let mut first = true;
         loop {
@@ -484,57 +500,59 @@ impl JsonSyntax<'_> {
                 }));
             }
             first = false;
-            self.string()?;
+            let key = self.string()?;
             self.whitespace();
             if !self.is(b':') {
                 return Err(self.at("Expected ':' after property name in JSON"));
             }
             self.pos += 1;
-            self.value()?;
+            map.insert(key, self.value()?);
             self.whitespace();
             if self.is(b',') {
                 self.pos += 1;
                 self.whitespace();
             } else if self.is(b'}') {
                 self.pos += 1;
-                return Ok(());
+                return Ok(Value::Object(map));
             } else {
                 return Err(self.at("Expected ',' or '}' after property value in JSON"));
             }
         }
     }
 
-    /// Checks an array.
-    fn array(&mut self) -> Result<(), Failure> {
+    /// Parses an array.
+    fn array(&mut self) -> Result<Value, Failure> {
+        let mut items = Vec::new();
         self.pos += 1;
         self.whitespace();
         if self.is(b']') {
             self.pos += 1;
-            return Ok(());
+            return Ok(Value::Array(items));
         }
         loop {
-            self.value()?;
+            items.push(self.value()?);
             self.whitespace();
             if self.is(b',') {
                 self.pos += 1;
             } else if self.is(b']') {
                 self.pos += 1;
-                return Ok(());
+                return Ok(Value::Array(items));
             } else {
                 return Err(self.at("Expected ',' or ']' after array element in JSON"));
             }
         }
     }
 
-    /// Checks a string.
-    fn string(&mut self) -> Result<(), Failure> {
+    /// Parses a string.
+    fn string(&mut self) -> Result<String, Failure> {
+        let mut units = Vec::new();
         self.pos += 1;
         loop {
             match self.peek() {
                 None => return Err(self.at("Unterminated string in JSON")),
                 Some(0x22) => {
                     self.pos += 1;
-                    return Ok(());
+                    return Ok(String::from_utf16_lossy(&units));
                 }
                 Some(ch) if ch < 0x20 => {
                     return Err(self.at("Bad control character in string literal in JSON"));
@@ -542,27 +560,44 @@ impl JsonSyntax<'_> {
                 Some(0x5c) => {
                     self.pos += 1;
                     let escape = self.peek().and_then(|c| u8::try_from(c).ok()).unwrap_or(0);
-                    if escape == b'u' {
-                        for _ in 0..4 {
-                            self.pos += 1;
-                            if !self.peek().is_some_and(|c| {
-                                u8::try_from(c).is_ok_and(|c| c.is_ascii_hexdigit())
-                            }) {
-                                return Err(self.at("Bad Unicode escape in JSON"));
+                    let unit = match escape {
+                        b'u' => {
+                            let mut unit = 0;
+                            for _ in 0..4 {
+                                self.pos += 1;
+                                let Some(digit) = self
+                                    .peek()
+                                    .and_then(|c| char::from_u32(c.into())?.to_digit(16))
+                                else {
+                                    return Err(self.at("Bad Unicode escape in JSON"));
+                                };
+                                unit = unit * 16 + digit;
                             }
+                            // Four hex digits fit a code unit.
+                            u16::try_from(unit).unwrap_or_default()
                         }
-                    } else if !b"\"\\/bfnrt".contains(&escape) {
-                        return Err(self.at("Bad escaped character in JSON"));
-                    }
+                        b'b' => 0x08,
+                        b'f' => 0x0c,
+                        b'n' => 0x0a,
+                        b'r' => 0x0d,
+                        b't' => 0x09,
+                        b'"' | b'\\' | b'/' => u16::from(escape),
+                        _ => return Err(self.at("Bad escaped character in JSON")),
+                    };
+                    units.push(unit);
                     self.pos += 1;
                 }
-                Some(_) => self.pos += 1,
+                Some(ch) => {
+                    units.push(ch);
+                    self.pos += 1;
+                }
             }
         }
     }
 
-    /// Checks a number.
-    fn number(&mut self) -> Result<(), Failure> {
+    /// Parses a number.
+    fn number(&mut self) -> Result<Value, Failure> {
+        let start = self.pos;
         if self.is(b'-') {
             self.pos += 1;
             if !self.digit() {
@@ -572,20 +607,19 @@ impl JsonSyntax<'_> {
         if self.is(b'0') {
             self.pos += 1;
         } else {
-            while self.digit() {
-                self.pos += 1;
-            }
+            self.digits();
         }
+        let mut integer = true;
         if self.is(b'.') {
+            integer = false;
             self.pos += 1;
             if !self.digit() {
                 return Err(self.at("Unterminated fractional number in JSON"));
             }
-            while self.digit() {
-                self.pos += 1;
-            }
+            self.digits();
         }
         if self.is(b'e') || self.is(b'E') {
+            integer = false;
             self.pos += 1;
             if self.is(b'+') || self.is(b'-') {
                 self.pos += 1;
@@ -593,15 +627,24 @@ impl JsonSyntax<'_> {
             if !self.digit() {
                 return Err(self.at("Exponent part is missing a number in JSON"));
             }
-            while self.digit() {
-                self.pos += 1;
+            self.digits();
+        }
+        let text = String::from_utf16_lossy(&self.chars[start..self.pos]);
+        // `-0` is a double, as JavaScript keeps its sign.
+        if integer && text != "-0" {
+            if let Ok(value) = text.parse::<u64>() {
+                return Ok(value.into());
+            }
+            if let Ok(value) = text.parse::<i64>() {
+                return Ok(value.into());
             }
         }
-        Ok(())
+        let value = text.parse::<f64>().unwrap_or(f64::NAN);
+        Ok(Number::from_f64(value).map_or_else(|| (self.non_finite)(value), Value::Number))
     }
 
-    /// Checks a literal such as `true`.
-    fn literal(&mut self, word: &str) -> Result<(), Failure> {
+    /// Parses a literal such as `true`.
+    fn literal(&mut self, word: &str, value: Value) -> Result<Value, Failure> {
         for expected in word.bytes() {
             match self.peek() {
                 None => return Err(Failure::End),
@@ -609,6 +652,6 @@ impl JsonSyntax<'_> {
                 Some(_) => return Err(Failure::Token),
             }
         }
-        Ok(())
+        Ok(value)
     }
 }

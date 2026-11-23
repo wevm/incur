@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use futures::{StreamExt, stream};
 use incur::help::Usage;
 use incur::{
     BannerMode, Cli, Command, Config, Context, Cta, CtaBlock, Error, Format, OutputPolicy, Schema,
@@ -303,11 +304,10 @@ fn mixed() -> Value {
 fn app() -> Cli {
     let pr = Cli::new("pr")
         .description("Pull request commands")
-        .middleware(|c, next| {
+        .middleware(|mut c, next| {
             let user = c.var::<User>().map_or("", |u| u.0.as_str()).to_owned();
             c.set(User(format!("pr:{user}")));
-            next.run(c);
-            Ok(())
+            next.run(c)
         })
         .command(
             "list",
@@ -346,7 +346,7 @@ fn app() -> Cli {
         .version("1.2.3")
         .env::<AppEnv>()
         .var(User("anonymous".into()))
-        .middleware(|c, next| {
+        .middleware(|mut c, next| {
             // An empty value is falsy in JavaScript, so it leaves the default user.
             if let Some(user) = c
                 .env
@@ -356,15 +356,14 @@ fn app() -> Cli {
             {
                 c.set(User(user.to_owned()));
             }
-            next.run(c);
-            Ok(())
+            next.run(c)
         })
         .command(
             "status",
             Command::new()
                 .description("Show repo status")
                 .example("", Some("Show status"))
-                .run(|_: Context| data(json!({ "clean": true, "branch": "main" }))),
+                .run(|_: Context| async { data(json!({ "clean": true, "branch": "main" })) }),
         )
         .command(
             "install",
@@ -471,21 +470,21 @@ fn app() -> Cli {
         .command(
             "logs",
             Command::new().description("Tail logs").run(|_: Context| {
-                incur::stream([
-                    Ok(json!("connecting...")),
-                    Ok(json!({ "progress": 50 })),
-                    Ok(json!({ "progress": 100 })),
-                ])
-                .cta(CtaBlock::new(["status"]))
+                // Chunks may arrive after awaiting.
+                let connecting = stream::once(async { Ok(json!("connecting...")) });
+                let progress = stream::iter([50, 100]).then(|n| async move {
+                    Ok(json!({ "progress": n }))
+                });
+                incur::stream(connecting.chain(progress)).cta(CtaBlock::new(["status"]))
             }),
         )
         .command(
             "stream-fail",
             Command::new().description("Stream then fail").run(|_: Context| {
-                incur::stream([
+                incur::stream(stream::iter([
                     Ok(json!({ "step": 1 })),
                     Err(Error::new("STREAM_BROKE", "stream broke").cta(CtaBlock::new(["status"]))),
-                ])
+                ]))
             }),
         )
         .command(
@@ -588,19 +587,20 @@ fn app() -> Cli {
             "whoami",
             Command::new()
                 .description("Show the acting user")
-                .run(|c: Context| data(json!({ "user": c.var::<User>().map(|u| u.0.clone()) }))),
+                .run(|c: Context| async move {
+                    data(json!({ "user": c.var::<User>().map(|u| u.0.clone()) }))
+                }),
         )
         .command(
             "admin",
             Command::new()
                 .description("Admin only")
                 .destructive()
-                .middleware(|c, next| {
+                .middleware(|c, next| async move {
                     if c.var::<User>().map(|u| u.0.as_str()) != Some("root") {
                         return Err(Error::new("FORBIDDEN", "admin only"));
                     }
-                    next.run(c);
-                    Ok(())
+                    next.run(c).await
                 })
                 .run(|_: Context| data(json!({ "admin": true }))),
         )

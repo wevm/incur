@@ -2,8 +2,9 @@
 //! TypeScript reference implementation and this port, and requires identical stdout, stderr, and
 //! exit codes. Durations are the only normalized values.
 //!
-//! Cases with a `bin` run this executable again through a link with that name, so the process
-//! entry point [`incur::Cli::serve`] reads its real arguments, environment, and binary name.
+//! Cases with a `bin` run this executable again through a link with that name, once through each
+//! process entry point, [`incur::Cli::serve`] and [`incur::Cli::serve_async`], so they read their
+//! real arguments, environment, and binary name.
 //!
 //! Requires Node.js and the repository's `pnpm install`.
 
@@ -41,8 +42,9 @@ fn root() -> PathBuf {
 }
 
 /// Serves a case in a child process started through a link named `bin`, with only the case's
-/// environment. Returns the exit code, stdout, and stderr.
-fn spawn(links: &Path, bin: &str, case: &Case) -> (i32, Vec<u8>, Vec<u8>) {
+/// environment, through [`incur::Cli::serve_async`] when `asynchronous` is set and
+/// [`incur::Cli::serve`] otherwise. Returns the exit code, stdout, and stderr.
+fn spawn(links: &Path, bin: &str, case: &Case, asynchronous: bool) -> (i32, Vec<u8>, Vec<u8>) {
     assert!(!case.tty, "cases with a `bin` cannot emulate a terminal");
     let link = links.join(bin);
     if !link.exists() {
@@ -53,6 +55,9 @@ fn spawn(links: &Path, bin: &str, case: &Case) -> (i32, Vec<u8>, Vec<u8>) {
         .args(&case.argv)
         .env_clear()
         .env("INCUR_FIXTURE", &case.cli);
+    if asynchronous {
+        command.env("INCUR_ASYNC", "1");
+    }
     // Coverage runs collect profiles from child processes too.
     if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
         command.env("LLVM_PROFILE_FILE", profile);
@@ -93,7 +98,13 @@ fn normalize(text: &str) -> String {
 
 fn main() {
     if let Ok(name) = std::env::var("INCUR_FIXTURE") {
-        fixtures::cli(&name).serve();
+        let cli = fixtures::cli(&name);
+        // The async entry runs on any executor; fixtures await no tokio IO.
+        if std::env::var_os("INCUR_ASYNC").is_some() {
+            futures::executor::block_on(cli.serve_async());
+        } else {
+            cli.serve();
+        }
         return;
     }
     matches_typescript();
@@ -131,50 +142,53 @@ fn matches_typescript() {
 
     let mut failures = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&expected).enumerate() {
-        let (exit, stdout, stderr) = if let Some(bin) = &case.bin {
-            spawn(&links, bin, case)
+        let runs = if let Some(bin) = &case.bin {
+            vec![
+                ("serve", spawn(&links, bin, case, false)),
+                ("serve_async", spawn(&links, bin, case, true)),
+            ]
         } else {
-            {
-                let cli = fixtures::cli(&case.cli);
-                let env = |key: &str| case.env.get(key).and_then(Value::as_str).map(str::to_owned);
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                let exit = cli.serve_with(
-                    &case.argv,
-                    &mut Io {
-                        env: &env,
-                        stderr: &mut stderr,
-                        stdout: &mut stdout,
-                        tty: case.tty,
-                    },
-                );
-                (exit, stdout, stderr)
-            }
-        };
-        let actual = Outcome {
-            exit,
-            stderr: normalize(&String::from_utf8(stderr).unwrap()),
-            stdout: normalize(&String::from_utf8(stdout).unwrap()),
+            let cli = fixtures::cli(&case.cli);
+            let env = |key: &str| case.env.get(key).and_then(Value::as_str).map(str::to_owned);
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = cli.serve_with(
+                &case.argv,
+                &mut Io {
+                    env: &env,
+                    stderr: &mut stderr,
+                    stdout: &mut stdout,
+                    tty: case.tty,
+                },
+            );
+            vec![("serve_with", (exit, stdout, stderr))]
         };
         let expected = Outcome {
             exit: expected.exit,
             stderr: normalize(&expected.stderr),
             stdout: normalize(&expected.stdout),
         };
-        if actual != expected {
-            failures.push(format!(
-                "case {index}: {} {:?} env={:?} tty={}\n--- expected (exit {})\n{}{}\n--- actual (exit {})\n{}{}",
-                case.cli,
-                case.argv,
-                case.env,
-                case.tty,
-                expected.exit,
-                expected.stdout,
-                expected.stderr,
-                actual.exit,
-                actual.stdout,
-                actual.stderr,
-            ));
+        for (entry, (exit, stdout, stderr)) in runs {
+            let actual = Outcome {
+                exit,
+                stderr: normalize(&String::from_utf8(stderr).unwrap()),
+                stdout: normalize(&String::from_utf8(stdout).unwrap()),
+            };
+            if actual != expected {
+                failures.push(format!(
+                    "case {index} ({entry}): {} {:?} env={:?} tty={}\n--- expected (exit {})\n{}{}\n--- actual (exit {})\n{}{}",
+                    case.cli,
+                    case.argv,
+                    case.env,
+                    case.tty,
+                    expected.exit,
+                    expected.stdout,
+                    expected.stderr,
+                    actual.exit,
+                    actual.stdout,
+                    actual.stderr,
+                ));
+            }
         }
     }
     std::fs::remove_dir_all(&links).unwrap();

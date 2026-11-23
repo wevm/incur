@@ -62,8 +62,9 @@ pub fn format(value: &Value, format: Format) -> String {
         (_, Value::Null) => String::new(),
         (Format::Json, Value::String(string)) => {
             let trimmed = string.trim_matches(js::is_whitespace);
+            // `JSON.stringify` writes infinities as `null`.
             if (trimmed.starts_with('{') || trimmed.starts_with('['))
-                && let Ok(parsed) = serde_json::from_str::<Value>(string)
+                && let Ok(parsed) = js::json_parse(string, |_| Value::Null)
             {
                 return js::stringify_pretty(&js::normalize(parsed));
             }

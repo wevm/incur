@@ -1,18 +1,23 @@
 //! CLI definition, command routing, and the `serve` loop.
 
+use std::future::poll_fn;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::pin::pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Instant;
 
+use futures_channel::oneshot;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
 use crate::command::{
-    Command, Inner, Invocation, Middleware, MiddlewareContext, Next, OutputPolicy, Vars, run_chain,
+    self, Chunks, Command, Inner, Invocation, Middleware, MiddlewareContext, Next, Outcome,
+    OutputPolicy, Terminal, Vars,
 };
 use crate::completions::{self, Shell};
-use crate::errors::{Error, FormattedCta, FormattedCtaBlock, human_error};
+use crate::errors::{CtaBlock, Error, FormattedCta, FormattedCtaBlock, human_error};
 use crate::filter;
 use crate::formatter::{self, Format};
 use crate::help::{self, Entry as HelpEntry, Example};
@@ -75,14 +80,16 @@ pub enum BannerMode {
     Human,
 }
 
-/// Process I/O for [`Cli::serve_with`].
+/// Process I/O for [`Cli::run`] and [`Cli::serve_with`].
+///
+/// Every part is thread-safe, so the future [`Cli::run`] returns is [`Send`].
 pub struct Io<'a> {
     /// Environment lookup.
-    pub env: &'a dyn Fn(&str) -> Option<String>,
+    pub env: &'a (dyn Fn(&str) -> Option<String> + Sync),
     /// Standard error.
-    pub stderr: &'a mut dyn Write,
+    pub stderr: &'a mut (dyn Write + Send),
     /// Standard output.
-    pub stdout: &'a mut dyn Write,
+    pub stdout: &'a mut (dyn Write + Send),
     /// Whether standard output is a terminal.
     pub tty: bool,
 }
@@ -309,12 +316,36 @@ impl Cli {
     }
 
     /// Adds middleware, which runs around every command in registration order.
+    ///
+    /// Middleware receives the context and the rest of the chain, and returns a future. It may
+    /// set variables before passing the context on with [`Next::run`], return an error instead
+    /// of running the command, or run code after the command finishes. Returning `next.run(c)`
+    /// directly makes plain middleware that needs no `async` block.
+    ///
+    /// ```
+    /// use incur::{Cli, Error};
+    ///
+    /// struct User(String);
+    ///
+    /// let cli = Cli::new("tool")
+    ///     .middleware(|mut c, next| {
+    ///         c.set(User("alice".into()));
+    ///         next.run(c)
+    ///     })
+    ///     .middleware(|c, next| async move {
+    ///         if c.var::<User>().is_none() {
+    ///             return Err(Error::new("UNAUTHENTICATED", "Log in first"));
+    ///         }
+    ///         next.run(c).await
+    ///     });
+    /// ```
     #[must_use]
-    pub fn middleware<F>(mut self, f: F) -> Self
+    pub fn middleware<F, R>(mut self, f: F) -> Self
     where
-        F: Fn(&mut MiddlewareContext, Next<'_>) -> Result<(), Error> + Send + Sync + 'static,
+        F: Fn(MiddlewareContext, Next) -> R + Send + Sync + 'static,
+        R: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        self.middleware.push(Arc::new(f));
+        self.middleware.push(command::middleware(f));
         self
     }
 
@@ -355,7 +386,38 @@ impl Cli {
 
     /// Runs the CLI with the process arguments, environment, and standard streams, then exits
     /// with the command's exit code.
+    ///
+    /// Blocks on a current-thread tokio runtime with every driver the dependency graph enables,
+    /// so handlers may await tokio timers and IO. Inside a running async runtime, await
+    /// [`Cli::serve_async`] instead: tokio refuses to start a runtime within another.
     pub fn serve(&self) {
+        // The runtime fails to start only when the operating system refuses its drivers.
+        let code = block_on(self.serve_process());
+        exit(code.unwrap_or_else(|error| fail(&mut std::io::stderr(), &error.into())));
+    }
+
+    /// Runs the CLI with the process arguments, environment, and standard streams on the
+    /// caller's async runtime, then exits with the command's exit code.
+    pub async fn serve_async(&self) {
+        exit(self.serve_process().await);
+    }
+
+    /// Runs the CLI with explicit arguments and I/O, blocking like [`Cli::serve`]. Returns the
+    /// exit code.
+    pub fn serve_with(&self, argv: &[String], io: &mut Io<'_>) -> i32 {
+        block_on(self.run(argv, io)).unwrap_or_else(|error| fail(io.stderr, &error.into()))
+    }
+
+    /// Runs the CLI with explicit arguments and I/O on the caller's async runtime. Returns the
+    /// exit code.
+    ///
+    /// The future is [`Send`], so it may run on any executor, including multi-threaded ones.
+    pub async fn run(&self, argv: &[String], io: &mut Io<'_>) -> i32 {
+        self.serve_impl(argv, io, None).await
+    }
+
+    /// Serves the process arguments with process I/O. Returns the exit code.
+    async fn serve_process(&self) -> i32 {
         let mut args = std::env::args();
         let bin = args.next();
         let argv = args.collect::<Vec<_>>();
@@ -366,7 +428,7 @@ impl Cli {
         let display = bin
             .as_deref()
             .and_then(|bin| Path::new(bin).file_name()?.to_str().map(str::to_owned));
-        let code = self.serve_impl(
+        self.serve_impl(
             &argv,
             &mut Io {
                 env: &env,
@@ -375,15 +437,8 @@ impl Cli {
                 tty,
             },
             display.as_deref(),
-        );
-        if code != 0 {
-            std::process::exit(code);
-        }
-    }
-
-    /// Runs the CLI with explicit arguments and I/O. Returns the exit code.
-    pub fn serve_with(&self, argv: &[String], io: &mut Io<'_>) -> i32 {
-        self.serve_impl(argv, io, None)
+        )
+        .await
     }
 
     /// Returns the root command with the CLI description as its fallback.
@@ -397,7 +452,7 @@ impl Cli {
     }
 
     /// The shared serve implementation.
-    fn serve_impl(&self, argv: &[String], io: &mut Io<'_>, bin: Option<&str>) -> i32 {
+    async fn serve_impl(&self, argv: &[String], io: &mut Io<'_>, bin: Option<&str>) -> i32 {
         let display_name = match bin {
             Some(bin) if bin == self.name || self.aliases.iter().any(|a| a == bin) => {
                 bin.to_owned()
@@ -413,9 +468,39 @@ impl Cli {
             root: root.as_ref(),
             start: Instant::now(),
         };
-        run.serve(argv);
+        run.serve(argv).await;
         run.exit
     }
+}
+
+/// Drives a future to completion on a current-thread tokio runtime with every enabled driver.
+fn block_on<F: Future<Output = i32>>(future: F) -> std::io::Result<i32> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    Ok(runtime.block_on(future))
+}
+
+/// Exits the process with a non-zero exit code.
+fn exit(code: i32) {
+    if code != 0 {
+        std::process::exit(code);
+    }
+}
+
+/// Writes a line, adding a newline unless the text ends with one.
+fn write_line(out: &mut dyn Write, text: &str) {
+    let _ = if text.ends_with('\n') {
+        out.write_all(text.as_bytes())
+    } else {
+        writeln!(out, "{text}")
+    };
+}
+
+/// Writes an error for a terminal and returns exit code 1.
+fn fail(out: &mut dyn Write, error: &Error) -> i32 {
+    write_line(out, &human_error(error));
+    1
 }
 
 /// The resolved target of an invocation.
@@ -960,11 +1045,7 @@ impl Run<'_, '_> {
 
     /// Writes a line to stdout.
     fn writeln(&mut self, text: &str) {
-        if text.ends_with('\n') {
-            self.write(text);
-        } else {
-            self.write(&format!("{text}\n"));
-        }
+        write_line(self.io.stdout, text);
     }
 
     /// Reads an environment variable.
@@ -994,12 +1075,12 @@ impl Run<'_, '_> {
 
     /// Reports an error before a command resolves.
     fn early_error(&mut self, error: &Error, human: bool, format: Format) {
-        if human {
-            self.writeln(&human_error(error));
+        self.exit = if human {
+            fail(self.io.stdout, error)
         } else {
             self.writeln(&formatter::format(&error.to_value(), format));
-        }
-        self.exit = 1;
+            1
+        };
     }
 
     /// Writes the banner when its mode matches.
@@ -1018,7 +1099,7 @@ impl Run<'_, '_> {
     }
 
     /// Serves one invocation.
-    fn serve(&mut self, argv: &[String]) {
+    async fn serve(&mut self, argv: &[String]) {
         let cli = self.cli;
         if let Some(shell) = self.env("COMPLETE") {
             self.complete(&shell, argv);
@@ -1254,7 +1335,8 @@ impl Run<'_, '_> {
                 rest,
                 ..
             } => {
-                self.execute(command, middleware, &path, &filtered, &rest, &output);
+                self.execute(command, middleware, &path, &filtered, &rest, &output)
+                    .await;
             }
             Resolved::Help {
                 commands,
@@ -2099,8 +2181,9 @@ impl Run<'_, '_> {
                 return Ok(None);
             };
             let display = target.display().to_string();
-            let raw = match std::fs::read_to_string(&target) {
-                Ok(raw) => raw,
+            // Node decodes the file as UTF-8, replacing invalid sequences.
+            let raw = match std::fs::read(&target) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 // Search paths only resolve to existing files, so a missing file was named by flag.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     return Err(Error::new(
@@ -2111,9 +2194,8 @@ impl Run<'_, '_> {
                 // TypeScript reports Node's `fs` message here, whose wording varies by Node version.
                 Err(error) => return Err(Error::new("UNKNOWN", error.to_string())),
             };
-            let parsed = serde_json::from_str::<Value>(&raw).map_err(|error| {
-                // V8 accepts some JSON that serde_json rejects, such as out-of-range numbers.
-                let details = js::json_parse_error(&raw).unwrap_or_else(|| error.to_string());
+            // Infinities reach validation as the marker number options report.
+            let parsed = js::json_parse(&raw, parser::number_value).map_err(|details| {
                 Error::new(
                     "UNKNOWN",
                     format!("Invalid JSON config file: {display}\n\nDetails: {details}"),
@@ -2161,7 +2243,7 @@ impl Run<'_, '_> {
     }
 
     /// Parses input, runs middleware and the handler, and writes the result.
-    fn execute(
+    async fn execute(
         &mut self,
         command: &Command,
         group_middleware: Vec<Middleware>,
@@ -2214,11 +2296,18 @@ impl Run<'_, '_> {
             Some(schema) => parser::parse_env(schema, env_lookup),
             None => Ok(Value::Object(Map::new())),
         };
-        let mut context = MiddlewareContext {
+        let env = match cli_env {
+            Ok(env) => env,
+            Err(error) => {
+                self.finish(command, path, output, Err(error));
+                return;
+            }
+        };
+        let context = MiddlewareContext {
             agent: !output.human,
             command: path.to_owned(),
             display_name: self.display_name.clone(),
-            env: Value::Null,
+            env,
             format: output.format,
             format_explicit: output.flags.format_explicit,
             globals,
@@ -2226,74 +2315,77 @@ impl Run<'_, '_> {
             vars: cli.vars.clone(),
             version: cli.version.clone(),
         };
-        let mut result: Option<Result<Rendered, Error>> = None;
-        let mut streamed = false;
-        match cli_env {
-            Err(error) => result = Some(Err(error)),
-            Ok(env) => {
-                context.env = env;
-                let mut error = None;
-                let mut last = |c: &mut MiddlewareContext| {
-                    let parsed = parser::parse(
-                        &argv,
-                        command.args.as_ref(),
-                        command.options.as_ref(),
-                        defaults.as_ref(),
-                    )
-                    .and_then(|parsed| {
-                        let env = match &command.env {
-                            Some(schema) => parser::parse_env(schema, env_lookup)?,
-                            None => Value::Object(Map::new()),
-                        };
-                        Ok((parsed, env))
-                    });
-                    let (parsed, env) = match parsed {
-                        Ok(parsed) => parsed,
-                        Err(error) => {
-                            result = Some(Err(error));
-                            return;
-                        }
-                    };
-                    let Some(handler) = &command.handler else {
-                        result = Some(Ok((None, None)));
-                        return;
-                    };
-                    let outcome = handler(Invocation {
-                        agent: c.agent,
-                        args: parsed.args,
-                        display_name: c.display_name.clone(),
-                        env,
-                        format: c.format,
-                        format_explicit: c.format_explicit,
-                        globals: c.globals.clone(),
-                        name: c.name.clone(),
-                        options: parsed.options,
-                        vars: c.vars.clone(),
-                        version: c.version.clone(),
-                    });
-                    result = Some(match outcome.0 {
-                        Inner::Data { cta, data } => {
-                            Ok((data, FormattedCtaBlock::new(&c.display_name, cta.as_ref())))
-                        }
-                        Inner::Error(error) => Err(error),
-                        Inner::Stream { chunks, cta } => {
-                            streamed = true;
-                            self.stream(chunks, cta.as_ref(), path, output);
-                            return;
-                        }
-                    });
-                };
-                run_chain(&chain, &mut context, &mut error, &mut last);
-                if let Some(error) = error {
-                    result = Some(Err(error));
-                    streamed = false;
-                }
+        // Parsing reads only argv, defaults, and the environment, so it runs up front; the
+        // terminal step reports its result after middleware, as TypeScript does.
+        let parsed = parser::parse(
+            &argv,
+            command.args.as_ref(),
+            command.options.as_ref(),
+            defaults.as_ref(),
+        )
+        .and_then(|parsed| {
+            let env = match &command.env {
+                Some(schema) => parser::parse_env(schema, env_lookup)?,
+                None => Value::Object(Map::new()),
+            };
+            Ok((parsed, env))
+        });
+        let (outcome_tx, mut outcome_rx) = oneshot::channel();
+        let (stream_tx, mut stream_rx) = oneshot::channel();
+        let terminal = terminal(command.handler.clone(), parsed, outcome_tx, stream_tx);
+
+        // Run the chain until it finishes or hands over a stream. The chain then waits until the
+        // stream is written, so middleware code after `next.run(c)` runs after the stream ends.
+        let mut chain = pin!(Next::new(chain, terminal).run(context));
+        let mut finished = None;
+        let mut stream = None;
+        poll_fn(|cx| {
+            if let Poll::Ready(result) = chain.as_mut().poll(cx) {
+                finished = Some(result);
+                return Poll::Ready(());
             }
+            stream = stream_rx.try_recv().ok().flatten();
+            if stream.is_some() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+        // Middleware may abandon the chain after the handler hands over its stream.
+        let stream = stream.or_else(|| stream_rx.try_recv().ok().flatten());
+        let streamed = stream.is_some();
+        if let Some((chunks, cta, done)) = stream {
+            self.stream(chunks, cta.as_ref(), path, output).await;
+            drop(done);
         }
-        if streamed {
-            return;
-        }
-        match result.unwrap_or(Ok((None, None))) {
+        let result = match finished {
+            Some(result) => result,
+            None => chain.await,
+        };
+        let result = match result {
+            // A middleware error replaces the result.
+            Err(error) => Err(error),
+            Ok(()) if streamed => return,
+            // Middleware that skips `next.run(c)` leaves no result.
+            Ok(()) => outcome_rx
+                .try_recv()
+                .ok()
+                .flatten()
+                .unwrap_or(Ok((None, None))),
+        };
+        self.finish(command, path, output, result);
+    }
+
+    /// Writes a command's data or failure.
+    fn finish(
+        &mut self,
+        command: &Command,
+        path: &str,
+        output: &Output<'_>,
+        result: Result<Rendered, Error>,
+    ) {
+        match result {
             Ok((data, cta)) => self.write_output(output, true, data, path, cta.as_ref()),
             Err(error)
                 if output.human
@@ -2369,10 +2461,10 @@ impl Run<'_, '_> {
     }
 
     /// Writes a streamed result.
-    fn stream(
+    async fn stream(
         &mut self,
-        chunks: Box<dyn Iterator<Item = Result<Value, Error>>>,
-        cta: Option<&crate::errors::CtaBlock>,
+        mut chunks: Chunks,
+        cta: Option<&CtaBlock>,
         path: &str,
         output: &Output<'_>,
     ) {
@@ -2403,7 +2495,7 @@ impl Run<'_, '_> {
             run.exit = error.exit_code.unwrap_or(1);
         };
         let mut buffered = Vec::new();
-        for chunk in chunks {
+        while let Some(chunk) = poll_fn(|cx| chunks.as_mut().poll_next(cx)).await {
             match chunk {
                 Err(error) => {
                     fail(self, &error);
@@ -2453,6 +2545,63 @@ impl Run<'_, '_> {
             );
         }
     }
+}
+
+/// A stream a handler returned, its suggested commands, and a sender the runner drops once the
+/// stream is written.
+type Handover = (Chunks, Option<CtaBlock>, oneshot::Sender<()>);
+
+/// Builds the final step of the middleware chain: reports the parse result, runs the handler,
+/// and sends its result to the runner. A stream is handed over, and the step waits until it is
+/// written.
+fn terminal(
+    handler: Option<command::Handler>,
+    parsed: Result<(parser::Parsed, Value), Error>,
+    outcome_tx: oneshot::Sender<Result<Rendered, Error>>,
+    stream_tx: oneshot::Sender<Handover>,
+) -> Terminal {
+    Box::new(move |c| {
+        Box::pin(async move {
+            let outcome = match (parsed, handler) {
+                (Err(error), _) => Outcome::from(error),
+                (Ok(_), None) => Outcome(Inner::Data {
+                    cta: None,
+                    data: None,
+                }),
+                (Ok((parsed, env)), Some(handler)) => {
+                    handler(Invocation {
+                        agent: c.agent,
+                        args: parsed.args,
+                        display_name: c.display_name.clone(),
+                        env,
+                        format: c.format,
+                        format_explicit: c.format_explicit,
+                        globals: c.globals,
+                        name: c.name,
+                        options: parsed.options,
+                        vars: c.vars,
+                        version: c.version,
+                    })
+                    .await
+                }
+            };
+            let result = match outcome.0 {
+                Inner::Data { cta, data } => {
+                    Ok((data, FormattedCtaBlock::new(&c.display_name, cta.as_ref())))
+                }
+                Inner::Error(error) => Err(error),
+                Inner::Stream { chunks, cta } => {
+                    let (done_tx, done_rx) = oneshot::channel();
+                    let _ = stream_tx.send((chunks, cta, done_tx));
+                    // Resolves with `Canceled` once the runner drops the sender.
+                    let _ = done_rx.await;
+                    return Ok(());
+                }
+            };
+            let _ = outcome_tx.send(result);
+            Ok(())
+        })
+    })
 }
 
 /// Rebuilds an error from its output value, for terminal rendering. Errors with field errors

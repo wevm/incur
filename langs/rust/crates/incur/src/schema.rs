@@ -511,8 +511,31 @@ impl Issue {
     }
 }
 
-/// The marker a coerced non-finite number carries through validation. JSON has no NaN.
+/// The marker a non-finite number carries through validation, as JSON values hold no NaN or
+/// infinities. Coerced flags and environment variables, and config files with numbers beyond the
+/// double range, produce it.
 pub(crate) const NON_FINITE: &str = "\u{0}incur:non-finite:";
+
+/// Whether a value is the marker of a non-finite number.
+fn is_non_finite(value: &Value) -> bool {
+    value
+        .as_str()
+        .is_some_and(|string| string.starts_with(NON_FINITE))
+}
+
+/// Replaces non-finite markers with `null`, as `JSON.stringify` writes infinities.
+fn finite(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(finite).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, item)| (key.clone(), finite(item)))
+                .collect(),
+        ),
+        value if is_non_finite(value) => Value::Null,
+        value => value.clone(),
+    }
+}
 
 /// Validates `value` against `ty`, applying defaults and stripping unknown object keys.
 ///
@@ -589,7 +612,8 @@ fn parse_present(
             check_bounds(len, *min, *max, "array", path, issues);
             Some(Value::Array(out))
         }
-        (Kind::Boolean, Value::Bool(_)) | (Kind::Unknown, _) => Some(value.clone()),
+        (Kind::Boolean, Value::Bool(_)) => Some(value.clone()),
+        (Kind::Unknown, _) => Some(finite(value)),
         (Kind::Integer { max, min } | Kind::Number { max, min }, _) => {
             let integer = matches!(ty.kind, Kind::Integer { .. });
             let number = match value {
@@ -649,7 +673,7 @@ fn parse_present(
             }
             Some(Value::Object(out))
         }
-        (Kind::String { max, min }, Value::String(string)) => {
+        (Kind::String { max, min }, Value::String(string)) if !is_non_finite(value) => {
             #[expect(
                 clippy::cast_precision_loss,
                 reason = "String lengths are far below 2^53."
@@ -736,6 +760,7 @@ fn check_bounds(
 /// Returns Zod's name for the type of a received value.
 fn received(value: &Value) -> &'static str {
     match value {
+        value if is_non_finite(value) => "number",
         Value::Array(_) => "array",
         Value::Bool(_) => "boolean",
         Value::Null => "null",
