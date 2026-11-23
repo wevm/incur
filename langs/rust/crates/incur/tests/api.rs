@@ -2742,6 +2742,30 @@ fn parses_derived_commands() {
     assert!(matches!(parsed, Ok(Bare)));
 }
 
+/// Middleware that fails after `next.run` fails the parse: its error is written and the exit
+/// code returned, though the command was already parsed.
+#[test]
+fn parses_failed_middleware() {
+    let cli = || {
+        Bare::cli().update(false).middleware(|c, next| async move {
+            next.run(c).await?;
+            Err(Error::new("DENIED", "failed after the command"))
+        })
+    };
+    assert_snapshot!(parse::<Bare>(cli(), &[], &[]), @r#"
+    Err(1)
+    code: DENIED
+    message: failed after the command
+    "#);
+    assert_snapshot!(parse::<Bare>(cli(), &["--format", "json"], &[]), @r#"
+    Err(1)
+    {
+      "code": "DENIED",
+      "message": "failed after the command"
+    }
+    "#);
+}
+
 /// In the parse form, help and completions hide `--mcp` and `mcp add`, which need a handler,
 /// and both are unknown commands.
 #[test]

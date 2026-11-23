@@ -395,6 +395,7 @@ impl Cli {
         let mut stdout = Gate {
             out: io.stdout,
             closed: &parsed,
+            held: Vec::new(),
         };
         let code = cli.serve_with(
             argv,
@@ -406,26 +407,39 @@ impl Cli {
                 tty: io.tty,
             },
         );
-        let _ = stdout.flush();
-        slot.lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
-            .ok_or(code)
+        let command = slot.lock().ok().and_then(|mut slot| slot.take());
+        match command {
+            // The chain succeeded: output after the command belongs to the caller.
+            Some(command) if code == 0 => {
+                let _ = stdout.flush();
+                Ok(command)
+            }
+            // A built-in ran, the input was invalid, or middleware failed after the command
+            // was parsed: its output is written and the exit code returned.
+            _ => {
+                let Gate { out, held, .. } = stdout;
+                let _ = out.write_all(&held).and_then(|()| out.flush());
+                Err(code)
+            }
+        }
     }
 }
 
-/// Standard output that discards writes once `closed` returns true: after a parsed command,
-/// output belongs to the caller.
+/// Standard output that holds writes back once `closed` returns true: after a parsed command,
+/// output belongs to the caller unless the chain fails.
 struct Gate<'a> {
     /// The underlying output.
     out: &'a mut (dyn Write + Send),
-    /// Whether output is discarded.
+    /// Whether output is held back.
     closed: &'a (dyn Fn() -> bool + Sync),
+    /// Output written after the command was parsed.
+    held: Vec<u8>,
 }
 
 impl Write for Gate<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if (self.closed)() {
+            self.held.extend_from_slice(buf);
             return Ok(buf.len());
         }
         self.out.write(buf)
