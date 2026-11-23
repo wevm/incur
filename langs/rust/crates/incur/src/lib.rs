@@ -5,6 +5,7 @@ mod cli;
 mod command;
 pub mod completions;
 mod convert;
+mod derive;
 mod errors;
 mod execute;
 mod fetch;
@@ -31,12 +32,13 @@ pub use body::Body;
 pub use cli::{BannerMode, Cli, Config, Io};
 pub use command::{
     Command, Context, HandlerOutput, Input, IntoOutcome, MaybeFuture, MiddlewareContext, Next,
-    Outcome, OutputPolicy, Vars, marker, ok, stream,
+    Outcome, OutputPolicy, Result, Vars, marker, ok, stream,
 };
+pub use derive::Parser;
 pub use errors::{Cta, CtaBlock, Error, FieldError};
 pub use fetch::{Fetch, FetchCommand};
 pub use formatter::Format;
-pub use incur_macros::Schema;
+pub use incur_macros::{Parser, Schema};
 pub use mcp::Mcp;
 pub use openapi::Openapi;
 pub use remote::McpSource;
@@ -46,9 +48,20 @@ pub use update::Update;
 
 #[doc(hidden)]
 pub mod __private {
-    //! Support code for the derive macro.
+    //! Support code for the derive macros.
+
+    pub use crate::derive::{Fields, Leaf, Meta, Node, Run, leaf};
 
     use crate::schema::Type;
+
+    /// Coerces a positional argument of a number kind, which the command line passes as a
+    /// string.
+    pub fn positional(ty: Type) -> Type {
+        match ty.kind {
+            crate::schema::Kind::Integer { .. } | crate::schema::Kind::Number { .. } => ty.coerce(),
+            _ => ty,
+        }
+    }
 
     /// Applies a serialized default to a field schema. `null` defaults, such as `None`, are
     /// ignored.

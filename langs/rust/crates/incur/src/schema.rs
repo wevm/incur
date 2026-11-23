@@ -42,6 +42,10 @@ pub trait Schema {
 /// A schema node: a [`Kind`] with the metadata Zod attaches through `.describe()`, `.default()`,
 /// `.optional()`, and `.meta()`.
 #[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent Zod modifiers, each set by its own builder method."
+)]
 pub struct Type {
     /// Whether the option counts repeated flags (`-vvv`).
     pub count: bool,
@@ -57,6 +61,8 @@ pub struct Type {
     pub optional: bool,
     /// What a schema converted from JSON Schema keeps beyond its kind.
     pub(crate) converted: Option<Box<Converted>>,
+    /// Whether input converts to the kind first, as `z.coerce` does.
+    pub(crate) coerce: bool,
 }
 
 /// What a schema converted from JSON Schema, such as an OpenAPI parameter or a remote MCP
@@ -142,12 +148,22 @@ impl Type {
             kind,
             optional: false,
             converted: None,
+            coerce: false,
         }
     }
 
     /// Creates an object schema from its fields.
     pub fn object(fields: Vec<Field>) -> Self {
         Self::new(Kind::Object(fields))
+    }
+
+    /// Converts input to the kind before validation, as `z.coerce.number()` and
+    /// `z.coerce.boolean()` do with JavaScript's `Number()` and `Boolean()`, so a positional
+    /// argument `"42"` becomes `42`. The JSON Schema is unchanged.
+    #[must_use]
+    pub fn coerce(mut self) -> Self {
+        self.coerce = true;
+        self
     }
 
     /// Marks the option as a counter of repeated flags: a number that defaults to 0.
@@ -619,11 +635,8 @@ pub(crate) fn parse(
         }
     }
     // `z.coerce` also converts a missing value: `Number(undefined)` is `NaN`.
-    let coerced = ty
-        .converted
-        .as_ref()
-        .filter(|c| c.coerce)
-        .map(|_| coerce(&ty.kind, value));
+    let coerced = (ty.coerce || ty.converted.as_ref().is_some_and(|c| c.coerce))
+        .then(|| coerce(&ty.kind, value));
     let value = coerced.as_ref().or(value);
     match (&ty.kind, value) {
         (Kind::Enum(values), _) => {

@@ -1,16 +1,20 @@
 //! Derive macros for `incur`.
 //!
+//! `#[derive(Parser)]` declares a CLI as a type; see `incur::Parser`.
+//!
 //! `#[derive(Schema)]` implements `incur::Schema` for structs with named fields and for enums with
 //! unit variants. It reads the `serde` attributes that change field names or defaults, so a schema
 //! names every field the way `serde` deserializes it, and the `incur` attributes that only matter
 //! on the command line. See the `incur::schema` module documentation for examples.
 
+mod parser;
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, MetaNameValue,
-    Path, parse_macro_input, spanned::Spanned,
+    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Ident, Lit, LitBool, LitStr, Meta,
+    MetaNameValue, Path, parse_macro_input, spanned::Spanned,
 };
 
 /// Derives `incur::Schema`.
@@ -31,10 +35,69 @@ use syn::{
 /// - `#[incur(count)]` counts repeated flags, such as `-vvv`.
 /// - `#[incur(deprecated)]` marks an option as deprecated.
 /// - `#[incur(min = 1, max = 10)]` bounds a number, string length, or array length.
+/// - `#[incur(default)]` and `#[incur(default = expr)]` set the default the schema reports,
+///   which parsing fills in before deserializing.
+/// - `#[incur(coerce)]` converts input to a number or boolean first, as `z.coerce` does.
 #[proc_macro_derive(Schema, attributes(incur))]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derives `incur::Parser`: a struct becomes a single-command CLI, and an enum a CLI with a
+/// subcommand per variant. See the `incur::Parser` documentation for examples.
+///
+/// Type attributes:
+///
+/// - Doc comments become the CLI description. `#[incur(description = "...")]` overrides them.
+/// - `#[incur(name = "...")]` names the CLI. Defaults to the package name.
+/// - `#[incur(version)]` uses the package version; `#[incur(version = "...")]` sets one.
+/// - `#[incur(aliases = ["..."])]` adds alternative binary names.
+/// - `#[incur(middleware = path)]`, repeatable, runs middleware around every command of an
+///   enum, or around a struct's command.
+/// - On a struct, the command attributes below describe its command, as on variants. An enum
+///   is a command group, so they are compile errors there.
+///
+/// Command attributes, on variants:
+///
+/// - Doc comments become the command description. `#[incur(description = "...")]` overrides
+///   them.
+/// - `#[incur(name = "...")]` names the command. Defaults to the kebab-case variant name.
+/// - `#[incur(aliases = ["..."])]` adds alternative command names.
+/// - `#[incur(destructive)]` marks the command as destructive.
+/// - `#[incur(hint = "...")]` adds guidance shown after examples.
+/// - `#[incur(output = Type)]` sets the output schema from a `Schema` type.
+/// - `#[incur(middleware = path)]`, repeatable, adds command middleware, which runs after CLI,
+///   group, and type middleware, in order. `path` names a function such as
+///   `async fn(MiddlewareContext, Next) -> Result<(), Error>`.
+/// - `#[incur(example = "args")]` or `#[incur(example(command = "args", description = "..."))]`,
+///   repeatable, adds an example: the arguments after the command name.
+/// - `#[incur(usage(args = [...], options = [...], prefix = "...", suffix = "..."))]`,
+///   repeatable, adds an alternative usage line.
+///
+/// Unit variants take no input, struct variants declare fields inline, and a tuple variant
+/// holds one other `Parser` type: a struct nests as a command, an enum as a command group. A
+/// group variant takes only `name` and `description`; command attributes on it fail to compile.
+///
+/// Field attributes, besides those of `#[derive(Schema)]`:
+///
+/// - Fields are options by default, named in camelCase (`save_dev` is `--save-dev`). `bool`
+///   and `Vec` options default to `false` and empty.
+/// - `#[incur(arg)]` makes a positional argument, in field order. Positional numbers convert
+///   from strings unless `#[incur(coerce = false)]` keeps them strict, as `z.number()` does.
+/// - `#[incur(env)]` reads an environment variable, named in `SCREAMING_SNAKE_CASE`.
+/// - `#[incur(name = "...")]` sets the name.
+/// - `#[incur(default)]` and `#[incur(default = expr)]` set a default. The field type must
+///   implement `serde::Serialize`.
+/// - `#[incur(skip)]` leaves a field out of the input, set to `Default::default()`.
+///
+/// Field types implement `incur::Schema` and `serde::de::DeserializeOwned`.
+#[proc_macro_derive(Parser, attributes(incur))]
+pub fn derive_parser(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    parser::expand(&input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -67,7 +130,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                         "Schema can only be derived for enums with unit variants",
                     ));
                 }
-                let attrs = FieldAttrs::parse(&variant.attrs)?;
+                let attrs = FieldAttrs::parse(&variant.attrs, false)?;
                 if attrs.skip {
                     continue;
                 }
@@ -104,7 +167,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
 /// Expands one struct field into an `incur::schema::Field` expression.
 fn expand_field(container: &Container, field: &syn::Field) -> syn::Result<Option<TokenStream2>> {
-    let attrs = FieldAttrs::parse(&field.attrs)?;
+    let attrs = FieldAttrs::parse(&field.attrs, false)?;
     if attrs.skip {
         return Ok(None);
     }
@@ -115,16 +178,27 @@ fn expand_field(container: &Container, field: &syn::Field) -> syn::Result<Option
             .rename_all
             .apply_to_field(&ident.as_ref().map(unraw).unwrap_or_default())
     });
-    let ty = &field.ty;
+    let fallback = container
+        .default
+        .then(|| quote!(<Self as ::core::default::Default>::default().#ident));
+    Ok(Some(field_schema(&name, field, attrs, fallback)))
+}
 
+/// Builds the `incur::schema::Field` expression of a field named `name`. `fallback` is the
+/// default when the field declares none.
+fn field_schema(
+    name: &str,
+    field: &syn::Field,
+    attrs: FieldAttrs,
+    fallback: Option<TokenStream2>,
+) -> TokenStream2 {
+    let ty = &field.ty;
     let mut modifiers = Vec::new();
-    let default = match &attrs.default {
+    let default = match attrs.default {
         Some(Default::Trait) => Some(quote!(<#ty as ::core::default::Default>::default())),
         Some(Default::Path(path)) => Some(quote!(#path())),
-        None if container.default => {
-            Some(quote!(<Self as ::core::default::Default>::default().#ident))
-        }
-        None => None,
+        Some(Default::Expr(expr)) => Some(quote!(#expr)),
+        None => fallback,
     };
     if let Some(default) = default {
         modifiers.push(quote!(.map(|ty| ::incur::__private::default(ty, &#default))));
@@ -134,6 +208,9 @@ fn expand_field(container: &Container, field: &syn::Field) -> syn::Result<Option
     }
     if attrs.count {
         modifiers.push(quote!(.map(::incur::schema::Type::count)));
+    }
+    if attrs.coerce == Some(true) {
+        modifiers.push(quote!(.map(::incur::schema::Type::coerce)));
     }
     if attrs.deprecated {
         modifiers.push(quote!(.map(::incur::schema::Type::deprecated)));
@@ -147,9 +224,9 @@ fn expand_field(container: &Container, field: &syn::Field) -> syn::Result<Option
     if let Some(alias) = attrs.alias {
         modifiers.push(quote!(.alias(#alias)));
     }
-    Ok(Some(quote! {
+    quote! {
         ::incur::schema::Field::new(#name, <#ty as ::incur::Schema>::schema()) #(#modifiers)*
-    }))
+    }
 }
 
 /// Container-level attributes.
@@ -187,17 +264,30 @@ impl Container {
 
 /// A field default.
 enum Default {
+    /// `#[incur(default = expr)]`.
+    Expr(Expr),
     /// `#[serde(default = "path")]`.
     Path(Path),
-    /// `#[serde(default)]`.
+    /// `#[serde(default)]` or `#[incur(default)]`.
     Trait,
 }
 
 /// Field and variant attributes.
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent attribute switches, set by name."
+)]
 struct FieldAttrs {
     /// Single-character option alias.
     alias: Option<char>,
+    /// Whether the field is a positional argument (`Parser` only).
+    arg: bool,
+    /// Whether the field is an environment variable (`Parser` only).
+    env: bool,
+    /// Whether input converts to the kind first, as `z.coerce` does: `Some(false)` keeps a
+    /// positional number strict.
+    coerce: Option<bool>,
     /// Whether the option counts repeated flags.
     count: bool,
     /// The default value source.
@@ -217,8 +307,9 @@ struct FieldAttrs {
 }
 
 impl FieldAttrs {
-    /// Reads `#[serde(...)]` and `#[incur(...)]` field attributes.
-    fn parse(attrs: &[Attribute]) -> syn::Result<Self> {
+    /// Reads `#[serde(...)]` and `#[incur(...)]` field attributes. `parser` accepts the
+    /// attributes only `#[derive(Parser)]` fields take: `arg`, `env`, `name`, and `skip`.
+    fn parse(attrs: &[Attribute], parser: bool) -> syn::Result<Self> {
         let mut out = Self::default();
         for attr in attrs {
             if attr.path().is_ident("serde") {
@@ -262,6 +353,27 @@ impl FieldAttrs {
                                     "`alias` takes a single character",
                                 ));
                             }
+                        });
+                    } else if parser && meta.path.is_ident("arg") {
+                        out.arg = true;
+                    } else if parser && meta.path.is_ident("env") {
+                        out.env = true;
+                    } else if parser && meta.path.is_ident("name") {
+                        let value: LitStr = meta.value()?.parse()?;
+                        out.rename = Some(value.value());
+                    } else if parser && meta.path.is_ident("skip") {
+                        out.skip = true;
+                    } else if meta.path.is_ident("default") {
+                        out.default = Some(if meta.input.peek(syn::Token![=]) {
+                            Default::Expr(meta.value()?.parse()?)
+                        } else {
+                            Default::Trait
+                        });
+                    } else if meta.path.is_ident("coerce") {
+                        out.coerce = Some(if meta.input.peek(syn::Token![=]) {
+                            meta.value()?.parse::<LitBool>()?.value
+                        } else {
+                            true
                         });
                     } else if meta.path.is_ident("count") {
                         out.count = true;

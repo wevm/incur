@@ -28,12 +28,18 @@ ryu-js = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-# The blocking entries drive the CLI on a current-thread runtime. `enable_all` turns on every
-# driver the dependency graph enables, so handlers can use tokio timers and IO.
-tokio = { workspace = true, features = ["rt"] }
+# With the `tokio` feature, the blocking entries drive the CLI on a current-thread runtime.
+# `enable_all` turns on every driver the dependency graph enables, so handlers can use tokio
+# timers and IO.
+tokio = { workspace = true, features = ["rt"], optional = true }
 ureq = { workspace = true, optional = true }
 
 [features]
+default = ["tokio"]
+# Run the blocking entries (`Cli::serve`, `Cli::serve_with`, `Parser::parse`) on a tokio
+# runtime, so handlers may await tokio timers and IO. Without it, they run on a minimal
+# thread-parking executor: synchronous handlers and runtime-agnostic futures need no runtime.
+tokio = ["dep:tokio"]
 # A real HTTP client for hosted fetch sources, OpenAPI documents and MCP servers fetched by URL,
 # and npm registry update checks. Without it, those requests fail unless `Cli::client` sets one.
 client = ["dep:ureq"]
@@ -41,7 +47,7 @@ client = ["dep:ureq"]
 [dev-dependencies]
 futures = { workspace = true }
 insta = { workspace = true }
-tokio = { workspace = true, features = ["macros", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 trybuild = { workspace = true }
 
 [[test]]
