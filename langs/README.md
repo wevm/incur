@@ -130,7 +130,7 @@ writes `package.json`'s version into every port's manifest, lockfile, and instal
 the Checks job fails when they drift (`node langs/version.ts --check`).
 
 When changesets publishes `incur` to npm, `main.yml` runs `.github/workflows/release-langs.yml`,
-which reruns every gate and publishes the same version:
+which publishes the same version once Main's checks have passed:
 
 - Rust: `incur-macros`, then `incur`, to crates.io (trusted publishing, environment `crates-io`).
 - Python: `incur` to PyPI (trusted publishing, environment `pypi`).

@@ -9,16 +9,12 @@ concurrency:
   group: release-langs-${{ github.ref }}
   cancel-in-progress: false
 
+# Main verifies every port before changesets publishes, and a manual run releases `main`, which CI
+# has verified. Calling verify.yml again here would put two copies of its concurrency group in one
+# run, which GitHub rejects at startup.
 jobs:
-  # Every port's gate, including the differential suite against the released TypeScript reference.
-  verify:
-    name: Verify
-    uses: ./.github/workflows/verify.yml
-    secrets: inherit
-
   rust:
     name: Publish Rust
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: crates-io
@@ -48,7 +44,6 @@ jobs:
 
   python:
     name: Publish Python
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi
@@ -72,7 +67,6 @@ jobs:
 
   zig:
     name: Release Zig
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
