@@ -455,3 +455,13 @@ def json_parse_error(source: str) -> str | None:
 def parse_json(source: str) -> Json:
     """Parses JSON text that `json_parse_error` accepts, as `JSON.parse` does."""
     return normalize(json.loads(source))
+
+
+def as_object(value: Json) -> dict[str, Json]:
+    """Returns a JSON object, or an empty one for any other value."""
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Json) -> list[Json]:
+    """Returns a JSON array, or an empty one for any other value."""
+    return value if isinstance(value, list) else []

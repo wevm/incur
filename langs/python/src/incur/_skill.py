@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+import typing
 from dataclasses import dataclass, field
 
-from . import _js
+from . import _js, _yaml
+from ._command import Command
 from ._help import Example
-from ._schema import Type
+from ._js import Json
+from ._schema import Type, json_schema
+from ._tree import Entry, Gateway, Group
 
 
 @dataclass
@@ -21,6 +27,77 @@ class CommandInfo:
     hint: str | None = None
     options: Type | None = None
     output: Type | None = None
+
+
+#: The hint of fetch gateways in agent skills.
+GATEWAY_HINT = "Fetch gateway. Pass path segments and curl-style flags (-X, -H, -d, --key value)."
+
+#: The hint appended to destructive commands in agent skills.
+DESTRUCTIVE_HINT = "Confirm with the user before executing this destructive command."
+
+
+def _is_destructive(command: Command) -> bool:
+    annotations = command.mcp.annotations if command.mcp and command.mcp_enabled else None
+    return command.destructive or (annotations or {}).get("destructiveHint") is True
+
+
+def _hint_with_destructive(command: Command) -> str | None:
+    if not _is_destructive(command):
+        return command.hint
+    if not command.hint:
+        return DESTRUCTIVE_HINT
+    if DESTRUCTIVE_HINT in command.hint:
+        return command.hint
+    return f"{command.hint} {DESTRUCTIVE_HINT}"
+
+
+def prefixed_examples(examples: list[Example], name: str) -> list[Example]:
+    """Prefixes examples with a command path."""
+    return [Example(f"{name} {e.command}" if e.command else name, e.description) for e in examples]
+
+
+def _command_info(name: str | None, command: Command) -> CommandInfo:
+    examples = prefixed_examples(command.examples, name) if name else list(command.examples)
+    return CommandInfo(
+        name=name,
+        args=command.args,
+        description=command.description,
+        env=command.env,
+        examples=examples,
+        hint=_hint_with_destructive(command),
+        options=command.options,
+        output=command.output,
+    )
+
+
+def collect(
+    commands: dict[str, Entry],
+    prefix: list[str],
+    groups: dict[str, str],
+    root: Command | None,
+) -> list[CommandInfo]:
+    """Collects the commands that skill files and Markdown manifests describe, sorted by name.
+
+    `groups` receives the descriptions of groups along the way.
+    """
+    out: list[CommandInfo] = []
+    if root is not None:
+        out.append(_command_info(None, root))
+    for name, entry in commands.items():
+        path = [*prefix, name]
+        joined = " ".join(path)
+        if isinstance(entry, Command):
+            out.append(_command_info(joined, entry))
+        elif isinstance(entry, Gateway):
+            out.append(CommandInfo(name=joined, description=entry.description, hint=GATEWAY_HINT))
+        elif isinstance(entry, Group):
+            if entry.description is not None:
+                groups[joined] = entry.description
+            if entry.root is not None:
+                out.append(_command_info(joined, entry.root))
+            out += collect(entry.commands, path, groups, None)
+    out.sort(key=lambda info: _js.locale_key(info.name or ""))
+    return out
 
 
 def _type_name(ty: Type) -> str:
@@ -164,3 +241,115 @@ def _schema_table(ty: Type, prefix: str) -> str | None:
         "| Field | Type | Required | Description |\n"
         "|-------|------|----------|-------------|\n" + "\n".join(rows)
     )
+
+
+@dataclass
+class File:
+    """A generated skill file: its directory, `SKILL.md` contents, and description."""
+
+    dir: str
+    content: str
+    description: str
+
+
+def slugify(value: str) -> str:
+    """Converts text to a lowercase slug, such as `My Tool` to `my-tool`."""
+    slug = re.sub("[^a-z0-9-]+", "-", value.lower())
+    return re.sub("^-|-$", "", re.sub("-{2,}", "-", slug))
+
+
+def split(
+    name: str, commands: list[CommandInfo], depth: float, groups: dict[str, str]
+) -> list[File]:
+    """Splits commands into skill files, grouped by their first `depth` name segments.
+
+    `depth` bounds a JavaScript `slice`, as `--depth` parses it: fractions truncate, negative
+    values count from the end, and `NaN` takes no segments.
+    """
+    if depth == 0:
+        return [_group(name, name, commands, groups, name, "")]
+
+    def head(cmd: str) -> list[str]:
+        segments = cmd.split(" ")
+        return segments[: _js.relative_index(depth, len(segments))]
+
+    buckets: dict[str, list[CommandInfo]] = {}
+    for cmd in commands:
+        key = slugify(name) if not cmd.name else "-".join(head(cmd.name))
+        buckets.setdefault(key, []).append(cmd)
+    files: list[File] = []
+    for key in sorted(buckets, key=_js.locale_key):
+        cmds = buckets[key]
+        first = cmds[0]
+        prefix = " ".join(head(first.name)) if first.name else ""
+        title = f"{name} {prefix}" if prefix else name
+        files.append(_group(name, title, cmds, groups, prefix or None, key))
+    return files
+
+
+def _group(
+    cli: str,
+    title: str,
+    cmds: list[CommandInfo],
+    groups: dict[str, str],
+    prefix: str | None,
+    directory: str,
+) -> File:
+    """Renders a skill file: frontmatter, then command bodies."""
+    described = groups.get(prefix) if prefix else None
+    fallback = cmds[0].description if len(cmds) == 1 and cmds[0].description else None
+    desc = described if described is not None else fallback
+    usage = f"Run `{title} --help` for usage details."
+    description = f"{desc.removesuffix('.')}. {usage}" if desc else usage
+    frontmatter = {
+        "name": slugify(title),
+        "description": description,
+        "requires_bin": cli,
+        "command": title,
+    }
+    meta = _yaml.stringify(typing.cast("Json", frontmatter), line_width=0).rstrip()
+    body = "\n\n---\n\n".join(_body(cli, cmd, 1) for cmd in cmds)
+    return File(directory, f"---\n{meta}\n---\n\n{body}", description)
+
+
+def hash_commands(commands: list[CommandInfo]) -> str:
+    """Hashes the command structure, to detect when installed skills are out of date."""
+    data: list[Json] = []
+    for cmd in commands:
+        entry: dict[str, Json] = {}
+        if cmd.name is not None:
+            entry["name"] = cmd.name
+        if cmd.description is not None:
+            entry["description"] = cmd.description
+        if cmd.hint is not None:
+            entry["hint"] = cmd.hint
+        for key, ty in (
+            ("args", cmd.args),
+            ("env", cmd.env),
+            ("options", cmd.options),
+            ("output", cmd.output),
+        ):
+            if ty is not None:
+                entry[key] = json_schema(ty)
+        data.append(entry)
+    return hashlib.sha256(_js.stringify(data).encode()).hexdigest()[:16]
+
+
+def discovery(origin: str, files: list[tuple[str, str, str]]) -> dict[str, Json]:
+    """Builds the Agent Skills discovery index (v0.2.0) of `(name, description, content)`."""
+    skills: list[Json] = []
+    for name, description, content in files:
+        digest = hashlib.sha256(content.encode()).hexdigest()
+        skills.append(
+            {
+                "name": name,
+                "type": "skill-md",
+                "description": description,
+                "url": f"{origin}/.well-known/agent-skills/{name}/SKILL.md",
+                "digest": f"sha256:{digest}",
+            }
+        )
+    return {
+        "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+        "skills": skills,
+    }

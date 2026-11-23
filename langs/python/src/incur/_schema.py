@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, replace
 from typing import Literal, TypeAlias
 
@@ -10,7 +11,28 @@ from . import _js
 from ._js import Json
 
 #: The shape of a schema node.
-Kind = Literal["array", "boolean", "enum", "integer", "number", "object", "string", "unknown"]
+Kind = Literal[
+    "array",
+    "boolean",
+    "enum",
+    "integer",
+    "intersection",
+    "literal",
+    "null",
+    "number",
+    "object",
+    "record",
+    "string",
+    "union",
+    "unknown",
+]
+
+#: The pattern of Zod's `z.iso.datetime()`: UTC timestamps with optional seconds and fractions.
+ISO_DATETIME = (
+    r"^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29"
+    r"|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)"
+    r"|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z))$"
+)
 
 #: The largest integer a JavaScript number represents exactly, which bounds Zod's `z.int()`.
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -42,6 +64,27 @@ class Type:
     values: list[str] = field(default_factory=list[str])
     fields: list[Field] = field(default_factory=list[Field])
     py: type | None = None
+    coerce: bool = False
+    """Whether input converts with JavaScript's `Number()` or `Boolean()` first, as
+    `z.coerce` does."""
+    pattern: str | None = None
+    """A regular expression strings must match somewhere."""
+    format: str | None = None
+    """A string format Zod checks, such as `date-time`."""
+    loose: bool = False
+    """Whether an object keeps unknown keys."""
+    variants: list[Type] = field(default_factory=list["Type"])
+    """The options of a union, or the two sides of an intersection."""
+    literal: Json = None
+    """The value a `literal` schema accepts."""
+    exclusive: bool = False
+    """Whether exactly one option of a union must match, as `z.xor` requires."""
+    extra: dict[str, Json] = field(default_factory=dict[str, Json])
+    """Metadata that JSON Schema output carries verbatim, such as `example`."""
+    raw: dict[str, Json] | None = None
+    """The JSON Schema to emit, for schemas converted from JSON Schema."""
+    required: bool | None = None
+    """Whether an object lists the field as required, when it differs from `is_optional`."""
 
     def field(self, name: str) -> Field | None:
         """Returns the field with the given name."""
@@ -63,7 +106,7 @@ class Type:
             return "|".join(self.values)
         if self.kind == "integer":
             return "number"
-        if self.kind in ("object", "unknown"):
+        if self.kind in ("object", "record", "unknown"):
             return "value"
         return self.kind
 
@@ -80,8 +123,14 @@ def object_type(fields: list[Field]) -> Type:
     return Type("object", fields=fields)
 
 
-def json_schema(ty: Type) -> dict[str, Json]:
-    """Converts a schema to the JSON Schema Zod's `z.toJSONSchema()` emits, in the same order."""
+def json_schema(ty: Type, io: Literal["input", "output"] = "output") -> dict[str, Json]:
+    """Converts a schema to the JSON Schema Zod's `z.toJSONSchema()` emits, in the same order.
+
+    The `input` view describes what the input may omit: fields with defaults are not required,
+    and objects accept other keys.
+    """
+    if ty.raw is not None:
+        return dict(ty.raw)
     out: dict[str, Json] = {}
     wrapped = ty.optional or ty.default is not None
     if wrapped:
@@ -92,7 +141,7 @@ def json_schema(ty: Type) -> dict[str, Json]:
         _bound(out, "maxItems", ty.max)
         out["type"] = "array"
         assert ty.items is not None
-        out["items"] = json_schema(ty.items)
+        out["items"] = json_schema(ty.items, io)
     elif kind == "enum":
         out["type"] = "string"
         values: list[Json] = [*ty.values]
@@ -101,13 +150,23 @@ def json_schema(ty: Type) -> dict[str, Json]:
         out["type"] = "integer"
         _bound(out, "minimum", -MAX_SAFE_INTEGER if ty.min is None else ty.min)
         _bound(out, "maximum", MAX_SAFE_INTEGER if ty.max is None else ty.max)
+    elif kind == "record":
+        out["type"] = "object"
+        out["propertyNames"] = {"type": "string"}
+        out["additionalProperties"] = {}
     elif kind == "object":
         out["type"] = "object"
-        out["properties"] = {f.name: json_schema(f.ty) for f in ty.fields}
-        required: list[Json] = [f.name for f in ty.fields if not f.ty.is_optional()]
+        out["properties"] = {f.name: json_schema(f.ty, io) for f in ty.fields}
+        required: list[Json] = [
+            f.name
+            for f in ty.fields
+            if (not f.ty.is_optional() if f.ty.required is None else f.ty.required)
+            and (io == "output" or f.ty.default is None)
+        ]
         if required:
             out["required"] = required
-        out["additionalProperties"] = False
+        if io == "output":
+            out["additionalProperties"] = False
     elif kind != "unknown":
         out["type"] = kind
         if kind != "boolean":
@@ -147,9 +206,14 @@ class Issue:
     expected: str = ""
     format: str | None = None
     received: str | None = None
-    values: list[str] = field(default_factory=list[str])
+    values: list[Json] = field(default_factory=list[Json])
     bound: float = 0.0
     origin: str = ""
+    pattern: str = ""
+    errors: list[list[Issue]] = field(default_factory=list[list["Issue"]])
+    """The issues of each option of a failed union, with paths relative to the union."""
+    inclusive: bool | None = None
+    """`False` when more than one option of an exclusive union matched."""
 
     def to_json(self) -> dict[str, Json]:
         """Returns the issue as Zod serializes it in `ZodError.message`, in the same order."""
@@ -164,6 +228,16 @@ class Issue:
         elif self.code == "invalid_value":
             out["code"] = self.code
             out["values"] = list(self.values)
+        elif self.code == "invalid_format":
+            out["origin"] = self.origin
+            out["code"] = self.code
+            out["format"] = self.format
+            out["pattern"] = self.pattern
+        elif self.code == "invalid_union":
+            out["code"] = self.code
+            out["errors"] = [[i.to_json() for i in option] for option in self.errors]
+            if self.inclusive is not None:
+                out["inclusive"] = self.inclusive
         else:
             key = "maximum" if self.code == "too_big" else "minimum"
             # Zod's safe-integer check reports its issue with a note and a different key order.
@@ -203,26 +277,56 @@ def parse(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -
             return ty.default
         if ty.optional or ty.kind == "unknown":
             return _ABSENT
-    if ty.kind == "enum":
-        if isinstance(value, str) and value in ty.values:
-            return value
-        if len(ty.values) == 1:
-            message = f"Invalid input: expected {_js.stringify(ty.values[0])}"
-        else:
-            listed = "|".join(_js.stringify(v) for v in ty.values)
-            message = f"Invalid option: expected one of {listed}"
-        issues.append(Issue("invalid_value", message, list(path), values=list(ty.values)))
-        return _ABSENT
+        if ty.coerce:
+            # `Number(undefined)` is NaN; `Boolean(undefined)` is false.
+            return _parse_present(ty, math.nan if ty.kind == "number" else False, path, issues)
+    if ty.kind in ("enum", "literal"):
+        return _parse_choice(ty, value, path, issues)
     if isinstance(value, _Absent):
         _invalid_type(ty, "undefined", None, path, issues)
         return _ABSENT
     return _parse_present(ty, value, path, issues)
 
 
+def _parse_choice(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -> Parsed:
+    """Validates a value against an enum or a literal, which report absent values the same."""
+    if ty.kind == "literal":
+        literal = ty.literal
+        # Zod compares with `===`: numbers by value, objects never.
+        numbers = is_number(literal) and not isinstance(value, (_Absent, bool)) and is_number(value)
+        same = numbers or (type(value) is type(literal) and not isinstance(value, (list, dict)))
+        if same and value == literal:
+            return value
+        message = f"Invalid input: expected {_js.stringify(literal)}"
+        issues.append(Issue("invalid_value", message, list(path), values=[literal]))
+        return _ABSENT
+    if isinstance(value, str) and value in ty.values:
+        return value
+    if len(ty.values) == 1:
+        message = f"Invalid input: expected {_js.stringify(ty.values[0])}"
+    else:
+        listed = "|".join(_js.stringify(v) for v in ty.values)
+        message = f"Invalid option: expected one of {listed}"
+    issues.append(Issue("invalid_value", message, list(path), values=list(ty.values)))
+    return _ABSENT
+
+
 def _parse_present(ty: Type, value: Json, path: list[str | int], issues: list[Issue]) -> Parsed:
     """Validates a value that is present in the input."""
     kind = ty.kind
+    if ty.coerce:
+        value = _js_number(value) if kind == "number" else _js_truthy(value)
+    if kind in ("enum", "literal"):
+        return _parse_choice(ty, value, path, issues)
+    if kind == "union":
+        return _parse_union(ty, value, path, issues)
+    if kind == "intersection":
+        return _parse_intersection(ty, value, path, issues)
     if kind == "unknown" or (kind == "boolean" and isinstance(value, bool)):
+        return value
+    if kind == "null" and value is None:
+        return None
+    if kind == "record" and isinstance(value, dict):
         return value
     if kind == "array" and isinstance(value, list):
         assert ty.items is not None
@@ -274,12 +378,124 @@ def _parse_present(ty: Type, value: Json, path: list[str | int], issues: list[Is
             if not isinstance(parsed, _Absent):
                 result[f.name] = parsed
             path.pop()
+        if ty.loose:
+            known = {f.name for f in ty.fields}
+            result.update((k, v) for k, v in value.items() if k not in known)
         return result
     if kind == "string" and isinstance(value, str):
+        if ty.format == "date-time" and not re.search(ISO_DATETIME, value):
+            issues.append(
+                Issue(
+                    "invalid_format",
+                    "Invalid ISO datetime",
+                    list(path),
+                    format="datetime",
+                    origin="string",
+                    pattern=f"/{ISO_DATETIME}/",
+                )
+            )
         _check_bounds(_js.utf16_len(value), ty.min, ty.max, "string", path, issues)
+        if ty.pattern is not None and not re.search(ty.pattern, value):
+            issues.append(
+                Issue(
+                    "invalid_format",
+                    f"Invalid string: must match pattern /{ty.pattern}/",
+                    list(path),
+                    format="regex",
+                    origin="string",
+                    pattern=f"/{ty.pattern}/",
+                )
+            )
         return value
     _invalid_type(ty, _received(value), None, path, issues)
     return _ABSENT
+
+
+def is_number(value: Json) -> bool:
+    """Whether a value is a JavaScript number: an `int` or `float`, but not a `bool`."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _js_number(value: Json) -> Json:
+    """Converts a value as JavaScript's `Number()` does."""
+    if value is None or value is False:
+        return 0
+    if value is True:
+        return 1
+    if isinstance(value, str):
+        return _js.to_number(value)
+    return value if isinstance(value, (int, float)) else math.nan
+
+
+def _js_truthy(value: Json) -> bool:
+    """Converts a value as JavaScript's `Boolean()` does."""
+    return value not in (None, False, 0, "")
+
+
+def _parse_union(ty: Type, value: Json, path: list[str | int], issues: list[Issue]) -> Parsed:
+    """Returns the value parsed by the first matching option, as `z.union` does."""
+    errors: list[list[Issue]] = []
+    matches: list[Parsed] = []
+    for variant in ty.variants:
+        attempt: list[Issue] = []
+        parsed = _parse_present(variant, value, [], attempt)
+        if not attempt and not ty.exclusive:
+            return parsed
+        if attempt:
+            errors.append(attempt)
+        else:
+            matches.append(parsed)
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        # More than one option of `z.xor` matched.
+        issues.append(Issue("invalid_union", "Invalid input", list(path), inclusive=False))
+    else:
+        issues.append(Issue("invalid_union", "Invalid input", list(path), errors=errors))
+    return _ABSENT
+
+
+def _parse_intersection(
+    ty: Type, value: Json, path: list[str | int], issues: list[Issue]
+) -> Parsed:
+    """Parses a value with both sides of an intersection and merges the results.
+
+    Raises:
+        ValueError: When both sides succeed with values that cannot merge, as Zod throws.
+    """
+    count = len(issues)
+    left, right = (_parse_present(side, value, path, issues) for side in ty.variants)
+    if len(issues) > count or isinstance(left, _Absent) or isinstance(right, _Absent):
+        return _ABSENT
+    merged, at = _merge(left, right)
+    if at is not None:
+        raise ValueError(f"Unmergable intersection. Error path: {_js.stringify(at)}")
+    return merged
+
+
+def _merge(a: Json, b: Json) -> tuple[Json, list[Json] | None]:
+    """Merges the results of an intersection, as Zod's `mergeValues` does.
+
+    Returns the merged value and, when the results conflict, the path of the conflict.
+    """
+    if a == b and type(a) is type(b):
+        return a, None
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = {**a, **b}
+        for key in a.keys() & b.keys():
+            out[key], at = _merge(a[key], b[key])
+            if at is not None:
+                return None, [key, *at]
+        return out, None
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        items: list[Json] = []
+        for index, (x, y) in enumerate(zip(a, b, strict=True)):
+            item, at = _merge(x, y)
+            if at is not None:
+                return None, [index, *at]
+            items.append(item)
+        return items, None
+    return None, []
 
 
 def _invalid_type(

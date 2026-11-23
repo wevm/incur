@@ -1,164 +1,363 @@
-# incur
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wevm/incur/main/.github/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/wevm/incur/main/.github/logo-light.svg">
+  <img alt="incur" src="https://raw.githubusercontent.com/wevm/incur/main/.github/logo-light.svg" width="100%" height="140px">
+</picture>
 
-Build CLIs for agents and humans. This package is the Python port of the
-[`incur`](https://github.com/wevm/incur) TypeScript package. Its output matches the TypeScript
-package byte for byte: a differential suite replays the same invocations against both.
+<br/>
 
-A CLI gets TOON, JSON, YAML, Markdown, and JSONL output, `--llms` manifests, `--schema`,
-`--filter-output`, token pagination, call-to-action suggestions, middleware, config-file
-defaults, and shell completions. It has no runtime dependencies.
+<p align="center">
+  <a href="https://github.com/wevm/incur/blob/main/LICENSE">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/license/wevm/incur?colorA=21262d&colorB=21262d&style=flat">
+      <img src="https://img.shields.io/github/license/wevm/incur?colorA=f6f8fa&colorB=f6f8fa&style=flat" alt="MIT License">
+    </picture>
+  </a>
+</p>
 
-## Example
+<p align="center">
+  <a href="#features">Features</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
+</p>
 
-Declare inputs as schema classes, register handlers with decorators, and serve:
+[incur](https://github.com/wevm/incur) for Python: build CLIs for agents and humans, with output that matches the TypeScript package byte for byte.
 
-```python
->>> import sys
->>> from typing import Annotated, Literal
->>> import incur
+## Features
 
->>> @incur.schema
-... class Args:
-...     package: Annotated[str, incur.field("Package name")]
+- [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) so agents find your CLI automatically
+- [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
+- **TOON output**: token-efficient default format, with JSON, YAML, Markdown, and JSONL alternatives
+- [**`--llms` flag**](#agent-discovery): token-efficient command manifest in Markdown or JSON schema
+- **Well-formed I/O**: schema classes for arguments, options, environment variables, and output
+- **Typed contexts**: `Context[Args, Options, Env, Vars, Globals]` types handlers and middleware under strict pyright
+- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
+- [**Mount APIs**](#mount-apis): fetch handlers, OpenAPI documents, and remote MCP servers as commands
+- [**Serve over HTTP**](#serve-over-http): every CLI is an ASGI app with an MCP endpoint
+- [**Middleware**](#middleware-and-variables): composable before/after hooks with typed variables via `@cli.use`
+- **Async-native**: handlers and middleware may be `async def`, and streams async generators
+- **Zero dependencies**: standard library only
 
->>> @incur.schema(rename_all="camelCase")
-... class Options:
-...     save_dev: Annotated[bool | None, incur.field("Save as a dev dependency", alias="D")] = None
-...     retries: Annotated[float, incur.field("Retry count", min=0, max=10)] = 3
-...     tag: Annotated[Literal["latest", "next"], incur.field("Dist tag")] = "latest"
+## Install
 
->>> cli = incur.Cli("pm", description="A package manager", version="1.0.0")
-
->>> @cli.command("install", description="Install a package")
-... def install(c: incur.Context[Args, Options]) -> dict[str, object]:
-...     return {"package": c.args.package, "retries": c.options.retries, "tag": c.options.tag}
-
->>> exit_code = cli.serve_with(["install", "left-pad", "-D", "--retries", "5"], stdout=sys.stdout)
-package: left-pad
-retries: 5
-tag: latest
-
->>> exit_code = cli.serve_with(["install", "--help"], stdout=sys.stdout)
-pm install — Install a package
-<BLANKLINE>
-Usage: pm install <package> [options]
-<BLANKLINE>
-Arguments:
-  package  Package name
-<BLANKLINE>
-Options:
-  --save-dev, -D       Save as a dev dependency
-  --retries <number>   Retry count (default: 3)
-  --tag <latest|next>  Dist tag (default: latest)
-<BLANKLINE>
-Global Options:
-  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
-  --format <toon|json|yaml|md|jsonl>  Output format
-  --full-output                       Show full output envelope
-  --help                              Show help
-  --llms, --llms-full                 Print LLM-readable manifest
-  --schema                            Show JSON Schema for command
-  --token-count                       Print token count of output (instead of output)
-  --token-limit <n>                   Limit output to n tokens
-  --token-offset <n>                  Skip first n tokens of output
-
+```bash
+pip install incur
 ```
 
-In a script, end with `cli.serve()`: it reads `sys.argv`, the environment, and whether stdout is
-a terminal (human output) or not (agent output), runs the event loop, then exits with the
-command's exit code. Inside a running event loop, `await cli.serve_async()` does the same and
-returns the exit code, and `await cli.run(argv, stdout=...)` takes the arguments and I/O that
-`cli.serve_with` does.
+## Usage
 
-## Async handlers and middleware state
+### Single-command CLI
 
-Handlers and middleware may be `async def` functions, and streaming handlers async generators;
-plain functions and generators work too. Declare middleware variables as a class whose fields
-have defaults: every run gets a fresh instance as `c.var`, typed through the annotations.
+Register a root command with `@cli.root()` for CLIs that do one thing.
 
 ```python
->>> import asyncio
->>> from collections.abc import AsyncIterator
+from typing import Annotated
 
->>> @incur.schema
-... class Vars:
-...     user: str = "anonymous"
+import incur
 
->>> app = incur.Cli("app", vars=Vars)
 
->>> @app.use
-... async def authenticate(c: incur.MiddlewareContext[Vars], next_: incur.Next) -> None:
-...     c.var.user = "alice"
-...     await next_()
+@incur.schema
+class Args:
+    name: Annotated[str, incur.field("Name to greet")]
 
->>> @app.command("whoami")
-... async def whoami(c: incur.Context[None, None, None, Vars]) -> dict[str, str]:
-...     return {"user": c.var.user}
 
->>> @app.command("count")
-... async def count(c: incur.Context) -> AsyncIterator[object]:
-...     for n in range(2):
-...         yield {"n": n}
-...     yield incur.ok(cta=incur.CtaBlock(["whoami"]))
+cli = incur.Cli("greet", description="A greeting CLI")
 
->>> asyncio.run(app.run(["whoami"], stdout=sys.stdout))
-user: alice
-0
->>> exit_code = app.serve_with(["count"], stdout=sys.stdout)
-n: 0
-n: 1
-<BLANKLINE>
-Suggested command:
-  app whoami
 
+@cli.root()
+def greet(c: incur.Context[Args]) -> dict[str, str]:
+    return {"message": f"hello {c.args.name}"}
+
+
+if __name__ == "__main__":
+    cli.serve()
 ```
 
-Middleware takes the context and `next`. `async def` middleware awaits `next()`; a plain function
-calls it and runs in a worker thread, so it may block. Middleware raises `incur.Error` to stop
-the chain.
+```sh
+$ greet world
+# → message: hello world
+```
 
-## Schemas
+### Multi-command CLI
 
-`@incur.schema` turns a class into a keyword-only dataclass and describes its fields:
+Decorate a function per subcommand.
 
-- `str`, `bool`, `int` (an integer), `float` (any number), `list[T]`, `Literal["a", "b"]` or a
-  string `Enum`, `typing.Any`, and nested schema classes. `T | None` marks a field optional.
-- Defaults are ordinary attribute values; a field with a default is not required.
-- `incur.field(description, alias=, name=, min=, max=, count=, deprecated=)` in
-  `typing.Annotated` adds command-line metadata. `min` and `max` bound numbers, string lengths,
-  and list lengths. `count=True` counts repeated flags (`-vvv`).
-- `rename_all` renames fields as `serde` does: `camelCase`, `kebab-case`, `lowercase`,
-  `PascalCase`, `SCREAMING-KEBAB-CASE`, `SCREAMING_SNAKE_CASE`, `snake_case`, or `UPPERCASE`.
-- Declarations incur cannot describe raise `incur.SchemaError` when the class is defined or the
-  handler is registered.
+```python
+from typing import Annotated
 
-Handlers take one parameter annotated `incur.Context[Args, Options, Env, Vars, Globals]`;
-omitted input parameters are `None`, and omitted `Vars` and `Globals` are untyped. `c.globals` is
-an instance of the CLI's `globals` class, and middleware reads `c.env` as an instance of the CLI's
-`env` class (`None` without one). Handlers return JSON-compatible data, schema class instances, or
-`incur.ok(data, cta=...)`; generators and async generators stream chunks, and yield
-`incur.ok(cta=...)` last to suggest commands; and `raise incur.Error(code, message)` fails with a
-code. `@cli.root()` registers a command that runs without a subcommand, `cli.group(other)` mounts
-another CLI as a command group, and `@cli.use` adds middleware.
+import incur
+
+
+@incur.schema
+class InstallArgs:
+    package: Annotated[str | None, incur.field("Package name")] = None
+
+
+@incur.schema(rename_all="camelCase")
+class InstallOptions:
+    save_dev: Annotated[bool | None, incur.field("Save as dev dependency", alias="D")] = None
+
+
+cli = incur.Cli("my-cli", description="My CLI")
+
+
+@cli.command("status", description="Show repo status")
+def status(c: incur.Context) -> dict[str, bool]:
+    return {"clean": True}
+
+
+@cli.command("install", description="Install a package")
+def install(c: incur.Context[InstallArgs, InstallOptions]) -> dict[str, int]:
+    return {"added": 1, "packages": 451}
+
+
+if __name__ == "__main__":
+    cli.serve()
+```
+
+```sh
+$ my-cli status
+# → clean: true
+
+$ my-cli install express -D
+# → added: 1
+# → packages: 451
+```
+
+### Sub-command CLI
+
+Create a separate `Cli` and mount it with `cli.group(...)` to nest command groups.
+
+```python
+from typing import Literal
+
+import incur
+
+cli = incur.Cli("my-cli", description="My CLI")
+pr = incur.Cli("pr", description="Pull request commands")
+
+
+@incur.schema
+class ListOptions:
+    state: Literal["open", "closed", "all"] = "open"
+
+
+@pr.command("list", description="List pull requests")
+def list_prs(c: incur.Context[None, ListOptions]) -> dict[str, object]:
+    return {"prs": [], "state": c.options.state}
+
+
+cli.group(pr)
+
+if __name__ == "__main__":
+    cli.serve()
+```
+
+```sh
+$ my-cli pr list --state closed
+# → prs: []
+# → state: closed
+```
+
+## Walkthrough
+
+### Agent discovery
+
+Agents can only use your CLI if they know it exists. incur ships three built-in discovery mechanisms:
+
+```sh
+# Generate and install agent skill files (recommended – lighter on tokens)
+$ my-cli skills add
+
+# Register as an MCP server for your agents
+$ my-cli mcp add
+
+# Print a machine-readable manifest
+$ my-cli --llms
+```
+
+`--mcp` serves the commands as MCP tools over stdio. Set `package=` when the CLI's npm package differs from its name, `mcp=incur.McpOptions(...)` to configure the server, and `sync=False` to drop the skills commands. See [Agent discovery](https://github.com/wevm/incur#agent-discovery).
+
+### Call-to-actions
+
+Return `incur.ok(data, cta=...)` to tell agents which commands to run next. `incur.Error(code, message, cta=...)` carries suggestions too.
+
+```python
+import incur
+
+cli = incur.Cli("my-cli")
+
+
+@cli.command("list")
+def list_items(c: incur.Context) -> incur.Outcome:
+    items = [{"id": 1, "title": "Fix bug"}]
+    return incur.ok({"items": items}, cta=incur.CtaBlock([incur.Cta("get 1", "View item")]))
+```
+
+```sh
+$ my-cli list
+# → items[1]{id,title}:
+# →   1,Fix bug
+# → cta:
+# →   description: "Suggested command:"
+# →   commands[1]{command,description}:
+# →     my-cli get 1,View item
+```
+
+### Streaming
+
+Generators and async generators stream chunks: one line each in TOON, one record each with `--format jsonl`.
+
+```python
+from collections.abc import AsyncIterator
+
+import incur
+
+cli = incur.Cli("my-cli")
+
+
+@cli.command("logs", description="Tail logs")
+async def logs(c: incur.Context) -> AsyncIterator[str]:
+    for line in ("connecting...", "streaming logs", "done"):
+        yield line
+```
+
+```sh
+$ my-cli logs
+# → connecting...
+# → streaming logs
+# → done
+```
+
+### Middleware and variables
+
+`@cli.use` registers onion-style middleware that awaits `next_()`. Declare `vars` as a schema class whose fields have defaults: each run gets a fresh, typed instance as `c.var`.
+
+```python
+import incur
+
+
+@incur.schema
+class Vars:
+    user: str = "anonymous"
+
+
+cli = incur.Cli("my-cli", vars=Vars)
+
+
+@cli.use
+async def authenticate(c: incur.MiddlewareContext[Vars], next_: incur.Next) -> None:
+    c.var.user = "alice"
+    await next_()
+
+
+@cli.command("whoami")
+def whoami(c: incur.Context[None, None, None, Vars]) -> dict[str, str]:
+    return {"user": c.var.user}
+```
+
+```sh
+$ my-cli whoami
+# → user: alice
+```
+
+Raise `incur.Error` to stop the chain. See [Middleware](https://github.com/wevm/incur#middleware).
+
+### Global options
+
+Every CLI accepts `--filter-output`, `--format`, `--full-output`, `--help`, `--json`, `--llms`, `--mcp`, `--schema`, `--token-count`, `--token-limit`, `--token-offset`, `--update`, and `--version`. Declare your own with `globals=`, a schema class every handler reads as `c.globals`.
+
+### Config file
+
+`config=incur.Config(flag="config", files=["my-cli.json"])` loads option defaults from `{"commands": {"<name>": {"options": {...}}}}`; a `loader` reads other formats. Precedence is argv, then config, then schema defaults. See [Config file](https://github.com/wevm/incur#config-file).
+
+### Mount APIs
+
+`cli.gateway(name, fetch)` forwards curl-style arguments to a fetch handler: any function from `incur.Request` to `incur.Response`, plain or `async def`. `incur.from_request(url)` forwards to a hosted API.
+
+```python
+import incur
+
+
+def app(request: incur.Request) -> incur.Response:
+    if request.method == "POST":
+        return incur.Response.json({"created": True, **request.json()}, status=201)
+    return incur.Response.json({"users": [{"id": 1, "name": "Alice"}]})
+
+
+cli = incur.Cli("my-cli")
+cli.gateway("api", app)
+```
+
+```sh
+$ my-cli api users
+# → users[1]{id,name}:
+# →   1,Alice
+
+$ my-cli api users -X POST -d '{"name":"Bob"}'
+# → created: true
+# → name: Bob
+```
+
+With `openapi=` (a document or its URL), each operation becomes a typed command; `openapi_config=incur.OpenapiConfig(mode="namespace")` nests them by path. `cli.mcp_source` turns a remote MCP server's tools into commands:
+
+```python
+import incur
+
+cli = incur.Cli("my-cli")
+cli.gateway("pets", incur.from_request("https://petstore.example/v1/"), openapi="openapi.json")
+cli.mcp_source("docs", "https://mcp.tempo.xyz/mcp")
+```
+
+See [Mount APIs as CLIs](https://github.com/wevm/incur#mount-apis-as-clis).
+
+### Serve over HTTP
+
+`await cli.fetch(request)` runs the command a path names, and `cli.asgi` is the same as an ASGI 3 app (`uvicorn app:cli.asgi`):
+
+```
+GET  /users?limit=5            → my-cli users --limit 5
+POST /users {"name": "Bob"}    → my-cli users --name Bob
+POST /mcp                      → MCP over HTTP
+GET  /openapi.json             → the commands as an OpenAPI document
+GET  /.well-known/agent-skills/index.json → Agent Skills discovery
+```
+
+Responses use the `--full-output --format json` envelope, and streams are NDJSON. See [Serve CLIs as APIs](https://github.com/wevm/incur#serve-clis-as-apis).
+
+### Update notices
+
+In a terminal, CLIs installed from npm check for updates once a day in a detached process and suggest `my-cli --update`. `update=incur.Update(check=..., install=...)` supplies custom checks and installers, and `update=False` disables both. See [Update notices](https://github.com/wevm/incur#update-notices).
+
+### Filtering and token pagination
+
+`--filter-output` prunes output to key paths, and `--token-count`, `--token-limit`, and `--token-offset` page through large outputs.
+
+```python
+import incur
+
+cli = incur.Cli("my-cli")
+
+
+@cli.command("users")
+def users(c: incur.Context) -> dict[str, object]:
+    return {"users": [{"name": "Alice", "role": "admin"}, {"name": "Bob", "role": "user"}]}
+```
+
+```sh
+$ my-cli users --filter-output users[0,2].name
+# → users[2]{name}:
+# →   Alice
+# →   Bob
+
+$ my-cli users --token-count
+# → 14
+```
 
 ## Differences from TypeScript
 
-- `--mcp`, `mcp add`, `mcp doctor`, `skills add`, and `skills list` report an `UNSUPPORTED`
-  error. Self-update, HTTP serving, OpenAPI and fetch sources, and MCP proxy commands are not
-  ported.
-- Integers in data keep their exact value in every format, where TypeScript rounds numbers
-  beyond 2^53. Floats print as JavaScript numbers do. `int` fields still accept only safe
-  integers (±(2^53 − 1)) unless `min` or `max` say otherwise, as Zod's `z.int()` does.
-- Config files that cannot be read report the operating system's message.
+- Integers in data keep their exact value in every format, where JavaScript rounds beyond 2^53.
+- JSON Schema string formats other than `date-time` (such as `email` or `uuid`) are not validated.
+- Standalone binaries and file-based commands are not ported.
 
-## Development
+## License
 
-```sh
-uv sync
-uv run ruff check && uv run ruff format --check
-uv run pyright
-uv run coverage run -m pytest && uv run coverage report  # 100% branch coverage, subprocesses included
-```
-
-The differential test requires Node.js and the repository's `pnpm install`.
-`INCUR_DIFFERENTIAL_DUMP=/tmp/failures.txt` writes every differing case to a file.
+[MIT](https://github.com/wevm/incur/blob/main/LICENSE)

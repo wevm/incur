@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal
 from ._errors import CtaBlock, Error, unknown
 from ._formatter import Format
 from ._help import Example, Usage
+from ._http import Request
 from ._js import Json
 from ._model import SchemaError, build, schema_of, to_json
 from ._schema import Type
@@ -71,6 +72,8 @@ class Context(Generic[A, O, E, V, G]):
     """Variables set by middleware: an instance of the CLI's `vars` class, or a `dict`."""
     version: str | None
     """The CLI version."""
+    request: Request | None = None
+    """The HTTP request, when the command runs over HTTP or HTTP MCP."""
 
     def __class_getitem__(cls, params: object) -> Any:
         """Fills omitted input parameters with `None`, and omitted state parameters with `Any`."""
@@ -112,6 +115,8 @@ class MiddlewareContext(Generic[V, CE, G]):
     """Variables for downstream middleware and handlers: assign attributes, or keys of a `dict`."""
     version: str | None
     """The CLI version."""
+    request: Request | None = None
+    """The HTTP request, when the command runs over HTTP or HTTP MCP."""
 
     def __class_getitem__(cls, params: object) -> Any:
         """Fills omitted parameters with `Any`."""
@@ -156,6 +161,16 @@ def ok(data: object = None, *, cta: CtaBlock | None = None) -> Outcome:
 
 
 @dataclass
+class ToolMeta:
+    """How a command appears as an MCP tool."""
+
+    name: str | None = None
+    description: str | None = None
+    annotations: dict[str, Json] | None = None
+    instructions: str | None = None
+
+
+@dataclass
 class Command:
     """A registered command."""
 
@@ -173,6 +188,8 @@ class Command:
     output: Type | None = None
     output_policy: OutputPolicy | None = None
     usage: list[Usage] = field(default_factory=list[Usage])
+    mcp: ToolMeta | None = None
+    mcp_enabled: bool = True
 
 
 def inputs(
@@ -289,7 +306,7 @@ async def execute(
             return
         result = await _invoke(command, context, args, options, env, sink)
 
-    failure = await _run_chain(chain, context, last)
+    failure = await run_chain(chain, context, last)
     return result if failure is None else failure
 
 
@@ -318,6 +335,7 @@ async def _invoke(
             options=build(command.options, options) if command.options else None,
             var=c.var,
             version=c.version,
+            request=c.request,
         )
         result = handler(context)
         if inspect.isawaitable(result):
@@ -347,7 +365,7 @@ class _Done:
         yield from ()
 
 
-async def _run_chain(
+async def run_chain(
     chain: list[Middleware],
     context: MiddlewareContext[Any, Any, Any],
     last: Callable[[], Awaitable[None]],
@@ -363,7 +381,7 @@ async def _run_chain(
 
     async def run_rest() -> None:
         nonlocal inner
-        inner = await _run_chain(rest, context, last)
+        inner = await run_chain(rest, context, last)
 
     def call_next() -> Awaitable[None]:
         if threading.get_ident() == loop_thread:

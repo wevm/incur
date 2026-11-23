@@ -1,5 +1,5 @@
-"""Python-only behavior that the differential suite cannot compare with TypeScript: built-ins this
-port does not implement, process I/O defaults, handler and middleware failures, the async API,
+"""Python-only behavior that the differential suite cannot compare with TypeScript: process I/O
+defaults, handler and middleware failures, the async API,
 typed middleware state, and inputs the TypeScript reference treats differently by design, such as
 exact integers beyond 2^53.
 """
@@ -31,30 +31,6 @@ def serve(
     stderr = io.StringIO()
     code = cli.serve_with(argv, env=env, stdout=stdout, stderr=stderr, tty=tty)
     return code, stdout.getvalue() + stderr.getvalue()
-
-
-def test_reports_unsupported_builtins() -> None:
-    cli = incur.Cli("tool", version="1.0.0")
-    outputs = [serve(cli, *argv) for argv in (["--mcp"], ["skills", "add"], ["mcp", "add"])]
-    assert outputs == snapshot(
-        [
-            (
-                1,
-                "code: UNSUPPORTED\nmessage: '--mcp' is not supported by the Python port of incur yet.\n",
-            ),
-            (
-                1,
-                "code: UNSUPPORTED\nmessage: 'skills add' is not supported by the Python port of incur yet.\n",
-            ),
-            (
-                1,
-                "code: UNSUPPORTED\nmessage: 'mcp add' is not supported by the Python port of incur yet.\n",
-            ),
-        ]
-    )
-    assert serve(cli, "--mcp", tty=True) == snapshot(
-        (1, "Error (UNSUPPORTED): '--mcp' is not supported by the Python port of incur yet.\n")
-    )
 
 
 def test_discards_output_without_streams() -> None:

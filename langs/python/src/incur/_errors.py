@@ -182,6 +182,14 @@ class FormattedCtaBlock:
             commands.append(entry)
         return {"description": self.description, "commands": commands}
 
+    def text(self) -> str:
+        """Renders the block as plain text, as MCP tool results append it."""
+        lines = [self.description]
+        for cta in self.commands:
+            suffix = f" - {cta.description}" if cta.description else ""
+            lines.append(f"  {cta.command}{suffix}")
+        return "\n".join(lines)
+
     def human(self) -> str:
         """Renders the block for a terminal."""
         width = max(_js.utf16_len(cta.command) for cta in self.commands)

@@ -56,6 +56,7 @@ class Options:
     globals: Type | None = None
     hide_global_options: bool = False
     hide_skills: bool = False
+    hide_update: bool = False
     hint: str | None = None
     options: Type | None = None
     root: bool = False
@@ -242,6 +243,8 @@ def _global_lines(lines: list[str], options: Options) -> None:
     ]
     if options.root:
         flags += [("--mcp", "Start as MCP stdio server"), ("--version", "Show version")]
+        if not options.hide_update:
+            flags.append(("--update", "Update to latest version"))
     flags.sort(key=lambda entry: _js.locale_key(entry[0]))
     width = max(len(flag) for flag, _ in flags)
     lines += ["", "Global Options:"]

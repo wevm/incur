@@ -20,8 +20,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "src", "README.md"]
-addopts = ["--doctest-modules", "--doctest-glob=README.md", "-p", "no:cacheprovider"]
+testpaths = ["tests", "src"]
+addopts = ["--doctest-modules", "-p", "no:cacheprovider"]
 doctest_optionflags = []
 
 [tool.coverage.run]

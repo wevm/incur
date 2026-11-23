@@ -5,15 +5,19 @@ String folding indexes UTF-16 code units, as the JavaScript implementation does.
 
 from __future__ import annotations
 
+import contextvars
 import itertools
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from . import _js
 from ._js import Json
 
 LINE_WIDTH = 80
 MIN_CONTENT_WIDTH = 20
+
+#: The line width of the current `stringify` call; 0 disables folding.
+_width = contextvars.ContextVar("width", default=LINE_WIDTH)
 
 _BLOCK, _FLOW, _QUOTED = 0, 1, 2
 
@@ -44,11 +48,71 @@ class _Ctx:
     indent: str = ""
     indent_at_start: int | None = None
     force_block_indent: bool = False
+    anchors: dict[int, str] = field(default_factory=dict[int, str])
+    emitted: set[int] = field(default_factory=set[int])
 
 
-def stringify(value: Json) -> str:
-    """Serializes a value as a YAML document, ending with a newline."""
-    return _node(value, _Ctx()) + "\n"
+def stringify(value: Json, line_width: int = LINE_WIDTH) -> str:
+    """Serializes a value as a YAML document, ending with a newline.
+
+    A list or object that appears more than once is written once with an anchor (`&a1`) and
+    referenced by alias (`*a1`) elsewhere. A `line_width` of 0 disables line folding.
+
+    >>> shared, empty = [1], {}
+    >>> print(stringify({"a": [shared, shared], "b": empty, "c": empty}), end="")
+    a:
+      - &a1
+        - 1
+      - *a1
+    b: &a2 {}
+    c: *a2
+    """
+    token = _width.set(line_width)
+    try:
+        return _node(value, _Ctx(anchors=_anchors(value))) + "\n"
+    finally:
+        _width.reset(token)
+
+
+def _anchors(value: Json) -> dict[int, str]:
+    """Names repeated lists and objects in order of their first repeat, as `yaml` does."""
+    seen: set[int] = set()
+    anchors: dict[int, str] = {}
+
+    def visit(node: Json) -> None:
+        if not isinstance(node, (list, dict)):
+            return
+        if id(node) in seen:
+            anchors.setdefault(id(node), f"a{len(anchors) + 1}")
+            return
+        seen.add(id(node))
+        for child in node.values() if isinstance(node, dict) else node:
+            visit(child)
+
+    visit(value)
+    return anchors
+
+
+def _anchor(value: Json, ctx: _Ctx) -> tuple[str | None, bool]:
+    """Returns the anchor of a node, and whether this occurrence is an alias."""
+    name = ctx.anchors.get(id(value)) if isinstance(value, (list, dict)) else None
+    if name is None:
+        return None, False
+    if id(value) in ctx.emitted:
+        return name, True
+    ctx.emitted.add(id(value))
+    return name, False
+
+
+def _item(value: Json, ctx: _Ctx) -> str:
+    """Writes a sequence item."""
+    name, alias = _anchor(value, ctx)
+    if name is None:
+        return f"- {_node(value, ctx)}"
+    if alias:
+        return f"- *{name}"
+    text = _node(value, ctx)
+    return f"- &{name} {text}" if not value else f"- &{name}\n{ctx.indent}{text}"
 
 
 def _node(value: Json, ctx: _Ctx) -> str:
@@ -64,7 +128,7 @@ def _node(value: Json, ctx: _Ctx) -> str:
         if not value:
             return "[]"
         item_ctx = replace(ctx, indent=ctx.indent + "  ", indent_at_start=None)
-        return f"\n{ctx.indent}".join(f"- {_node(item, item_ctx)}" for item in value)
+        return f"\n{ctx.indent}".join(_item(item, item_ctx) for item in value)
     if not value:
         return "{}"
     return f"\n{ctx.indent}".join(_pair(k, v, ctx) for k, v in value.items())
@@ -78,6 +142,14 @@ def _pair(key: str, value: Json, ctx: _Ctx) -> str:
     out = f"? {key_str}\n{ctx.indent}:" if explicit else f"{key_str}:"
     pair_ctx.implicit_key = False
     collection = isinstance(value, (list, dict))
+    name, alias = _anchor(value, ctx)
+    if name is not None:
+        if alias:
+            return f"{out} *{name}"
+        value_str = _node(value, pair_ctx)
+        if not value:
+            return f"{out} &{name} {value_str}"
+        return f"{out} &{name}\n{pair_ctx.indent}{value_str}"
     if not explicit and not collection:
         pair_ctx.indent_at_start = _js.utf16_len(out) + 1
     value_str = _node(value, pair_ctx)
@@ -322,7 +394,10 @@ def _keep_more_indented(value: str) -> str:
 
 
 def _line_over_limit(value: str, indent: int) -> bool:
-    limit = LINE_WIDTH - indent
+    width = _width.get()
+    if not width:
+        return False
+    limit = width - indent
     units = _js.utf16(value)
     if len(units) <= limit:
         return False
@@ -345,6 +420,8 @@ def _fold(
     on_overflow: list[bool] | None = None,
 ) -> str:
     """Folds long lines at spaces, as `foldFlowLines` does."""
+    if not _width.get():
+        return text
     units = _js.utf16(text)
     size = len(units)
 
@@ -457,3 +534,51 @@ def _consume_more_indented(units: list[int], i: int, indent: int) -> int:
             start = i + 1
             ch = at(start)
     return end
+
+
+_PAIR = re.compile(r"^([^\s#'\"][^:]*?|\"[^\"]*\"|'[^']*'):(?:\s+(.*))?$")
+
+
+def _scalar(text: str) -> Json:
+    """Reads a flow scalar: quoted text, or a plain scalar resolved by the core schema."""
+    if text.startswith("'") and text.endswith("'") and len(text) > 1:
+        return text[1:-1].replace("''", "'")
+    if text.startswith('"') and text.endswith('"') and len(text) > 1:
+        if _js.json_parse_error(text) is not None:
+            raise ValueError(f"Invalid double-quoted scalar: {text}")
+        return _js.parse_json(text)
+    plain = re.sub(r"\s+#.*$", "", text).strip()
+    if plain in ("", "~", "null", "Null", "NULL"):
+        return None
+    if plain in ("true", "True", "TRUE"):
+        return True
+    if plain in ("false", "False", "FALSE"):
+        return False
+    if re.fullmatch(r"[-+]?[0-9]+", plain):
+        return int(plain)
+    return plain
+
+
+def parse_mapping(text: str) -> dict[str, Json]:
+    r"""Parses a block mapping of scalars, such as skill frontmatter.
+
+    Supports `key: value` lines with plain, single-quoted, and double-quoted scalars, which is
+    what skill frontmatter uses. Comments and lines of any other form are skipped.
+
+    >>> parse_mapping('name: demo\ndescription: "Say \\"hi\\""')
+    {'name': 'demo', 'description': 'Say "hi"'}
+    >>> parse_mapping("'a b': 'it''s'\n\"k\": ~\non: true\noff: FALSE\nn: -3\nx: y # c\n- z")
+    {'a b': "it's", 'k': None, 'on': True, 'off': False, 'n': -3, 'x': 'y'}
+
+    Raises:
+        ValueError: When a double-quoted scalar has an invalid escape, as `yaml` rejects it.
+    """
+    out: dict[str, Json] = {}
+    for line in text.splitlines():
+        match = _PAIR.match(line.rstrip())
+        if match is None:
+            continue
+        key = match[1].strip()
+        quoted = key[0] in "'\""
+        out[str(_scalar(key)) if quoted else key] = _scalar(match[2] or "")
+    return out

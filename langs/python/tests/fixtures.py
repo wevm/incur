@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import enum
 import json
+import sys
+import urllib.parse
 from collections.abc import AsyncGenerator, Awaitable, Generator
 from typing import Annotated, Any, Literal
 
 import incur
 from incur import Context, Cta, CtaBlock, Error, Example, Usage, field
+from incur._js import json_parse_error  # pyright: ignore[reportPrivateUsage]
 
 Data = dict[str, object]
 Stream = Generator[object, None, incur.Outcome | None]
@@ -46,6 +49,14 @@ MIXED: Data = {
     "numbers": [0, -1, 1.5, 1e21, 0.000001, 123456789012],
     "nil": None,
 }
+
+
+def parse_json(text: str) -> object:
+    """Parses JSON as `JSON.parse` does, failing with V8's message."""
+    message = json_parse_error(text)
+    if message is not None:
+        raise ValueError(message)
+    return json.loads(text)
 
 
 @incur.schema(rename_all="SCREAMING_SNAKE_CASE")
@@ -226,6 +237,7 @@ def app() -> incur.Cli:
         "app",
         description="A differential test CLI",
         version="1.2.3",
+        update=False,
         env=AppEnv,
         vars=UserVars,
     )
@@ -365,7 +377,7 @@ def app() -> incur.Cli:
 
     @cli.command("data", description="Return parsed JSON")
     def data(c: Context[DataArgs]) -> object:
-        return json.loads(c.args.json)
+        return parse_json(c.args.json)
 
     @cli.command("secret", description="Agent-only output", output_policy="agent-only")
     def secret(c: Context) -> Data:
@@ -422,7 +434,11 @@ class LoudOptions:
 
 def greet() -> incur.Cli:
     cli = incur.Cli(
-        "greet", description="A greeting CLI", banner=lambda: "Greet banner", banner_mode="agent"
+        "greet",
+        description="A greeting CLI",
+        update=False,
+        banner=lambda: "Greet banner",
+        banner_mode="agent",
     )
 
     @cli.root()
@@ -472,6 +488,7 @@ def globals_cli() -> incur.Cli:
     cli = incur.Cli(
         "glob",
         description="Global options",
+        update=False,
         banner=glob_banner,
         banner_mode="human",
         config=incur.Config(flag="config", loader=load_config),
@@ -527,6 +544,7 @@ def cfg() -> incur.Cli:
     cli = incur.Cli(
         "cfg",
         description="Config defaults",
+        update=False,
         config=incur.Config(flag="config", files=["config/cfg.json"]),
         env=CfgEnv,
         globals=CfgGlobals,
@@ -554,6 +572,7 @@ def plain() -> incur.Cli:
     cli = incur.Cli(
         "plain",
         description="No skills, JSON by default",
+        update=False,
         sync=False,
         format="json",
         aliases=["pl", "plain-cli"],
@@ -593,6 +612,7 @@ def rooted() -> incur.Cli:
     cli = incur.Cli(
         "rooted",
         description="Root with subcommands",
+        update=False,
         config=incur.Config(files=["config/cfg.json"]),
     )
 
@@ -613,13 +633,1101 @@ def rooted() -> incur.Cli:
     return cli.group(nest)
 
 
+def network(request: incur.Request) -> incur.Response | Awaitable[incur.Response]:
+    """The fake network: `hosted.test` reaches `upstream`, `registry.test` is a fake npm
+    registry, and any other host fails like an unreachable server."""
+    parts = urllib.parse.urlsplit(request.url)
+    if parts.netloc == "hosted.test":
+        return upstream(request)
+    if parts.netloc == "registry.test":
+        name = urllib.parse.unquote(parts.path[1:])
+        if name == "missing":
+            return incur.Response("Not Found", status=404)
+        latest = "0.1.0" if name == "stale" else "2.0.0"
+        return incur.Response.json({"name": name, "dist-tags": {"latest": latest}})
+    raise TypeError("fetch failed")
+
+
+incur.set_fetch(network)
+
+
+def reply(body: object, status: int = 200) -> incur.Response:
+    return incur.Response(
+        json.dumps(body, separators=(",", ":"), ensure_ascii=False),
+        status=status,
+        headers={"content-type": "application/json"},
+    )
+
+
+async def upstream(request: incur.Request) -> incur.Response:
+    """The upstream API behind fetch-backed and OpenAPI commands. Routes on the last path
+    segment; unknown routes echo the request."""
+    route = request.path.split("/")[-1]
+    if route == "openapi.json":
+        return reply(MINI_SPEC)
+    if route == "users":
+        return reply({"users": USERS})
+    if route == "text":
+        return incur.Response("plain text body")
+    if route == "fail":
+        return reply({"error": {"code": "NOT_FOUND", "message": "No such thing"}}, 404)
+    if route == "bad":
+        return reply({"message": "Bad input", "error": {"code": 7}}, 400)
+    if route == "boom":
+        return incur.Response("Internal failure", status=500)
+    if route == "down":
+        return reply({"status": "down"}, 503)
+    if route == "empty":
+        return incur.Response(status=204)
+    if route == "stream":
+        return incur.Response(
+            '{"n":1}\n\nnot json\n{"n":2}\n{"n":3}',
+            headers={"content-type": "application/x-ndjson"},
+        )
+    if route == "sse":
+        return incur.Response('data: {"n":1}\n\n', headers={"content-type": "text/event-stream"})
+    text = request.text()
+    body: object = None
+    if text:
+        try:
+            body = json.loads(text)
+        except ValueError:
+            body = text
+    return reply(
+        {
+            "method": request.method,
+            "path": urllib.parse.urlsplit(request.url).path,
+            "query": request.query,
+            "headers": dict(request.headers.items()),
+            "body": body,
+        }
+    )
+
+
+MINI_SPEC: Data = {
+    "openapi": "3.1.0",
+    "info": {"title": "Mini", "version": "1.0.0"},
+    "paths": {
+        "/ping": {"get": {"operationId": "ping", "summary": "Ping the API"}},
+        "/ping/{id}": {
+            "post": {
+                "operationId": "pingOne",
+                "parameters": [
+                    {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}
+                ],
+            }
+        },
+    },
+}
+
+PET_ID: Data = {
+    "name": "petId",
+    "in": "path",
+    "required": True,
+    "description": "Pet id",
+    "schema": {"type": "integer"},
+}
+
+PET_SPEC: Data = {
+    "openapi": "3.1.0",
+    "info": {"title": "Pets", "version": "1.0.0"},
+    "security": [{"apiKey": []}],
+    "components": {
+        "securitySchemes": {
+            "apiKey": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Api-Key",
+                "description": "API key",
+            },
+            "bearer": {"type": "http", "scheme": "bearer"},
+            "basic": {"type": "http", "scheme": "Basic", "description": "Basic credentials"},
+            "query": {"type": "apiKey", "in": "query", "name": "key"},
+            "oauth": {"type": "oauth2"},
+        },
+        "schemas": {
+            "Pet": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Pet name"},
+                    "age": {"type": "integer", "minimum": 0},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "owner": {"type": "object", "properties": {"id": {"type": "string"}}},
+                },
+                "required": ["name"],
+            }
+        },
+        "parameters": {
+            "Limit": {
+                "name": "limit",
+                "in": "query",
+                "description": "Max results",
+                "schema": {"type": "integer", "minimum": 1, "maximum": 50},
+            }
+        },
+    },
+    "paths": {
+        "/": {"get": {"operationId": "index", "summary": "API index"}},
+        "/pets": {
+            "get": {
+                "operationId": "listPets",
+                "summary": "List pets",
+                "description": "Lists every pet in the store.",
+                "parameters": [
+                    {"$ref": "#/components/parameters/Limit"},
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["available", "sold"]},
+                    },
+                    {"name": "vaccinated", "in": "query", "schema": {"type": "boolean"}},
+                    {
+                        "name": "X-Trace",
+                        "in": "header",
+                        "description": "Trace id",
+                        "schema": {"type": "string"},
+                    },
+                ],
+            },
+            "post": {
+                "operationId": "createPet",
+                "summary": "Create a pet",
+                "security": [{"bearer": []}],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}
+                    },
+                },
+            },
+        },
+        "/pets/{petId}": {
+            "get": {"operationId": "getPet", "summary": "Get a pet", "parameters": [PET_ID]},
+            "delete": {"operationId": "deletePet", "parameters": [PET_ID], "security": []},
+            "put": {
+                "summary": "Replace a pet",
+                "parameters": [PET_ID],
+                "security": [{"basic": []}, {"query": []}, {"oauth": []}, {"unknown": []}],
+                "requestBody": {
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}
+                    }
+                },
+            },
+        },
+        "/pets/{petId}/fail": {"get": {"operationId": "failPet", "parameters": [PET_ID]}},
+        "/store/text": {"get": {"operationId": "storeText", "description": "Plain text"}},
+        "/store/bad": {
+            "post": {"operationId": "storeBad", "summary": "Rejected", "description": "Rejected"}
+        },
+        "/store/boom": {"post": {"operationId": "storeBoom"}},
+        "/search": {
+            "get": {
+                "operationId": "search",
+                "summary": "Search",
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": True,
+                        "schema": {
+                            "type": "string",
+                            "pattern": f"^{'[a-z]' * 40}$",
+                            "example": "abc",
+                        },
+                    },
+                    {
+                        "name": "since",
+                        "in": "query",
+                        "schema": {"type": "string", "format": "date-time"},
+                    },
+                    {"name": "score", "in": "query", "schema": {"type": ["number", "null"]}},
+                ],
+            }
+        },
+        "/v1/users": {"get": {"operationId": "listUsersV1", "summary": "List users (v1)"}},
+        "/v2/users": {"get": {"operationId": "listUsersV2", "summary": "List users (v2)"}},
+        "/v2/users/{id}": {
+            "patch": {
+                "operationId": "updateUser",
+                "summary": "Update a user",
+                "parameters": [
+                    {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+                    {
+                        "name": "limit",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {"name": "Limit", "in": "header", "schema": {"type": "string"}},
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "header-limit": {"type": "string"},
+                                    "active": {"type": "boolean", "description": "Active flag"},
+                                },
+                                "required": ["active"],
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    },
+}
+
+
+@incur.schema(rename_all="SCREAMING_SNAKE_CASE")
+class ToolsEnv:
+    tools_region: Annotated[str, field("Region")] = "eu"
+
+
+@incur.schema
+class ToolsGlobals:
+    profile: Annotated[str, field("Profile")] = "dev"
+    verbose: Annotated[bool | None, field("Verbose output")] = None
+
+
+@incur.schema
+class Trace:
+    trace: str = "none"
+
+
+@incur.schema
+class EchoToolArgs:
+    text: Annotated[str, field("Text to echo")]
+
+
+@incur.schema
+class EchoToolOptions:
+    upper: Annotated[bool, field("Uppercase")] = False
+    times: Annotated[int, field("Repeat count", min=1, max=3)] = 1
+
+
+@incur.schema
+class EchoToolOutput:
+    text: Annotated[str, field("Echoed text")]
+
+
+@incur.schema
+class LabelOptions:
+    label: Annotated[str | None, field("Label")] = None
+
+
+@incur.schema(rename_all="SCREAMING_SNAKE_CASE")
+class TokenEnv:
+    tools_token: Annotated[str | None, field("Token")] = None
+
+
+@incur.schema(rename_all="SCREAMING_SNAKE_CASE")
+class RequiredTokenEnv:
+    tools_token: Annotated[str, field("Token")]
+
+
+@incur.schema
+class NamedArgs:
+    profile: Annotated[str, field("Profile argument")]
+
+
+@incur.schema
+class TargetArgs:
+    target: Annotated[str | None, field("Target")] = None
+
+
+@incur.schema
+class OpsLimitOptions:
+    limit: Annotated[float, field("Limit")] = 2
+
+
+ToolsContext = incur.MiddlewareContext[Trace, ToolsEnv, ToolsGlobals]
+
+
+def tool_cli(name: str, mcp: incur.McpOptions) -> incur.Cli:
+    """A CLI that exercises MCP tool behaviors. `tools` and `catalog` differ only in `mcp`."""
+    cli = incur.Cli(
+        name,
+        description="MCP tool behaviors",
+        version="2.0.0",
+        update=False,
+        sync=False,
+        mcp=mcp,
+        env=ToolsEnv,
+        globals=ToolsGlobals,
+        vars=Trace,
+    )
+
+    @cli.use
+    async def trace(c: ToolsContext, next_: incur.Next) -> None:
+        c.var.trace = f"root:{c.command}:{c.env.tools_region}"
+        await next_()
+
+    @cli.command(
+        "echo",
+        description="Echo text back",
+        aliases=["say"],
+        output=EchoToolOutput,
+        mcp=incur.McpTool(
+            annotations=incur.ToolAnnotations(
+                title="Echo",
+                read_only_hint=True,
+                destructive_hint=False,
+                idempotent_hint=True,
+                open_world_hint=False,
+            )
+        ),
+    )
+    def echo(c: Context[EchoToolArgs, EchoToolOptions]) -> Data:
+        text = c.args.text.upper() if c.options.upper else c.args.text
+        return {"text": " ".join([text] * c.options.times)}
+
+    @cli.command("context", description="Show globals, env, and vars")
+    def context(c: Context[None, LabelOptions, TokenEnv, Trace, ToolsGlobals]) -> Data:
+        return {
+            "agent": c.agent,
+            "format": c.format,
+            "globals": incur.dump(c.globals),
+            "label": c.options.label,
+            "token": c.env.tools_token,
+            "trace": c.var.trace,
+        }
+
+    @cli.command("named", description="Positional named like a global")
+    def named(c: Context[NamedArgs, None, None, Trace, ToolsGlobals]) -> Data:
+        return {"arg": c.args.profile, "global": c.globals.profile}
+
+    @cli.command("deploy", description="Deploy with a required token", destructive=True)
+    def deploy(c: Context[None, None, RequiredTokenEnv]) -> Data:
+        return {"deployed": c.env.tools_token}
+
+    @cli.command("fail", description="Fail with details")
+    def fail(c: Context) -> Data:
+        raise Error(
+            "QUOTA",
+            "Quota exceeded",
+            hint="Wait a minute.",
+            retryable=True,
+            exit_code=4,
+            cta=CtaBlock(
+                [
+                    Cta("echo", "Try again", args={"text": "retry"}),
+                    Cta("context", options={"label": True}),
+                ]
+            ),
+        )
+
+    @cli.command("plain-fail", description="Fail without details")
+    def plain_fail(c: Context) -> Data:
+        raise Error("NOPE", "nope")
+
+    @cli.command("throws", description="Throw an error")
+    def throws(c: Context) -> Data:
+        raise RuntimeError("kaput")
+
+    @cli.command("suggest", description="Return data with suggestions")
+    def suggest(c: Context) -> incur.Outcome:
+        return incur.ok(
+            {"done": True}, cta=CtaBlock(["echo next", "tools fail"], description="Then:")
+        )
+
+    @cli.command("stream", description="Stream chunks")
+    async def stream(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        yield "two"
+        yield incur.ok(cta=CtaBlock(["echo done"]))
+
+    @cli.command("stream-plain", description="Stream without suggestions")
+    async def stream_plain(c: Context) -> AsyncStream:
+        yield {"n": 1}
+
+    @cli.command("stream-fail", description="Stream then fail")
+    async def stream_fail(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        raise Error("BROKEN", "stream broke", cta=CtaBlock(["stream"]))
+
+    @cli.command("stream-throw", description="Stream then throw")
+    async def stream_throw(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        raise RuntimeError("stream threw")
+
+    @cli.command("stream-return-error", description="Stream then return an error")
+    async def stream_return_error(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        raise Error("LATE", "failed at the end")
+
+    @cli.command("scalar", description="Return a string", output=str)
+    def scalar(c: Context) -> str:
+        return "plain"
+
+    @cli.command("nothing", description="Return nothing")
+    def nothing(c: Context) -> None:
+        return None
+
+    @cli.command("hidden", description="Hidden from MCP", mcp=False)
+    def hidden(c: Context) -> Data:
+        return {"hidden": True}
+
+    @cli.command(
+        "renamed",
+        description="Renamed for MCP",
+        mcp=incur.McpTool(
+            name="custom_tool", description="A custom tool", instructions="Call sparingly."
+        ),
+    )
+    def renamed(c: Context) -> Data:
+        return {"renamed": True}
+
+    async def needs_verbose(c: ToolsContext, next_: incur.Next) -> None:
+        if not c.globals.verbose:
+            raise Error("NEEDS_VERBOSE", "pass verbose")
+        await next_()
+
+    @cli.command("guarded", description="Requires --verbose", middleware=[needs_verbose])
+    def guarded(c: Context[None, None, None, Trace]) -> Data:
+        return {"trace": c.var.trace}
+
+    ops = incur.Cli("ops", description="Operations", vars=Trace)
+
+    @ops.root()
+    def ops_root(c: Context[TargetArgs]) -> Data:
+        return {"ops": c.args.target or "all"}
+
+    @ops.use
+    async def ops_trace(c: incur.MiddlewareContext[Trace], next_: incur.Next) -> None:
+        c.var.trace = f"{c.var.trace}>ops"
+        await next_()
+
+    @ops.command("list", description="List operations")
+    def ops_list(c: Context[None, OpsLimitOptions, None, Trace]) -> Data:
+        return {"limit": c.options.limit, "trace": c.var.trace}
+
+    private = incur.Cli("private", description="Hidden group", mcp=False)
+
+    @private.command("peek", description="Peek")
+    def peek(c: Context) -> Data:
+        return {"peek": True}
+
+    return cli.group(ops).group(private)
+
+
+def tools() -> incur.Cli:
+    return tool_cli(
+        "tools",
+        incur.McpOptions(
+            instructions="Use echo for testing.",
+            title="Tool Box",
+            tools=incur.ToolFilter(discovery="direct"),
+        ),
+    )
+
+
+def catalog() -> incur.Cli:
+    return tool_cli(
+        "catalog",
+        incur.McpOptions(
+            tools=incur.ToolFilter(
+                include=["echo", "ops*", "stream*", "fail", "context", "named", "deploy"],
+                exclude=["stream-throw"],
+            )
+        ),
+    )
+
+
+def bare() -> incur.Cli:
+    return incur.Cli("bare", update=False, sync=False)
+
+
+def dupe() -> incur.Cli:
+    cli = incur.Cli("dupe", description="Duplicate tool names", update=False, sync=False)
+
+    @cli.command("a_b", description="Underscored")
+    def a_b(c: Context) -> int:
+        return 1
+
+    group = incur.Cli("a", description="Group")
+
+    @group.command("b")
+    def b(c: Context) -> int:
+        return 2
+
+    return cli.group(group)
+
+
+@incur.schema
+class WebGlobals:
+    region: Annotated[str, field("Region")] = "us"
+
+
+@incur.schema
+class WebArgs:
+    name: Annotated[str | None, field("Name")] = None
+
+
+@incur.schema
+class ItemsArgs:
+    id: Annotated[float | None, field("Item id")] = None
+
+
+@incur.schema
+class ItemsOptions:
+    limit: Annotated[float, field("Limit")] = 10
+    tags: Annotated[list[str] | None, field("Tags")] = None
+    verbose: Annotated[bool | None, field("Verbose")] = None
+
+
+@incur.schema
+class CreateOptions:
+    title: Annotated[str, field("Title", min=1)]
+    draft: Annotated[bool, field("Draft")] = False
+
+
+@incur.schema
+class CreateOutput:
+    title: str
+    draft: bool
+
+
+def web() -> incur.Cli:
+    cli = incur.Cli(
+        "web",
+        description="HTTP serving",
+        version="3.0.0",
+        update=False,
+        sync=False,
+        mcp=incur.McpOptions(stateless=False),
+        globals=WebGlobals,
+    )
+
+    @cli.root()
+    def root(c: Context[WebArgs, None, None, Any, WebGlobals]) -> Data:
+        return {"root": True, "name": c.args.name, "region": c.globals.region}
+
+    @cli.command("items", description="List items")
+    def items(c: Context[ItemsArgs, ItemsOptions, None, Any, WebGlobals]) -> Data:
+        return {"id": c.args.id, **incur.dump(c.options), "region": c.globals.region}
+
+    @cli.command("create", description="Create an item", output=CreateOutput)
+    def create(c: Context[None, CreateOptions]) -> Data:
+        return {**incur.dump(c.options)}
+
+    @cli.command("request", description="Inspect the HTTP request")
+    def request(c: Context) -> Data:
+        r = c.request
+        return {
+            "agent": r.headers.get("x-agent") if r else None,
+            "method": r.method if r else None,
+            "url": r.url if r else None,
+        }
+
+    @cli.command("stream", description="Stream chunks")
+    async def stream(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        yield {"n": 2}
+        yield incur.ok(cta=CtaBlock(["items"]))
+
+    @cli.command("stream-plain", description="Stream without suggestions")
+    async def stream_plain(c: Context) -> AsyncStream:
+        yield "only"
+
+    @cli.command("stream-fail", description="Stream then fail")
+    async def stream_fail(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        raise Error("BROKEN", "stream broke", cta=CtaBlock(["stream"]))
+
+    @cli.command("stream-throw", description="Stream then throw")
+    async def stream_throw(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        raise RuntimeError("stream threw")
+
+    @cli.command("stream-return-error", description="Stream then return an error")
+    async def stream_return_error(c: Context) -> AsyncStream:
+        yield {"n": 1}
+        raise Error("LATE", "failed at the end")
+
+    @cli.command("fail", description="Fail with suggestions")
+    def fail(c: Context) -> Data:
+        raise Error("NOPE", "nope", retryable=False, cta=CtaBlock(["items"]))
+
+    @cli.command("throws", description="Throw an error")
+    def throws(c: Context) -> Data:
+        raise RuntimeError("kaput")
+
+    admin = incur.Cli("admin", description="Admin commands")
+
+    @admin.use
+    def eu_only(c: incur.MiddlewareContext[Any, Any, WebGlobals], next_: incur.Next) -> None:
+        if c.globals.region != "eu":
+            raise Error("REGION", "eu only")
+        next_()
+
+    @admin.command("stats", description="Show stats")
+    def stats(c: Context) -> Data:
+        return {"users": 3}
+
+    return cli.group(admin)
+
+
+@incur.schema(rename_all="SCREAMING_SNAKE_CASE")
+class GatewayEnv:
+    gateway_mode: Annotated[str | None, field("Mode")] = None
+
+
+def gateway() -> incur.Cli:
+    cli = incur.Cli(
+        "gateway", description="Fetch gateways", update=False, sync=False, env=GatewayEnv
+    )
+
+    @cli.use
+    async def mode(c: incur.MiddlewareContext[Any, GatewayEnv], next_: incur.Next) -> None:
+        if c.env.gateway_mode == "deny":
+            raise Error("DENIED", "gateway denied", cta=CtaBlock(["status"]))
+        if c.env.gateway_mode == "throw":
+            raise RuntimeError("middleware threw")
+        await next_()
+
+    cli.gateway("api", upstream, description="Upstream API")
+    cli.gateway("v1", upstream, base_path="/v1")
+    cli.gateway(
+        "hosted",
+        incur.from_request(
+            "http://hosted.test/base/",
+            headers={"authorization": "Bearer hosted", "x-default": "yes"},
+        ),
+        description="Hosted API",
+    )
+    cli.gateway("offline", incur.from_request("http://offline.test"), description="Unreachable API")
+    cli.gateway("secret", upstream, description="Agent-only API", output_policy="agent-only")
+
+    @cli.command("status", description="Local command")
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    nested = incur.Cli("nested", description="Nested gateways")
+    nested.gateway("api", upstream, description="Nested API")
+    return cli.group(nested)
+
+
+def proxy() -> incur.Cli:
+    cli = incur.Cli(
+        "proxy", description="Root fetch with commands", update=False, sync=False, fetch=upstream
+    )
+
+    @cli.command("local", description="Local command")
+    def local(c: Context) -> Data:
+        return {"local": True}
+
+    return cli
+
+
+def raw() -> incur.Cli:
+    return incur.Cli("raw", description="Root fetch only", update=False, sync=False, fetch=upstream)
+
+
+def oa() -> incur.Cli:
+    cli = incur.Cli("oa", description="OpenAPI commands", update=False, sync=False)
+    cli.gateway("ops", upstream, description="Operation mode", openapi=PET_SPEC)
+    cli.gateway(
+        "ns",
+        upstream,
+        description="Namespace mode",
+        base_path="/base",
+        openapi=PET_SPEC,
+        openapi_config=incur.OpenapiConfig(
+            mode="namespace",
+            groups={
+                "pets": "Pet operations",
+                "v2 users": "Users (v2)",
+                "missing": "Ignored",
+                "pets petId get": "Leaf",
+            },
+            forward_headers=["x-forward", "x-api-key"],
+        ),
+    )
+    cli.gateway(
+        "latest",
+        upstream,
+        description="Latest versions only",
+        openapi=PET_SPEC,
+        openapi_config=incur.OpenapiConfig(
+            mode="namespace",
+            versions="latest",
+            security=False,
+            include=lambda o: o.method != "delete" and not o.path.startswith("/store"),
+        ),
+    )
+    cli.gateway(
+        "compact",
+        upstream,
+        description="Compact schemas",
+        openapi=PET_SPEC,
+        openapi_config=incur.OpenapiConfig(compact=True, include=lambda o: o.path == "/search"),
+        mcp=False,
+    )
+    cli.gateway(
+        "url", upstream, description="Spec from a URL", openapi="http://hosted.test/openapi.json"
+    )
+    cli.gateway(
+        "rel",
+        incur.from_request("http://hosted.test/svc"),
+        description="Spec relative to a hosted source",
+        openapi="openapi.json",
+        output_policy="agent-only",
+    )
+    return cli
+
+
+def oaroot() -> incur.Cli:
+    return incur.Cli(
+        "oaroot",
+        description="Root OpenAPI commands",
+        version="0.1.0",
+        update=False,
+        sync=False,
+        fetch=upstream,
+        openapi=MINI_SPEC,
+        openapi_config=incur.OpenapiConfig(mode="namespace"),
+    )
+
+
+FAKE_TOOLS: list[object] = [
+    {
+        "name": "structured",
+        "description": "Structured result",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "description": "Count"},
+                "label": {"type": "string"},
+                "on": {"type": "boolean"},
+                "ratio": {"type": ["number", "null"]},
+            },
+            "required": ["count"],
+        },
+        "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {"name": "headers", "description": "Echo MCP headers"},
+    {"name": "texts", "description": "Two text items", "outputSchema": {"type": "string"}},
+    {"name": "words", "description": "Non-JSON text"},
+    {"name": "none", "description": "No content"},
+    {"name": "tool-error", "description": "Tool error result"},
+    {"name": "silent-error", "description": "Tool error without text"},
+    {"name": "rpc-error", "description": "JSON-RPC error"},
+    {"name": "http-error", "description": "HTTP error"},
+    {"name": "sse", "description": "SSE response"},
+    {"name": "sse-other", "description": "SSE without a matching message"},
+    {"name": "empty-body", "description": "Empty response body"},
+]
+
+
+def compact(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+async def fake_mcp(request: incur.Request) -> incur.Response:
+    """A fake streamable-HTTP MCP server with canned tool results."""
+    message: dict[str, Any] = json.loads(request.text())
+    head = {"jsonrpc": "2.0", **({"id": message["id"]} if "id" in message else {})}
+
+    def answer(result: object, headers: dict[str, str] | None = None) -> incur.Response:
+        return incur.Response(
+            compact({**head, "result": result}),
+            headers={"content-type": "application/json", **(headers or {})},
+        )
+
+    def text(*items: str) -> incur.Response:
+        return answer({"content": [{"type": "text", "text": t} for t in items]})
+
+    method = message["method"]
+    if method == "initialize":
+        return answer(
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake", "version": "1.0.0"},
+            },
+            {"mcp-session-id": "fake-session"},
+        )
+    if method == "notifications/initialized":
+        return incur.Response(status=202)
+    if method == "tools/list":
+        return answer({"tools": FAKE_TOOLS})
+    params: dict[str, Any] = message.get("params") or {}
+    args: dict[str, Any] = params.get("arguments") or {}
+    name = params.get("name")
+    if name == "structured":
+        total = args["count"] * 2 if isinstance(args.get("count"), (int, float)) else None
+        return answer(
+            {
+                "content": [{"type": "text", "text": "ignored"}],
+                "structuredContent": {"total": total, "args": args},
+            }
+        )
+    if name == "headers":
+        return text(
+            compact(
+                {
+                    "session": request.headers.get("mcp-session-id"),
+                    "version": request.headers.get("mcp-protocol-version"),
+                    "custom": request.headers.get("x-custom"),
+                    "accept": request.headers.get("accept"),
+                }
+            )
+        )
+    if name == "texts":
+        return text("first", "second")
+    if name == "words":
+        return text("just words")
+    if name == "none":
+        return answer({})
+    if name == "tool-error":
+        return answer({"content": [{"type": "text", "text": "remote failed"}], "isError": True})
+    if name == "silent-error":
+        return answer({"content": [{"type": "image", "data": ""}], "isError": True})
+    if name == "rpc-error":
+        return incur.Response(
+            compact({**head, "error": {"code": -32000, "message": "rpc failed"}}),
+            headers={"content-type": "application/json"},
+        )
+    if name == "http-error":
+        return incur.Response("unavailable", status=503)
+    if name == "sse":
+        result = {**head, "result": {"content": [{"type": "text", "text": '{"via":"sse"}'}]}}
+        return incur.Response(
+            'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'
+            f"data: {compact(result)}\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+    if name == "sse-other":
+        return incur.Response(
+            'data: {"jsonrpc":"2.0","id":"other","result":{}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+    return incur.Response("", headers={"content-type": "application/json"})
+
+
+def remote() -> incur.Cli:
+    cli = incur.Cli("remote", description="Remote MCP servers", update=False, sync=False)
+    cli.mcp_source(
+        "direct", "http://tools.test/mcp", fetch=tools().fetch, description="Direct discovery"
+    )
+    cli.mcp_source(
+        "catalog",
+        "http://catalog.test/mcp",
+        fetch=catalog().fetch,
+        description="Progressive discovery",
+    )
+    cli.mcp_source(
+        "paged",
+        "http://app.test/mcp",
+        fetch=app().fetch,
+        description="Progressive discovery across pages",
+    )
+    cli.mcp_source(
+        "session", "http://web.test/mcp", fetch=web().fetch, description="Stateful server"
+    )
+    cli.mcp_source(
+        "fake",
+        "http://fake.test/mcp",
+        fetch=fake_mcp,
+        headers={"x-custom": "yes"},
+        description="Canned server",
+        output_policy="agent-only",
+    )
+
+    @cli.command("local", description="Local command")
+    def local(c: Context) -> Data:
+        return {"local": True}
+
+    return cli
+
+
+@incur.schema
+class DeployTargetArgs:
+    env: Annotated[Literal["staging", "prod"], field("Target environment")]
+
+
+def kit_cli(
+    name: str,
+    *,
+    mcp: incur.McpOptions | None = None,
+    package: str | None = None,
+    version: str = "1.4.0",
+) -> incur.Cli:
+    """A CLI that syncs skills and registers MCP servers."""
+    cli = incur.Cli(
+        name,
+        description="Skill and MCP sync",
+        version=version,
+        update=False,
+        package=package,
+        mcp=mcp,
+        sync=incur.Sync(
+            include=["skills/*", "_root"],
+            body="Run `kit auth login` to finish setup.",
+            suggestions=["Show my status", "Deploy the app"],
+        ),
+    )
+
+    @cli.command("status", description="Show status", examples=[Example("", "Show status")])
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    @cli.command("deploy", description="Deploy the app", destructive=True)
+    def deploy(c: Context[DeployTargetArgs]) -> Data:
+        return {"deployed": c.args.env}
+
+    auth = incur.Cli("auth", description="Authentication")
+
+    @auth.command("login", description="Log in")
+    def login(c: Context) -> Data:
+        return {"ok": True}
+
+    @auth.command("logout", description="Log out", hint="Clears tokens.")
+    def logout(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli.group(auth)
+
+
+def report(label: str, fields: dict[str, object]) -> None:
+    """Writes an update callback's context to stderr, as the reference fixtures do."""
+    present = {key: value for key, value in fields.items() if value is not None}
+    sys.stderr.write(f"{label} {compact(present)}\n")
+
+
+def status_cli(name: str, update: incur.Update, description: str | None = None) -> incur.Cli:
+    cli = incur.Cli(name, description=description, version="1.0.0", update=update)
+
+    @cli.command("status", description="Show status" if description else None)
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+def upd() -> incur.Cli:
+    def check(c: incur.UpdateCheck) -> str | None:
+        report("check", {"current": c.current, "name": c.name, "package": c.package})
+        return "1.2.0" if c.current == "1.0.0" else None
+
+    def install(c: incur.UpdateInstall) -> None:
+        report(
+            "install",
+            {"current": c.current, "latest": c.latest, "name": c.name, "package": c.package},
+        )
+
+    return status_cli("upd", incur.Update(check=check, install=install), "Custom updates")
+
+
+def updbeta() -> incur.Cli:
+    def install(c: incur.UpdateInstall) -> None:
+        raise RuntimeError("installer failed")
+
+    cli = incur.Cli(
+        "updbeta",
+        description="Prerelease updates",
+        version="1.0.0-beta.2",
+        sync=False,
+        update=incur.Update(check=lambda c: "not-a-version", deferred=True, install=install),
+    )
+
+    @cli.command("status", description="Show status")
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+def updcheck() -> incur.Cli:
+    def check(c: incur.UpdateCheck) -> str | None:
+        raise RuntimeError("check failed")
+
+    cli = incur.Cli(
+        "updcheck",
+        version="1.0.0",
+        sync=False,
+        update=incur.Update(check=check, deferred=True, install=lambda c: None),
+    )
+
+    @cli.command("status")
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+def updnone() -> incur.Cli:
+    cli = incur.Cli(
+        "updnone", version="1.0.0", sync=False, update=incur.Update(check=lambda c: "9.0.0")
+    )
+
+    @cli.command("status")
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+def updpkg() -> incur.Cli:
+    cli = incur.Cli("updpkg", description="Package updates", sync=False)
+
+    @cli.command("status")
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+def updbad() -> incur.Cli:
+    cli = incur.Cli("updbad", sync=False, update=incur.Update(package="Bad Name!"))
+
+    @cli.command("status")
+    def status(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
 def cli(name: str) -> incur.Cli:
     """Returns the fixture CLI with the given key from `cases.json`."""
     return {
         "app": app,
+        "bare": bare,
+        "catalog": catalog,
         "cfg": cfg,
+        "dupe": dupe,
+        "gateway": gateway,
         "globals": globals_cli,
         "greet": greet,
+        "kit": lambda: kit_cli("kit"),
+        "kitbad": lambda: kit_cli("kitbad", package="Bad Name", version="1"),
+        "kitcmd": lambda: kit_cli(
+            "kitcmd", mcp=incur.McpOptions(agents=["cursor", "amp"], command="kit serve --stdio")
+        ),
+        "kitpkg": lambda: kit_cli(
+            "kitpkg", package="@acme/kit", mcp=incur.McpOptions(name="acme", agents=["amp"])
+        ),
+        "kitver": lambda: kit_cli("kitver", package="kitver", version="latest"),
+        "oa": oa,
+        "oaroot": oaroot,
         "plain": plain,
+        "proxy": proxy,
+        "raw": raw,
+        "remote": remote,
         "rooted": rooted,
+        "spaced": lambda: kit_cli("kit tool"),
+        "tools": tools,
+        "upd": upd,
+        "updbad": updbad,
+        "updbeta": updbeta,
+        "updcheck": updcheck,
+        "updnone": updnone,
+        "updpkg": updpkg,
+        "web": web,
     }[name]()

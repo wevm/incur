@@ -3,17 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
+import io
 import math
 import os
 import sys
 import time
 import typing
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, NoReturn, Protocol, TypeVar
+from typing import Any, Literal, NoReturn, Protocol, TextIO, TypeVar
 
-from . import _completions, _filter, _js, _parser, _skill, _tokens
+from . import (
+    _completions,
+    _filter,
+    _gateway,
+    _js,
+    _mcpsource,
+    _parser,
+    _pm,
+    _serve_http,
+    _skill,
+    _syncmcp,
+    _tokens,
+)
 from ._command import (
     Command,
     Middleware,
@@ -24,6 +38,7 @@ from ._command import (
     Success,
     execute,
     inputs,
+    run_chain,
 )
 from ._errors import (
     Error,
@@ -38,17 +53,43 @@ from ._formatter import FORMATS, Format, format_value
 from ._help import Entry as HelpEntry
 from ._help import Example, Usage, format_command, format_root
 from ._help import Options as HelpOptions
+from ._http import FetchHandler, Request, RequestSource, Response, asgi, call
 from ._js import Json
+from ._mcp import HttpHandler, McpOptions, McpTool, serve_stdio
+from ._mcp import Server as McpServer
 from ._model import SchemaError, build, caller_locals, to_json, type_of
+from ._openapi import OpenapiConfig, OpenapiSource
+from ._openapi import commands as openapi_commands
+from ._openapi import resolve as openapi_resolve
 from ._schema import Field, Type, json_schema, object_type
+from ._sync import Options as SyncOptions
+from ._sync import Sync, has_installed_skills, list_skills, read_hash
+from ._sync import sync as sync_skills
+from ._tree import (
+    Alias,
+    BannerMode,
+    Entry,
+    Gateway,
+    GatewayHit,
+    Group,
+    GroupHelp,
+    NotFound,
+    Resolution,
+    Resolved,
+    Spec,
+    help_entries,
+    once,
+    resolve,
+    suggest,
+    target,
+)
+from ._update import Options as UpdateOptions
+from ._update import Update
+from ._update import check as check_update
+from ._update import install as install_update
+from ._update import refresh as refresh_update
 
 _F = TypeVar("_F", bound=Callable[..., object])
-
-#: Who sees the banner: everyone, agents only, or terminals only.
-BannerMode = Literal["all", "agent", "human"]
-
-#: The hint appended to destructive commands in agent skills.
-DESTRUCTIVE_HINT = "Confirm with the user before executing this destructive command."
 
 
 class Writer(Protocol):
@@ -77,61 +118,11 @@ class Config:
     It may be an `async def` function."""
 
 
-@dataclass
-class _Alias:
-    """Another name for a sibling command."""
-
-    command: Command
-
-
-@dataclass
-class _Group:
-    """A mounted command group."""
-
-    commands: dict[str, _Entry]
-    description: str | None
-    middleware: list[Middleware]
-    output_policy: OutputPolicy | None
-    root: Command | None
-
-
-_Entry = Command | _Alias | _Group
-
-
-def _target(entry: _Entry) -> Command | None:
-    """Returns the command an entry runs directly, or `None` for groups."""
-    if isinstance(entry, _Alias):
-        return entry.command
-    return entry if isinstance(entry, Command) else None
-
-
-@dataclass
-class _Spec:
-    """A CLI definition, as the serve loop reads it."""
-
-    name: str
-    description: str | None = None
-    version: str | None = None
-    aliases: list[str] = field(default_factory=list[str])
-    banner: Callable[[], str | Awaitable[str | None] | None] | None = None
-    banner_mode: BannerMode = "all"
-    config: Config | None = None
-    env: Type | None = None
-    format: Format | None = None
-    globals: Type | None = None
-    output_policy: OutputPolicy | None = None
-    sync: bool = True
-    vars: type | dict[str, Any] = field(default_factory=dict[str, Any])
-    commands: dict[str, _Entry] = field(default_factory=dict[str, "_Entry"])
-    middleware: list[Middleware] = field(default_factory=list[Middleware])
-    root: Command | None = None
-
-
 class Cli:
     """A CLI: a router of commands, optionally with its own root command.
 
     >>> import incur
-    >>> cli = incur.Cli("my-cli", description="My CLI")
+    >>> cli = incur.Cli("my-cli", description="My CLI", update=False)
     >>> @cli.command("status", description="Show repo status")
     ... def status(c: incur.Context) -> dict[str, bool]:
     ...     return {"clean": True}
@@ -141,7 +132,8 @@ class Cli:
 
     Handlers and middleware may be `async def` functions, and streaming handlers async
     generators. `serve()` runs the event loop; `await cli.serve_async()` and `await cli.run(...)`
-    run inside one that is already running.
+    run inside one that is already running. `await cli.fetch(request)` and the ASGI application
+    `cli.asgi` serve the same commands over HTTP.
     """
 
     def __init__(
@@ -155,10 +147,16 @@ class Cli:
         banner_mode: BannerMode = "all",
         config: Config | None = None,
         env: type | None = None,
+        fetch: FetchHandler | None = None,
         format: Format | None = None,
         globals: type | None = None,
+        mcp: McpOptions | Literal[False] | None = None,
+        openapi: OpenapiSource | None = None,
+        openapi_config: OpenapiConfig | None = None,
         output_policy: OutputPolicy | None = None,
-        sync: bool = True,
+        package: str | None = None,
+        sync: Sync | bool = True,
+        update: Update | bool = True,
         vars: type | Mapping[str, Any] | None = None,
     ) -> None:
         """Creates a CLI.
@@ -173,11 +171,20 @@ class Cli:
             config: Enables config-file option defaults.
             env: A schema class of CLI-level environment variables, parsed before middleware.
                 Middleware reads an instance as `c.env`.
+            fetch: A fetch handler, or a hosted source from `incur.from_request`, that runs when
+                no command matches: arguments become a curl-style HTTP request.
             format: The default output format.
             globals: A schema class of global options available to every command. Middleware and
                 handlers read an instance as `c.globals`.
+            mcp: MCP server and registration settings. `False` hides the CLI's commands from MCP
+                clients when it is mounted as a group.
+            openapi: An OpenAPI document, or its URL, that generates root commands calling
+                `fetch`.
+            openapi_config: How OpenAPI commands are generated.
             output_policy: The default output policy, inherited by every command.
-            sync: Enables the built-in skills integration.
+            package: The npm package that runs the CLI, when it differs from the name.
+            sync: Settings of the built-in `skills add` command, or `False` to disable skills.
+            update: Settings of update checks and `--update`, or `False` to disable both.
             vars: Variables that middleware sets for handlers: a class whose fields all have
                 defaults, such as an `@incur.schema` class, instantiated for every run as
                 `c.var`; or a mapping of defaults, copied into a `dict`.
@@ -187,21 +194,28 @@ class Cli:
         """
         self.name = name
         """The CLI name."""
-        self._spec = _Spec(name)
-        self._spec.description = description
-        self._spec.version = version
-        self._spec.aliases = list(aliases)
-        self._spec.banner = banner
-        self._spec.banner_mode = banner_mode
-        self._spec.config = config
-        self._spec.env = type_of(env, f"{name} env") if env is not None else None
-        self._spec.format = format
-        self._spec.globals = (
-            self._check_globals(type_of(globals, f"{name} globals")) if globals else None
-        )
-        self._spec.output_policy = output_policy
-        self._spec.sync = sync
-        self._spec.vars = vars if isinstance(vars, type) else dict(vars or {})
+        spec = Spec(name)
+        self._spec = spec
+        spec.description = description
+        spec.version = version
+        spec.aliases = list(aliases)
+        spec.banner = banner
+        spec.banner_mode = banner_mode
+        spec.config = config
+        spec.env = type_of(env, f"{name} env") if env is not None else None
+        spec.format = format
+        spec.update = None if update is False else Update() if update is True else update
+        spec.globals = self._check_globals(type_of(globals, f"{name} globals")) if globals else None
+        spec.output_policy = output_policy
+        spec.sync = None if sync is False else Sync() if sync is True else sync
+        spec.vars = vars if isinstance(vars, type) else dict(vars or {})
+        spec.mcp = mcp or None
+        spec.mcp_enabled = mcp is not False
+        spec.package = package
+        spec.root_fetch = fetch
+        if fetch is not None and openapi is not None:
+            spec.pending.append(self._openapi(fetch, openapi, openapi_config, None, spec.commands))
+        self._mcp_http = HttpHandler(spec)
 
     def _check_globals(self, schema: Type) -> Type:
         """Rejects global options that collide with built-in flags."""
@@ -213,6 +227,9 @@ class Cli:
             "llmsFull",
             "mcp",
             "help",
+            "incurBinaryApply",
+            "incurUpdateCheck",
+            *(["update"] if self._spec.update is not None else []),
             "version",
             "schema",
             "filterOutput",
@@ -246,6 +263,7 @@ class Cli:
         examples: Sequence[Example] = (),
         format: Format | None = None,
         hint: str | None = None,
+        mcp: McpTool | Literal[False] | None = None,
         middleware: Sequence[Middleware] = (),
         output: object = None,
         output_policy: OutputPolicy | None = None,
@@ -266,6 +284,7 @@ class Cli:
             examples: Usage examples shown in help and manifests.
             format: The default output format.
             hint: Guidance shown after examples.
+            mcp: How the command appears as an MCP tool, or `False` to hide it from MCP.
             middleware: Middleware that runs after CLI and group middleware.
             output: The output type: a schema class, `str`, `Any`, and so on.
             output_policy: Where the output may appear.
@@ -288,13 +307,106 @@ class Cli:
                 output=type_of(output, f"{name} output") if output is not None else None,
                 output_policy=output_policy,
                 usage=list(usage),
+                mcp=mcp.meta() if mcp else None,
+                mcp_enabled=mcp is not False,
             )
             for alias in command.aliases:
-                self._spec.commands[alias] = _Alias(command)
+                self._spec.commands[alias] = Alias(command)
             self._spec.commands[name] = command
             return fn
 
         return register
+
+    def gateway(
+        self,
+        name: str,
+        fetch: FetchHandler,
+        *,
+        description: str | None = None,
+        base_path: str | None = None,
+        openapi: OpenapiSource | None = None,
+        openapi_config: OpenapiConfig | None = None,
+        output_policy: OutputPolicy | None = None,
+        mcp: bool = True,
+    ) -> Cli:
+        """Adds a command that forwards to a fetch handler. Returns this CLI.
+
+        Arguments after the command become a curl-style HTTP request: path segments, `--key value`
+        query parameters, `-X` for the method, `-H "Name: value"` headers, and `-d` for a body.
+        With `openapi`, the command is instead a group of typed commands, one per operation.
+
+        Args:
+            name: The command name.
+            fetch: An `async def` fetch handler, such as an ASGI-free in-process app, or a hosted
+                source from `incur.from_request`.
+            description: What the command does.
+            base_path: A path prepended to every request path.
+            openapi: An OpenAPI document, or its URL, relative to a hosted source's URL.
+            openapi_config: How OpenAPI commands are generated.
+            output_policy: Where the output may appear.
+            mcp: Whether generated OpenAPI commands are MCP tools.
+        """
+        if openapi is None:
+            self._spec.commands[name] = Gateway(fetch, description, base_path, output_policy)
+            return self
+        group = Group({}, description, output_policy=output_policy, mcp=mcp)
+        load = self._openapi(fetch, openapi, openapi_config, base_path, group.commands)
+
+        async def mount() -> None:
+            await load()
+            self._spec.commands[name] = group
+
+        self._spec.pending.append(mount)
+        return self
+
+    def mcp_source(
+        self,
+        name: str,
+        url: str,
+        *,
+        fetch: FetchHandler | None = None,
+        headers: Mapping[str, str] | None = None,
+        description: str | None = None,
+        output_policy: OutputPolicy | None = None,
+    ) -> Cli:
+        """Adds a group of commands that call the tools of a remote MCP server. Returns this CLI.
+
+        The server is reached over streamable HTTP when the group is first used, and its tools
+        become commands, whether it lists them directly or through progressive discovery.
+
+        Args:
+            name: The group name.
+            url: The server's streamable-HTTP endpoint.
+            fetch: Sends the MCP requests, such as another CLI's `fetch`. Defaults to the
+                network.
+            headers: Headers sent with every MCP request.
+            description: What the group does.
+            output_policy: Where the output may appear.
+        """
+        group = Group({}, description, output_policy=output_policy)
+        self._spec.commands[name] = group
+
+        async def load() -> None:
+            source = _mcpsource.Source(url, fetch, dict(headers or {}))
+            group.commands.update(await _mcpsource.commands(source))
+
+        self._spec.lazy[name] = once(load)
+        return self
+
+    def _openapi(
+        self,
+        fetch: FetchHandler,
+        source: OpenapiSource,
+        config: OpenapiConfig | None,
+        base_path: str | None,
+        into: dict[str, Entry],
+    ) -> Callable[[], Awaitable[None]]:
+        async def load() -> None:
+            base = fetch.url if isinstance(fetch, RequestSource) else None
+            spec = await openapi_resolve(source, base)
+            into.update(openapi_commands(spec, fetch, config, base_path))
+
+        return load
 
     def root(
         self,
@@ -329,23 +441,26 @@ class Cli:
 
     def group(self, cli: Cli) -> Cli:
         """Mounts another CLI as a command group. Returns this CLI."""
-        root = cli._spec.root
-        if root is not None and root.description is None:
-            root = replace(root, description=cli._spec.description)
-        entry: _Entry
-        if root is not None and not cli._spec.commands:
+        sub = cli._spec
+        root = sub.root_command()
+        entry: Entry
+        if root is not None and not sub.commands:
             # A CLI without subcommands mounts as a command, keeping its aliases.
-            entry = replace(root, aliases=list(cli._spec.aliases))
+            entry = replace(root, aliases=list(sub.aliases))
             for alias in entry.aliases:
-                self._spec.commands[alias] = _Alias(entry)
+                self._spec.commands[alias] = Alias(entry)
         else:
-            entry = _Group(
-                cli._spec.commands,
-                cli._spec.description,
-                cli._spec.middleware,
-                cli._spec.output_policy,
+            entry = Group(
+                sub.commands,
+                sub.description,
+                sub.middleware,
+                sub.output_policy,
                 root,
+                sub.mcp_enabled,
             )
+            # Mounted CLIs resolve their deferred groups up front.
+            if sub.pending or sub.lazy:
+                self._spec.pending.append(sub.load)
         self._spec.commands[cli.name] = entry
         return self
 
@@ -370,6 +485,24 @@ class Cli:
         self._spec.middleware.append(middleware)
         return middleware
 
+    async def fetch(self, request: Request) -> Response:
+        """Serves an HTTP request: runs the command its path names, or speaks MCP at `/mcp`.
+
+        `GET /users/list?limit=5` runs `users list` with options from the query; other methods
+        read options from a JSON body. `/openapi.json` describes the commands as an OpenAPI
+        document, and `/.well-known/agent-skills/index.json` lists their agent skills.
+        """
+        await self._spec.load()
+        return await _serve_http.handle(self._spec, request, self._mcp_http)
+
+    @property
+    def asgi(self) -> Any:
+        """The CLI as an ASGI 3 application, serving the same routes as `fetch`.
+
+        Run it with any ASGI server, such as `uvicorn module:cli.asgi`.
+        """
+        return asgi(self.fetch)
+
     def serve(self) -> NoReturn:
         """Runs the CLI with the process arguments, environment, and streams, then exits.
 
@@ -385,9 +518,10 @@ class Cli:
         display = os.path.basename(sys.argv[0]) if sys.argv else None
         code = await self._serve(
             sys.argv[1:],
-            os.environ,
+            dict(os.environ),
             sys.stdout,
             sys.stderr,
+            sys.stdin,
             sys.stdout.isatty(),
             display,
         )
@@ -401,6 +535,7 @@ class Cli:
         env: Mapping[str, str] | None = None,
         stdout: Writer | None = None,
         stderr: Writer | None = None,
+        stdin: TextIO | None = None,
         tty: bool = False,
     ) -> int:
         """Runs the CLI with explicit arguments and I/O inside a running event loop.
@@ -408,7 +543,13 @@ class Cli:
         Returns the exit code. Takes the same arguments as `serve_with`.
         """
         return await self._serve(
-            list(argv), env or {}, stdout or _Null(), stderr or _Null(), tty, None
+            list(argv),
+            dict(env or {}),
+            stdout or _Null(),
+            stderr or _Null(),
+            stdin or io.StringIO(),
+            tty,
+            None,
         )
 
     def serve_with(
@@ -418,6 +559,7 @@ class Cli:
         env: Mapping[str, str] | None = None,
         stdout: Writer | None = None,
         stderr: Writer | None = None,
+        stdin: TextIO | None = None,
         tty: bool = False,
     ) -> int:
         """Runs the CLI with explicit arguments and I/O. Returns the exit code.
@@ -426,27 +568,31 @@ class Cli:
 
         Args:
             argv: Arguments after the binary name.
-            env: Environment variables. Defaults to none.
+            env: Environment variables. Defaults to none. Agent, skill, and update paths
+                resolve from its `HOME` and `XDG_*` variables.
             stdout: Receives output. Defaults to discarding it.
             stderr: Receives warnings. Defaults to discarding them.
+            stdin: Input of `--mcp`. Defaults to empty input.
             tty: Whether stdout is a terminal, which selects human output.
         """
-        return asyncio.run(self.run(argv, env=env, stdout=stdout, stderr=stderr, tty=tty))
+        return asyncio.run(
+            self.run(argv, env=env, stdout=stdout, stderr=stderr, stdin=stdin, tty=tty)
+        )
 
     async def _serve(
         self,
         argv: list[str],
-        env: Mapping[str, str],
+        env: dict[str, str],
         stdout: Writer,
         stderr: Writer,
+        stdin: TextIO,
         tty: bool,
         bin_name: str | None,
     ) -> int:
-        display = bin_name if bin_name in (self.name, *self._spec.aliases) else self.name
-        root = self._spec.root
-        if root is not None and root.description is None:
-            root = replace(root, description=self._spec.description)
-        run = _Run(self._spec, display or self.name, env, stdout, stderr, tty, root)
+        spec = self._spec
+        await spec.load_pending()
+        display = bin_name if bin_name in (self.name, *spec.aliases) else self.name
+        run = _Run(spec, display or self.name, env, stdout, stderr, stdin, tty)
         await run.serve(argv)
         return run.exit
 
@@ -456,118 +602,6 @@ class _Null:
 
     def write(self, text: str, /) -> int:
         return len(text)
-
-
-@dataclass
-class _Resolved:
-    """A command to run."""
-
-    command: Command
-    commands: dict[str, _Entry] | None
-    middleware: list[Middleware]
-    output_policy: OutputPolicy | None
-    path: str
-    rest: list[str]
-
-
-@dataclass
-class _NotFound:
-    """An unknown command."""
-
-    commands: dict[str, _Entry]
-    error: str
-    path: str
-    rest: list[str]
-
-
-@dataclass
-class _GroupHelp:
-    """A group without a root command."""
-
-    commands: dict[str, _Entry]
-    description: str | None
-    path: str
-
-
-def _resolve(commands: dict[str, _Entry], tokens: list[str]) -> _Resolved | _NotFound | _GroupHelp:
-    """Walks tokens down the command tree."""
-    entry = commands.get(tokens[0]) if tokens else None
-    if entry is None:
-        return _NotFound(commands, tokens[0] if tokens else "(none)", "", tokens[1:])
-    path = [tokens[0]]
-    remaining = tokens[1:]
-    inherited: OutputPolicy | None = None
-    middleware: list[Middleware] = []
-    while isinstance(entry, _Group):
-        group = entry
-        if group.output_policy is not None:
-            inherited = group.output_policy
-        middleware += group.middleware
-
-        root = group.root
-        target = None
-        if root is not None:
-            policy = root.output_policy or inherited
-            target = _Resolved(
-                root, group.commands, list(middleware), policy, " ".join(path), remaining
-            )
-        if not remaining:
-            if target is not None:
-                return target
-            return _GroupHelp(group.commands, group.description, " ".join(path))
-        nxt = remaining[0]
-        child = group.commands.get(nxt)
-        if child is None:
-            if target is not None and _suggest(nxt, group.commands) is None:
-                return target
-            return _NotFound(group.commands, nxt, " ".join(path), remaining[1:])
-        entry = child
-        path.append(nxt)
-        remaining = remaining[1:]
-    command = _target(entry)
-    assert command is not None
-    return _Resolved(
-        command, None, middleware, command.output_policy or inherited, " ".join(path), remaining
-    )
-
-
-def _suggest(text: str, candidates: Iterator[str] | Sequence[str] | dict[str, Any]) -> str | None:
-    """Suggests the closest candidate by prefix, substring, then edit distance."""
-    length = _js.utf16_len(text)
-    threshold = 2 if length <= 4 else length // 2
-    lower = text.lower()
-    best: str | None = None
-    best_score: int | None = None
-    for candidate in candidates:
-        lc = candidate.lower()
-        distance = _levenshtein(lower, lc)
-        if lc.startswith(lower) and lc != lower:
-            score = distance
-        elif lower in lc:
-            score = 100 + distance
-        elif distance <= threshold:
-            score = 200 + distance
-        else:
-            continue
-        if best_score is None or score < best_score:
-            best_score = score
-            best = candidate
-    return best
-
-
-def _levenshtein(a: str, b: str) -> int:
-    """Computes the Levenshtein distance over UTF-16 code units."""
-    x = _js.utf16(a)
-    y = _js.utf16(b)
-    dp = list(range(len(y) + 1))
-    for i in range(1, len(x) + 1):
-        prev = dp[0]
-        dp[0] = i
-        for j in range(1, len(y) + 1):
-            tmp = dp[j]
-            dp[j] = prev if x[i - 1] == y[j - 1] else 1 + min(prev, dp[j], dp[j - 1])
-            prev = tmp
-    return dp[len(y)]
 
 
 @dataclass
@@ -589,10 +623,16 @@ class _Flags:
     token_count: bool = False
     token_limit: float | None = None
     token_offset: float | None = None
+    update: bool = False
+    update_check: bool = False
     version: bool = False
 
 
-def _extract_flags(argv: list[str], config_flag: str | None) -> _Flags:
+#: The hidden flag of detached update checks.
+UPDATE_CHECK_FLAG = "--incur-update-check"
+
+
+def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True) -> _Flags:
     """Extracts built-in flags from argv."""
     flags = _Flags()
     i = 0
@@ -609,6 +649,10 @@ def _extract_flags(argv: list[str], config_flag: str | None) -> _Flags:
             flags.mcp = True
         elif token in ("--help", "-h"):
             flags.help = True
+        elif token == "--update" and update:
+            flags.update = True
+        elif token == UPDATE_CHECK_FLAG:
+            flags.update_check = True
         elif token == "--version" and (nxt is None or nxt.startswith("-")):
             # A following value belongs to a command-local `--version` option.
             flags.version = True
@@ -660,70 +704,6 @@ def _extract_flags(argv: list[str], config_flag: str | None) -> _Flags:
     return flags
 
 
-def _help_entries(commands: dict[str, _Entry]) -> list[HelpEntry]:
-    """Lists immediate children for help output, sorted by name."""
-    out = [
-        HelpEntry(name, entry.description)
-        for name, entry in commands.items()
-        if not isinstance(entry, _Alias)
-    ]
-    out.sort(key=lambda e: _js.locale_key(e.name))
-    return out
-
-
-def _hint_with_destructive(command: Command) -> str | None:
-    if not command.destructive:
-        return command.hint
-    if not command.hint:
-        return DESTRUCTIVE_HINT
-    if DESTRUCTIVE_HINT in command.hint:
-        return command.hint
-    return f"{command.hint} {DESTRUCTIVE_HINT}"
-
-
-def _prefixed_examples(examples: list[Example], name: str) -> list[Example]:
-    return [Example(f"{name} {e.command}" if e.command else name, e.description) for e in examples]
-
-
-def _command_info(name: str | None, command: Command) -> _skill.CommandInfo:
-    examples = _prefixed_examples(command.examples, name) if name else list(command.examples)
-    return _skill.CommandInfo(
-        name=name,
-        args=command.args,
-        description=command.description,
-        env=command.env,
-        examples=examples,
-        hint=_hint_with_destructive(command),
-        options=command.options,
-        output=command.output,
-    )
-
-
-def _skill_commands(
-    commands: dict[str, _Entry],
-    prefix: list[str],
-    groups: dict[str, str],
-    root: Command | None,
-) -> list[_skill.CommandInfo]:
-    """Collects commands for Markdown manifests, sorted by name."""
-    out: list[_skill.CommandInfo] = []
-    if root is not None:
-        out.append(_command_info(None, root))
-    for name, entry in commands.items():
-        path = [*prefix, name]
-        joined = " ".join(path)
-        if isinstance(entry, Command):
-            out.append(_command_info(joined, entry))
-        elif isinstance(entry, _Group):
-            if entry.description is not None:
-                groups[joined] = entry.description
-            if entry.root is not None:
-                out.append(_command_info(joined, entry.root))
-            out += _skill_commands(entry.commands, path, groups, None)
-    out.sort(key=lambda info: _js.locale_key(info.name or ""))
-    return out
-
-
 def _manifest_entry(path: str, command: Command, full: bool) -> dict[str, Json]:
     out: dict[str, Json] = {"name": path}
     if command.description:
@@ -743,7 +723,7 @@ def _manifest_entry(path: str, command: Command, full: bool) -> dict[str, Json]:
         out["schema"] = schema
     if command.examples:
         examples: list[Json] = []
-        for example in _prefixed_examples(command.examples, path):
+        for example in _skill.prefixed_examples(command.examples, path):
             item: dict[str, Json] = {"command": example.command}
             if example.description is not None:
                 item["description"] = example.description
@@ -753,7 +733,7 @@ def _manifest_entry(path: str, command: Command, full: bool) -> dict[str, Json]:
 
 
 def _manifest_commands(
-    commands: dict[str, _Entry], prefix: list[str], full: bool
+    commands: dict[str, Entry], prefix: list[str], full: bool
 ) -> list[dict[str, Json]]:
     out: list[dict[str, Json]] = []
     for name, entry in commands.items():
@@ -761,7 +741,12 @@ def _manifest_commands(
         joined = " ".join(path)
         if isinstance(entry, Command):
             out.append(_manifest_entry(joined, entry, full))
-        elif isinstance(entry, _Group):
+        elif isinstance(entry, Gateway):
+            item: dict[str, Json] = {"name": joined}
+            if entry.description:
+                item["description"] = entry.description
+            out.append(item)
+        elif isinstance(entry, Group):
             if entry.root is not None:
                 out.append(_manifest_entry(joined, entry.root, full))
             out += _manifest_commands(entry.commands, path, full)
@@ -811,23 +796,25 @@ class _Run:
 
     def __init__(
         self,
-        cli: _Spec,
+        cli: Spec,
         display_name: str,
-        env: Mapping[str, str],
+        env: dict[str, str],
         stdout: Writer,
         stderr: Writer,
+        stdin: TextIO,
         tty: bool,
-        root: Command | None,
     ) -> None:
         self.cli = cli
         self.display_name = display_name
         self.env_map = env
         self.stdout = stdout
         self.stderr = stderr
+        self.stdin = stdin
         self.tty = tty
-        self.root = root
+        self.root = cli.root_command()
         self.exit = 0
         self.start = time.monotonic()
+        self.notice: FormattedCtaBlock | None = None
 
     def write(self, text: str) -> None:
         self.stdout.write(text)
@@ -850,6 +837,7 @@ class _Run:
             config_flag=self.config_flag(),
             globals=self.cli.globals,
             hide_skills=not self.cli.sync,
+            hide_update=self.cli.update is None,
         )
         return replace(base, **overrides)
 
@@ -870,24 +858,25 @@ class _Run:
             if text:
                 self.writeln(text)
 
-    def root_help(self) -> str:
+    def root_help(self, globals_: bool = True) -> str:
         cli = self.cli
         return format_root(
             cli.name,
             self.help_options(
                 aliases=cli.aliases,
-                commands=_help_entries(cli.commands),
+                commands=help_entries(cli.commands),
                 description=cli.description,
+                globals=cli.globals if globals_ else None,
                 root=True,
                 version=cli.version,
             ),
         )
 
-    def group_help(self, group: _GroupHelp, **overrides: Any) -> str:
+    def group_help(self, group: GroupHelp, **overrides: Any) -> str:
         return format_root(
             f"{self.cli.name} {group.path}",
             self.help_options(
-                commands=_help_entries(group.commands), description=group.description, **overrides
+                commands=help_entries(group.commands), description=group.description, **overrides
             ),
         )
 
@@ -895,10 +884,10 @@ class _Run:
         cli = self.cli
         shell = self.env("COMPLETE")
         if shell is not None:
-            self.complete(shell, argv)
+            await self.complete(shell, argv)
             return
         try:
-            flags = _extract_flags(argv, self.config_flag())
+            flags = _extract_flags(argv, self.config_flag(), cli.update is not None)
         except Error as error:
             self.early_error(error, self.tty, "toon")
             return
@@ -913,9 +902,35 @@ class _Run:
                 self.early_error(error, human, flags.format)
                 return
 
-        if flags.mcp:
-            self.unsupported("--mcp", human)
+        # Deferred groups load only when this invocation can reach them.
+        first = filtered[0] if filtered else None
+        reaches_all = (
+            flags.mcp
+            or ((flags.llms or flags.llms_full) and first is None)
+            or first == cli.name
+            or (first is not None and _find_builtin(first) is not None)
+        )
+        if reaches_all:
+            await cli.load()
+        elif first is not None:
+            await cli.load(first)
+
+        if flags.update_check:
+            if cli.update is not None:
+                with contextlib.suppress(Exception):
+                    await refresh_update(cli.name, self.update_options(), self.env_map)
             return
+        # --help takes precedence over --update.
+        if flags.update and not flags.help:
+            await self.install_update(human, flags)
+            return
+
+        if flags.mcp:
+            await serve_stdio(cli, self.env_map, self.stdin, typing.cast("TextIO", self.stdout))
+            return
+
+        skills_cta = await self.skills_notice(flags, filtered)
+
         if flags.llms or flags.llms_full:
             self.llms(flags, filtered)
             return
@@ -952,7 +967,7 @@ class _Run:
                 continue
             index = builtin_index(builtin)
             if index is not None:
-                self.builtin(builtin, filtered, index, argv, flags, human)
+                await self.builtin(builtin, filtered, index, argv, flags, human)
                 return
 
         version = cli.version
@@ -969,38 +984,79 @@ class _Run:
             )
             if root is not None and human and required:
                 await self.banner(human, flags.help)
-                commands = _help_entries(cli.commands)
+                commands = help_entries(cli.commands)
                 options = self.command_help(root, cli.aliases, version, commands, True)
                 self.writeln(format_command(cli.name, options))
                 return
-            if root is None:
+            if root is None and cli.root_fetch is None:
                 await self.banner(human, flags.help)
                 self.writeln(self.root_help())
                 return
 
-        resolved: _Resolved | _NotFound | _GroupHelp
+        resolved: Resolution
         if root is not None and not filtered:
-            resolved = _Resolved(root, None, [], None, cli.name, [])
+            resolved = Resolved(root, None, [], None, cli.name, [])
+        elif cli.root_fetch is not None and not filtered:
+            resolved = GatewayHit(Gateway(cli.root_fetch, cli.description), [], None, cli.name, [])
         else:
-            resolved = _resolve(cli.commands, filtered)
+            resolved = resolve(cli.commands, filtered)
 
+        if flags.help and isinstance(resolved, GatewayHit):
+            if resolved.path == cli.name and cli.commands:
+                self.writeln(self.root_help(globals_=False))
+            else:
+                name = cli.name if resolved.path == cli.name else f"{cli.name} {resolved.path}"
+                self.writeln(_gateway.help_text(name, resolved.gateway.description))
+            return
         if flags.help:
             self.help(resolved)
             return
         if flags.schema:
             self.schema(resolved, flags)
             return
+        if isinstance(resolved, GroupHelp):
+            self.writeln(self.group_help(resolved, hide_skills=False, hide_update=False))
+            return
 
-        command_format = resolved.command.format if isinstance(resolved, _Resolved) else None
+        update_cta: FormattedCtaBlock | None = None
+        if human and cli.update is not None:
+            available = check_update(cli.name, self.update_options(), self.env_map)
+            if available is not None:
+                update_cta = FormattedCtaBlock(
+                    [
+                        FormattedCta(
+                            f"{self.display_name} --update",
+                            f"upgrade from {available.current} to {available.latest}",
+                        )
+                    ],
+                    f"Update available for {available.name}:",
+                )
+        notices = [block for block in (skills_cta, update_cta) if block is not None]
+        if notices:
+            self.notice = FormattedCtaBlock(
+                [c for block in notices for c in block.commands], notices[0].description
+            )
+
+        command_format = resolved.command.format if isinstance(resolved, Resolved) else None
         fmt = flags.format if flags.format_explicit else command_format or cli.format or "toon"
 
-        # A token that is not a typo of a known command falls back to the root command.
-        if isinstance(resolved, _NotFound) and not resolved.path and root is not None:
+        # A token that is not a typo of a known command falls back to the root fetch or command.
+        # A token starting with `/` is a request path, never a mistyped command.
+        if (
+            isinstance(resolved, NotFound)
+            and not resolved.path
+            and (root is not None or cli.root_fetch is not None)
+        ):
             candidates = [*resolved.commands, *self.builtin_names()]
-            if _suggest(resolved.error, candidates) is None:
-                resolved = _Resolved(root, None, [], None, cli.name, list(filtered))
+            if resolved.error.startswith("/") or suggest(resolved.error, candidates) is None:
+                if cli.root_fetch is not None:
+                    gateway = Gateway(cli.root_fetch, cli.description)
+                    resolved = GatewayHit(gateway, [], None, cli.name, list(filtered))
+                else:
+                    assert root is not None
+                    resolved = Resolved(root, None, [], None, cli.name, list(filtered))
 
-        if isinstance(resolved, _Resolved):
+        if isinstance(resolved, (Resolved, GatewayHit)):
             policy = resolved.output_policy or cli.output_policy
         else:
             policy = cli.output_policy
@@ -1012,12 +1068,88 @@ class _Run:
             render=not (human and policy == "agent-only"),
         )
 
-        if isinstance(resolved, _NotFound):
+        if isinstance(resolved, NotFound):
             self.not_found(resolved.error, resolved.path, resolved.commands, argv, output)
-        elif isinstance(resolved, _Resolved):
-            await self.execute(resolved, filtered, output)
+        elif isinstance(resolved, GatewayHit):
+            await self.forward(resolved, filtered, output)
         else:
-            self.writeln(self.group_help(resolved, hide_skills=False))
+            await self.execute(resolved, filtered, output)
+
+    def update_options(self) -> UpdateOptions:
+        """The update settings of this run."""
+        update = self.cli.update
+        assert update is not None
+        return UpdateOptions(update, self.cli.version)
+
+    async def install_update(self, human: bool, flags: _Flags) -> None:
+        """Handles `--update`."""
+        cli = self.cli
+        if cli.update is None:
+            return
+        try:
+            result = await install_update(cli.name, self.update_options(), self.env_map)
+        except Exception as error:
+            failure = Error("UPDATE_FAILED", str(error))
+            if human:
+                self.writeln(human_error(failure))
+            else:
+                self.writeln(format_value(failure.to_json(), flags.format))
+            self.exit = 1
+            return
+        if human:
+            deferred = result.get("deferred") is True
+            lines = [
+                f"\u2713 Update staged for {result['name']}"
+                if deferred
+                else f"\u2713 Updated {result['name']}"
+            ]
+            if "command" in result:
+                lines.append(f"  {result['command']}")
+            if deferred:
+                lines.append("  Installation will finish after this process exits.")
+            self.writeln("\n".join(lines))
+        else:
+            self.writeln(format_value(result, flags.format))
+
+    async def skills_notice(self, flags: _Flags, filtered: list[str]) -> FormattedCtaBlock | None:
+        """Suggests `skills add` when installed skills are out of date."""
+        cli = self.cli
+        if (
+            cli.sync is None
+            or flags.llms
+            or flags.llms_full
+            or flags.schema
+            or flags.help
+            or flags.update
+            or flags.update_check
+            or flags.version
+        ):
+            return None
+        for index in (0, 1):
+            if index == 1 and (not filtered or filtered[0] != cli.name):
+                break
+            if len(filtered) > index and _find_builtin(filtered[index]) in ("skills", "mcp"):
+                return None
+        env = self.env_map
+        stored = read_hash(cli.name, env)
+        if stored is None or not has_installed_skills(cli.name, env, cli.sync.cwd):
+            return None
+        # The stored hash covers every command, deferred groups included.
+        await cli.load()
+        infos, _ = self.skill_infos()
+        if _skill.hash_commands(infos) == stored:
+            return None
+        runner = (env.get("npm_config_user_agent") or env.get("npm_execpath")) and (
+            cli.package is not None or _syncmcp.is_package_name(cli.name)
+        )
+        if runner:
+            specifier = _syncmcp.package_specifier(cli.name, cli.package, cli.version)
+            command = f"{_pm.runner(env)} {specifier} skills add"
+        else:
+            command = f"{self.display_name} skills add"
+        return FormattedCtaBlock(
+            [FormattedCta(command, "sync outdated skills")], "Skills are out of date:"
+        )
 
     def builtin_names(self) -> list[str]:
         """Names of built-in commands, without skills when the integration is disabled."""
@@ -1050,12 +1182,13 @@ class _Run:
             version=version,
         )
 
-    def help(self, resolved: _Resolved | _NotFound | _GroupHelp) -> None:
+    def help(self, resolved: Resolution) -> None:
         cli = self.cli
-        if isinstance(resolved, _GroupHelp):
+        assert not isinstance(resolved, GatewayHit)
+        if isinstance(resolved, GroupHelp):
             text = self.group_help(resolved)
-        elif isinstance(resolved, _NotFound):
-            entries = _help_entries(cli.commands)
+        elif isinstance(resolved, NotFound):
+            entries = help_entries(cli.commands)
             if self.root is not None and entries:
                 options = self.command_help(
                     self.root,
@@ -1072,9 +1205,9 @@ class _Run:
             is_root = resolved.path == cli.name
             name = cli.name if is_root else f"{cli.name} {resolved.path}"
             if resolved.commands:
-                entries = _help_entries(resolved.commands)
+                entries = help_entries(resolved.commands)
             elif is_root:
-                entries = _help_entries(cli.commands)
+                entries = help_entries(cli.commands)
             else:
                 entries = []
             aliases = cli.aliases if is_root else command.aliases
@@ -1084,13 +1217,16 @@ class _Run:
             )
         self.writeln(text)
 
-    def schema(self, resolved: _Resolved | _NotFound | _GroupHelp, flags: _Flags) -> None:
+    def schema(self, resolved: Resolution, flags: _Flags) -> None:
         cli = self.cli
-        if isinstance(resolved, _GroupHelp):
+        if isinstance(resolved, GroupHelp):
             self.writeln(self.group_help(resolved, hide_skills=False))
-        elif isinstance(resolved, _NotFound):
+        elif isinstance(resolved, GatewayHit):
+            self.writeln("--schema is not supported for fetch commands.")
+            self.exit = 1
+        elif isinstance(resolved, NotFound):
             parent = f"{cli.name} {resolved.path}" if resolved.path else cli.name
-            suggestion = _suggest(resolved.error, resolved.commands)
+            suggestion = suggest(resolved.error, resolved.commands)
             did_you_mean = f" Did you mean '{suggestion}'?" if suggestion else ""
             self.writeln(
                 f"Error: '{resolved.error}' is not a command for '{parent}'.{did_you_mean}"
@@ -1113,7 +1249,7 @@ class _Run:
 
     def llms(self, flags: _Flags, filtered: list[str]) -> None:
         cli = self.cli
-        commands: dict[str, _Entry] = cli.commands
+        commands: dict[str, Entry] = cli.commands
         prefix: list[str] = []
         description = cli.description
         root = self.root
@@ -1121,15 +1257,13 @@ class _Run:
             entry = commands.get(token)
             if entry is None:
                 break
-            if isinstance(entry, _Group):
+            if isinstance(entry, Group):
                 commands = entry.commands
                 description = entry.description
                 root = entry.root
                 prefix.append(token)
             else:
-                command = _target(entry)
-                assert command is not None
-                commands = {token: command}
+                commands = {token: target(entry) or entry}
                 root = None
                 break
         if not prefix:
@@ -1137,7 +1271,7 @@ class _Run:
         scoped = " ".join([cli.name, *prefix])
         if not flags.format_explicit or flags.format == "md":
             groups: dict[str, str] = {}
-            infos = _skill_commands(commands, [], groups, root)
+            infos = _skill.collect(commands, [], groups, root)
             if flags.llms_full:
                 text = _skill.generate(scoped, infos, groups)
             else:
@@ -1195,7 +1329,7 @@ class _Run:
         )
         self.writeln(text)
 
-    def builtin(
+    async def builtin(
         self,
         builtin: str,
         filtered: list[str],
@@ -1204,7 +1338,7 @@ class _Run:
         flags: _Flags,
         human: bool,
     ) -> None:
-        """Handles `skills` and `mcp`: help output, and an error for unported actions."""
+        """Handles `skills` and `mcp`."""
         name = self.cli.name
         subs = [s for s in _BUILTIN_SUBCOMMANDS if s[0] == builtin]
         if index + 1 >= len(filtered):
@@ -1224,7 +1358,7 @@ class _Run:
         found = next((s for s in subs if s[1] == sub or sub in s[3]), None)
         if found is None:
             candidates = [value for s in subs for value in (s[1], *s[3])]
-            suggestion = _suggest(sub, candidates)
+            suggestion = suggest(sub, candidates)
             did_you_mean = f" Did you mean '{suggestion}'?" if suggestion else ""
             message = f"'{sub}' is not a command for '{name} {builtin}'.{did_you_mean}"
             commands: list[FormattedCta] = []
@@ -1304,16 +1438,187 @@ class _Run:
             )
             self.writeln(text)
             return
-        self.unsupported(f"{builtin} {found[1]}", human)
+        rest = filtered[index + 2 :]
+        fmt: Format = flags.format if flags.format_explicit else "toon"
+        if found[:2] == ("skills", "list"):
+            await self.skills_list(fmt)
+        elif found[:2] == ("skills", "add"):
+            await self.skills_add(rest, flags, fmt)
+        elif found[:2] == ("mcp", "doctor"):
+            report = await self.mcp_doctor()
+            self.writeln(format_value(report, fmt))
+            if report["ok"] is not True:
+                self.exit = 1
+        else:
+            await self.mcp_add(rest, flags, fmt)
 
-    def unsupported(self, feature: str, human: bool) -> None:
-        """Reports a built-in this port does not implement."""
-        error = Error(
-            "UNSUPPORTED", f"'{feature}' is not supported by the Python port of incur yet."
+    def sync_options(self) -> SyncOptions:
+        cli = self.cli
+        sync = cli.sync
+        assert sync is not None
+        return SyncOptions(
+            env=self.env_map,
+            cwd=sync.cwd,
+            depth=sync.depth,
+            description=cli.description,
+            include=list(sync.include),
         )
-        self.early_error(error, human, "toon")
 
-    def complete(self, shell: str, argv: list[str]) -> None:
+    def skill_infos(self) -> tuple[list[_skill.CommandInfo], dict[str, str]]:
+        """The commands that skill files describe, and group descriptions."""
+        cli = self.cli
+        groups: dict[str, str] = {cli.name: cli.description} if cli.description else {}
+        return _skill.collect(cli.commands, [], groups, self.root), groups
+
+    async def skills_list(self, fmt: Format) -> None:
+        """Handles `skills list`."""
+        cli = self.cli
+        try:
+            infos, groups = self.skill_infos()
+            skills = await list_skills(cli.name, infos, groups, self.sync_options())
+        except Exception as error:
+            failure: dict[str, Json] = {"code": "LIST_SKILLS_FAILED", "message": str(error)}
+            self.writeln(format_value(failure, fmt))
+            self.exit = 1
+            return
+        if not skills:
+            self.writeln("No skills found.")
+            return
+        width = max(_js.utf16_len(s.name) for s in skills)
+        lines: list[str] = []
+        for s in skills:
+            icon = "\u2713" if s.installed else "\u2717"
+            pad = " " * (width - _js.utf16_len(s.name))
+            lines.append(
+                f"  {icon} {s.name}" + (f"{pad}  {s.description}" if s.description else "")
+            )
+        installed = sum(1 for s in skills if s.installed)
+        plural = "" if len(skills) == 1 else "s"
+        lines += ["", f"{len(skills)} skill{plural} ({installed} installed)"]
+        self.writeln("\n".join(lines))
+
+    async def skills_add(self, rest: list[str], flags: _Flags, fmt: Format) -> None:
+        """Handles `skills add`."""
+        cli = self.cli
+        sync = cli.sync
+        assert sync is not None
+        options = self.sync_options()
+        if "--depth" in rest:
+            at = rest.index("--depth") + 1
+            options.depth = _js.to_number(rest[at]) if at < len(rest) else math.nan
+        else:
+            eq = next((t for t in rest if t.startswith("--depth=")), None)
+            if eq is not None:
+                options.depth = _js.to_number(eq.split("=")[1])
+        options.global_ = False if "--no-global" in rest else None
+        self.write("Syncing...")
+        try:
+            infos, groups = self.skill_infos()
+            result = await sync_skills(cli.name, infos, groups, options)
+        except Exception as error:
+            failure: dict[str, Json] = {"code": "SYNC_SKILLS_FAILED", "message": str(error)}
+            self.writeln(format_value(failure, fmt))
+            self.exit = 1
+            return
+        self.write("\r\x1b[K")
+        width = max((_js.utf16_len(s.name) for s in result.skills), default=0)
+        lines: list[str] = []
+        for s in result.skills:
+            pad = " " * (width - _js.utf16_len(s.name))
+            lines.append(
+                f"  \u2713 {s.name}" + (f"{pad}  {s.description}" if s.description else "")
+            )
+        plural = "" if len(result.skills) == 1 else "s"
+        lines += ["", f"{len(result.skills)} skill{plural} synced"]
+        if sync.body:
+            lines += ["", sync.body]
+        if sync.suggestions:
+            lines += ["", f"Your agent can now use {cli.name}. Try asking:"]
+            lines += [f'  "{s}"' for s in sync.suggestions]
+        lines += ["", f"Run `{cli.name} --help` to see the full command reference."]
+        self.writeln("\n".join(lines))
+        if flags.full_output or flags.format_explicit:
+            out: dict[str, Json] = {"skills": list(result.paths)}
+            if sync.body:
+                out["body"] = sync.body
+            if flags.full_output and result.agents:
+                out["agents"] = list(result.agents)
+            self.writeln(format_value(out, fmt))
+
+    async def mcp_doctor(self) -> dict[str, Json]:
+        """Handles `mcp doctor`: lists the tools a direct MCP server exposes."""
+        report: dict[str, Json] = {"ok": False, "toolCount": 0, "tools": [], "warnings": []}
+        try:
+            server = McpServer(self.cli, self.env_map, direct=True)
+        except Exception as error:
+            report["errors"] = [{"code": "MCP_SERVER_FAILED", "message": str(error)}]
+            return report
+        listed = _js.as_list(server.list_tools()["tools"])
+        tools: list[Json] = []
+        for tool in listed:
+            item = _js.as_object(tool)
+            entry: dict[str, Json] = {"name": item["name"]}
+            if "description" in item:
+                entry["description"] = item["description"]
+            tools.append(entry)
+        report.update(ok=True, toolCount=len(tools), tools=tools, errors=[])
+        if not tools:
+            report["warnings"] = ["No MCP tools exposed."]
+        return report
+
+    async def mcp_add(self, rest: list[str], flags: _Flags, fmt: Format) -> None:
+        """Handles `mcp add`."""
+        cli = self.cli
+        options = cli.mcp or McpOptions()
+        command = options.command
+        agents = list(options.agents)
+        i = 0
+        while i < len(rest):
+            if rest[i] in ("--command", "-c") and i + 1 < len(rest) and rest[i + 1]:
+                command = rest[i + 1]
+                i += 1
+            elif rest[i] == "--agent" and i + 1 < len(rest) and rest[i + 1]:
+                agents.append(rest[i + 1])
+                i += 1
+            i += 1
+        name = options.name or cli.name
+        self.write("Registering MCP server...")
+        try:
+            result = await _syncmcp.register(
+                name,
+                _syncmcp.Options(
+                    env=self.env_map,
+                    cli=None if name == cli.name else cli.name,
+                    command=command,
+                    global_="--no-global" not in rest,
+                    agents=agents,
+                    package=cli.package,
+                    version=cli.version if cli.package is not None else None,
+                ),
+            )
+        except Exception as error:
+            failure: dict[str, Json] = {"code": "MCP_ADD_FAILED", "message": str(error)}
+            self.writeln(format_value(failure, fmt))
+            self.exit = 1
+            return
+        self.write("\r\x1b[K")
+        lines = [f"\u2713 Registered {name} as MCP server"]
+        if result.agents:
+            lines.append(f"  Agents: {', '.join(result.agents)}")
+        lines += ["", f"Agents can now use {name} tools."]
+        suggestions = cli.sync.suggestions if cli.sync else []
+        if suggestions:
+            lines += ["", "Try asking:", *(f'  "{s}"' for s in suggestions)]
+        self.writeln("\n".join(lines))
+        if flags.full_output or flags.format_explicit:
+            out: dict[str, Json] = {
+                "name": name,
+                "command": result.command,
+                "agents": list(result.agents),
+            }
+            self.writeln(format_value(out, fmt))
+
+    async def complete(self, shell: str, argv: list[str]) -> None:
         """Answers a shell completion request."""
         cli = self.cli
         if shell not in _completions.SHELLS:
@@ -1337,6 +1642,9 @@ class _Run:
                 before = _parser.parse_globals(before, globals_schema)[1]
         except Error:
             before = None
+        # Groups named before the cursor load so their commands complete.
+        for word in before if before is not None else words[:cut]:
+            await cli.load(word)
         if before is not None:
             words_in = [*before, *words[cut:]]
             at = len(before)
@@ -1374,7 +1682,7 @@ class _Run:
         self,
         error: str,
         path: str,
-        commands: dict[str, _Entry],
+        commands: dict[str, Entry],
         argv: list[str],
         output: _Output,
     ) -> None:
@@ -1383,7 +1691,7 @@ class _Run:
         candidates = list(commands)
         if not path:
             candidates += self.builtin_names()
-        suggestion = _suggest(error, candidates)
+        suggestion = suggest(error, candidates)
         did_you_mean = f" Did you mean '{suggestion}'?" if suggestion else ""
         message = f"'{error}' is not a command for '{parent}'.{did_you_mean}"
         ctas: list[FormattedCta] = []
@@ -1395,10 +1703,25 @@ class _Run:
         failure = Error("COMMAND_NOT_FOUND", message)
         if output.human and not output.flags.full_output:
             self.writeln(human_error(failure))
-            self.writeln(cta.human())
+            self.writeln(self.with_notice(cta).human())
         else:
             self.write_output(output, False, failure.to_json(), error, cta)
         self.exit = 1
+
+    @typing.overload
+    def with_notice(self, cta: FormattedCtaBlock) -> FormattedCtaBlock: ...
+
+    @typing.overload
+    def with_notice(self, cta: FormattedCtaBlock | None) -> FormattedCtaBlock | None: ...
+
+    def with_notice(self, cta: FormattedCtaBlock | None) -> FormattedCtaBlock | None:
+        """Appends framework notices, such as an available update, to suggestions."""
+        notice = self.notice
+        if notice is None:
+            return cta
+        if cta is None:
+            return notice
+        return FormattedCtaBlock([*cta.commands, *notice.commands], cta.description)
 
     @staticmethod
     def truncate(flags: _Flags, text: str) -> tuple[str, bool, float | None]:
@@ -1430,6 +1753,7 @@ class _Run:
         """Writes a command result. `body` is `MISSING` for no data."""
         flags = output.flags
         fmt = output.format
+        cta = self.with_notice(cta)
         if output.filter is not None and ok and not isinstance(body, Missing):
             body = _filter.apply(body, output.filter)
         text = "" if isinstance(body, Missing) else format_value(body, fmt)
@@ -1572,7 +1896,7 @@ class _Run:
             raise unknown(f"Invalid config 'options' for '{path}': expected an object")
         return dict(options)
 
-    async def execute(self, resolved: _Resolved, filtered: list[str], output: _Output) -> None:
+    async def execute(self, resolved: Resolved, filtered: list[str], output: _Output) -> None:
         """Parses input, runs middleware and the handler, and writes the result."""
         cli = self.cli
         command = resolved.command
@@ -1598,18 +1922,7 @@ class _Run:
             self.write_failure(output, error, path)
             return
 
-        context = MiddlewareContext[Any, Any, Any](
-            agent=not output.human,
-            command=path,
-            display_name=self.display_name,
-            env=None,
-            format=output.format,
-            format_explicit=output.flags.format_explicit,
-            globals=build(globals_schema, globals_) if globals_schema else None,
-            name=cli.name,
-            var=cli.vars() if isinstance(cli.vars, type) else dict(cli.vars),
-            version=cli.version,
-        )
+        context = self.context(path, output, globals_)
 
         def parse() -> tuple[dict[str, Json], dict[str, Json], dict[str, Json]]:
             args, options = _parser.parse(argv, command.args, command.options, defaults)
@@ -1638,6 +1951,70 @@ class _Run:
             return
         data = MISSING if result.data is None else result.data
         self.write_output(output, True, data, path, format_cta(self.display_name, result.cta))
+
+    def context(
+        self, path: str, output: _Output, globals_: dict[str, Json]
+    ) -> MiddlewareContext[Any, Any, Any]:
+        """Creates the middleware context of a run."""
+        cli = self.cli
+        return MiddlewareContext[Any, Any, Any](
+            agent=not output.human,
+            command=path,
+            display_name=self.display_name,
+            env=None,
+            format=output.format,
+            format_explicit=output.flags.format_explicit,
+            globals=build(cli.globals, globals_) if cli.globals else None,
+            name=cli.name,
+            var=cli.vars_instance(),
+            version=cli.version,
+        )
+
+    async def forward(self, hit: GatewayHit, filtered: list[str], output: _Output) -> None:
+        """Runs a fetch gateway: sends argv as an HTTP request and writes the response."""
+        cli = self.cli
+        path = hit.path
+        depth = len(filtered) - len(hit.rest)
+        globals_: dict[str, Json] = {}
+        argv = output.flags.rest
+        if cli.globals is not None:
+            try:
+                globals_, argv = _parser.parse_globals(
+                    output.flags.rest, cli.globals, None, known=True, validate=True
+                )
+            except Error as error:
+                self.early_error(error, output.human, output.flags.format)
+                return
+        argv = argv[depth:]
+
+        async def send() -> None:
+            data = _gateway.parse_argv(argv)
+            if hit.gateway.base_path:
+                data.path = hit.gateway.base_path + data.path
+            response = await call(hit.gateway.fetch, _gateway.build_request(data))
+            if _gateway.is_streaming(response):
+                await self.stream(_gateway.stream(response), path, output, cli.name)
+                return
+            body = await _gateway.read(response)
+            if response.ok:
+                self.write_output(output, True, body, path, None)
+                return
+            code, message = _gateway.error_of(body, response.status)
+            self.write_output(output, False, {"code": code, "message": message}, path, None)
+            self.exit = 1
+
+        try:
+            context = self.context(path, output, globals_)
+            if cli.env is not None:
+                context.env = build(cli.env, _parser.parse_env(cli.env, self.env))
+            chain = [*cli.middleware, *hit.middleware]
+            failure = await run_chain(chain, context, send) if chain else await send()
+        except Error as error:
+            failure = error
+        except Exception as error:
+            failure = unknown(str(error))
+        if failure is not None:
+            self.write_failure(output, failure, path)
 
     def validation_help(self, command: Command, path: str, error: Error) -> None:
         """Writes human validation errors followed by command help."""
@@ -1679,11 +2056,17 @@ class _Run:
         self.writeln("\n".join(lines))
         self.exit = 1
 
-    async def stream(self, chunks: Stream, path: str, output: _Output) -> None:
+    async def stream(
+        self,
+        chunks: Stream | AsyncIterator[Json],
+        path: str,
+        output: _Output,
+        name: str | None = None,
+    ) -> None:
         """Writes a streamed result."""
         jsonl = output.format == "jsonl"
         incremental = jsonl or (not output.flags.format_explicit and output.format == "toon")
-        name = self.display_name
+        name = name or self.display_name
 
         def fail(error: Error) -> None:
             cta = format_cta(name, error.cta)
@@ -1718,7 +2101,7 @@ class _Run:
         except Exception as error:
             fail(unknown(str(error)))
             return
-        final = chunks.final
+        final = chunks.final if isinstance(chunks, Stream) else None
         cta = format_cta(name, final.cta if isinstance(final, Outcome) else None)
         if jsonl:
             meta: dict[str, Json] = {"command": path, "duration": self.duration()}
@@ -1742,17 +2125,17 @@ def _exists(path: str) -> bool:
 
 
 def _tree(
-    commands: dict[str, _Entry], root: Command | None, description: str | None
+    commands: dict[str, Entry], root: Command | None, description: str | None
 ) -> _completions.Node:
     """Builds the completion tree of a command group."""
     nodes: list[tuple[str, _completions.Node, bool]] = []
     for name, entry in commands.items():
-        if isinstance(entry, _Group):
+        if isinstance(entry, Group):
             node = _tree(entry.commands, entry.root, entry.description)
         else:
-            command = _target(entry)
+            command = target(entry)
             assert command is not None
             node = _completions.Node(command.description, command.options, False, [])
-        nodes.append((name, node, isinstance(entry, _Alias)))
+        nodes.append((name, node, isinstance(entry, Alias)))
     options = root.options if root is not None else None
     return _completions.Node(description, options, True, nodes)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from . import _js
-from ._errors import unknown, validation
+from ._errors import Error, unknown, validation
 from ._js import Json
 from ._schema import Type, validate
 
@@ -90,7 +90,13 @@ def _number(text: str, ty: Type) -> Json:
 
 def check(schema: Type, data: dict[str, Json]) -> dict[str, Json]:
     """Validates an object against a schema, raising a validation error on failure."""
-    parsed, issues = validate(schema, data)
+    try:
+        parsed, issues = validate(schema, data)
+    except ValueError as error:
+        # Zod throws when an intersection cannot merge its results.
+        raise Error(
+            "VALIDATION_ERROR", f"Validation failed\n\nDetails: {error}", field_errors=[]
+        ) from error
     if issues:
         raise validation(issues, data)
     return parsed
