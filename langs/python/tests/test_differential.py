@@ -1,6 +1,6 @@
-"""Differential test: replays every case in `langs/differential/cases.json` against the TypeScript
+"""Differential test: replays every case in `langs/_differential/cases.json` against the TypeScript
 reference implementation and this port, and requires identical stdout, stderr, exit codes, and
-sandbox files. Mirrors `langs/differential/run.ts`.
+sandbox files. Mirrors `langs/_differential/run.ts`.
 
 Cases with a `bin` and no `sandbox` run in a child process started through a link with that name,
 so the process entry point `Cli.serve` reads its real arguments, environment, and binary name.
@@ -35,7 +35,7 @@ import incur
 
 TESTS = Path(__file__).resolve().parent
 ROOT = TESTS.parents[2]
-DIFFERENTIAL = ROOT / "langs" / "differential"
+DIFFERENTIAL = ROOT / "langs" / "_differential"
 DURATION = re.compile(r"(?<![A-Za-z0-9])[0-9]+ms(?![A-Za-z0-9])", re.ASCII)
 TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
 CHECKED = re.compile(r'"checkedAt":\d+')
@@ -302,7 +302,7 @@ def matches(want: dict[str, Any], got: dict[str, Any]) -> bool:
 def test_matches_typescript(tmp_path: Path) -> None:
     cases: list[dict[str, Any]] = json.loads((DIFFERENTIAL / "cases.json").read_text("utf-8"))
     reference = subprocess.run(
-        ["node", "--no-warnings", "--import", "tsx", "langs/differential/run.ts"],
+        ["node", "--no-warnings", "--import", "tsx", "langs/_differential/run.ts"],
         cwd=ROOT,
         capture_output=True,
         text=True,

@@ -1,4 +1,4 @@
-//! Differential test: replays every case in `langs/differential/cases.json` against the
+//! Differential test: replays every case in `langs/_differential/cases.json` against the
 //! TypeScript reference implementation and this port, and requires identical stdout, stderr, and
 //! exit codes. Durations are the only normalized values outside sandboxed cases.
 //!
@@ -498,7 +498,7 @@ fn reference(root: &Path) -> Vec<Outcome> {
             "--no-warnings",
             "--import",
             "tsx",
-            "langs/differential/run.ts",
+            "langs/_differential/run.ts",
         ])
         .current_dir(root)
         .output()
@@ -530,7 +530,7 @@ fn selected(index: usize, case: &Case) -> bool {
 /// Runs every case and asserts that all match the reference.
 fn matches_typescript() {
     let root = root();
-    let dir = root.join("langs/differential");
+    let dir = root.join("langs/_differential");
     let cases: Vec<Case> =
         serde_json::from_str(&std::fs::read_to_string(dir.join("cases.json")).unwrap()).unwrap();
     let expected = reference(&root);

@@ -7,7 +7,7 @@
  * working directory, a cleared environment, stub package-manager runners on `PATH`, `stdin` fed to
  * `--mcp`, and `requests` sent to `cli.fetch` instead of `serve`. See `langs/README.md`.
  *
- * Usage: `node --import tsx langs/differential/run.ts [cases-file]` from any directory. The cases
+ * Usage: `node --import tsx langs/_differential/run.ts [cases-file]` from any directory. The cases
  * file defaults to `cases.json` beside this script.
  */
 import * as fs from 'node:fs'

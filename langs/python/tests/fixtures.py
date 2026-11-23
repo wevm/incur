@@ -1,4 +1,4 @@
-"""Python mirror of the reference CLIs in `langs/differential/fixtures.ts`."""
+"""Python mirror of the reference CLIs in `langs/_differential/fixtures.ts`."""
 
 from __future__ import annotations
 

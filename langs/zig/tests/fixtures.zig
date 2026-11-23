@@ -1,4 +1,4 @@
-//! Zig mirror of the reference CLIs in `langs/differential/fixtures.ts`.
+//! Zig mirror of the reference CLIs in `langs/_differential/fixtures.ts`.
 
 const std = @import("std");
 const incur = @import("incur");

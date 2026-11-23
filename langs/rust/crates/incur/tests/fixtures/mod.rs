@@ -1,4 +1,4 @@
-//! Rust mirror of the reference CLIs in `langs/differential/fixtures.ts`.
+//! Rust mirror of the reference CLIs in `langs/_differential/fixtures.ts`.
 
 mod sandboxed;
 mod services;

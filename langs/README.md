@@ -3,27 +3,27 @@
 Ports of incur to other languages. The TypeScript package in `src/` is the reference; every port
 must produce the same stdout, stderr, and exit code for the same invocation.
 
-| Directory                         | Contents                                                                   |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| [`differential/`](./differential) | The shared differential suite: reference CLIs, cases, and config fixtures. |
-| [`rust/`](./rust)                 | The Rust port: the `incur` crate and its `#[derive(Schema)]` macro.        |
-| [`python/`](./python)             | The Python port: the `incur` package, with typed schema classes.           |
-| [`zig/`](./zig)                   | The Zig port: the `incur` module, with comptime schema metadata.           |
+| Directory                           | Contents                                                                   |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| [`_differential/`](./_differential) | The shared differential suite: reference CLIs, cases, and config fixtures. |
+| [`rust/`](./rust)                   | The Rust port: the `incur` crate and its `#[derive(Schema)]` macro.        |
+| [`python/`](./python)               | The Python port: the `incur` package, with typed schema classes.           |
+| [`zig/`](./zig)                     | The Zig port: the `incur` module, with comptime schema metadata.           |
 
 ## Differential suite
 
-- [`differential/fixtures.ts`](./differential/fixtures.ts) defines the reference CLIs. Each port
+- [`_differential/fixtures.ts`](./_differential/fixtures.ts) defines the reference CLIs. Each port
   mirrors them with the same names, schemas, and handlers.
-- [`differential/cases.json`](./differential/cases.json) lists the invocations, one per line:
+- [`_differential/cases.json`](./_differential/cases.json) lists the invocations, one per line:
   `cli` (a fixture key), `argv`, and optional `env`, `tty`, `bin`, `sandbox`, `stdin`, and
   `requests`. `bin` serves the case as a process started under that binary name, which the help
   title and completion scripts show. The last three are described under
   [Sandboxed cases](#sandboxed-cases).
-- [`differential/run.ts`](./differential/run.ts) runs every case against the TypeScript CLIs and
+- [`_differential/run.ts`](./_differential/run.ts) runs every case against the TypeScript CLIs and
   prints `[{ stdout, stderr, exit }]` in case order, with `files` added for sandboxed cases. Ports
   run the same cases and compare. Durations such as `12ms` are normalized; sandboxed cases also
   normalize paths and timestamps. `run.ts <file>` runs another cases file.
-- [`differential/config/`](./differential/config) holds config files the cases load, including
+- [`_differential/config/`](./_differential/config) holds config files the cases load, including
   invalid JSON on purpose. Cases without `sandbox` run with this directory's parent as the
   working directory.
 
@@ -82,7 +82,7 @@ cases to `cases.json`. Every port must pass the whole suite.
 
 ```sh
 pnpm install
-node --import tsx langs/differential/run.ts > /tmp/reference.json
+node --import tsx langs/_differential/run.ts > /tmp/reference.json
 ```
 
 ## Rust

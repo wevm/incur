@@ -1,4 +1,4 @@
-//! Differential test: replays every case in `langs/differential/cases.json` against the
+//! Differential test: replays every case in `langs/_differential/cases.json` against the
 //! TypeScript reference implementation and this port, and requires identical stdout, stderr, exit
 //! codes, and sandbox files. Durations are normalized in both; sandboxed cases also normalize
 //! sandbox paths and timestamps, as `run.ts` does.
@@ -362,7 +362,7 @@ fn matchesTypescript(init: std.process.Init) !void {
     const a = arena_state.allocator();
     const io = init.io;
     const root = try std.Io.Dir.cwd().realPathFileAlloc(io, "../..", a);
-    const dir = try std.fs.path.join(a, &.{ root, "langs/differential" });
+    const dir = try std.fs.path.join(a, &.{ root, "langs/_differential" });
 
     const cases_text = try std.Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(a, &.{ dir, "cases.json" }), a, .unlimited);
     const cases = (try std.json.parseFromSliceLeaky(JsonValue, a, cases_text, .{})).array.items;
@@ -372,7 +372,7 @@ fn matchesTypescript(init: std.process.Init) !void {
         try std.Io.Dir.cwd().readFileAlloc(io, path, a, .unlimited)
     else reference: {
         const reference = try std.process.run(a, io, .{
-            .argv = &.{ "node", "--no-warnings", "--import", "tsx", "langs/differential/run.ts" },
+            .argv = &.{ "node", "--no-warnings", "--import", "tsx", "langs/_differential/run.ts" },
             .cwd = .{ .path = root },
         });
         if (!reference.term.success()) {
