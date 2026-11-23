@@ -26,6 +26,9 @@ pub const Type = struct {
     kind: Kind,
     /// Whether the input may omit the field.
     optional: bool = false,
+    /// The range of the Zig integer type that stores the value, which `incur.schema` sets for
+    /// integer fields. Validation checks it after the declared bounds; JSON Schema omits it.
+    int_range: ?IntRange = null,
 
     /// Returns the fields of an object schema, or an empty slice.
     pub fn fields(ty: *const Type) []const Field {
@@ -60,6 +63,14 @@ pub const Type = struct {
             .object, .unknown => "value",
         };
     }
+};
+
+/// An inclusive integer range.
+pub const IntRange = struct {
+    /// Minimum.
+    min: i128,
+    /// Maximum.
+    max: i128,
 };
 
 /// Numeric bounds: values for numbers, UTF-16 length for strings, item count for arrays.
@@ -174,7 +185,7 @@ fn metadata(a: Allocator, ty: *const Type, out: *json.ObjectBuilder) Allocator.E
 
 /// Writes a numeric bound when present.
 fn bound(a: Allocator, out: *json.ObjectBuilder, key: []const u8, value: ?f64) Allocator.Error!void {
-    if (value) |v| try out.put(a, key, .{ .number = v });
+    if (value) |v| try out.put(a, key, .{ .float = v });
 }
 
 /// A validation issue, matching the issues Zod reports.
@@ -215,13 +226,13 @@ pub const Issue = struct {
                 // Zod's safe-integer check reports its issue with a note and a different key order.
                 if (std.mem.eql(u8, b.origin, "int")) {
                     try out.put(a, "code", .{ .string = issue.code() });
-                    try out.put(a, key, .{ .number = b.bound });
+                    try out.put(a, key, b.bound);
                     try out.put(a, "note", .{ .string = "Integers must be within the safe integer range." });
                     try out.put(a, "origin", .{ .string = b.origin });
                 } else {
                     try out.put(a, "origin", .{ .string = b.origin });
                     try out.put(a, "code", .{ .string = issue.code() });
-                    try out.put(a, key, .{ .number = b.bound });
+                    try out.put(a, key, b.bound);
                 }
                 try out.put(a, "inclusive", .{ .bool = true });
             },
@@ -234,8 +245,8 @@ pub const Issue = struct {
 
 /// A bound check that failed.
 pub const BoundIssue = struct {
-    /// The bound.
-    bound: f64,
+    /// The bound, an integer or a float.
+    bound: Value,
     /// The checked type.
     origin: []const u8,
 };
@@ -258,9 +269,6 @@ pub const IssueKind = union(enum) {
     /// The value is under a minimum.
     too_small: BoundIssue,
 };
-
-/// The marker a coerced non-finite number carries through validation. JSON has no NaN.
-pub const non_finite = "\x00incur:non-finite:";
 
 /// Validation state: the current path and the issues found.
 pub const Validator = struct {
@@ -306,42 +314,44 @@ pub const Validator = struct {
             .array => |array| if (value == .array) {
                 const out = try v.a.alloc(Value, value.array.len);
                 for (value.array, out, 0..) |item, *slot, index| {
-                    try v.path.append(v.a, .{ .number = @floatFromInt(index) });
+                    try v.path.append(v.a, .{ .integer = index });
                     slot.* = try v.parse(array.items, item) orelse .null;
                     _ = v.path.pop();
                 }
-                try v.checkBounds(@floatFromInt(value.array.len), array.bounds, "array");
+                try v.checkBounds(.{ .integer = value.array.len }, array.bounds, "array");
                 return .{ .array = out };
             },
             .boolean => if (value == .bool) return value,
             .unknown => return value,
             .integer, .number => |b| {
-                const integer = ty.kind == .integer;
-                if (value == .string and std.mem.startsWith(u8, value.string, non_finite)) {
+                const number = value.toFloat() orelse {
+                    try v.invalidType(ty, received(value), null);
+                    return null;
+                };
+                if (!std.math.isFinite(number)) {
                     // Zod names NaN in the message but reports infinities as numbers.
-                    const nan = std.mem.eql(u8, value.string[non_finite.len..], "NaN");
+                    const nan = std.math.isNan(number);
                     try v.invalidType(ty, if (nan) "NaN" else "number", if (nan) "NaN" else "Infinity");
                     return null;
                 }
-                if (value != .number) {
-                    try v.invalidType(ty, received(value), null);
-                    return null;
-                }
-                const number = value.number;
-                if (integer and @trunc(number) != number) {
-                    // Only a finite fraction reports the integer format.
-                    try v.issue(.{ .invalid_type = .{ .expected = "int", .format = "safeint" } }, "Invalid input: expected int, received number");
-                    return null;
-                }
-                if (integer) {
+                const issues = v.issues.items.len;
+                if (ty.kind == .integer) {
+                    if (value == .float and @trunc(number) != number) {
+                        // Only a finite fraction reports the integer format.
+                        try v.issue(.{ .invalid_type = .{ .expected = "int", .format = "safeint" } }, "Invalid input: expected int, received number");
+                        return null;
+                    }
                     const min = b.min orelse -js.max_safe_integer;
                     const max = b.max orelse js.max_safe_integer;
-                    const safe = (min == -js.max_safe_integer and number < min) or (max == js.max_safe_integer and number > max);
-                    try v.checkBounds(number, .{ .min = min, .max = max }, if (safe) "int" else "number");
+                    const safe = (min == -js.max_safe_integer and compare(value, min) == .lt) or (max == js.max_safe_integer and compare(value, max) == .gt);
+                    try v.checkBounds(value, .{ .min = min, .max = max }, if (safe) "int" else "number");
                 } else {
-                    try v.checkBounds(number, b, "number");
+                    try v.checkBounds(value, b, "number");
                 }
-                return value;
+                if (v.issues.items.len > issues) return null;
+                if (ty.int_range) |range| try v.checkRange(value, range);
+                // Integers coerced from argv and the environment are floats until here.
+                return if (ty.kind == .integer and value == .float) .{ .integer = @intFromFloat(number) } else value;
             },
             .object => |fs| if (value == .object) {
                 var out: json.ObjectBuilder = .{};
@@ -353,7 +363,7 @@ pub const Validator = struct {
                 return out.finish();
             },
             .string => |b| if (value == .string) {
-                try v.checkBounds(@floatFromInt(js.utf16Len(value.string)), b, "string");
+                try v.checkBounds(.{ .integer = js.utf16Len(value.string) }, b, "string");
                 return value;
             },
             // `parse` handles enums before reaching here.
@@ -384,20 +394,65 @@ pub const Validator = struct {
         );
     }
 
-    /// Reports `too_small` and `too_big` issues.
-    fn checkBounds(v: *Validator, value: f64, b: Bounds, origin: []const u8) Allocator.Error!void {
-        const unit = if (std.mem.eql(u8, origin, "string")) " characters" else if (std.mem.eql(u8, origin, "array")) " items" else "";
-        const verb = if (unit.len == 0) "be" else "have";
-        if (b.min) |minimum| if (value < minimum) try v.issue(
-            .{ .too_small = .{ .bound = minimum, .origin = origin } },
-            try std.fmt.allocPrint(v.a, "Too small: expected {s} to {s} >={s}{s}", .{ origin, verb, try js.numberToString(v.a, minimum), unit }),
-        );
-        if (b.max) |maximum| if (value > maximum) try v.issue(
-            .{ .too_big = .{ .bound = maximum, .origin = origin } },
-            try std.fmt.allocPrint(v.a, "Too big: expected {s} to {s} <={s}{s}", .{ origin, verb, try js.numberToString(v.a, maximum), unit }),
-        );
+    /// Reports `too_small` and `too_big` issues for a number, length, or item count.
+    fn checkBounds(v: *Validator, value: Value, b: Bounds, origin: []const u8) Allocator.Error!void {
+        if (b.min) |minimum| if (compare(value, minimum) == .lt) try v.tooSmall(.{ .float = minimum }, origin);
+        if (b.max) |maximum| if (compare(value, maximum) == .gt) try v.tooBig(.{ .float = maximum }, origin);
+    }
+
+    /// Reports a number that is not an integer or does not fit the Zig integer type storing it.
+    fn checkRange(v: *Validator, value: Value, range: IntRange) Allocator.Error!void {
+        const int: i128 = switch (value) {
+            .integer => |i| i,
+            .float => |f| if (@trunc(f) != f)
+                return v.issue(.{ .invalid_type = .{ .expected = "int" } }, "Invalid input: expected int, received number")
+            else if (@abs(f) < 0x1p127) @intFromFloat(f) else return v.outOfRange(f < 0, range),
+            else => return v.outOfRange(value.big_integer[0] == '-', range),
+        };
+        if (int < range.min or int > range.max) try v.outOfRange(int < range.min, range);
+    }
+
+    /// Reports a number below or above an integer range.
+    fn outOfRange(v: *Validator, below: bool, range: IntRange) Allocator.Error!void {
+        if (below) try v.tooSmall(.{ .integer = range.min }, "number") else try v.tooBig(.{ .integer = range.max }, "number");
+    }
+
+    /// Reports a `too_small` issue.
+    fn tooSmall(v: *Validator, minimum: Value, origin: []const u8) Allocator.Error!void {
+        try v.issue(.{ .too_small = .{ .bound = minimum, .origin = origin } }, try std.fmt.allocPrint(v.a, "Too small: expected {s} to {s} >={s}{s}", .{ origin, verb(origin), try json.toString(v.a, minimum), unit(origin) }));
+    }
+
+    /// Reports a `too_big` issue.
+    fn tooBig(v: *Validator, maximum: Value, origin: []const u8) Allocator.Error!void {
+        try v.issue(.{ .too_big = .{ .bound = maximum, .origin = origin } }, try std.fmt.allocPrint(v.a, "Too big: expected {s} to {s} <={s}{s}", .{ origin, verb(origin), try json.toString(v.a, maximum), unit(origin) }));
     }
 };
+
+/// Returns the unit Zod's bound messages name for an origin.
+fn unit(origin: []const u8) []const u8 {
+    return if (std.mem.eql(u8, origin, "string")) " characters" else if (std.mem.eql(u8, origin, "array")) " items" else "";
+}
+
+/// Returns the verb Zod's bound messages use for an origin.
+fn verb(origin: []const u8) []const u8 {
+    return if (unit(origin).len == 0) "be" else "have";
+}
+
+/// Compares a number with a finite bound exactly, without rounding integers to floats.
+fn compare(value: Value, limit: f64) std.math.Order {
+    switch (value) {
+        .integer => |int| {
+            // Bounds beyond the `i128` range compare by sign; others compare as integers, with a
+            // fractional limit between its floor and the next integer.
+            if (limit >= 0x1p127) return .lt;
+            if (limit < -0x1p127) return .gt;
+            const floor = @floor(limit);
+            const order = std.math.order(int, @as(i128, @intFromFloat(floor)));
+            return if (order == .eq and floor != limit) .lt else order;
+        },
+        else => return std.math.order(value.toFloat().?, limit),
+    }
+}
 
 /// Returns Zod's name for the type of a received value.
 fn received(value: Value) []const u8 {
@@ -405,7 +460,7 @@ fn received(value: Value) []const u8 {
         .array => "array",
         .bool => "boolean",
         .null => "null",
-        .number => "number",
+        .integer, .big_integer, .float => "number",
         .object => "object",
         .string => "string",
     };

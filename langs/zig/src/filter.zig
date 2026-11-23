@@ -164,10 +164,9 @@ const Node = union(enum) {
                 if (index(key)) |i| {
                     while (items.items.len <= i) try items.append(a, .{ .value = .null });
                     items.items[i] = value;
-                } else if (std.mem.eql(u8, key, "length") and value == .value and value.value == .number and
-                    value.value.number >= 0 and @trunc(value.value.number) == value.value.number)
-                {
-                    const len: usize = @intFromFloat(value.value.number);
+                } else if (std.mem.eql(u8, key, "length") and value == .value and value.value == .integer) {
+                    // Filters read `length` from the same array, so it is a valid length.
+                    const len: usize = @intCast(value.value.integer);
                     while (items.items.len < len) try items.append(a, .{ .value = .null });
                     items.shrinkRetainingCapacity(len);
                 }
@@ -225,7 +224,7 @@ fn merge(a: Allocator, target: *Node, data: Value, segments: Path, at: usize) Al
 /// Reads a property as JavaScript does: object keys, and the indices and `length` of arrays.
 fn get(data: Value, key: []const u8) ?Value {
     if (data != .array) return data.get(key);
-    if (std.mem.eql(u8, key, "length")) return .{ .number = @floatFromInt(data.array.len) };
+    if (std.mem.eql(u8, key, "length")) return .{ .integer = data.array.len };
     const i = index(key) orelse return null;
     return if (i < data.array.len) data.array[i] else null;
 }

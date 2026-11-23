@@ -20,6 +20,7 @@ const Type = schema.Type;
 const Error = errors.Error;
 const Format = formatter.Format;
 const Command = command.Command;
+const ServeError = command.ServeError;
 const Middleware = command.Middleware;
 const OutputPolicy = command.OutputPolicy;
 const FormattedCta = errors.FormattedCta;
@@ -42,8 +43,9 @@ pub const BannerMode = enum {
 pub const Banner = struct {
     /// Who sees it.
     mode: BannerMode = .all,
-    /// Renders the text; null or empty shows nothing.
-    render: *const fn (a: Allocator) Allocator.Error!?[]const u8,
+    /// Renders the text, and may perform I/O. Null or empty text shows nothing, and errors
+    /// other than `error.OutOfMemory` and `error.Canceled` show nothing too.
+    render: *const fn (io: std.Io, a: Allocator) anyerror!?[]const u8,
 };
 
 /// Config-file option defaults.
@@ -60,6 +62,8 @@ pub const Config = struct {
     pub const Load = struct {
         /// Allocator for the returned value.
         allocator: Allocator,
+        /// The I/O implementation, for reading the config.
+        io: std.Io,
         /// The failure slot `fail` writes.
         failure: *command.Failure,
 
@@ -129,7 +133,8 @@ fn lookup(commands: Commands, name: []const u8) ?Entry {
 
 /// Process I/O for `Cli.serveWith`.
 pub const Process = struct {
-    /// The I/O implementation, used for config files and the clock.
+    /// The I/O implementation that config files, the clock, banners, middleware, handlers, and
+    /// streams use. Canceling the task that serves the CLI cancels the command's I/O.
     io: std.Io,
     /// Environment variables.
     env: *const std.process.Environ.Map,
@@ -246,13 +251,14 @@ pub const Cli = struct {
         if (code != 0) std.process.exit(code);
     }
 
-    /// Runs the CLI with explicit arguments and I/O. Returns the exit code.
-    pub fn serveWith(cli: *const Cli, argv: []const []const u8, process: Process) Allocator.Error!u8 {
+    /// Runs the CLI with explicit arguments and I/O. Returns the exit code; fails only when
+    /// allocation fails or the task serving the CLI is canceled.
+    pub fn serveWith(cli: *const Cli, argv: []const []const u8, process: Process) ServeError!u8 {
         return cli.serveImpl(argv, process, null);
     }
 
     /// The shared serve implementation.
-    fn serveImpl(cli: *const Cli, argv: []const []const u8, process: Process, bin: ?[]const u8) Allocator.Error!u8 {
+    fn serveImpl(cli: *const Cli, argv: []const []const u8, process: Process, bin: ?[]const u8) ServeError!u8 {
         var arena = std.heap.ArenaAllocator.init(cli.gpa);
         defer arena.deinit();
         const display_name = if (bin) |b| name: {
@@ -719,7 +725,7 @@ const Run = struct {
 
     /// Writes to stdout.
     fn write(run: *Run, text: []const u8) void {
-        run.process.stdout.writeAll(text) catch {};
+        js.writeWellFormed(run.process.stdout, text) catch {};
     }
 
     /// Writes a line to stdout.
@@ -752,7 +758,7 @@ const Run = struct {
     }
 
     /// Writes the banner when its mode matches.
-    fn banner(run: *Run, human: bool, is_help: bool) Allocator.Error!void {
+    fn banner(run: *Run, human: bool, is_help: bool) ServeError!void {
         const b = run.cli.options.banner orelse return;
         if (is_help) return;
         const matches = switch (b.mode) {
@@ -761,11 +767,16 @@ const Run = struct {
             .agent => !human,
         };
         if (!matches) return;
-        if (errors.nonEmpty(try b.render(run.a))) |text| run.writeln(text);
+        const text = b.render(run.process.io, run.a) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Canceled => return error.Canceled,
+            else => null,
+        };
+        if (errors.nonEmpty(text)) |t| run.writeln(t);
     }
 
     /// Serves one invocation.
-    fn serve(run: *Run, argv: []const []const u8) Allocator.Error!void {
+    fn serve(run: *Run, argv: []const []const u8) ServeError!void {
         const a = run.a;
         const cli = run.cli;
         if (run.process.env.get("COMPLETE")) |shell| return run.complete(shell, argv);
@@ -1265,7 +1276,7 @@ const Run = struct {
                     var envelope: json.ObjectBuilder = .{};
                     try envelope.put(a, "ok", .{ .bool = ok });
                     try envelope.put(a, key, .{ .string = truncated });
-                    if (next) |n| try meta.put(a, "nextOffset", .{ .number = n });
+                    if (next) |n| try meta.put(a, "nextOffset", .{ .float = n });
                     try envelope.put(a, "meta", meta.finish());
                     run.writeln(try formatter.format(a, envelope.finish(), format));
                     return;
@@ -1342,7 +1353,7 @@ const Run = struct {
     }
 
     /// Loads config-file defaults for a command path.
-    fn configDefaults(run: *Run, path: []const u8, flags: *const Flags) Allocator.Error!parser.Result(?[]const Value.Entry) {
+    fn configDefaults(run: *Run, path: []const u8, flags: *const Flags) ServeError!parser.Result(?[]const Value.Entry) {
         const a = run.a;
         const io = run.process.io;
         const config = run.cli.options.config orelse return .{ .ok = null };
@@ -1357,7 +1368,7 @@ const Run = struct {
         };
         const parsed: Value = if (config.loader) |loader| parsed: {
             var failure: command.Failure = .{};
-            var load: Config.Load = .{ .allocator = a, .failure = &failure };
+            var load: Config.Load = .{ .allocator = a, .io = io, .failure = &failure };
             const loaded = loader(&load, target) catch |err| return .{ .err = try failure.take(err) };
             const value = loaded orelse return .{ .ok = null };
             if (value != .object) return .{ .err = .{ .message = "Config loader must return a plain object or undefined" } };
@@ -1400,7 +1411,7 @@ const Run = struct {
     }
 
     /// Parses input, runs middleware and the handler, and writes the result.
-    fn execute(run: *Run, cmd: *const Command, group_middleware: []const Middleware, path: []const u8, filtered: []const []const u8, rest: []const []const u8, output: *const Output) Allocator.Error!void {
+    fn execute(run: *Run, cmd: *const Command, group_middleware: []const Middleware, path: []const u8, filtered: []const []const u8, rest: []const []const u8, output: *const Output) ServeError!void {
         const a = run.a;
         const cli = run.cli;
         const depth = filtered.len - rest.len;
@@ -1429,6 +1440,7 @@ const Run = struct {
         var failure: command.Failure = .{};
         var context: command.MiddlewareContext = .{
             .allocator = a,
+            .io = run.process.io,
             .agent = !output.human,
             .command = path,
             .display_name = run.display_name,
@@ -1505,14 +1517,14 @@ const Run = struct {
     }
 
     /// Writes a streamed result.
-    fn stream(run: *Run, s: command.Stream, block: ?errors.CtaBlock, path: []const u8, output: *const Output) Allocator.Error!void {
+    fn stream(run: *Run, s: command.Stream, block: ?errors.CtaBlock, path: []const u8, output: *const Output) ServeError!void {
         const a = run.a;
         const jsonl = output.format == .jsonl;
         const incremental = jsonl or (!output.flags.format_explicit and output.format == .toon);
         var buffered: std.ArrayList(Value) = .empty;
         var failure: command.Failure = .{};
         while (true) {
-            const next = s.next(s.context, a) catch |err| Chunk{ .failure = try failure.take(err) };
+            const next = s.next(s.context, run.process.io, a) catch |err| Chunk{ .failure = try failure.take(err) };
             const chunk = next orelse break;
             switch (chunk) {
                 .failure => |e| return run.streamFailure(e, jsonl, incremental, path, output),
@@ -1527,7 +1539,10 @@ const Run = struct {
                         if (output.render) run.writeln((try run.truncate(output.flags, try formatter.format(a, value, output.format)))[0]);
                     } else {
                         try buffered.append(a, value);
+                        continue;
                     }
+                    // Incremental chunks reach the reader while the stream waits for the next one.
+                    run.process.stdout.flush() catch {};
                 },
             }
         }
@@ -1588,7 +1603,7 @@ const Step = struct {
     result: ?Result = null,
     streamed: bool = false,
 
-    fn last(context: *anyopaque, c: *command.MiddlewareContext) Allocator.Error!void {
+    fn last(context: *anyopaque, c: *command.MiddlewareContext) ServeError!void {
         const step: *Step = @ptrCast(@alignCast(context));
         const run = step.run;
         const a = run.a;
@@ -1613,6 +1628,7 @@ const Step = struct {
         };
         const invocation: command.Invocation = .{
             .allocator = a,
+            .io = c.io,
             .agent = c.agent,
             .args = parsed.args,
             .display_name = c.display_name,

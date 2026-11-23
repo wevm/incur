@@ -28,6 +28,10 @@ pub const Vars = json.ObjectBuilder;
 /// with `fail`.
 pub const Failed = error{Failed};
 
+/// Errors that end serving instead of being reported as incur errors: allocation failure, and
+/// cancelation of the task serving the CLI, which handlers see as `error.Canceled` from `std.Io`.
+pub const ServeError = Allocator.Error || std.Io.Cancelable;
+
 /// Holds the `Error` recorded by `fail` until the CLI reports it.
 pub const Failure = struct {
     /// The recorded error.
@@ -40,9 +44,11 @@ pub const Failure = struct {
     }
 
     /// Converts a returned error into an incur error. Errors other than `error.Failed` become
-    /// `UNKNOWN` errors named after the Zig error; `error.OutOfMemory` propagates.
-    pub fn take(f: *Failure, err: anyerror) Allocator.Error!Error {
+    /// `UNKNOWN` errors named after the Zig error; `error.OutOfMemory` and `error.Canceled`
+    /// propagate.
+    pub fn take(f: *Failure, err: anyerror) ServeError!Error {
         if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
         if (err == error.Failed) if (f.err) |e| {
             f.err = null;
             return e;
@@ -75,8 +81,12 @@ pub fn Context(comptime input: Input) type {
         /// The declared input types.
         pub const declared = input;
 
-        /// Allocator for this invocation. Memory is freed when the CLI finishes serving.
+        /// Allocator for this invocation. Memory is freed when the CLI finishes serving. It is
+        /// thread-safe when the CLI's allocator is, so concurrent tasks may share it.
         allocator: Allocator,
+        /// The I/O implementation: files, the network, clocks, and `io.async` and
+        /// `io.concurrent` for concurrent work.
+        io: std.Io,
         /// Whether the consumer is an agent (stdout is not a terminal).
         agent: bool,
         /// Positional arguments.
@@ -123,18 +133,19 @@ pub fn Context(comptime input: Input) type {
             return derive.decode(G, c.allocator, c.globals);
         }
 
-        /// Streams chunks from an iterator with a `next(self, Allocator) anyerror!?Chunk` method.
-        /// Human and TOON output writes each chunk as it arrives; JSONL writes one `chunk`
-        /// record per item; other explicit formats buffer the chunks into one array.
+        /// Streams chunks from an iterator with a `next(self, std.Io, Allocator) !?Chunk` method,
+        /// which may perform I/O and wait. Human and TOON output writes each chunk as it
+        /// arrives; JSONL writes one `chunk` record per item; other explicit formats buffer the
+        /// chunks into one array. A Zig error from `next` ends the stream as an `UNKNOWN` error.
         pub fn stream(_: *Self, iterator: anytype) Outcome {
             const Ptr = @TypeOf(iterator);
             const Iterator = @typeInfo(Ptr).pointer.child;
             return .{ .stream = .{ .stream = .{
                 .context = iterator,
                 .next = struct {
-                    fn next(context: *anyopaque, a: Allocator) anyerror!?Chunk {
+                    fn next(context: *anyopaque, io: std.Io, a: Allocator) anyerror!?Chunk {
                         const it: Ptr = @ptrCast(@alignCast(context));
-                        return Iterator.next(it, a);
+                        return Iterator.next(it, io, a);
                     }
                 }.next,
             } } };
@@ -154,7 +165,7 @@ const SliceIterator = struct {
     chunks: []const Chunk,
     index: usize = 0,
 
-    fn next(it: *SliceIterator, _: Allocator) anyerror!?Chunk {
+    fn next(it: *SliceIterator, _: std.Io, _: Allocator) anyerror!?Chunk {
         if (it.index == it.chunks.len) return null;
         it.index += 1;
         return it.chunks[it.index - 1];
@@ -174,7 +185,7 @@ pub const Stream = struct {
     /// The iterator.
     context: *anyopaque,
     /// Returns the next chunk, or null at the end.
-    next: *const fn (context: *anyopaque, a: Allocator) anyerror!?Chunk,
+    next: *const fn (context: *anyopaque, io: std.Io, a: Allocator) anyerror!?Chunk,
 };
 
 /// A command result: data or a stream of chunks. Failures are returned with `Context.fail`.
@@ -211,6 +222,8 @@ pub const Outcome = union(enum) {
 pub const Invocation = struct {
     /// Allocator for this invocation.
     allocator: Allocator,
+    /// The I/O implementation.
+    io: std.Io,
     /// Whether the consumer is an agent.
     agent: bool,
     /// Parsed arguments.
@@ -273,6 +286,7 @@ pub fn handler(comptime f: anytype) Handler {
                 const a = i.allocator;
                 var c: Ctx = .{
                     .allocator = a,
+                    .io = i.io,
                     .agent = i.agent,
                     .args = try decodeInput(input.args, a, i.args),
                     .display_name = i.display_name,
@@ -341,6 +355,8 @@ pub const Command = struct {
 pub const MiddlewareContext = struct {
     /// Allocator for this invocation.
     allocator: Allocator,
+    /// The I/O implementation.
+    io: std.Io,
     /// Whether the consumer is an agent.
     agent: bool,
     /// The resolved command path.
@@ -388,7 +404,7 @@ pub const Next = struct {
     index: usize,
 
     /// Runs downstream middleware and the command handler.
-    pub fn run(next: Next, c: *MiddlewareContext) Allocator.Error!void {
+    pub fn run(next: Next, c: *MiddlewareContext) ServeError!void {
         return next.chain.run(next.index, c);
     }
 };
@@ -400,13 +416,13 @@ pub const Chain = struct {
     /// The final step's state.
     context: *anyopaque,
     /// Runs the command.
-    last: *const fn (context: *anyopaque, c: *MiddlewareContext) Allocator.Error!void,
+    last: *const fn (context: *anyopaque, c: *MiddlewareContext) ServeError!void,
     /// The error that replaces the result. The outermost middleware error wins, as the last
     /// `c.error()` call does in TypeScript.
     err: ?Error = null,
 
     /// Runs the chain from `index`.
-    pub fn run(chain: *Chain, index: usize, c: *MiddlewareContext) Allocator.Error!void {
+    pub fn run(chain: *Chain, index: usize, c: *MiddlewareContext) ServeError!void {
         if (index == chain.middleware.len) return chain.last(chain.context, c);
         chain.middleware[index](c, .{ .chain = chain, .index = index + 1 }) catch |err| {
             chain.err = try c.failure.take(err);

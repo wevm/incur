@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const js = @import("js.zig");
+const unicode = @import("unicode.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -59,12 +60,13 @@ fn isNumeric(segment: []const u8) bool {
     return true;
 }
 
-/// Whether any lowercased code point of the segment is in `set`.
+/// Whether any code point of the segment matches `set` case-insensitively, as a regular
+/// expression character class with the `i` flag and without the `u` flag does.
 fn has(segment: []const u8, set: []const u8) bool {
     var it = js.Utf8.init(segment);
     while (it.next()) |cp| {
         var chars = js.Utf8.init(set);
-        while (chars.next()) |ch| if (js.lower(cp) == ch) return true;
+        while (chars.next()) |ch| if (unicode.canonicalize(cp) == unicode.canonicalize(ch)) return true;
     }
     return false;
 }

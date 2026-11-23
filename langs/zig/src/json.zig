@@ -1,5 +1,5 @@
-//! JSON values with JavaScript semantics: insertion-ordered objects that list integer-like keys
-//! first, `JSON.stringify` output, and `JSON.parse` with V8's error messages.
+//! JSON values: exact integers, insertion-ordered objects that list integer-like keys first as
+//! JavaScript objects do, `JSON.stringify` output, and `JSON.parse` with V8's error messages.
 
 const std = @import("std");
 const js = @import("js.zig");
@@ -7,14 +7,21 @@ const js = @import("js.zig");
 const Allocator = std.mem.Allocator;
 
 /// A JSON value. Arrays and objects are immutable slices; build objects with `ObjectBuilder`.
+///
+/// Integers keep their exact value in every output format. Floats format as JavaScript's
+/// `String(number)` does, so `1e21` prints as `1e+21` and `0.1` as `0.1`.
 pub const Value = union(enum) {
     /// `null`.
     null,
     /// `true` or `false`.
     bool: bool,
-    /// A number. Non-finite numbers stringify as `null`, as in `JSON.stringify`.
-    number: f64,
-    /// A UTF-8 string.
+    /// An integer.
+    integer: i128,
+    /// An integer outside the `i128` range, as decimal digits with an optional leading `-`.
+    big_integer: []const u8,
+    /// A floating-point number. Non-finite floats stringify as `null`, as in `JSON.stringify`.
+    float: f64,
+    /// A UTF-8 string. Unpaired surrogates, which JSON escapes can produce, are stored as WTF-8.
     string: []const u8,
     /// An array.
     array: []const Value,
@@ -29,9 +36,26 @@ pub const Value = union(enum) {
         value: Value,
     };
 
-    /// Returns a number value, or `null` for non-finite numbers, as `JSON.stringify` does.
-    pub fn fromNumber(number: f64) Value {
-        return if (std.math.isFinite(number)) .{ .number = number } else .null;
+    /// Returns a float value, or `null` for non-finite floats, as `JSON.stringify` does.
+    pub fn fromFloat(float: f64) Value {
+        return if (std.math.isFinite(float)) .{ .float = float } else .null;
+    }
+
+    /// Returns an integer value of any integer type.
+    pub fn fromInt(a: Allocator, int: anytype) Allocator.Error!Value {
+        if (std.math.cast(i128, int)) |small| return .{ .integer = small };
+        return .{ .big_integer = try std.fmt.allocPrint(a, "{d}", .{int}) };
+    }
+
+    /// Returns a number as an `f64`, rounding integers to the nearest float, or null for
+    /// non-numbers.
+    pub fn toFloat(value: Value) ?f64 {
+        return switch (value) {
+            .integer => |i| @floatFromInt(i),
+            .big_integer => |digits| std.fmt.parseFloat(f64, digits) catch unreachable,
+            .float => |f| f,
+            else => null,
+        };
     }
 
     /// Returns the value of an object property, or null for missing keys and non-objects.
@@ -81,7 +105,9 @@ fn write(a: Allocator, out: *std.ArrayList(u8), value: Value, step: ?[]const u8,
     switch (value) {
         .null => try out.appendSlice(a, "null"),
         .bool => |b| try out.appendSlice(a, if (b) "true" else "false"),
-        .number => |n| try out.appendSlice(a, if (std.math.isFinite(n)) try js.numberToString(a, n) else "null"),
+        .integer => |i| try out.print(a, "{d}", .{i}),
+        .big_integer => |digits| try out.appendSlice(a, digits),
+        .float => |f| try out.appendSlice(a, if (std.math.isFinite(f)) try js.numberToString(a, f) else "null"),
         .string => |s| try quote(a, out, s),
         .array, .object => {
             const is_array = value == .array;
@@ -113,10 +139,12 @@ fn write(a: Allocator, out: *std.ArrayList(u8), value: Value, step: ?[]const u8,
     }
 }
 
-/// Writes a JSON string literal with `JSON.stringify` escaping.
+/// Writes a JSON string literal with `JSON.stringify` escaping, which escapes unpaired
+/// surrogates as `\\uXXXX`.
 fn quote(a: Allocator, out: *std.ArrayList(u8), text: []const u8) Allocator.Error!void {
     try out.append(a, '"');
-    for (text) |ch| switch (ch) {
+    var it = js.Utf8.init(text);
+    while (it.next()) |cp| switch (cp) {
         '"' => try out.appendSlice(a, "\\\""),
         '\\' => try out.appendSlice(a, "\\\\"),
         0x08 => try out.appendSlice(a, "\\b"),
@@ -124,8 +152,11 @@ fn quote(a: Allocator, out: *std.ArrayList(u8), text: []const u8) Allocator.Erro
         '\n' => try out.appendSlice(a, "\\n"),
         '\r' => try out.appendSlice(a, "\\r"),
         '\t' => try out.appendSlice(a, "\\t"),
-        0...0x07, 0x0b, 0x0e...0x1f => try out.print(a, "\\u{x:0>4}", .{ch}),
-        else => try out.append(a, ch),
+        0...0x07, 0x0b, 0x0e...0x1f, 0xd800...0xdfff => try out.print(a, "\\u{x:0>4}", .{cp}),
+        else => {
+            var buf: [4]u8 = undefined;
+            try out.appendSlice(a, buf[0 .. std.unicode.utf8Encode(cp, &buf) catch unreachable]);
+        },
     };
     try out.append(a, '"');
 }
@@ -135,7 +166,9 @@ pub fn toString(a: Allocator, value: Value) Allocator.Error![]const u8 {
     return switch (value) {
         .null => "null",
         .bool => |b| if (b) "true" else "false",
-        .number => |n| js.numberToString(a, n),
+        .integer => |i| std.fmt.allocPrint(a, "{d}", .{i}),
+        .big_integer => |digits| digits,
+        .float => |f| js.numberToString(a, f),
         .string => |s| s,
         .array => |items| {
             var parts: std.ArrayList([]const u8) = .empty;
@@ -376,6 +409,7 @@ const Parser = struct {
             if (!p.digit()) return p.at("No number after minus sign in JSON");
         }
         if (p.is('0')) p.pos += 1 else while (p.digit()) p.pos += 1;
+        const integer = !p.is('.') and !p.is('e') and !p.is('E');
         if (p.is('.')) {
             p.pos += 1;
             if (!p.digit()) return p.at("Unterminated fractional number in JSON");
@@ -389,7 +423,11 @@ const Parser = struct {
         }
         // Number characters are ASCII, so code unit offsets are byte offsets of the text.
         const text = try js.fromUtf16(p.a, p.units[start..p.pos]);
-        return .{ .number = std.fmt.parseFloat(f64, text) catch unreachable };
+        // Integers stay exact. JavaScript has no negative zero integer, so `-0` is a float.
+        if (integer and !std.mem.eql(u8, text, "-0")) {
+            if (std.fmt.parseInt(i128, text, 10)) |int| return .{ .integer = int } else |_| return .{ .big_integer = text };
+        }
+        return .{ .float = std.fmt.parseFloat(f64, text) catch unreachable };
     }
 
     fn literal(p: *Parser, word: []const u8, result: Value) Failure!Value {

@@ -242,7 +242,7 @@ test "decodes typed options and encodes Zig values" {
 const Countdown = struct {
     left: u8,
 
-    pub fn next(it: *Countdown, a: Allocator) anyerror!?incur.Chunk {
+    pub fn next(it: *Countdown, _: std.Io, a: Allocator) !?incur.Chunk {
         if (it.left == 0) return error.Exhausted;
         it.left -= 1;
         return .{ .data = try incur.encode(a, .{ .left = it.left }) };
@@ -312,9 +312,17 @@ fn mark(c: *incur.MiddlewareContext, next: incur.Next) !void {
     try next.run(c);
 }
 
+fn allocatedBanner(_: std.Io, a: Allocator) !?[]const u8 {
+    return try std.fmt.allocPrint(a, "tool {d}", .{1});
+}
+
 /// Serves a few invocations that touch config loading, middleware, validation, and streams.
 fn serveSeveral(gpa: Allocator, dir: [:0]const u8) !void {
-    const cli = try incur.Cli.create(gpa, "tool", .{ .config = .{ .files = &.{dir} }, .env = incur.schema(struct { HOME: ?[]const u8 = null }) });
+    const cli = try incur.Cli.create(gpa, "tool", .{
+        .banner = .{ .render = allocatedBanner },
+        .config = .{ .files = &.{dir} },
+        .env = incur.schema(struct { HOME: ?[]const u8 = null }),
+    });
     defer cli.destroy();
     try cli.use(mark);
     try cli.command("greet", .{ .description = "Greet", .run = incur.handler(greet) });
@@ -331,7 +339,7 @@ fn serveSeveral(gpa: Allocator, dir: [:0]const u8) !void {
         &.{"greet"},                    &.{ "greet", "--name", "fail" },   &.{ "greet", "--nope" },
         &.{ "loaded", "greet" },        &.{ "count", "--format", "yaml" }, &.{ "gret", "--full-output" },
         &.{ "greet", "--token-count" }, &.{"--llms-full"},                 &.{ "greet", "--help" },
-        &.{ "greet", "--schema" },      &.{ "completions", "bash" },
+        &.{ "greet", "--schema" },      &.{ "completions", "bash" },       &.{},
     }) |argv| {
         // Output goes to a writer that does not allocate, so every failure reaches the library.
         var buf: [64]u8 = undefined;
@@ -374,4 +382,486 @@ test "keeps manifest entries with the same name in registration order" {
     const served = try serve(cli, &.{"--llms"}, &.{});
     defer served.deinit();
     try testing.expect(std.mem.find(u8, served.output, "| `tool g x` | Grouped |\n| `tool g x` | Spaced |\n") != null);
+}
+
+const DataArgs = struct { json: []const u8 };
+
+fn parseData(c: *Context(.{ .args = DataArgs })) !Outcome {
+    var message: []const u8 = undefined;
+    return c.ok(incur.json.parse(c.allocator, c.args.json, &message) catch |err| switch (err) {
+        error.SyntaxError => return c.fail(.{ .message = message }),
+        else => |e| return e,
+    });
+}
+
+fn zigIntegers(c: *Context(.{})) !Outcome {
+    return c.ok(.{
+        .u64_max = std.math.maxInt(u64),
+        .i64_min = @as(i64, std.math.minInt(i64)),
+        .u128_max = @as(u128, std.math.maxInt(u128)),
+        .comptime_big = 1 << 130,
+        .float = @as(f64, 9007199254740993.0),
+    });
+}
+
+/// Integers beyond 2^53, beyond 64 bits, and beyond 128 bits, next to floats.
+const big_numbers =
+    \\{"u64":18446744073709551615,"i64":-9223372036854775808,"near":9007199254740993,
+    \\"huge":-123456789012345678901234567890123456789012,"float":1.5,"exp":1e21,"zero":-0,
+    \\"list":[9007199254740993,18446744073709551616,1]}
+;
+
+test "keeps integers exact in every format" {
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{});
+    defer cli.destroy();
+    try cli.command("data", .{ .run = incur.handler(parseData) });
+    try cli.command("ints", .{ .run = incur.handler(zigIntegers) });
+    try expectServe(cli, &.{ "data", big_numbers, "--format", "json" }, 0,
+        \\{
+        \\  "u64": 18446744073709551615,
+        \\  "i64": -9223372036854775808,
+        \\  "near": 9007199254740993,
+        \\  "huge": -123456789012345678901234567890123456789012,
+        \\  "float": 1.5,
+        \\  "exp": 1e+21,
+        \\  "zero": 0,
+        \\  "list": [
+        \\    9007199254740993,
+        \\    18446744073709551616,
+        \\    1
+        \\  ]
+        \\}
+        \\
+    );
+    try expectServe(cli, &.{ "data", big_numbers, "--format", "jsonl" }, 0,
+        \\{"u64":18446744073709551615,"i64":-9223372036854775808,"near":9007199254740993,"huge":-123456789012345678901234567890123456789012,"float":1.5,"exp":1e+21,"zero":0,"list":[9007199254740993,18446744073709551616,1]}
+        \\
+    );
+    try expectServe(cli, &.{ "data", big_numbers, "--format", "yaml" }, 0,
+        \\u64: 18446744073709551615
+        \\i64: -9223372036854775808
+        \\near: 9007199254740993
+        \\huge: -123456789012345678901234567890123456789012
+        \\float: 1.5
+        \\exp: 1e+21
+        \\zero: 0
+        \\list:
+        \\  - 9007199254740993
+        \\  - 18446744073709551616
+        \\  - 1
+        \\
+    );
+    const toon =
+        \\u64: 18446744073709551615
+        \\i64: -9223372036854775808
+        \\near: 9007199254740993
+        \\huge: -123456789012345678901234567890123456789012
+        \\float: 1.5
+        \\exp: 1e+21
+        \\zero: 0
+        \\list[3]: 9007199254740993,18446744073709551616,1
+        \\
+    ;
+    try expectServe(cli, &.{ "data", big_numbers }, 0, toon);
+    try expectServe(cli, &.{ "data", big_numbers, "--format", "md" }, 0,
+        \\## u64
+        \\
+        \\18446744073709551615
+        \\
+        \\## i64
+        \\
+        \\-9223372036854775808
+        \\
+        \\## near
+        \\
+        \\9007199254740993
+        \\
+        \\## huge
+        \\
+        \\-123456789012345678901234567890123456789012
+        \\
+        \\## float
+        \\
+        \\1.5
+        \\
+        \\## exp
+        \\
+        \\1e+21
+        \\
+        \\## zero
+        \\
+        \\0
+        \\
+        \\## list
+        \\
+        \\9007199254740993,18446744073709551616,1
+        \\
+    );
+    try expectServe(cli, &.{ "data", "[{\"id\":18446744073709551615,\"n\":9007199254740993}]", "--format", "md" }, 0,
+        \\| id                   | n                |
+        \\|----------------------|------------------|
+        \\| 18446744073709551615 | 9007199254740993 |
+        \\
+    );
+    try expectServe(cli, &.{ "data", big_numbers, "--token-count" }, 0, "36\n");
+    try expectServe(cli, &.{ "data", big_numbers, "--filter-output", "list[1,3],u64" }, 0,
+        \\list[2]: 18446744073709551616,1
+        \\u64: 18446744073709551615
+        \\
+    );
+    try expectServe(cli, &.{ "ints", "--json" }, 0,
+        \\{
+        \\  "u64_max": 18446744073709551615,
+        \\  "i64_min": -9223372036854775808,
+        \\  "u128_max": 340282366920938463463374607431768211455,
+        \\  "comptime_big": 1361129467683753853853498429727072845824,
+        \\  "float": 9007199254740992
+        \\}
+        \\
+    );
+}
+
+const Narrow = struct {
+    small: i8 = 0,
+    port: ?u16 = null,
+    verbose: u8 = 0,
+    limit: f64 = 1,
+    extra: Value = .{ .integer = 7 },
+    nothing: Value = .null,
+
+    pub const incur = .{ .fields = .{ .verbose = .{ .count = true, .alias = 'v' } } };
+};
+
+fn narrow(c: *Context(.{ .options = Narrow })) !Outcome {
+    return c.ok(c.options);
+}
+
+test "rejects integers that do not fit narrower fields with validation errors" {
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{});
+    defer cli.destroy();
+    try cli.command("narrow", .{ .run = incur.handler(narrow) });
+    try expectServe(cli, &.{ "narrow", "--small", "-128", "--port", "65535", "-vvv" }, 0,
+        \\small: -128
+        \\port: 65535
+        \\verbose: 3
+        \\limit: 1
+        \\extra: 7
+        \\nothing: null
+        \\
+    );
+    try expectServe(cli, &.{ "narrow", "--small", "128", "--port", "-1" }, 1,
+        \\code: VALIDATION_ERROR
+        \\message: "Too big: expected number to be <=127; Too small: expected number to be >=0\n\nDetails: [\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 127,\n    \"inclusive\": true,\n    \"path\": [\n      \"small\"\n    ],\n    \"message\": \"Too big: expected number to be <=127\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": true,\n    \"path\": [\n      \"port\"\n    ],\n    \"message\": \"Too small: expected number to be >=0\"\n  }\n]"
+        \\fieldErrors[2]{code,missing,path,expected,received,message}:
+        \\  too_big,false,small,"","","Too big: expected number to be <=127"
+        \\  too_small,false,port,"","","Too small: expected number to be >=0"
+        \\
+    );
+    // The declared contract stays the safe-integer one Zod reports.
+    try expectServe(cli, &.{ "narrow", "--schema", "--format", "json" }, 0,
+        \\{
+        \\  "options": {
+        \\    "type": "object",
+        \\    "properties": {
+        \\      "small": {
+        \\        "default": 0,
+        \\        "type": "integer",
+        \\        "minimum": -9007199254740991,
+        \\        "maximum": 9007199254740991
+        \\      },
+        \\      "port": {
+        \\        "type": "integer",
+        \\        "minimum": -9007199254740991,
+        \\        "maximum": 9007199254740991
+        \\      },
+        \\      "verbose": {
+        \\        "default": 0,
+        \\        "count": true,
+        \\        "type": "number"
+        \\      },
+        \\      "limit": {
+        \\        "default": 1,
+        \\        "type": "number"
+        \\      },
+        \\      "extra": {
+        \\        "default": 7
+        \\      },
+        \\      "nothing": {
+        \\        "default": null
+        \\      }
+        \\    },
+        \\    "required": [
+        \\      "small",
+        \\      "verbose",
+        \\      "limit",
+        \\      "extra",
+        \\      "nothing"
+        \\    ],
+        \\    "additionalProperties": false
+        \\  }
+        \\}
+        \\
+    );
+}
+
+test "checks config numbers against the integer type of count fields" {
+    var dir = testing.tmpDir(.{});
+    defer dir.cleanup();
+    const path = try tempConfig(dir, "tool.json",
+        \\{"commands":{
+        \\"whole":{"options":{"verbose":2.0,"limit":123456789012345678901234567890123456789012}},
+        \\"fraction":{"options":{"verbose":2.5}},
+        \\"float":{"options":{"verbose":1e40}},
+        \\"negative":{"options":{"verbose":-1e40}},
+        \\"big":{"options":{"verbose":-123456789012345678901234567890123456789012}},
+        \\"wide":{"options":{"verbose":256}}}}
+    );
+    defer testing.allocator.free(path);
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{ .config = .{ .files = &.{path} } });
+    defer cli.destroy();
+    for ([_][]const u8{ "whole", "fraction", "float", "negative", "big", "wide" }) |name| try cli.command(name, .{ .run = incur.handler(narrow) });
+    try expectServe(cli, &.{ "whole", "--format", "json" }, 0,
+        \\{
+        \\  "small": 0,
+        \\  "port": null,
+        \\  "verbose": 2,
+        \\  "limit": 1.2345678901234568e+41,
+        \\  "extra": 7,
+        \\  "nothing": null
+        \\}
+        \\
+    );
+    try expectServe(cli, &.{"fraction"}, 1,
+        \\code: VALIDATION_ERROR
+        \\message: "Invalid input: expected int, received number\n\nDetails: [\n  {\n    \"expected\": \"int\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"verbose\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+        \\fieldErrors[1]{code,missing,path,expected,received,message}:
+        \\  invalid_type,false,verbose,int,"","Invalid input: expected int, received number"
+        \\
+    );
+    try expectServe(cli, &.{"float"}, 1,
+        \\code: VALIDATION_ERROR
+        \\message: "Too big: expected number to be <=255\n\nDetails: [\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 255,\n    \"inclusive\": true,\n    \"path\": [\n      \"verbose\"\n    ],\n    \"message\": \"Too big: expected number to be <=255\"\n  }\n]"
+        \\fieldErrors[1]{code,missing,path,expected,received,message}:
+        \\  too_big,false,verbose,"","","Too big: expected number to be <=255"
+        \\
+    );
+    try expectServe(cli, &.{"negative"}, 1,
+        \\code: VALIDATION_ERROR
+        \\message: "Too small: expected number to be >=0\n\nDetails: [\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": true,\n    \"path\": [\n      \"verbose\"\n    ],\n    \"message\": \"Too small: expected number to be >=0\"\n  }\n]"
+        \\fieldErrors[1]{code,missing,path,expected,received,message}:
+        \\  too_small,false,verbose,"","","Too small: expected number to be >=0"
+        \\
+    );
+    try expectServe(cli, &.{"big"}, 1,
+        \\code: VALIDATION_ERROR
+        \\message: "Too small: expected number to be >=0\n\nDetails: [\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": true,\n    \"path\": [\n      \"verbose\"\n    ],\n    \"message\": \"Too small: expected number to be >=0\"\n  }\n]"
+        \\fieldErrors[1]{code,missing,path,expected,received,message}:
+        \\  too_small,false,verbose,"","","Too small: expected number to be >=0"
+        \\
+    );
+    try expectServe(cli, &.{"wide"}, 1,
+        \\code: VALIDATION_ERROR
+        \\message: "Too big: expected number to be <=255\n\nDetails: [\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 255,\n    \"inclusive\": true,\n    \"path\": [\n      \"verbose\"\n    ],\n    \"message\": \"Too big: expected number to be <=255\"\n  }\n]"
+        \\fieldErrors[1]{code,missing,path,expected,received,message}:
+        \\  too_big,false,verbose,"","","Too big: expected number to be <=255"
+        \\
+    );
+}
+
+fn halves(c: *Context(.{})) !Outcome {
+    // A high and a low surrogate stored apart, as JavaScript concatenation leaves them, and a
+    // lone high surrogate at the end.
+    return c.ok(.{ .joined = "\xed\xa0\xbd" ++ "\xed\xb8\x80", .lone = "x\xed\xa0\xbd" });
+}
+
+/// Strings with unpaired surrogates, which JSON escapes can produce.
+const lone_surrogates =
+    \\{"a":"x\ud800y","b":"\udc00","c":"\ud83d\ude00","d":["\ud800"],"k\udbff":1}
+;
+
+test "keeps unpaired surrogates as JavaScript strings do" {
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{});
+    defer cli.destroy();
+    try cli.command("data", .{ .run = incur.handler(parseData) });
+    try cli.command("halves", .{ .run = incur.handler(halves) });
+    // JSON escapes them; other formats write them as Node writes strings, as U+FFFD.
+    try expectServe(cli, &.{ "data", lone_surrogates, "--format", "json" }, 0,
+        \\{
+        \\  "a": "x\ud800y",
+        \\  "b": "\udc00",
+        \\  "c": "😀",
+        \\  "d": [
+        \\    "\ud800"
+        \\  ],
+        \\  "k\udbff": 1
+        \\}
+        \\
+    );
+    try expectServe(cli, &.{ "data", lone_surrogates, "--format", "jsonl" }, 0,
+        \\{"a":"x\ud800y","b":"\udc00","c":"😀","d":["\ud800"],"k\udbff":1}
+        \\
+    );
+    try expectServe(cli, &.{ "data", lone_surrogates, "--format", "yaml" }, 0,
+        \\a: "x\ud800y"
+        \\b: "\udc00"
+        \\c: 😀
+        \\d:
+        \\  - "\ud800"
+        \\"k\udbff": 1
+        \\
+    );
+    try expectServe(cli, &.{ "data", lone_surrogates }, 0,
+        \\a: x�y
+        \\b: �
+        \\c: 😀
+        \\d[1]: �
+        \\"k�": 1
+        \\
+    );
+    try expectServe(cli, &.{ "data", lone_surrogates, "--format", "md" }, 0,
+        \\## a
+        \\
+        \\x�y
+        \\
+        \\## b
+        \\
+        \\�
+        \\
+        \\## c
+        \\
+        \\😀
+        \\
+        \\## d
+        \\
+        \\�
+        \\
+        \\## k�
+        \\
+        \\1
+        \\
+    );
+    try expectServe(cli, &.{ "data", lone_surrogates, "--token-count" }, 0,
+        \\17
+        \\
+    );
+    try expectServe(cli, &.{ "data", "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \\ud800\\ud800\\ud800\\ud800 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"", "--format", "yaml" }, 0,
+        \\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        \\\ud800\ud800\ud800\ud800 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        \\
+    );
+    try expectServe(cli, &.{ "halves", "--json" }, 0,
+        \\{
+        \\  "joined": "😀",
+        \\  "lone": "x\ud83d"
+        \\}
+        \\
+    );
+    try expectServe(cli, &.{"halves"}, 0,
+        \\joined: 😀
+        \\lone: x�
+        \\
+    );
+}
+
+test "lowercases suggestions as JavaScript does" {
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{ .description = "Unicode names" });
+    defer cli.destroy();
+    for ([_][]const u8{ "привет", "οσος", "οσοσx", "istanbul", "σα", "α'ς", "α'σx", "ασα", "ας", "āxy" }) |name| try cli.command(name, .{ .run = incur.handler(one) });
+    for ([_][2][]const u8{
+        .{ "ПРИВЕ", "привет" },
+        .{ "ΟΣΟΣ", "οσος" },
+        .{ "İSTANBUL", "istanbul" },
+        .{ "ΣΑ", "σα" },
+        .{ "Α'Σ", "α'ς" },
+        .{ "Α'Σ1", "α'ς" },
+        .{ "ΑΣΑ", "ασα" },
+        .{ "āx", "āxy" },
+    }) |entry| {
+        const typo, const suggestion = entry;
+        const served = try serve(cli, &.{typo}, &.{});
+        defer served.deinit();
+        const message = try std.fmt.allocPrint(testing.allocator, "code: COMMAND_NOT_FOUND\nmessage: '{s}' is not a command for 'tool'. Did you mean '{s}'?\n", .{ typo, suggestion });
+        defer testing.allocator.free(message);
+        try testing.expectStringStartsWith(served.output, message);
+    }
+}
+
+/// Reads a file through `std.Io`.
+fn readFile(io: std.Io, a: Allocator, path: []const u8) ![]u8 {
+    return std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 16));
+}
+
+const PathsArgs = struct { first: []const u8, second: []const u8 };
+
+fn readBoth(c: *Context(.{ .args = PathsArgs })) !Outcome {
+    var first = c.io.async(readFile, .{ c.io, c.allocator, c.args.first });
+    defer if (first.cancel(c.io)) |_| {} else |_| {};
+    var second = c.io.async(readFile, .{ c.io, c.allocator, c.args.second });
+    defer if (second.cancel(c.io)) |_| {} else |_| {};
+    return c.ok(.{ .first = try first.await(c.io), .second = try second.await(c.io) });
+}
+
+/// Emits `left` chunks, waiting on the clock before each one.
+const Ticker = struct {
+    left: u8,
+
+    pub fn next(it: *Ticker, io: std.Io, a: Allocator) !?incur.Chunk {
+        if (it.left == 0) return null;
+        try io.sleep(.fromMilliseconds(1), .awake);
+        it.left -= 1;
+        return .{ .data = try incur.encode(a, .{ .left = it.left }) };
+    }
+};
+
+fn tick(c: *Context(.{})) !Outcome {
+    const it = try c.allocator.create(Ticker);
+    it.* = .{ .left = 2 };
+    return c.stream(it);
+}
+
+fn wait(c: *Context(.{})) !Outcome {
+    try c.io.sleep(.fromSeconds(600), .awake);
+    return c.ok(1);
+}
+
+fn missingBanner(io: std.Io, a: Allocator) !?[]const u8 {
+    return try readFile(io, a, "/nonexistent/incur-banner.txt");
+}
+
+test "runs handlers and streams on std.Io" {
+    var dir = testing.tmpDir(.{});
+    defer dir.cleanup();
+    const first = try tempConfig(dir, "first.txt", "one");
+    defer testing.allocator.free(first);
+    const second = try tempConfig(dir, "second.txt", "two");
+    defer testing.allocator.free(second);
+    // Banner I/O failures show no banner, as in TypeScript.
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{ .banner = .{ .render = missingBanner } });
+    defer cli.destroy();
+    try cli.command("read", .{ .run = incur.handler(readBoth) });
+    try cli.command("tick", .{ .run = incur.handler(tick) });
+    try expectServe(cli, &.{ "read", first, second }, 0, "first: one\nsecond: two\n");
+    try expectServe(cli, &.{"tick"}, 0, "left: 1\nleft: 0\n");
+}
+
+fn canceledBanner(_: std.Io, _: Allocator) !?[]const u8 {
+    return error.Canceled;
+}
+
+test "ends serving when its task is canceled" {
+    const cli = try incur.Cli.create(testing.allocator, "tool", .{});
+    defer cli.destroy();
+    try cli.command("wait", .{ .run = incur.handler(wait) });
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stdout.deinit();
+    const process: incur.Process = .{ .io = testing.io, .env = &env, .stdout = &stdout.writer, .stderr = &stdout.writer, .tty = false };
+    var serving = try testing.io.concurrent(incur.Cli.serveWith, .{ cli, &.{"wait"}, process });
+    try testing.expectError(error.Canceled, serving.cancel(testing.io));
+    try testing.expectEqualStrings("", stdout.written());
+
+    const bannered = try incur.Cli.create(testing.allocator, "tool", .{ .banner = .{ .render = canceledBanner } });
+    defer bannered.destroy();
+    try testing.expectError(error.Canceled, bannered.serveWith(&.{}, process));
 }

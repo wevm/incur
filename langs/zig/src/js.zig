@@ -5,6 +5,7 @@
 //! reuses these functions, so the Zig port prints the same bytes.
 
 const std = @import("std");
+const unicode = @import("unicode.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -129,7 +130,11 @@ pub fn trim(text: []const u8) []const u8 {
     return text[start..end];
 }
 
-/// A lenient UTF-8 code point iterator. Invalid bytes decode as U+FFFD.
+/// A lenient iterator over the code points of UTF-8 text that may hold lone surrogates.
+///
+/// Strings follow JavaScript, whose strings are UTF-16 and may hold unpaired surrogates: they are
+/// stored as WTF-8, and a high and a low surrogate stored apart decode as the pair they form, as
+/// they would after JavaScript concatenates them. Other invalid bytes decode as U+FFFD.
 pub const Utf8 = struct {
     /// The text.
     bytes: []const u8,
@@ -144,6 +149,18 @@ pub const Utf8 = struct {
     /// Returns the next code point, or null at the end.
     pub fn next(it: *Utf8) ?u21 {
         if (it.i >= it.bytes.len) return null;
+        const cp = it.decodeNext();
+        if (cp < 0xd800 or cp > 0xdbff) return cp;
+        const at = it.i;
+        const low = it.decodeNext();
+        if (low >= 0xdc00 and low <= 0xdfff) return 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+        it.i = at;
+        return cp;
+    }
+
+    /// Decodes one WTF-8 sequence, or returns U+FFFD.
+    fn decodeNext(it: *Utf8) u21 {
+        if (it.i >= it.bytes.len) return 0;
         const len = std.unicode.utf8ByteSequenceLength(it.bytes[it.i]) catch 1;
         const end = @min(it.i + len, it.bytes.len);
         const cp = decode(it.bytes[it.i..end]);
@@ -152,9 +169,27 @@ pub const Utf8 = struct {
     }
 };
 
-/// Decodes one UTF-8 sequence, or returns U+FFFD.
+/// Decodes one WTF-8 sequence, or returns U+FFFD.
 fn decode(bytes: []const u8) u21 {
-    return std.unicode.utf8Decode(bytes) catch 0xfffd;
+    return std.unicode.wtf8Decode(bytes) catch 0xfffd;
+}
+
+/// Appends a code point as WTF-8.
+fn appendCodePoint(a: Allocator, out: *std.ArrayList(u8), cp: u21) Allocator.Error!void {
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.wtf8Encode(cp, &buf) catch unreachable;
+    try out.appendSlice(a, buf[0..n]);
+}
+
+/// Writes text as well-formed UTF-8, the bytes Node writes for a string: lone surrogates and
+/// invalid bytes become U+FFFD, and surrogate halves stored apart join into their pair.
+pub fn writeWellFormed(writer: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
+    if (std.unicode.utf8ValidateSlice(text)) return writer.writeAll(text);
+    var it = Utf8.init(text);
+    while (it.next()) |cp| {
+        var buf: [4]u8 = undefined;
+        try writer.writeAll(buf[0 .. std.unicode.utf8Encode(if (std.unicode.isSurrogateCodepoint(cp)) 0xfffd else cp, &buf) catch unreachable]);
+    }
 }
 
 /// Returns the length of a string in UTF-16 code units, as `String.prototype.length` does.
@@ -183,8 +218,7 @@ pub fn toUtf16(a: Allocator, text: []const u8) Allocator.Error![]const u16 {
     return out.items;
 }
 
-/// Decodes UTF-16 code units as UTF-8, replacing unpaired surrogates with U+FFFD, as Rust's
-/// `String::from_utf16_lossy` and JavaScript output do.
+/// Decodes UTF-16 code units as UTF-8, keeping unpaired surrogates as WTF-8.
 pub fn fromUtf16(a: Allocator, units: []const u16) Allocator.Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
@@ -193,12 +227,8 @@ pub fn fromUtf16(a: Allocator, units: []const u16) Allocator.Error![]const u8 {
         if (cp >= 0xd800 and cp <= 0xdbff and i + 1 < units.len and units[i + 1] >= 0xdc00 and units[i + 1] <= 0xdfff) {
             cp = 0x10000 + ((cp - 0xd800) << 10) + (units[i + 1] - 0xdc00);
             i += 1;
-        } else if (cp >= 0xd800 and cp <= 0xdfff) {
-            cp = 0xfffd;
         }
-        var buf: [4]u8 = undefined;
-        const n = std.unicode.utf8Encode(cp, &buf) catch unreachable;
-        try out.appendSlice(a, buf[0..n]);
+        try appendCodePoint(a, &out, cp);
     }
     return out.items;
 }
@@ -209,28 +239,32 @@ pub fn sliceUtf16(a: Allocator, units: []const u16, start: usize, end: usize) Al
     return fromUtf16(a, units[from..@max(from, @min(end, units.len))]);
 }
 
-/// Lowercases a code point for the Latin scripts the reference data uses.
-pub fn lower(cp: u21) u21 {
-    return switch (cp) {
-        'A'...'Z', 0xc0...0xd6, 0xd8...0xde => cp + 0x20,
-        0x100...0x137, 0x14a...0x177 => cp | 1,
-        0x139...0x148, 0x179...0x17e => if (cp & 1 == 1) cp + 1 else cp,
-        0x178 => 0xff,
-        0x1e9e => 0xdf,
-        else => cp,
+/// Lowercases a string as `String.prototype.toLowerCase` does, including the special cases of
+/// U+0130 and the final sigma.
+pub fn lowerString(a: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    var cps: std.ArrayList(u21) = .empty;
+    var it = Utf8.init(text);
+    while (it.next()) |cp| try cps.append(a, cp);
+    var out: std.ArrayList(u8) = .empty;
+    for (cps.items, 0..) |cp, i| switch (cp) {
+        0x130 => try out.appendSlice(a, "i\u{307}"),
+        0x3a3 => try appendCodePoint(a, &out, if (isFinalSigma(cps.items, i)) 0x3c2 else 0x3c3),
+        else => try appendCodePoint(a, &out, unicode.lower(cp)),
     };
+    return out.items;
 }
 
-/// Lowercases a string with `lower`.
-pub fn lowerString(a: Allocator, text: []const u8) Allocator.Error![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    var it = Utf8.init(text);
-    while (it.next()) |cp| {
-        var buf: [4]u8 = undefined;
-        const n = std.unicode.utf8Encode(lower(cp), &buf) catch unreachable;
-        try out.appendSlice(a, buf[0..n]);
-    }
-    return out.items;
+/// Whether the sigma at `i` ends a word: a cased letter precedes it and none follows it, skipping
+/// case-ignorable code points.
+fn isFinalSigma(cps: []const u21, i: usize) bool {
+    var before = i;
+    const preceded = while (before > 0) {
+        before -= 1;
+        if (!unicode.isCaseIgnorable(cps[before])) break unicode.isCased(cps[before]);
+    } else false;
+    if (!preceded) return false;
+    for (cps[i + 1 ..]) |cp| if (!unicode.isCaseIgnorable(cp)) return !unicode.isCased(cp);
+    return true;
 }
 
 /// Converts a camelCase name to kebab-case.
@@ -269,7 +303,7 @@ fn tertiary(a: []const u8, b: []const u8) std.math.Order {
     var y = Utf8.init(b);
     while (x.next()) |p| {
         const q = y.next().?;
-        const order = std.math.order(@intFromBool(lower(p) != p), @intFromBool(lower(q) != q));
+        const order = std.math.order(@intFromBool(unicode.lower(p) != p), @intFromBool(unicode.lower(q) != q));
         if (order != .eq) return order;
     }
     return std.mem.order(u8, a, b);
@@ -282,7 +316,7 @@ fn primaryWeight(cp: u21) u32 {
     if (cp < 0x80) {
         if (std.mem.findScalar(u8, symbols, @intCast(cp))) |index| return @intCast(index);
         if (std.ascii.isDigit(@intCast(cp))) return 100 + @as(u32, cp);
-        if (std.ascii.isAlphabetic(@intCast(cp))) return 200 + @as(u32, lower(cp));
+        if (std.ascii.isAlphabetic(@intCast(cp))) return 200 + @as(u32, unicode.lower(cp));
     }
     return 1000 + @as(u32, cp);
 }

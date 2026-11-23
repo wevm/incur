@@ -86,8 +86,7 @@ const Raw = json.ObjectBuilder;
 /// Increments a counter option.
 fn increment(a: Allocator, raw: *Raw, name: []const u8) Allocator.Error!void {
     const current = raw.finish().get(name);
-    const next: f64 = if (current != null and current.? == .number) current.?.number + 1 else 1;
-    try raw.put(a, name, .{ .number = next });
+    try raw.put(a, name, .{ .integer = if (current != null and current.? == .integer) current.?.integer + 1 else 1 });
 }
 
 /// Sets an option value, collecting values of array options.
@@ -102,20 +101,14 @@ fn set(a: Allocator, raw: *Raw, names: Names, name: []const u8, value: []const u
 }
 
 /// Coerces a raw string to the option's type before validation.
-fn coerce(a: Allocator, value: Value, ty: ?*const Type) Allocator.Error!Value {
+fn coerce(value: Value, ty: ?*const Type) Value {
     const t = ty orelse return value;
     if (value != .string) return value;
     return switch (t.kind) {
-        .number, .integer => numberValue(a, js.toNumber(value.string)),
+        .number, .integer => .{ .float = js.toNumber(value.string) },
         .boolean => .{ .bool = std.mem.eql(u8, value.string, "true") },
         else => value,
     };
-}
-
-/// Wraps a coerced number, marking non-finite results for validation.
-fn numberValue(a: Allocator, number: f64) Allocator.Error!Value {
-    if (std.math.isFinite(number)) return .{ .number = number };
-    return .{ .string = try std.mem.concat(a, u8, &.{ schema.non_finite, try js.numberToString(a, number) }) };
 }
 
 /// Validates an object against a schema.
@@ -210,7 +203,7 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
         const name = try names.long(entry.key) orelse return .{ .err = try parseError(a, "Unknown config option: {s}", .{entry.key}) };
         try merged.put(a, name, entry.value);
     }
-    for (raw.entries.items) |entry| try merged.put(a, entry.key, try coerce(a, entry.value, names.ty(entry.key)));
+    for (raw.entries.items) |entry| try merged.put(a, entry.key, coerce(entry.value, names.ty(entry.key)));
     const parsed_options = if (options) |s| switch (try validate(a, s, merged.finish())) {
         .ok => |v| v,
         .err => |e| return .{ .err = e },
@@ -224,7 +217,7 @@ pub fn parseEnv(a: Allocator, ty: *const Type, env: *const std.process.Environ.M
     var raw: json.ObjectBuilder = .{};
     for (ty.fields()) |f| if (env.get(f.name)) |value| {
         const coerced: Value = switch (f.ty.kind) {
-            .number, .integer => try numberValue(a, js.toNumber(value)),
+            .number, .integer => .{ .float = js.toNumber(value) },
             .boolean => .{ .bool = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1") },
             else => .{ .string = value },
         };
@@ -359,7 +352,7 @@ pub fn parseGlobals(a: Allocator, argv: []const []const u8, ty: *const Type, opt
 
     if (!options.validate) return .{ .ok = .{ .values = raw.finish(), .rest = rest.items } };
     var coerced: json.ObjectBuilder = .{};
-    for (raw.entries.items) |entry| try coerced.put(a, entry.key, try coerce(a, entry.value, names.ty(entry.key)));
+    for (raw.entries.items) |entry| try coerced.put(a, entry.key, coerce(entry.value, names.ty(entry.key)));
     return switch (try validate(a, ty, coerced.finish())) {
         .ok => |v| .{ .ok = .{ .values = v, .rest = rest.items } },
         .err => |e| .{ .err = e },

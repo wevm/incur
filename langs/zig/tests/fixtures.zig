@@ -283,7 +283,7 @@ fn status(c: *Context(.{})) !Outcome {
 
 fn install(c: *Context(.{ .args = InstallArgs, .options = InstallOptions })) !Outcome {
     var out: incur.ObjectBuilder = .{};
-    try out.put(c.allocator, "added", .{ .number = 1 });
+    try out.put(c.allocator, "added", .{ .integer = 1 });
     try out.put(c.allocator, "package", try incur.encode(c.allocator, c.args.package));
     for ((try incur.encode(c.allocator, c.options)).object) |entry| try out.put(c.allocator, entry.key, entry.value);
     return c.ok(out.finish());
@@ -525,7 +525,7 @@ fn greetRoot(c: *Context(.{ .args = GreetArgs, .options = LoudOptions })) !Outco
     return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "{s} {s}", .{ prefix, c.args.name }) });
 }
 
-fn greetBanner(_: Allocator) !?[]const u8 {
+fn greetBanner(_: std.Io, _: Allocator) !?[]const u8 {
     return "Greet banner";
 }
 
@@ -591,7 +591,7 @@ fn pick(c: *Context(.{ .options = PickOptions })) !Outcome {
     return c.ok(.{ .color = c.options.color });
 }
 
-fn globBanner(_: Allocator) !?[]const u8 {
+fn globBanner(_: std.Io, _: Allocator) !?[]const u8 {
     return "Glob banner";
 }
 
@@ -699,7 +699,7 @@ fn katakana(c: *Context(.{})) !Outcome {
     return c.ok("ポン");
 }
 
-fn plainBanner(_: Allocator) !?[]const u8 {
+fn plainBanner(_: std.Io, _: Allocator) !?[]const u8 {
     return "Welcome to plain";
 }
 

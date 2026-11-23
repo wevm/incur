@@ -6,7 +6,7 @@
 //! | ------------------------- | --------------------------------------- |
 //! | `[]const u8`              | string                                  |
 //! | `bool`                    | boolean                                 |
-//! | `i64` and other integers  | integer (a safe integer)                |
+//! | `i64` and other integers  | integer (a safe integer that fits)      |
 //! | `f64`, `f32`              | number                                  |
 //! | `enum { a, b }`           | one of the tag names                    |
 //! | `[]const T`               | array of `T`                            |
@@ -15,7 +15,8 @@
 //! | `incur.Value`             | any value                               |
 //!
 //! A field default makes the field optional in input and appears in help and JSON Schema; a
-//! `null` default on an optional field is the same as no default.
+//! `null` default on an optional field is the same as no default. Integer fields also check the
+//! range of their Zig type, so input that does not fit fails validation instead of overflowing.
 //!
 //! Per-field metadata lives in a `pub const incur` declaration inside the struct:
 //!
@@ -157,7 +158,10 @@ fn typeOf(comptime T: type) Type {
     if (comptime isString(T)) return .{ .kind = .{ .string = .{} } };
     return switch (@typeInfo(T)) {
         .bool => .{ .kind = .boolean },
-        .int => .{ .kind = .{ .integer = .{} } },
+        .int => .{ .kind = .{ .integer = .{} }, .int_range = .{
+            .min = @max(std.math.minInt(T), std.math.minInt(i128)),
+            .max = @min(std.math.maxInt(T), std.math.maxInt(i128)),
+        } },
         .float => .{ .kind = .{ .number = .{} } },
         .@"enum" => |e| .{ .kind = .{ .@"enum" = comptime names: {
             var names: [e.field_names.len][]const u8 = undefined;
@@ -204,7 +208,7 @@ fn fieldOf(comptime T: type, comptime name: []const u8, comptime F: type, compti
             else => @compileError("incur count on " ++ @typeName(T) ++ "." ++ name ++ " needs a number field"),
         }
         ty.count = true;
-        if (ty.default == null) ty.default = .{ .number = 0 };
+        if (ty.default == null) ty.default = .{ .integer = 0 };
     }
     if (M.min != null or M.max != null) {
         const bounds: schema.Bounds = .{ .min = M.min, .max = M.max };
@@ -221,11 +225,12 @@ fn fieldOf(comptime T: type, comptime name: []const u8, comptime F: type, compti
 
 /// Converts a field default to JSON, or null for a `null` default.
 fn defaultValue(comptime T: type, comptime value: T) ?Value {
+    if (T == Value) return value;
     if (comptime isString(T)) return .{ .string = value };
     return switch (@typeInfo(T)) {
         .bool => .{ .bool = value },
-        .int => .{ .number = @floatFromInt(value) },
-        .float => .{ .number = @floatCast(value) },
+        .int => .{ .integer = value },
+        .float => .{ .float = value },
         .@"enum" => .{ .string = @tagName(value) },
         .optional => |o| if (value) |v| defaultValue(o.child, v) else null,
         .pointer => |p| comptime items: {
@@ -245,8 +250,12 @@ pub fn decode(comptime T: type, a: Allocator, value: ?Value) Allocator.Error!T {
     if (comptime isString(T)) return value.?.string;
     switch (@typeInfo(T)) {
         .bool => return value.?.bool,
-        .int => return @intFromFloat(value.?.number),
-        .float => return @floatCast(value.?.number),
+        // Validation against `int_range` guarantees the value fits.
+        .int => return switch (value.?) {
+            .integer => |i| @intCast(i),
+            else => |v| @intFromFloat(v.float),
+        },
+        .float => return @floatCast(value.?.toFloat().?),
         .@"enum" => return std.meta.stringToEnum(T, value.?.string).?,
         .optional => |o| return if (value == null or value.? == .null) null else try decode(o.child, a, value),
         .pointer => |p| {
@@ -272,8 +281,9 @@ pub fn encode(a: Allocator, value: anytype) Allocator.Error!Value {
     switch (@typeInfo(T)) {
         .null => return .null,
         .bool => return .{ .bool = value },
-        .int, .comptime_int => return Value.fromNumber(@floatFromInt(value)),
-        .float, .comptime_float => return Value.fromNumber(@floatCast(value)),
+        .int => return Value.fromInt(a, value),
+        .comptime_int => return comptime if (std.math.cast(i128, value)) |int| .{ .integer = int } else .{ .big_integer = std.fmt.comptimePrint("{d}", .{value}) },
+        .float, .comptime_float => return Value.fromFloat(@floatCast(value)),
         .@"enum", .enum_literal => return .{ .string = @tagName(value) },
         .optional => return if (value) |v| encode(a, v) else .null,
         .pointer => |p| {

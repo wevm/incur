@@ -82,8 +82,8 @@ fn hasPath(input: Value, path: []const Value) bool {
     for (path) |part| {
         // Issue paths hold object keys and array indices.
         current = switch (part) {
-            .number => |index| if (current == .array and index < @as(f64, @floatFromInt(current.array.len)))
-                current.array[@intFromFloat(index)]
+            .integer => |index| if (current == .array and index < current.array.len)
+                current.array[@intCast(index)]
             else
                 return false,
             else => current.get(part.string) orelse return false,

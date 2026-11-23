@@ -50,6 +50,8 @@ pub const Next = command.Next;
 pub const OutputPolicy = command.OutputPolicy;
 /// The error returned after recording an incur `Error` with `fail`.
 pub const Failed = command.Failed;
+/// Errors that end serving: allocation failure and cancelation.
+pub const ServeError = command.ServeError;
 
 /// A command failure with a machine-readable code.
 pub const Error = errors_.Error;
@@ -60,7 +62,7 @@ pub const Cta = errors_.Cta;
 /// A list of suggested commands.
 pub const CtaBlock = errors_.CtaBlock;
 
-/// A JSON value with JavaScript semantics.
+/// A JSON value with exact integers.
 pub const Value = json.Value;
 /// Builds JSON objects in insertion order.
 pub const ObjectBuilder = json.ObjectBuilder;

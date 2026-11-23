@@ -36,7 +36,7 @@ pub fn stringify(a: Allocator, value: Value) Allocator.Error![]const u8 {
 /// Stringifies any node.
 fn node(a: Allocator, value: Value, ctx: Ctx) Allocator.Error![]const u8 {
     switch (value) {
-        .null, .bool, .number => return json.toString(a, value),
+        .null, .bool, .integer, .big_integer, .float => return json.toString(a, value),
         .string => |s| return stringScalar(a, s, ctx),
         .array => |items| {
             if (items.len == 0) return "[]";
@@ -94,11 +94,12 @@ fn containsDocumentMarker(text: []const u8) bool {
     return false;
 }
 
-/// Stringifies a string scalar in the default plain style.
+/// Stringifies a string scalar in the default plain style. Control characters and unpaired
+/// surrogates force double quotes.
 fn stringScalar(a: Allocator, text: []const u8, ctx: Ctx) Allocator.Error![]const u8 {
     var it = js.Utf8.init(text);
     while (it.next()) |cp| switch (cp) {
-        0...0x08, 0x0b...0x1f, 0x7f...0x9f => return doubleQuoted(a, text, ctx),
+        0...0x08, 0x0b...0x1f, 0x7f...0x9f, 0xd800...0xdfff => return doubleQuoted(a, text, ctx),
         else => {},
     };
     return plain(a, text, ctx);
@@ -233,8 +234,13 @@ fn doubleQuoted(a: Allocator, text: []const u8, ctx: Ctx) Allocator.Error![]cons
                 const short = for ([_][2][]const u8{ .{ "0000", "\\0" }, .{ "0007", "\\a" }, .{ "000b", "\\v" }, .{ "001b", "\\e" } }) |entry| {
                     if (std.mem.eql(u8, code, entry[0])) break entry[1];
                 } else null;
-                // `JSON.stringify` escapes only C0 controls, so `code` is `00XX`.
-                if (short) |s| try out.appendSlice(a, s) else try out.print(a, "\\x{s}", .{code[2..]});
+                // `JSON.stringify` escapes C0 controls as `00XX` and unpaired surrogates, which stay.
+                if (short) |s|
+                    try out.appendSlice(a, s)
+                else if (std.mem.startsWith(u8, code, "00"))
+                    try out.print(a, "\\x{s}", .{code[2..]})
+                else
+                    try out.print(a, "\\u{s}", .{code});
                 i += 5;
                 start = i + 1;
             },
@@ -451,8 +457,12 @@ fn fold(a: Allocator, text: []const u8, indent: []const u8, mode: Mode, indent_a
         var ch = at(units, @intCast(i)) orelse break;
         if (mode == .quoted and ch == '\\') {
             esc_start = i;
-            // Only `\xXX` escapes are longer than two units after `doubleQuoted`.
-            i += if (at(units, @intCast(i + 1)) == 'x') 3 else 1;
+            // `doubleQuoted` writes `\xXX` and `\uXXXX` escapes; the others are two units long.
+            i += switch (at(units, @intCast(i + 1)) orelse 0) {
+                'x' => 3,
+                'u' => 5,
+                else => 1,
+            };
             esc_end = i;
         }
         const index: usize = @intCast(i);
