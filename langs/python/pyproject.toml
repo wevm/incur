@@ -1,6 +1,6 @@
 [project]
 name = "incur"
-version = "0.1.0"
+version = "0.9.0"
 description = "Build CLIs for agents and humans: TOON output, LLM manifests, skills, and shell completions."
 readme = "README.md"
 license = "MIT"

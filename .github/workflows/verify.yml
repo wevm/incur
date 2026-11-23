@@ -25,6 +25,9 @@ jobs:
       - name: Check types
         run: pnpm check:types
 
+      - name: Check language port versions
+        run: node langs/version.ts --check
+
   test:
     name: Test Runtime
     runs-on: ubuntu-latest
