@@ -25,6 +25,16 @@ pub const Banner = cli.Banner;
 pub const BannerMode = cli.BannerMode;
 /// Config-file option defaults.
 pub const Config = cli.Config;
+/// Skill sync settings.
+pub const Sync = cli.Sync;
+/// Self-update settings.
+pub const Update = cli.Update;
+/// MCP server settings.
+pub const Mcp = cli.Mcp;
+/// A command backed by an HTTP handler, optionally described by an OpenAPI document.
+pub const Gateway = cli.Gateway;
+/// A group of commands generated from a remote MCP server's tools.
+pub const McpSource = cli.McpSource;
 
 /// A command definition.
 pub const Command = command.Command;
@@ -46,6 +56,10 @@ pub const Middleware = command.Middleware;
 pub const MiddlewareContext = command.MiddlewareContext;
 /// Runs the rest of the middleware chain.
 pub const Next = command.Next;
+/// How a command appears as an MCP tool.
+pub const Tool = command.Tool;
+/// MCP tool annotations.
+pub const Annotations = command.Annotations;
 /// Where a command's output may appear.
 pub const OutputPolicy = command.OutputPolicy;
 /// The error returned after recording an incur `Error` with `fail`.
@@ -88,5 +102,15 @@ pub const completions = @import("completions.zig");
 pub const parser = @import("parser.zig");
 /// Markdown manifests.
 pub const skill = @import("skill.zig");
+/// HTTP requests, responses, handlers, and the `std.http` adapters.
+pub const http = @import("http.zig");
+/// Fetch-backed command sources and curl-style argv parsing.
+pub const fetch = @import("fetch.zig");
+/// Commands generated from OpenAPI documents.
+pub const openapi = @import("openapi.zig");
+/// The MCP server.
+pub const mcp = @import("mcp.zig");
+/// Self-update callbacks.
+pub const update = @import("update.zig");
 /// Output format names.
 pub const Format = formatter.Format;

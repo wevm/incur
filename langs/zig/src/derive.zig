@@ -216,7 +216,7 @@ fn fieldOf(comptime T: type, comptime name: []const u8, comptime F: type, compti
             .array => |array| ty.kind = .{ .array = .{ .items = array.items, .bounds = bounds } },
             .integer => ty.kind = .{ .integer = bounds },
             .number => ty.kind = .{ .number = bounds },
-            .string => ty.kind = .{ .string = bounds },
+            .string => ty.kind = .{ .string = .{ .min = bounds.min, .max = bounds.max } },
             else => @compileError("incur min and max on " ++ @typeName(T) ++ "." ++ name ++ " need a number, string, or array field"),
         }
     }

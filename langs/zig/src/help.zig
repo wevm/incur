@@ -61,6 +61,8 @@ pub const Options = struct {
     hide_global_options: bool = false,
     /// Hide the skills integration.
     hide_skills: bool = false,
+    /// Hide the `--update` flag.
+    hide_update: bool = false,
     /// Text shown after examples.
     hint: ?[]const u8 = null,
     /// Options schema.
@@ -286,6 +288,7 @@ fn globalLines(a: Allocator, lines: *Lines, options: Options) Allocator.Error!vo
         .{ "--full-output", "Show full output envelope" },
     });
     if (options.root) try flags.appendSlice(a, &.{ .{ "--mcp", "Start as MCP stdio server" }, .{ "--version", "Show version" } });
+    if (options.root and !options.hide_update) try flags.append(a, .{ "--update", "Update to latest version" });
     std.mem.sort(Flag, flags.items, {}, struct {
         fn lessThan(_: void, x: Flag, y: Flag) bool {
             return js.localeCompare(x[0], y[0]) == .lt;

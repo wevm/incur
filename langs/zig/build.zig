@@ -52,8 +52,8 @@ fn testArtifacts(b: *std.Build, incur: *std.Build.Module, llvm: bool) Tests {
     const suffix = if (llvm) "-llvm" else "";
     return .{
         .api = b.addTest(.{ .name = b.fmt("api{s}", .{suffix}), .root_module = testModule(b, b.path("tests/api.zig"), incur), .use_llvm = llvm }),
-        // The README example compiles and runs as a test.
-        .readme = b.addTest(.{ .name = b.fmt("readme{s}", .{suffix}), .root_module = testModule(b, readmeExample(b), incur), .use_llvm = llvm }),
+        // The README examples compile, and running this program checks their documented output.
+        .readme = b.addExecutable(.{ .name = b.fmt("readme{s}", .{suffix}), .root_module = testModule(b, readmeExample(b), incur), .use_llvm = llvm }),
         .differential = b.addExecutable(.{
             .name = b.fmt("differential{s}", .{suffix}),
             .root_module = testModule(b, b.path("tests/differential.zig"), incur),

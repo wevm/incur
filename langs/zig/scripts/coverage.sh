@@ -34,8 +34,9 @@ uncovered=$(awk '
 ' "$report")
 
 # Functions with no instrumented lines were never compiled, so no test references them. Only
-# functions evaluated at compile time (`derive.zig` schema derivation and generic type
-# constructors) may be missing.
+# functions evaluated at compile time (`derive.zig` schema derivation, generic type
+# constructors, and generic functions, whose instances kcov does not attribute to the signature)
+# may be missing.
 instrumented=$(awk '
     /<class / { match($0, /filename="[^"]*"/); file = substr($0, RSTART + 10, RLENGTH - 11); n = split(file, parts, "/"); file = parts[n] }
     /<line / { match($0, /number="[0-9]+"/); print file ":" substr($0, RSTART + 8, RLENGTH - 9) }
@@ -44,7 +45,7 @@ missing=""
 for path in "$src"/*.zig; do
     name=$(basename "$path")
     [ "$name" = derive.zig ] && continue
-    for line in $(grep -nE '^\s*(pub )?fn [A-Za-z_]+\(' "$path" | grep -vE 'comptime [A-Za-z_]+: (type|anytype|Input)\b|\) type \{' | cut -d: -f1); do
+    for line in $(grep -nE '^\s*(pub )?fn [A-Za-z_]+\(' "$path" | grep -vE 'comptime [A-Za-z_]+: (type|anytype|Input)\b|: anytype\b|\) type \{' | cut -d: -f1); do
         if ! printf '%s\n' "$instrumented" | grep -qx "$name:$line"; then
             missing="$missing
 $name:$line: $(sed -n "${line}p" "$path" | sed 's/^ *//')"

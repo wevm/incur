@@ -26,15 +26,87 @@ const Ctx = struct {
     indent_at_start: ?usize = null,
     /// Whether a top-level block scalar must be indented.
     force_block_indent: bool = false,
+    /// Whether lines never fold, as the `lineWidth: 0` option sets.
+    unlimited: bool = false,
+    /// Anchors for collections that occur more than once, as `aliasDuplicateObjects` emits.
+    aliases: ?*Aliases = null,
 };
+
+/// The anchor state of collections, keyed by address.
+const Aliases = std.AutoHashMapUnmanaged(usize, Alias);
+
+/// The anchor state of one collection.
+const Alias = struct {
+    /// The anchor number, assigned when the collection is first seen again.
+    anchor: ?usize = null,
+    /// Whether the anchored collection was written.
+    written: bool = false,
+};
+
+/// Returns the address identifying a non-empty collection, or null.
+fn address(value: Value) ?usize {
+    return switch (value) {
+        .array => |items| if (items.len > 0) @intFromPtr(items.ptr) else null,
+        .object => |entries| if (entries.len > 0) @intFromPtr(entries.ptr) else null,
+        else => null,
+    };
+}
+
+/// Numbers repeated collections in the order their second occurrences are reached.
+fn number(a: Allocator, aliases: *Aliases, count: *usize, value: Value) Allocator.Error!void {
+    const key = address(value) orelse return;
+    const entry = try aliases.getOrPut(a, key);
+    if (entry.found_existing) {
+        if (entry.value_ptr.anchor == null) {
+            count.* += 1;
+            entry.value_ptr.anchor = count.*;
+        }
+        return;
+    }
+    entry.value_ptr.* = .{};
+    switch (value) {
+        .array => |items| for (items) |item| try number(a, aliases, count, item),
+        .object => |entries| for (entries) |e| try number(a, aliases, count, e.value),
+        else => unreachable,
+    }
+}
 
 /// Serializes a value as a YAML document, ending with a newline.
 pub fn stringify(a: Allocator, value: Value) Allocator.Error![]const u8 {
     return std.mem.concat(a, u8, &.{ try node(a, value, .{}), "\n" });
 }
 
+/// Serializes a value as a YAML document without folding long lines, as the `lineWidth: 0`
+/// option does. The result ends with a newline.
+pub fn stringifyUnfolded(a: Allocator, value: Value) Allocator.Error![]const u8 {
+    return std.mem.concat(a, u8, &.{ try node(a, value, .{ .unlimited = true }), "\n" });
+}
+
+/// Serializes a value as a YAML document in which repeated collections, identified by
+/// address, are written once with an anchor (`&a1`) and then as aliases (`*a1`). The result
+/// ends with a newline.
+pub fn stringifyAliased(a: Allocator, value: Value) Allocator.Error![]const u8 {
+    var aliases: Aliases = .empty;
+    var count: usize = 0;
+    try number(a, &aliases, &count, value);
+    return std.mem.concat(a, u8, &.{ try node(a, value, .{ .aliases = &aliases }), "\n" });
+}
+
 /// Stringifies any node.
 fn node(a: Allocator, value: Value, ctx: Ctx) Allocator.Error![]const u8 {
+    if (ctx.aliases) |aliases| if (address(value)) |key| {
+        const alias = aliases.getPtr(key).?;
+        if (alias.anchor) |n| {
+            if (alias.written) return std.fmt.allocPrint(a, "*a{d}", .{n});
+            alias.written = true;
+            return std.fmt.allocPrint(a, "&a{d}\n{s}{s}", .{ n, ctx.indent, try unanchored(a, value, ctx) });
+        }
+    };
+    return unanchored(a, value, ctx);
+}
+
+/// Stringifies a node without its anchor.
+fn unanchored(a: Allocator, value: Value, ctx: Ctx) Allocator.Error![]const u8 {
     switch (value) {
         .null, .bool, .integer, .big_integer, .float => return json.toString(a, value),
         .string => |s| return stringScalar(a, s, ctx),
@@ -73,7 +145,9 @@ fn pair(a: Allocator, key: []const u8, value: Value, ctx: Ctx) Allocator.Error![
     const collection = value == .array or value == .object;
     if (!explicit and !collection) pair_ctx.indent_at_start = js.utf16Len(out) + 1;
     const value_str = try node(a, value, pair_ctx);
-    const ws = if (!explicit and collection) ws: {
+    // An anchor or alias stays on the key's line.
+    const props = value_str.len > 0 and (value_str[0] == '&' or value_str[0] == '*');
+    const ws = if (!explicit and collection and !props) ws: {
         const empty = (value == .array and value.array.len == 0) or (value == .object and value.object.len == 0);
         break :ws if (contains(value_str, '\n') or !empty) try std.mem.concat(a, u8, &.{ "\n", pair_ctx.indent }) else " ";
     } else if (value_str.len == 0 or value_str[0] == '\n') "" else " ";
@@ -121,7 +195,7 @@ fn plain(a: Allocator, text: []const u8, ctx: Ctx) Allocator.Error![]const u8 {
         }
     }
     if (resolvesAsNonString(text)) return quoted(a, text, ctx);
-    if (ctx.implicit_key) return text;
+    if (ctx.implicit_key or ctx.unlimited) return text;
     return fold(a, text, ctx.indent, .flow, ctx.indent_at_start, null);
 }
 
@@ -201,7 +275,7 @@ fn singleQuoted(a: Allocator, text: []const u8, ctx: Ctx) Allocator.Error![]cons
     // break, and single quotes can hold neither.
     if (contains(text, '\n')) return doubleQuoted(a, text, ctx);
     const res = try std.fmt.allocPrint(a, "'{s}'", .{try std.mem.replaceOwned(u8, a, text, "'", "''")});
-    if (ctx.implicit_key) return res;
+    if (ctx.implicit_key or ctx.unlimited) return res;
     return fold(a, res, quotedIndent(text, ctx), .flow, ctx.indent_at_start, null);
 }
 
@@ -267,7 +341,7 @@ fn doubleQuoted(a: Allocator, text: []const u8, ctx: Ctx) Allocator.Error![]cons
         try std.mem.concat(a, u8, &.{ out.items, try js.sliceUtf16(a, units, start, units.len) })
     else
         try js.fromUtf16(a, units);
-    if (ctx.implicit_key) return result;
+    if (ctx.implicit_key or ctx.unlimited) return result;
     return fold(a, result, indent, .quoted, ctx.indent_at_start, null);
 }
 
@@ -280,7 +354,7 @@ fn block(a: Allocator, text: []const u8, ctx: Ctx) Allocator.Error![]const u8 {
     const indent = if (ctx.indent.len > 0)
         ctx.indent
     else if (ctx.force_block_indent or containsDocumentMarker(text)) "  " else "";
-    const literal = !lineOverLimit(text, indent.len);
+    const literal = ctx.unlimited or !lineOverLimit(text, indent.len);
 
     // Chomping from trailing whitespace (ASCII, so byte offsets match code units).
     var end_start = text.len;
@@ -551,4 +625,156 @@ fn consumeMoreIndented(units: []const u16, start_index: isize, indent: usize) is
         }
     }
     return end;
+}
+
+/// Parses the YAML frontmatter of a `SKILL.md` (the text between a leading `---` line and the
+/// next line starting with `---`) as a mapping, or returns null when there is none.
+///
+/// Supports what skill frontmatter uses: top-level `key: value` pairs whose values are plain,
+/// single-quoted, double-quoted, literal (`|`), or folded (`>`) scalars, with comments and blank
+/// lines. Plain scalars resolve with the core schema; nested collections become null. Returns
+/// `error.SyntaxError` for lines that are not pairs.
+pub fn parseFrontmatter(a: Allocator, content: []const u8) (Allocator.Error || error{SyntaxError})!?Value {
+    var it = std.mem.splitScalar(u8, content, '\n');
+    if (!std.mem.eql(u8, std.mem.trimEnd(u8, it.first(), "\r"), "---")) return null;
+    var lines: std.ArrayList([]const u8) = .empty;
+    while (it.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (std.mem.startsWith(u8, line, "---")) break;
+        try lines.append(a, line);
+    } else return null;
+    var out: json.ObjectBuilder = .{};
+    var i: usize = 0;
+    while (i < lines.items.len) {
+        const line = lines.items[i];
+        i += 1;
+        if (js.trim(line).len == 0 or line[0] == '#') continue;
+        if (line[0] == ' ' or line[0] == '\t') return error.SyntaxError;
+        const colon = std.mem.find(u8, line, ": ") orelse if (std.mem.endsWith(u8, line, ":")) line.len - 1 else return error.SyntaxError;
+        const key = js.trim(line[0..colon]);
+        const value = js.trim(line[colon + 1 ..]);
+        // The value continues on the indented and blank lines that follow.
+        const start = i;
+        while (i < lines.items.len and (js.trim(lines.items[i]).len == 0 or lines.items[i][0] == ' ' or lines.items[i][0] == '\t')) i += 1;
+        try out.put(a, try unquote(a, key), try pairValue(a, value, lines.items[start..i]));
+    }
+    return out.finish();
+}
+
+/// Parses the value of a pair from the rest of its line and its continuation lines.
+fn pairValue(a: Allocator, value: []const u8, rest: []const []const u8) (Allocator.Error || error{SyntaxError})!Value {
+    if (value.len > 0 and (value[0] == '|' or value[0] == '>')) return .{ .string = try blockScalar(a, value, rest) };
+    var parts: std.ArrayList([]const u8) = .empty;
+    try parts.append(a, value);
+    for (rest) |line| try parts.append(a, js.trim(line));
+    while (parts.items.len > 1 and parts.items[parts.items.len - 1].len == 0) _ = parts.pop();
+    // A key without a value on its line holds a nested collection, or null.
+    if (value.len == 0 or value[0] == '#' or value[0] == '[' or value[0] == '{') return .null;
+    const text = try foldLines(a, parts.items);
+    if (value[0] == '"' or value[0] == '\'') return .{ .string = try unquote(a, text) };
+    const comment = std.mem.find(u8, text, " #") orelse text.len;
+    return resolve(js.trim(text[0..comment]));
+}
+
+/// Joins flow lines: a line break is a space, and each empty line is a newline.
+fn foldLines(a: Allocator, parts: []const []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var space = false;
+    for (parts) |part| {
+        if (part.len == 0) {
+            try out.append(a, '\n');
+            space = false;
+            continue;
+        }
+        if (space) try out.append(a, ' ');
+        try out.appendSlice(a, part);
+        space = true;
+    }
+    return out.items;
+}
+
+/// Resolves a plain scalar with the core schema.
+fn resolve(text: []const u8) Value {
+    if (!resolvesAsNonString(text)) return .{ .string = text };
+    for ([_][]const u8{ "true", "True", "TRUE" }) |t| if (std.mem.eql(u8, text, t)) return .{ .bool = true };
+    for ([_][]const u8{ "false", "False", "FALSE" }) |f| if (std.mem.eql(u8, text, f)) return .{ .bool = false };
+    const signed = unsign(text);
+    if (signed.len == 4 and signed[0] == '.') return .{ .float = if (std.ascii.toLower(signed[1]) == 'n') std.math.nan(f64) else if (text[0] == '-') -std.math.inf(f64) else std.math.inf(f64) };
+    const float = js.toNumber(text);
+    return if (std.math.isNan(float)) .null else .{ .float = float };
+}
+
+/// Removes the quotes of a single- or double-quoted scalar, or returns plain text as is.
+fn unquote(a: Allocator, text: []const u8) (Allocator.Error || error{SyntaxError})![]const u8 {
+    if (text.len == 0 or (text[0] != '"' and text[0] != '\'')) return text;
+    const quote = text[0];
+    if (text.len < 2 or text[text.len - 1] != quote) return error.SyntaxError;
+    const inner = text[1 .. text.len - 1];
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < inner.len) : (i += 1) {
+        const ch = inner[i];
+        if (quote == '\'') {
+            // A quote inside single quotes is doubled.
+            if (ch == '\'') {
+                if (i + 1 == inner.len or inner[i + 1] != '\'') return error.SyntaxError;
+                i += 1;
+            }
+            try out.append(a, ch);
+            continue;
+        }
+        if (ch == '"') return error.SyntaxError;
+        if (ch != '\\') {
+            try out.append(a, ch);
+            continue;
+        }
+        i += 1;
+        if (i == inner.len) return error.SyntaxError;
+        switch (inner[i]) {
+            'n' => try out.append(a, '\n'),
+            't' => try out.append(a, '\t'),
+            'u' => {
+                const cp = if (i + 5 <= inner.len) std.fmt.parseInt(u21, inner[i + 1 .. i + 5], 16) catch return error.SyntaxError else return error.SyntaxError;
+                var buffer: [4]u8 = undefined;
+                try out.appendSlice(a, buffer[0 .. std.unicode.utf8Encode(cp, &buffer) catch return error.SyntaxError]);
+                i += 4;
+            },
+            else => |escaped| try out.append(a, escaped),
+        }
+    }
+    return out.items;
+}
+
+/// Parses a literal (`|`) or folded (`>`) block scalar with its chomping indicator.
+fn blockScalar(a: Allocator, header: []const u8, lines: []const []const u8) Allocator.Error![]const u8 {
+    const literal = header[0] == '|';
+    var indent: usize = 0;
+    for (lines) |line| if (js.trim(line).len > 0) {
+        indent = line.len - std.mem.trimStart(u8, line, " ").len;
+        break;
+    };
+    var out: std.ArrayList(u8) = .empty;
+    var breaks: usize = 0;
+    var started = false;
+    var previous_normal = false;
+    for (lines) |line| {
+        if (js.trim(line).len == 0) {
+            breaks += 1;
+            continue;
+        }
+        const text = line[@min(indent, line.len)..];
+        const normal = text[0] != ' ' and text[0] != '\t';
+        // Folding turns one line break between two normal lines into a space.
+        if (started and !literal and previous_normal and normal and breaks == 0)
+            try out.append(a, ' ')
+        else
+            try out.appendNTimes(a, '\n', breaks + @intFromBool(started and (literal or !previous_normal or !normal)));
+        try out.appendSlice(a, text);
+        started = true;
+        previous_normal = normal;
+        breaks = 0;
+    }
+    if (std.mem.findScalar(u8, header, '-') != null or !started and std.mem.findScalar(u8, header, '+') == null) return out.items;
+    try out.appendNTimes(a, '\n', 1 + if (std.mem.findScalar(u8, header, '+') != null) breaks else 0);
+    return out.items;
 }

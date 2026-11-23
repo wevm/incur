@@ -1,6 +1,6 @@
-//! Zig-only behavior that the differential suite cannot compare with TypeScript: built-ins this
-//! port does not implement, typed handler and middleware failures, the struct schema syntax,
-//! allocation failures, and inputs the reference treats differently by design.
+//! Zig-only behavior that the differential suite cannot compare with TypeScript: typed handler
+//! and middleware failures, the struct schema syntax, allocation failures, the production
+//! network and HTTP server paths, and inputs the reference treats differently by design.
 
 const std = @import("std");
 const incur = @import("incur");
@@ -22,7 +22,7 @@ const Served = struct {
 };
 
 /// Serves `argv` without a terminal and returns the exit code and output.
-fn serve(cli: *const incur.Cli, argv: []const []const u8, vars: []const [2][]const u8) !Served {
+fn serve(cli: *incur.Cli, argv: []const []const u8, vars: []const [2][]const u8) !Served {
     var env: std.process.Environ.Map = .init(testing.allocator);
     defer env.deinit();
     for (vars) |v| try env.put(v[0], v[1]);
@@ -35,7 +35,7 @@ fn serve(cli: *const incur.Cli, argv: []const []const u8, vars: []const [2][]con
 }
 
 /// Asserts the exit code and output of one invocation.
-fn expectServe(cli: *const incur.Cli, argv: []const []const u8, exit: u8, output: []const u8) !void {
+fn expectServe(cli: *incur.Cli, argv: []const []const u8, exit: u8, output: []const u8) !void {
     const served = try serve(cli, argv, &.{});
     defer served.deinit();
     try testing.expectEqualStrings(output, served.output);
@@ -44,14 +44,6 @@ fn expectServe(cli: *const incur.Cli, argv: []const []const u8, exit: u8, output
 
 fn one(c: *Context(.{})) !Outcome {
     return c.ok(1);
-}
-
-test "reports built-ins this port does not implement" {
-    const cli = try incur.Cli.create(testing.allocator, "tool", .{ .version = "1.0.0" });
-    defer cli.destroy();
-    try expectServe(cli, &.{"--mcp"}, 1, "code: UNSUPPORTED\nmessage: '--mcp' is not supported by the Zig port of incur yet.\n");
-    try expectServe(cli, &.{ "skills", "add" }, 1, "code: UNSUPPORTED\nmessage: 'skills add' is not supported by the Zig port of incur yet.\n");
-    try expectServe(cli, &.{ "mcp", "add" }, 1, "code: UNSUPPORTED\nmessage: 'mcp add' is not supported by the Zig port of incur yet.\n");
 }
 
 test "runs commands without handlers and replaces commands registered twice" {
@@ -864,4 +856,8 @@ test "ends serving when its task is canceled" {
     const bannered = try incur.Cli.create(testing.allocator, "tool", .{ .banner = .{ .render = canceledBanner } });
     defer bannered.destroy();
     try testing.expectError(error.Canceled, bannered.serveWith(&.{}, process));
+}
+
+test {
+    _ = @import("features.zig");
 }

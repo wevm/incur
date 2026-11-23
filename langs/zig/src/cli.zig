@@ -13,6 +13,14 @@ const help = @import("help.zig");
 const parser = @import("parser.zig");
 const skill = @import("skill.zig");
 const tokens = @import("tokens.zig");
+const http = @import("http.zig");
+const fetch_api = @import("fetch.zig");
+const openapi = @import("openapi.zig");
+const mcp = @import("mcp.zig");
+const mcp_source = @import("mcp_source.zig");
+const server = @import("server.zig");
+const sync_api = @import("sync.zig");
+const update_api = @import("update.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -95,12 +103,109 @@ pub const Options = struct {
     output_policy: ?OutputPolicy = null,
     /// The root command, which runs when no subcommand matches.
     root: ?Command = null,
-    /// Whether the built-in skills integration is enabled.
-    sync: bool = true,
+    /// Skill sync settings for `skills add` and `skills list`. Null disables the skills
+    /// integration.
+    sync: ?Sync = .{},
+    /// Self-update settings for `--update`. Null disables updates.
+    update: ?Update = .{},
+    /// MCP server settings for `--mcp`, `mcp add`, and `/mcp` over HTTP. On a mounted group, null
+    /// hides the group's commands from MCP.
+    mcp: ?Mcp = .{},
+    /// The npm package that distributes the CLI, used by `mcp add` and stale-skill hints.
+    package: ?[]const u8 = null,
+    /// A root HTTP handler: invocations that match no command become requests to it.
+    fetch: ?fetch_api.Source = null,
+    /// An OpenAPI document whose operations become commands calling `fetch`.
+    openapi: ?openapi.Spec = null,
+    /// How OpenAPI operations become commands.
+    openapi_config: openapi.Config = .{},
     /// Default variables that middleware may replace.
     vars: []const Value.Entry = &.{},
     /// Version.
     version: ?[]const u8 = null,
+};
+
+/// Skill sync settings.
+pub const Sync = struct {
+    /// Text shown after `skills add` lists the synced skills.
+    body: ?[]const u8 = null,
+    /// The directory `include` patterns resolve against. Defaults to the package root for global
+    /// installs and the working directory otherwise.
+    cwd: ?[]const u8 = null,
+    /// Grouping depth for skill files.
+    depth: f64 = 1,
+    /// Patterns of directories with extra `SKILL.md` files, such as `skills/*`, or `_root` for a
+    /// `SKILL.md` in the directory itself.
+    include: []const []const u8 = &.{},
+    /// Example prompts shown after `skills add` and `mcp add`.
+    suggestions: []const []const u8 = &.{},
+};
+
+/// Self-update settings. Without `check` and `install`, updates resolve through the npm package
+/// that contains the program and run the detected package manager.
+pub const Update = struct {
+    /// Returns the latest version, or null when unknown.
+    check: ?*const fn (c: *const update_api.Check) anyerror!?[]const u8 = null,
+    /// Installs the latest version.
+    install: ?*const fn (c: *const update_api.Install) anyerror!void = null,
+    /// Whether installation finishes after the updating process exits.
+    deferred: bool = false,
+    /// Minimum time between update checks, in milliseconds. Defaults to one day.
+    interval: ?f64 = null,
+    /// The npm package to check. Defaults to the package containing the program.
+    package: ?[]const u8 = null,
+};
+
+/// MCP server settings.
+pub const Mcp = struct {
+    /// Agents `mcp add` registers with by default.
+    agents: []const []const u8 = &.{},
+    /// The command agents run. Defaults to `<name> --mcp` or a package runner invocation.
+    command: ?[]const u8 = null,
+    /// Instructions describing how to use the server.
+    instructions: ?[]const u8 = null,
+    /// The server name. Defaults to the CLI name.
+    name: ?[]const u8 = null,
+    /// Whether `/mcp` over HTTP runs without sessions.
+    stateless: bool = true,
+    /// A human-readable server title.
+    title: ?[]const u8 = null,
+    /// Which commands become tools, and how clients discover them.
+    tools: mcp.Filter = .{},
+};
+
+/// A command backed by an HTTP handler. With `openapi`, the document's operations become a
+/// group of typed commands that call the handler instead.
+pub const Gateway = struct {
+    /// Description.
+    description: ?[]const u8 = null,
+    /// The handler requests go to.
+    fetch: fetch_api.Source,
+    /// A path prefix for every request.
+    base_path: ?[]const u8 = null,
+    /// Output policy.
+    output_policy: ?OutputPolicy = null,
+    /// An OpenAPI document describing the handler.
+    openapi: ?openapi.Spec = null,
+    /// How OpenAPI operations become commands.
+    openapi_config: openapi.Config = .{},
+    /// Whether generated OpenAPI commands are MCP tools.
+    mcp: bool = true,
+};
+
+/// A group of commands generated from a remote MCP server's tools. The server is contacted the
+/// first time an invocation reaches the group.
+pub const McpSource = struct {
+    /// Description.
+    description: ?[]const u8 = null,
+    /// The server's streamable-HTTP endpoint.
+    url: []const u8,
+    /// The handler requests go to. Null sends them to the network.
+    fetch: ?http.Handler = null,
+    /// Headers sent with every request.
+    headers: []const http.Header = &.{},
+    /// Output policy.
+    output_policy: ?OutputPolicy = null,
 };
 
 /// Errors `Cli.create` reports.
@@ -110,23 +215,25 @@ pub const CreateError = error{
 } || Allocator.Error;
 
 /// A command tree entry.
-const Entry = union(enum) {
+pub const Entry = union(enum) {
     /// Another name for a sibling command.
     alias: *const Command,
     /// A command.
     command: *const Command,
     /// A group of commands.
-    group: *const Cli,
+    group: *Cli,
+    /// A command that forwards requests to an HTTP handler.
+    gateway: *const Gateway,
 };
 
 /// A named command tree entry.
-const Named = struct { name: []const u8, entry: Entry };
+pub const Named = struct { name: []const u8, entry: Entry };
 
 /// A list of named entries in insertion order.
-const Commands = []const Named;
+pub const Commands = []const Named;
 
 /// Returns the entry with the given name.
-fn lookup(commands: Commands, name: []const u8) ?Entry {
+pub fn lookup(commands: Commands, name: []const u8) ?Entry {
     for (commands) |n| if (std.mem.eql(u8, n.name, name)) return n.entry;
     return null;
 }
@@ -144,6 +251,15 @@ pub const Process = struct {
     stderr: *std.Io.Writer,
     /// Whether standard output is a terminal.
     tty: bool,
+    /// Standard input, which `--mcp` reads JSON-RPC messages from. Null reads nothing.
+    stdin: ?*std.Io.Reader = null,
+    /// The path the program was invoked as. Package detection for updates, `mcp add`, and
+    /// skill installs walks up from it; the display name is its basename when that names the CLI
+    /// or one of its aliases.
+    program: ?[]const u8 = null,
+    /// Handles outgoing HTTP requests: hosted fetch sources, OpenAPI URLs, remote MCP servers,
+    /// and registry lookups. Null sends them with `std.http.Client`.
+    network: ?http.Handler = null,
 };
 
 /// A CLI: a router of commands, optionally with its own root command.
@@ -166,12 +282,26 @@ pub const Cli = struct {
     commands: std.ArrayList(Named) = .empty,
     /// Middleware.
     middleware: std.ArrayList(Middleware) = .empty,
-    /// Mounted groups, destroyed with this CLI.
+    /// Mounted groups and owned CLIs, destroyed with this CLI.
     children: std.ArrayList(*Cli) = .empty,
+    /// Where a generated group's commands come from.
+    source: ?Source = null,
+    /// Whether generated commands have been loaded.
+    loaded: bool = false,
+    /// The stateful MCP session for `/mcp` over HTTP, created on first use.
+    session: ?*mcp.Session = null,
+
+    /// Where a generated group's commands come from.
+    pub const Source = union(enum) {
+        /// An OpenAPI document and the handler its operations call.
+        openapi: *const Gateway,
+        /// A remote MCP server.
+        mcp: *const McpSource,
+    };
 
     /// Creates a CLI. Destroy it with `destroy`.
     pub fn create(gpa: Allocator, name: []const u8, options: Options) CreateError!*Cli {
-        if (options.globals) |globals| try checkGlobals(gpa, globals, options.config);
+        if (options.globals) |globals| try checkGlobals(gpa, globals, options.config, options.update != null);
         const cli = try gpa.create(Cli);
         cli.* = .{ .gpa = gpa, .arena = .init(gpa), .name = name, .options = options };
         return cli;
@@ -182,6 +312,81 @@ pub const Cli = struct {
         for (cli.children.items) |child| child.destroy();
         cli.arena.deinit();
         cli.gpa.destroy(cli);
+    }
+
+    /// Takes ownership of another CLI, such as one whose handler serves an MCP source, and
+    /// destroys it with this CLI. On error the caller still owns `other`.
+    pub fn own(cli: *Cli, other: *Cli) Allocator.Error!void {
+        try cli.children.append(cli.arena.allocator(), other);
+    }
+
+    /// Registers a command that forwards requests to an HTTP handler, as `curl`-style argv:
+    /// path segments, `--key value` query parameters, `-X`, `-H`, and `-d`. With `openapi`, it
+    /// registers a group of commands generated from the document instead.
+    pub fn gateway(cli: *Cli, name: []const u8, definition: Gateway) CreateError!void {
+        const a = cli.arena.allocator();
+        const stored = try a.create(Gateway);
+        stored.* = definition;
+        if (definition.openapi == null) return cli.put(name, .{ .gateway = stored });
+        const child = try cli.mount(name, .{
+            .description = definition.description,
+            .output_policy = definition.output_policy,
+            .mcp = if (definition.mcp) .{} else null,
+            .sync = null,
+            .update = null,
+        });
+        child.source = .{ .openapi = stored };
+    }
+
+    /// Registers a group of commands generated from a remote MCP server's tools.
+    pub fn mcpSource(cli: *Cli, name: []const u8, source: McpSource) CreateError!void {
+        const a = cli.arena.allocator();
+        const stored = try a.create(McpSource);
+        stored.* = source;
+        const child = try cli.mount(name, .{ .description = source.description, .output_policy = source.output_policy, .sync = null, .update = null });
+        child.source = .{ .mcp = stored };
+    }
+
+    /// Creates a CLI and mounts it as a command group, which this CLI owns.
+    pub fn mount(cli: *Cli, name: []const u8, options: Options) CreateError!*Cli {
+        const child = try Cli.create(cli.gpa, name, options);
+        cli.group(child) catch |err| {
+            child.destroy();
+            return err;
+        };
+        return child;
+    }
+
+    /// Generates commands for groups backed by OpenAPI documents and remote MCP servers. Remote
+    /// MCP groups mounted directly on this CLI load only when `name` names them or `name` is
+    /// null; others load always. Returns the first failure.
+    pub fn load(cli: *Cli, a: Allocator, process: *const Process, name: ?[]const u8) ServeError!?Error {
+        if (cli.options.openapi) |spec| if (!cli.loaded) {
+            cli.loaded = true;
+            const source = cli.options.fetch orelse return null;
+            if (try openapi.generate(cli, a, process, spec, source, null, cli.options.openapi_config)) |e| return e;
+        };
+        return cli.loadChildren(a, process, name, true);
+    }
+
+    /// Loads generated groups below this CLI.
+    fn loadChildren(cli: *Cli, a: Allocator, process: *const Process, name: ?[]const u8, root: bool) ServeError!?Error {
+        for (cli.commands.items) |n| {
+            if (n.entry != .group) continue;
+            const child = n.entry.group;
+            if (child.source) |source| if (!child.loaded) {
+                const selected = !root or source == .openapi or name == null or std.mem.eql(u8, name.?, n.name);
+                if (!selected) continue;
+                child.loaded = true;
+                const failure = switch (source) {
+                    .openapi => |g| try openapi.generate(child, a, process, g.openapi.?, g.fetch, g.base_path, g.openapi_config),
+                    .mcp => |m| try mcp_source.load(child, a, process, m),
+                };
+                if (failure) |e| return e;
+            };
+            if (try child.loadChildren(a, process, name, false)) |e| return e;
+        }
+        return null;
     }
 
     /// Registers a command and its aliases.
@@ -225,43 +430,44 @@ pub const Cli = struct {
     }
 
     /// Returns the root command with the CLI description as its fallback.
-    fn rootCommand(cli: *const Cli) ?Command {
+    pub fn rootCommand(cli: *const Cli) ?Command {
         var root = cli.options.root orelse return null;
         if (root.description == null) root.description = cli.options.description;
         return root;
     }
 
     /// Runs the CLI with the process arguments, environment, and standard streams, then exits
-    /// with the command's exit code when it is not 0.
-    pub fn serve(cli: *const Cli, init: std.process.Init) !void {
+    /// with the command's exit code when it is not 0. Outgoing HTTP requests use
+    /// `std.http.Client`.
+    pub fn serve(cli: *Cli, init: std.process.Init) !void {
         const io = init.io;
         const args = try init.minimal.args.toSlice(init.arena.allocator());
         var out_buf: [4096]u8 = undefined;
         var err_buf: [1024]u8 = undefined;
+        var in_buf: [4096]u8 = undefined;
         var stdout = std.Io.File.stdout().writer(io, &out_buf);
         var stderr = std.Io.File.stderr().writer(io, &err_buf);
+        var stdin = std.Io.File.stdin().reader(io, &in_buf);
         const tty = std.Io.File.stdout().isTty(io) catch false;
-        const code = try cli.serveImpl(args[1..], .{
+        const code = try cli.serveWith(args[1..], .{
             .io = io,
             .env = init.environ_map,
             .stdout = &stdout.interface,
             .stderr = &stderr.interface,
+            .stdin = &stdin.interface,
             .tty = tty,
-        }, std.fs.path.basename(args[0]));
+            .program = args[0],
+        });
         if (code != 0) std.process.exit(code);
     }
 
     /// Runs the CLI with explicit arguments and I/O. Returns the exit code; fails only when
     /// allocation fails or the task serving the CLI is canceled.
-    pub fn serveWith(cli: *const Cli, argv: []const []const u8, process: Process) ServeError!u8 {
-        return cli.serveImpl(argv, process, null);
-    }
-
-    /// The shared serve implementation.
-    fn serveImpl(cli: *const Cli, argv: []const []const u8, process: Process, bin: ?[]const u8) ServeError!u8 {
+    pub fn serveWith(cli: *Cli, argv: []const []const u8, process: Process) ServeError!u8 {
         var arena = std.heap.ArenaAllocator.init(cli.gpa);
         defer arena.deinit();
-        const display_name = if (bin) |b| name: {
+        const display_name = if (process.program) |program| name: {
+            const b = std.fs.path.basename(program);
             if (std.mem.eql(u8, b, cli.name)) break :name b;
             for (cli.options.aliases) |alias| if (std.mem.eql(u8, alias, b)) break :name b;
             break :name cli.name;
@@ -279,17 +485,37 @@ pub const Cli = struct {
         process.stderr.flush() catch {};
         return run.exit;
     }
+
+    /// Answers an HTTP request: commands at their paths (`GET /users/list?limit=5`, or a JSON
+    /// body for other methods), streaming commands as NDJSON, MCP at `/mcp`, the OpenAPI
+    /// document at `/openapi.json`, and Agent Skills at `/.well-known/agent-skills/`. The
+    /// response and everything it references are allocated with `a`.
+    pub fn fetch(cli: *Cli, a: Allocator, process: *const Process, request: *const http.Request) ServeError!http.Response {
+        return server.handle(cli, a, process, request);
+    }
+
+    /// Returns a handler that answers requests with `fetch`, for `http.serveConnection` or another
+    /// CLI's MCP source.
+    pub fn handler(cli: *Cli) http.Handler {
+        return .{ .context = cli, .call = struct {
+            fn call(context: ?*const anyopaque, a: Allocator, process: *const Process, request: *const http.Request) anyerror!http.Response {
+                const self: *Cli = @ptrCast(@alignCast(@constCast(context.?)));
+                return self.fetch(a, process, request);
+            }
+        }.call };
+    }
 };
 
 /// Built-in flag names that global options may not use.
-const builtin_flags = [_][]const u8{ "fullOutput", "format", "json", "llms", "llmsFull", "mcp", "help", "version", "schema", "filterOutput", "tokenLimit", "tokenOffset", "tokenCount" };
+const builtin_flags = [_][]const u8{ "fullOutput", "format", "json", "llms", "llmsFull", "mcp", "help", "incurBinaryApply", "incurUpdateCheck", "version", "schema", "filterOutput", "tokenLimit", "tokenOffset", "tokenCount" };
 
 /// Rejects global options that collide with built-in flags.
-fn checkGlobals(gpa: Allocator, globals: *const Type, config: ?Config) CreateError!void {
+fn checkGlobals(gpa: Allocator, globals: *const Type, config: ?Config, update: bool) CreateError!void {
     const flag = if (config) |c| c.flag else null;
     for (globals.fields()) |f| {
         if (f.alias == 'h') return error.GlobalOptionConflict;
         for (builtin_flags) |b| if (std.mem.eql(u8, b, f.name)) return error.GlobalOptionConflict;
+        if (update and std.mem.eql(u8, f.name, "update")) return error.GlobalOptionConflict;
         // The config flag and its `--no-` form are built-ins too.
         if (flag) |c| {
             if (std.mem.eql(u8, f.name, c)) return error.GlobalOptionConflict;
@@ -333,6 +559,18 @@ const Resolved = union(enum) {
         description: ?[]const u8,
         path: []const u8,
     },
+    /// A command that forwards requests to an HTTP handler.
+    gateway: struct {
+        gateway: *const Gateway,
+        /// Group middleware collected on the way.
+        middleware: []const Middleware = &.{},
+        /// Inherited output policy.
+        output_policy: ?OutputPolicy = null,
+        /// The command path.
+        path: []const u8,
+        /// Remaining tokens.
+        rest: []const []const u8,
+    },
 };
 
 /// Walks tokens down the command tree.
@@ -350,6 +588,13 @@ fn resolve(a: Allocator, commands: Commands, argv: []const []const u8) Allocator
     var middleware: std.ArrayList(Middleware) = .empty;
     while (true) {
         const g = switch (entry) {
+            .gateway => |gw| return .{ .gateway = .{
+                .gateway = gw,
+                .middleware = middleware.items,
+                .output_policy = gw.output_policy orelse inherited,
+                .path = try std.mem.join(a, " ", path.items),
+                .rest = remaining,
+            } },
             .command, .alias => |c| return .{ .command = .{
                 .command = c,
                 .middleware = middleware.items,
@@ -384,14 +629,14 @@ fn resolve(a: Allocator, commands: Commands, argv: []const []const u8) Allocator
 }
 
 /// Returns the names of entries.
-fn names(a: Allocator, commands: Commands) Allocator.Error![]const []const u8 {
+pub fn names(a: Allocator, commands: Commands) Allocator.Error![]const []const u8 {
     const out = try a.alloc([]const u8, commands.len);
     for (commands, out) |n, *slot| slot.* = n.name;
     return out;
 }
 
 /// Suggests the closest candidate by prefix, substring, then edit distance.
-fn suggest(a: Allocator, input: []const u8, candidates: []const []const u8) Allocator.Error!?[]const u8 {
+pub fn suggest(a: Allocator, input: []const u8, candidates: []const []const u8) Allocator.Error!?[]const u8 {
     const len = js.utf16Len(input);
     const threshold = if (len <= 4) 2 else len / 2;
     const lower = try js.lowerString(a, input);
@@ -466,12 +711,16 @@ const Flags = struct {
     token_limit: ?f64 = null,
     /// `--token-offset`.
     token_offset: ?f64 = null,
+    /// `--update`.
+    update: bool = false,
+    /// `--incur-update-check`, the flag of detached update checks.
+    update_check: bool = false,
     /// `--version`.
     version: bool = false,
 };
 
 /// Extracts built-in flags from argv.
-fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8) Allocator.Error!parser.Result(Flags) {
+fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8, update: bool) Allocator.Error!parser.Result(Flags) {
     var flags: Flags = .{};
     var rest: std.ArrayList([]const u8) = .empty;
     var i: usize = 0;
@@ -493,6 +742,10 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
             flags.mcp = true;
         } else if (eql(token, "--help") or eql(token, "-h")) {
             flags.help = true;
+        } else if (eql(token, "--update") and update) {
+            flags.update = true;
+        } else if (eql(token, "--incur-update-check")) {
+            flags.update_check = true;
         } else if (eql(token, "--version") and (next == null or next.?[0] == '-')) {
             // A following value belongs to a command-local `--version` option.
             flags.version = true;
@@ -551,6 +804,7 @@ fn helpEntries(a: Allocator, commands: Commands) Allocator.Error![]const help.En
         .alias => {},
         .command => |c| try out.append(a, .{ .name = n.name, .description = c.description }),
         .group => |g| try out.append(a, .{ .name = n.name, .description = g.options.description }),
+        .gateway => |g| try out.append(a, .{ .name = n.name, .description = g.description }),
     };
     std.mem.sort(help.Entry, out.items, {}, struct {
         fn lessThan(_: void, x: help.Entry, y: help.Entry) bool {
@@ -562,7 +816,9 @@ fn helpEntries(a: Allocator, commands: Commands) Allocator.Error![]const help.En
 
 /// Returns the hint with the destructive notice appended when needed.
 fn hintWithDestructive(a: Allocator, c: *const Command) Allocator.Error!?[]const u8 {
-    if (!c.destructive) return c.hint;
+    // MCP annotations that mark a tool destructive mark the command too.
+    const annotated = if (c.mcp) |t| if (try t.annotationsValue(a)) |v| (if (v.get("destructiveHint")) |d| d == .bool and d.bool else false) else false else false;
+    if (!c.destructive and !annotated) return c.hint;
     const hint = errors.nonEmpty(c.hint) orelse return destructive_hint;
     if (std.mem.find(u8, hint, destructive_hint) != null) return hint;
     return try std.fmt.allocPrint(a, "{s} {s}", .{ hint, destructive_hint });
@@ -600,6 +856,11 @@ fn skillCommands(a: Allocator, out: *std.ArrayList(skill.CommandInfo), commands:
         switch (n.entry) {
             .alias => {},
             .command => |c| try out.append(a, try commandInfo(a, joined, c)),
+            .gateway => |g| try out.append(a, .{
+                .name = joined,
+                .description = g.description,
+                .hint = "Fetch gateway. Pass path segments and curl-style flags (-X, -H, -d, --key value).",
+            }),
             .group => |g| {
                 if (g.options.description) |d| try groups.append(a, .{ .name = joined, .description = d });
                 if (g.options.root) |*r| try out.append(a, try commandInfo(a, joined, r));
@@ -607,6 +868,20 @@ fn skillCommands(a: Allocator, out: *std.ArrayList(skill.CommandInfo), commands:
             },
         }
     }
+}
+
+/// The manifest entries of every command, sorted by name, with group descriptions.
+pub const SkillInfos = struct { commands: []const skill.CommandInfo, groups: []const skill.Group };
+
+/// Collects the manifest entries of a CLI's commands, its root command included, as skill files
+/// and their hash describe them.
+pub fn skillInfos(a: Allocator, cli: *const Cli) Allocator.Error!SkillInfos {
+    var groups: std.ArrayList(skill.Group) = .empty;
+    var infos: std.ArrayList(skill.CommandInfo) = .empty;
+    if (cli.rootCommand()) |root| try infos.append(a, try commandInfo(a, null, &root));
+    try skillCommands(a, &infos, cli.commands.items, &.{}, &groups);
+    sortInfos(infos.items);
+    return .{ .commands = infos.items, .groups = groups.items };
 }
 
 /// Sorts manifest entries by name.
@@ -651,6 +926,12 @@ fn manifestCommands(a: Allocator, out: *std.ArrayList(Value), commands: Commands
         switch (n.entry) {
             .alias => {},
             .command => |c| try out.append(a, try manifestEntry(a, joined, c, full)),
+            .gateway => |g| {
+                var entry: json.ObjectBuilder = .{};
+                try entry.put(a, "name", .{ .string = joined });
+                if (errors.nonEmpty(g.description)) |d| try entry.put(a, "description", .{ .string = d });
+                try out.append(a, entry.finish());
+            },
             .group => |g| {
                 if (g.options.root) |*r| try out.append(a, try manifestEntry(a, joined, r, full));
                 try manifestCommands(a, out, g.commands.items, path, full);
@@ -716,7 +997,9 @@ const Result = union(enum) {
 /// The per-invocation serve state.
 const Run = struct {
     a: Allocator,
-    cli: *const Cli,
+    cli: *Cli,
+    /// Suggestions appended to the output: stale skills and available updates.
+    notice: ?FormattedCtaBlock = null,
     display_name: []const u8,
     exit: u8 = 0,
     process: Process,
@@ -748,7 +1031,7 @@ const Run = struct {
 
     /// Base help options shared by most help output.
     fn helpOptions(run: *Run) help.Options {
-        return .{ .config_flag = run.configFlag(), .globals = run.cli.options.globals, .hide_skills = !run.cli.options.sync };
+        return .{ .config_flag = run.configFlag(), .globals = run.cli.options.globals, .hide_skills = run.cli.options.sync == null, .hide_update = run.cli.options.update == null };
     }
 
     /// Reports an error before a command resolves.
@@ -767,11 +1050,7 @@ const Run = struct {
             .agent => !human,
         };
         if (!matches) return;
-        const text = b.render(run.process.io, run.a) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Canceled => return error.Canceled,
-            else => null,
-        };
+        const text = try command.optional(b.render(run.process.io, run.a)) orelse null;
         if (errors.nonEmpty(text)) |t| run.writeln(t);
     }
 
@@ -781,7 +1060,7 @@ const Run = struct {
         const cli = run.cli;
         if (run.process.env.get("COMPLETE")) |shell| return run.complete(shell, argv);
         const tty = run.process.tty;
-        const flags = switch (try extractFlags(a, argv, run.configFlag())) {
+        const flags = switch (try extractFlags(a, argv, run.configFlag(), cli.options.update != null)) {
             .ok => |f| f,
             .err => |e| return run.earlyError(e, tty, .toon),
         };
@@ -792,7 +1071,31 @@ const Run = struct {
             .err => |e| return run.earlyError(e, human, flags.format),
         } else flags.rest;
 
-        if (flags.mcp) return run.unsupported("--mcp", human);
+        // Generated groups load only when this invocation can reach them: by name, or through
+        // tree-wide modes.
+        const first: ?[]const u8 = if (filtered.len > 0) filtered[0] else null;
+        const all = flags.mcp or ((flags.llms or flags.llms_full) and first == null) or
+            (first != null and (std.mem.eql(u8, first.?, cli.name) or findBuiltin(first.?) != null));
+        if (try cli.load(a, &run.process, if (all) null else first orelse "")) |e| return run.earlyError(e, human, flags.format);
+
+        if (flags.update_check) {
+            if (cli.options.update) |u| _ = try command.optional(update_api.refresh(a, &run.process, cli.name, run.updateOptions(u)));
+            return;
+        }
+        // --help takes precedence over --update.
+        if (flags.update and !flags.help) return run.install(&flags, human);
+        if (flags.mcp) {
+            if (try mcp.serveStdio(a, cli, &run.process)) |message| {
+                run.process.stderr.print("{s}\n", .{message}) catch {};
+                run.exit = 1;
+            }
+            return;
+        }
+
+        if (cli.options.sync != null and !flags.llms and !flags.llms_full and !flags.schema and !flags.help and !flags.version and
+            builtinIndex(cli, filtered, "skills") == null and builtinIndex(cli, filtered, "mcp") == null)
+            run.notice = try sync_api.staleNotice(a, cli, &run.process, run.display_name);
+
         if (flags.llms or flags.llms_full) return run.llms(&flags, filtered);
 
         if (builtinIndex(cli, filtered, "completions")) |index| {
@@ -811,7 +1114,7 @@ const Run = struct {
         }
 
         for ([_][]const u8{ "skills", "mcp" }) |b| {
-            if (std.mem.eql(u8, b, "skills") and !cli.options.sync) continue;
+            if (std.mem.eql(u8, b, "skills") and cli.options.sync == null) continue;
             if (builtinIndex(cli, filtered, b)) |index| return run.builtin(b, filtered, index, argv, &flags, human);
         }
 
@@ -831,7 +1134,7 @@ const Run = struct {
                     run.writeln(text);
                     return;
                 }
-            } else {
+            } else if (cli.options.fetch == null) {
                 try run.banner(human, flags.help);
                 var options = run.helpOptions();
                 options.aliases = cli.options.aliases;
@@ -844,8 +1147,16 @@ const Run = struct {
             }
         }
 
+        const root_gateway: ?*const Gateway = if (cli.options.fetch) |source| gateway: {
+            const g = try a.create(Gateway);
+            g.* = .{ .description = cli.options.description, .fetch = source };
+            break :gateway g;
+        } else null;
+
         var resolved: Resolved = if (run.root != null and filtered.len == 0)
             .{ .command = .{ .command = &run.root.?, .path = cli.name, .rest = &.{} } }
+        else if (root_gateway != null and filtered.len == 0)
+            .{ .gateway = .{ .gateway = root_gateway.?, .path = cli.name, .rest = &.{} } }
         else
             try resolve(a, cli.commands.items, filtered);
 
@@ -855,16 +1166,44 @@ const Run = struct {
         const command_format = if (resolved == .command) resolved.command.command.format else null;
         const format = if (flags.format_explicit) flags.format else command_format orelse cli.options.format orelse .toon;
 
-        // A token that is not a typo of a known command falls back to the root command.
-        if (resolved == .err and resolved.err.path.len == 0) if (run.root) |*root| {
-            var candidates: std.ArrayList([]const u8) = .empty;
-            try candidates.appendSlice(a, try names(a, resolved.err.commands));
-            for (builtins) |b| if (cli.options.sync or !std.mem.eql(u8, b[0], "skills")) try candidates.append(a, b[0]);
-            if (try suggest(a, resolved.err.token, candidates.items) == null)
-                resolved = .{ .command = .{ .command = root, .path = cli.name, .rest = filtered } };
+        if (resolved == .help) {
+            const h = resolved.help;
+            var options = run.helpOptions();
+            options.commands = try helpEntries(a, h.commands);
+            options.description = h.description;
+            options.hide_skills = false;
+            options.hide_update = false;
+            run.writeln(try help.formatRoot(a, try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, h.path }), options));
+            return;
+        }
+
+        if (human) if (cli.options.update) |u| if (try update_api.notice(a, &run.process, cli.name, run.updateOptions(u))) |available| {
+            const commands = try a.dupe(FormattedCta, &.{.{
+                .command = try std.fmt.allocPrint(a, "{s} --update", .{run.display_name}),
+                .description = try std.fmt.allocPrint(a, "upgrade from {s} to {s}", .{ available.current, available.latest }),
+            }});
+            const block: FormattedCtaBlock = .{ .description = try std.fmt.allocPrint(a, "Update available for {s}:", .{available.name}), .commands = commands };
+            run.notice = if (run.notice) |n| try mergeCta(a, n, block) else block;
         };
 
-        const policy = (if (resolved == .command) resolved.command.output_policy else null) orelse cli.options.output_policy;
+        // A token that is not a typo of a known command falls back to the root command or root
+        // fetch. A token starting with `/` is a request path, never a mistyped command.
+        if (resolved == .err and resolved.err.path.len == 0 and (run.root != null or root_gateway != null)) {
+            var candidates: std.ArrayList([]const u8) = .empty;
+            try candidates.appendSlice(a, try names(a, resolved.err.commands));
+            for (builtins) |b| if (cli.options.sync != null or !std.mem.eql(u8, b[0], "skills")) try candidates.append(a, b[0]);
+            const blocked = !std.mem.startsWith(u8, resolved.err.token, "/") and try suggest(a, resolved.err.token, candidates.items) != null;
+            if (!blocked) resolved = if (root_gateway) |g|
+                .{ .gateway = .{ .gateway = g, .path = cli.name, .rest = filtered } }
+            else
+                .{ .command = .{ .command = &run.root.?, .path = cli.name, .rest = filtered } };
+        }
+
+        const policy = switch (resolved) {
+            .command => |c| c.output_policy,
+            .gateway => |g| g.output_policy,
+            else => null,
+        } orelse cli.options.output_policy;
         const output: Output = .{
             .flags = &flags,
             .format = format,
@@ -876,14 +1215,38 @@ const Run = struct {
         switch (resolved) {
             .err => |e| try run.notFound(e.token, e.path, e.commands, argv, &output),
             .command => |c| try run.execute(c.command, c.middleware, c.path, filtered, c.rest, &output),
-            .help => |h| {
-                var options = run.helpOptions();
-                options.commands = try helpEntries(a, h.commands);
-                options.description = h.description;
-                options.hide_skills = false;
-                run.writeln(try help.formatRoot(a, try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, h.path }), options));
-            },
+            .gateway => |g| try run.executeGateway(g.gateway, g.middleware, g.path, filtered, g.rest, &output),
+            // Group help returned above.
+            .help => {},
         }
+    }
+
+    /// Returns the update settings with the CLI version.
+    fn updateOptions(run: *Run, u: Update) update_api.Options {
+        return .{ .update = u, .version = run.cli.options.version };
+    }
+
+    /// Installs the latest version for `--update`.
+    fn install(run: *Run, flags: *const Flags, human: bool) ServeError!void {
+        const a = run.a;
+        const cli = run.cli;
+        const result = switch (try update_api.install(a, &run.process, cli.name, run.updateOptions(cli.options.update.?))) {
+            .ok => |r| r,
+            .err => |message| return run.earlyError(.{ .code = "UPDATE_FAILED", .message = message }, human, flags.format),
+        };
+        if (human) {
+            var lines: std.ArrayList([]const u8) = .empty;
+            try lines.append(a, try std.fmt.allocPrint(a, "{s} {s}", .{ if (result.deferred) "\u{2713} Update staged for" else "\u{2713} Updated", result.name }));
+            if (result.command) |c| try lines.append(a, try std.fmt.allocPrint(a, "  {s}", .{c}));
+            if (result.deferred) try lines.append(a, "  Installation will finish after this process exits.");
+            run.writeln(try std.mem.join(a, "\n", lines.items));
+            return;
+        }
+        var out: json.ObjectBuilder = .{};
+        if (result.command) |c| try out.put(a, "command", .{ .string = c });
+        if (result.deferred) try out.put(a, "deferred", .{ .bool = true });
+        try out.put(a, "name", .{ .string = result.name });
+        run.writeln(try formatter.format(a, out.finish(), flags.format));
     }
 
     /// Returns the completion scripts for every CLI name.
@@ -950,6 +1313,22 @@ const Run = struct {
                 );
                 break :text try help.formatCommand(a, name, options);
             },
+            .gateway => |g| text: {
+                const is_root = std.mem.eql(u8, g.path, cli.name);
+                // A root fetch on a CLI with commands shows the CLI's help.
+                if (is_root and cli.commands.items.len > 0) {
+                    var options = run.helpOptions();
+                    options.globals = null;
+                    options.aliases = cli.options.aliases;
+                    options.commands = try helpEntries(a, cli.commands.items);
+                    options.description = cli.options.description;
+                    options.root = true;
+                    options.version = cli.options.version;
+                    break :text try help.formatRoot(a, cli.name, options);
+                }
+                const name = if (is_root) cli.name else try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, g.path });
+                break :text try fetch_api.help(a, name, g.gateway.description);
+            },
         };
         run.writeln(text);
     }
@@ -970,6 +1349,10 @@ const Run = struct {
                 const parent = if (e.path.len == 0) cli.name else try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, e.path });
                 const suggestion = if (try suggest(a, e.token, try names(a, e.commands))) |s| try std.fmt.allocPrint(a, " Did you mean '{s}'?", .{s}) else "";
                 run.writeln(try std.fmt.allocPrint(a, "Error: '{s}' is not a command for '{s}'.{s}", .{ e.token, parent, suggestion }));
+                run.exit = 1;
+            },
+            .gateway => {
+                run.writeln("--schema is not supported for fetch commands.");
                 run.exit = 1;
             },
             .command => |c| {
@@ -1006,6 +1389,11 @@ const Run = struct {
                 },
                 .alias, .command => |c| {
                     commands = try a.dupe(Named, &.{.{ .name = token, .entry = .{ .command = c } }});
+                    root = null;
+                    break;
+                },
+                .gateway => {
+                    commands = try a.dupe(Named, &.{.{ .name = token, .entry = entry }});
                     root = null;
                     break;
                 },
@@ -1068,9 +1456,8 @@ const Run = struct {
         }));
     }
 
-    /// Handles the `skills` and `mcp` built-ins: help output, and an error for actions this port
-    /// does not implement.
-    fn builtin(run: *Run, b: []const u8, filtered: []const []const u8, index: usize, argv: []const []const u8, flags: *const Flags, human: bool) Allocator.Error!void {
+    /// Handles the `skills` and `mcp` built-ins.
+    fn builtin(run: *Run, b: []const u8, filtered: []const []const u8, index: usize, argv: []const []const u8, flags: *const Flags, human: bool) ServeError!void {
         const a = run.a;
         const name = run.cli.name;
         var subs: std.ArrayList(BuiltinSub) = .empty;
@@ -1131,13 +1518,147 @@ const Run = struct {
             }));
             return;
         }
-        try run.unsupported(try std.fmt.allocPrint(a, "{s} {s}", .{ b, found.name }), human);
+        const rest = filtered[index + 2 ..];
+        const format: Format = if (flags.format_explicit) flags.format else .toon;
+        if (std.mem.eql(u8, b, "mcp")) {
+            if (std.mem.eql(u8, found.name, "doctor")) {
+                const result = try mcp.doctor(a, run.cli, &run.process);
+                run.writeln(try formatter.format(a, result.value, format));
+                if (!result.ok) run.exit = 1;
+                return;
+            }
+            return run.mcpAdd(rest, flags, format);
+        }
+        if (std.mem.eql(u8, found.name, "list")) return run.skillsList();
+        return run.skillsAdd(rest, flags, format);
     }
 
-    /// Reports a built-in this port does not implement yet.
-    fn unsupported(run: *Run, feature: []const u8, human: bool) Allocator.Error!void {
-        const message = try std.fmt.allocPrint(run.a, "'{s}' is not supported by the Zig port of incur yet.", .{feature});
-        try run.earlyError(.{ .code = "UNSUPPORTED", .message = message }, human, .toon);
+    /// Writes a failed built-in action and sets the exit code.
+    fn builtinFailure(run: *Run, code: []const u8, message: []const u8, format: Format) Allocator.Error!void {
+        var out: json.ObjectBuilder = .{};
+        try out.put(run.a, "code", .{ .string = code });
+        try out.put(run.a, "message", .{ .string = message });
+        run.writeln(try formatter.format(run.a, out.finish(), format));
+        run.exit = 1;
+    }
+
+    /// Lists skills with their install status for `skills list`.
+    fn skillsList(run: *Run) ServeError!void {
+        const a = run.a;
+        const skills = try sync_api.list(a, run.cli, &run.process);
+        if (skills.len == 0) return run.writeln("No skills found.");
+        var width: usize = 0;
+        for (skills) |skill_| width = @max(width, js.utf16Len(skill_.name));
+        var lines: std.ArrayList([]const u8) = .empty;
+        var installed: usize = 0;
+        for (skills) |skill_| {
+            if (skill_.installed) installed += 1;
+            const padding = if (errors.nonEmpty(skill_.description)) |d| try std.fmt.allocPrint(a, "{s}  {s}", .{ try js.repeat(a, " ", width - js.utf16Len(skill_.name)), d }) else "";
+            try lines.append(a, try std.fmt.allocPrint(a, "  {s} {s}{s}", .{ if (skill_.installed) "\u{2713}" else "\u{2717}", skill_.name, padding }));
+        }
+        try lines.append(a, "");
+        try lines.append(a, try std.fmt.allocPrint(a, "{d} skill{s} ({d} installed)", .{ skills.len, if (skills.len == 1) "" else "s", installed }));
+        run.writeln(try std.mem.join(a, "\n", lines.items));
+    }
+
+    /// Generates and installs skill files for `skills add`.
+    fn skillsAdd(run: *Run, rest: []const []const u8, flags: *const Flags, format: Format) ServeError!void {
+        const a = run.a;
+        const sync = run.cli.options.sync.?;
+        const depth = for (rest, 0..) |token, i| {
+            if (std.mem.eql(u8, token, "--depth")) break js.toNumber(if (i + 1 < rest.len) rest[i + 1] else "undefined");
+        } else for (rest) |token| {
+            if (std.mem.startsWith(u8, token, "--depth=")) {
+                var parts = std.mem.splitScalar(u8, token, '=');
+                _ = parts.next();
+                break js.toNumber(parts.next().?);
+            }
+        } else sync.depth;
+        const global = !contains(rest, "--no-global");
+        run.write("Syncing...");
+        const result = switch (try sync_api.add(a, run.cli, &run.process, depth, global)) {
+            .ok => |r| r,
+            .err => |message| return run.builtinFailure("SYNC_SKILLS_FAILED", message, format),
+        };
+        run.write("\r\x1b[K");
+        var width: usize = 0;
+        for (result.skills) |skill_| width = @max(width, js.utf16Len(skill_.name));
+        var lines: std.ArrayList([]const u8) = .empty;
+        for (result.skills) |skill_| {
+            const padding = if (errors.nonEmpty(skill_.description)) |d| try std.fmt.allocPrint(a, "{s}  {s}", .{ try js.repeat(a, " ", width - js.utf16Len(skill_.name)), d }) else "";
+            try lines.append(a, try std.fmt.allocPrint(a, "  \u{2713} {s}{s}", .{ skill_.name, padding }));
+        }
+        try lines.append(a, "");
+        try lines.append(a, try std.fmt.allocPrint(a, "{d} skill{s} synced", .{ result.skills.len, if (result.skills.len == 1) "" else "s" }));
+        if (errors.nonEmpty(sync.body)) |body| try lines.appendSlice(a, &.{ "", body });
+        if (sync.suggestions.len > 0) {
+            try lines.appendSlice(a, &.{ "", try std.fmt.allocPrint(a, "Your agent can now use {s}. Try asking:", .{run.cli.name}) });
+            for (sync.suggestions) |suggestion| try lines.append(a, try std.fmt.allocPrint(a, "  \"{s}\"", .{suggestion}));
+        }
+        try lines.appendSlice(a, &.{ "", try std.fmt.allocPrint(a, "Run `{s} --help` to see the full command reference.", .{run.cli.name}) });
+        run.writeln(try std.mem.join(a, "\n", lines.items));
+        if (flags.full_output or flags.format_explicit) {
+            var out: json.ObjectBuilder = .{};
+            try out.put(a, "skills", try schema.strings(a, result.paths));
+            if (errors.nonEmpty(sync.body)) |body| try out.put(a, "body", .{ .string = body });
+            if (flags.full_output and result.agents.len > 0) {
+                const agents = try a.alloc(Value, result.agents.len);
+                for (result.agents, agents) |agent, *slot| {
+                    var entry: json.ObjectBuilder = .{};
+                    try entry.put(a, "agent", .{ .string = agent.agent });
+                    try entry.put(a, "path", .{ .string = agent.path });
+                    try entry.put(a, "mode", .{ .string = agent.mode });
+                    slot.* = entry.finish();
+                }
+                try out.put(a, "agents", .{ .array = agents });
+            }
+            run.writeln(try formatter.format(a, out.finish(), format));
+        }
+    }
+
+    /// Registers the CLI as an MCP server for `mcp add`.
+    fn mcpAdd(run: *Run, rest: []const []const u8, flags: *const Flags, format: Format) ServeError!void {
+        const a = run.a;
+        const cli = run.cli;
+        const settings = cli.options.mcp orelse Mcp{};
+        var command_override = settings.command;
+        var agents: std.ArrayList([]const u8) = .empty;
+        try agents.appendSlice(a, settings.agents);
+        var i: usize = 0;
+        while (i < rest.len) : (i += 1) {
+            const has_value = i + 1 < rest.len and rest[i + 1].len > 0;
+            if ((std.mem.eql(u8, rest[i], "--command") or std.mem.eql(u8, rest[i], "-c")) and has_value) {
+                i += 1;
+                command_override = rest[i];
+            } else if (std.mem.eql(u8, rest[i], "--agent") and has_value) {
+                i += 1;
+                try agents.append(a, rest[i]);
+            }
+        }
+        const name = settings.name orelse cli.name;
+        run.write("Registering MCP server...");
+        const result = switch (try sync_api.register(a, cli, &run.process, name, command_override, !contains(rest, "--no-global"), agents.items)) {
+            .ok => |r| r,
+            .err => |message| return run.builtinFailure("MCP_ADD_FAILED", message, format),
+        };
+        run.write("\r\x1b[K");
+        var lines: std.ArrayList([]const u8) = .empty;
+        try lines.append(a, try std.fmt.allocPrint(a, "\u{2713} Registered {s} as MCP server", .{name}));
+        if (result.agents.len > 0) try lines.append(a, try std.fmt.allocPrint(a, "  Agents: {s}", .{try std.mem.join(a, ", ", result.agents)}));
+        try lines.appendSlice(a, &.{ "", try std.fmt.allocPrint(a, "Agents can now use {s} tools.", .{name}) });
+        const suggestions = if (cli.options.sync) |sync| sync.suggestions else &.{};
+        if (suggestions.len > 0) {
+            try lines.appendSlice(a, &.{ "", "Try asking:" });
+            for (suggestions) |suggestion| try lines.append(a, try std.fmt.allocPrint(a, "  \"{s}\"", .{suggestion}));
+        }
+        run.writeln(try std.mem.join(a, "\n", lines.items));
+        if (flags.full_output or flags.format_explicit) {
+            var out: json.ObjectBuilder = .{};
+            try out.put(a, "name", .{ .string = name });
+            try out.put(a, "command", .{ .string = result.command });
+            try out.put(a, "agents", try schema.strings(a, result.agents));
+            run.writeln(try formatter.format(a, out.finish(), format));
+        }
     }
 
     /// Answers a shell completion request.
@@ -1154,7 +1675,7 @@ const Run = struct {
         const index = if (run.process.env.get("_COMPLETE_INDEX")) |raw| js.toNumber(raw) else @as(f64, @floatFromInt(words.len - 1));
         const cut = js.relativeIndex(index, words.len);
         const before: ?[]const []const u8 = before: {
-            const extracted = switch (try extractFlags(a, words[0..cut], run.configFlag())) {
+            const extracted = switch (try extractFlags(a, words[0..cut], run.configFlag(), cli.options.update != null)) {
                 .ok => |f| f,
                 .err => break :before null,
             };
@@ -1179,12 +1700,12 @@ const Run = struct {
             if (non_flags.items.len <= 1) {
                 for (builtins) |entry| {
                     const name, const description = entry;
-                    if (std.mem.eql(u8, name, "skills") and !cli.options.sync) continue;
+                    if (std.mem.eql(u8, name, "skills") and cli.options.sync == null) continue;
                     if (std.mem.startsWith(u8, name, current) and !listed(candidates.items, name))
                         try candidates.append(a, .{ .description = description, .no_space = !std.mem.eql(u8, name, "completions"), .value = name });
                 }
             } else if (non_flags.items.len == 2) if (findBuiltin(non_flags.items[1])) |b_name| {
-                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync or !std.mem.eql(u8, b_name, "skills"))) {
+                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills"))) {
                     for (builtin_subcommands) |s| if (std.mem.eql(u8, s.builtin, b_name)) {
                         for (try std.mem.concat(a, []const u8, &.{ &.{s.name}, s.aliases })) |value| {
                             if (std.mem.startsWith(u8, value, current) and !listed(candidates.items, value))
@@ -1205,7 +1726,7 @@ const Run = struct {
         const parent = if (path.len == 0) cli.name else try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, path });
         var candidates: std.ArrayList([]const u8) = .empty;
         try candidates.appendSlice(a, try names(a, commands));
-        if (path.len == 0) for (builtins) |b| if (cli.options.sync or !std.mem.eql(u8, b[0], "skills")) try candidates.append(a, b[0]);
+        if (path.len == 0) for (builtins) |b| if (cli.options.sync != null or !std.mem.eql(u8, b[0], "skills")) try candidates.append(a, b[0]);
         const suggestion = try suggest(a, token, candidates.items);
         const did_you_mean = if (suggestion) |s| try std.fmt.allocPrint(a, " Did you mean '{s}'?", .{s}) else "";
         const message = try std.fmt.allocPrint(a, "'{s}' is not a command for '{s}'.{s}", .{ token, parent, did_you_mean });
@@ -1213,7 +1734,7 @@ const Run = struct {
         const failure: Error = .{ .code = "COMMAND_NOT_FOUND", .message = message };
         if (output.human and !output.flags.full_output) {
             run.writeln(try errors.humanError(a, failure));
-            run.writeln(try cta.human(a));
+            run.writeln(try (if (run.notice) |n| try mergeCta(a, cta, n) else cta).human(a));
         } else {
             try run.writeOutput(output, false, try failure.toValue(a), token, cta);
         }
@@ -1244,8 +1765,9 @@ const Run = struct {
     }
 
     /// Writes a command result.
-    fn writeOutput(run: *Run, output: *const Output, ok: bool, raw_body: ?Value, path: []const u8, cta: ?FormattedCtaBlock) Allocator.Error!void {
+    fn writeOutput(run: *Run, output: *const Output, ok: bool, raw_body: ?Value, path: []const u8, own_cta: ?FormattedCtaBlock) Allocator.Error!void {
         const a = run.a;
+        const cta = if (run.notice) |n| (if (own_cta) |c| try mergeCta(a, c, n) else n) else own_cta;
         const flags = output.flags;
         const format = output.format;
         const body = if (output.filter != null and ok and raw_body != null) try filter.apply(a, raw_body.?, output.filter.?) else raw_body;
@@ -1429,12 +1951,52 @@ const Run = struct {
             .ok => |d| d,
             .err => |e| return run.writeFailure(output, e, path),
         };
+        var sink: CliSink = .{ .run = run, .path = path, .output = output };
+        const exec: Exec = .{
+            .a = a,
+            .process = &run.process,
+            .cli = cli,
+            .display_name = run.display_name,
+            .agent = !output.human,
+            .format = output.format,
+            .format_explicit = output.flags.format_explicit,
+            .globals = globals,
+            .sink = sink.sink(),
+        };
+        const result = try exec.run(cmd, group_middleware, path, .{ .argv = .{ .tokens = argv, .defaults = defaults } });
+        switch (result) {
+            .streamed => {},
+            .ok => |r| try run.writeOutput(output, true, r.data, path, try FormattedCtaBlock.init(a, run.display_name, r.cta)),
+            .err => |e| if (output.human and !output.flags.format_explicit and e.field_errors != null)
+                try run.validationHelp(cmd, path, e)
+            else
+                try run.writeFailure(output, e, path),
+        }
+    }
 
+    /// Forwards a fetch-backed invocation as an HTTP request, through CLI and group middleware,
+    /// and writes the response.
+    fn executeGateway(run: *Run, g: *const Gateway, group_middleware: []const Middleware, path: []const u8, filtered: []const []const u8, rest: []const []const u8, output: *const Output) ServeError!void {
+        const a = run.a;
+        const cli = run.cli;
+        const depth = filtered.len - rest.len;
+        var globals: Value = .{ .object = &.{} };
+        const all = if (cli.options.globals) |schema_| switch (try parser.parseGlobals(a, output.flags.rest, schema_, .{ .command = .{ .known = null }, .validate = true })) {
+            .ok => |parsed| all: {
+                globals = parsed.values;
+                break :all parsed.rest;
+            },
+            .err => |e| return run.earlyError(e, output.human, output.flags.format),
+        } else output.flags.rest;
+        var step: GatewayStep = .{ .run = run, .gateway = g, .argv = all[@min(depth, all.len)..], .path = path, .output = output };
+        const env = if (cli.options.env) |env| try parser.parseEnv(a, env, run.process.env) else parser.Result(Value){ .ok = .{ .object = &.{} } };
+        const cli_env = switch (env) {
+            .ok => |v| v,
+            .err => |e| return run.writeFailure(output, e, path),
+        };
         var chain: std.ArrayList(Middleware) = .empty;
         try chain.appendSlice(a, cli.middleware.items);
         try chain.appendSlice(a, group_middleware);
-        try chain.appendSlice(a, cmd.middleware);
-
         var vars: command.Vars = .{};
         for (cli.options.vars) |v| try vars.put(a, v.key, v.value);
         var failure: command.Failure = .{};
@@ -1444,7 +2006,7 @@ const Run = struct {
             .agent = !output.human,
             .command = path,
             .display_name = run.display_name,
-            .env = .null,
+            .env = cli_env,
             .format = output.format,
             .format_explicit = output.flags.format_explicit,
             .globals = globals,
@@ -1453,28 +2015,9 @@ const Run = struct {
             .version = cli.options.version,
             .failure = &failure,
         };
-        var step: Step = .{ .run = run, .cmd = cmd, .argv = argv, .defaults = defaults, .path = path, .output = output };
-        const cli_env = if (cli.options.env) |env| try parser.parseEnv(a, env, run.process.env) else parser.Result(Value){ .ok = .{ .object = &.{} } };
-        switch (cli_env) {
-            .err => |e| step.result = .{ .err = e },
-            .ok => |env| {
-                context.env = env;
-                var runner: command.Chain = .{ .middleware = chain.items, .context = &step, .last = Step.last };
-                try runner.run(0, &context);
-                if (runner.err) |e| {
-                    step.result = .{ .err = e };
-                    step.streamed = false;
-                }
-            },
-        }
-        if (step.streamed) return;
-        switch (step.result orelse Result{ .ok = .{ .data = null, .cta = null } }) {
-            .ok => |r| try run.writeOutput(output, true, r.data, path, r.cta),
-            .err => |e| if (output.human and !output.flags.format_explicit and e.field_errors != null)
-                try run.validationHelp(cmd, path, e)
-            else
-                try run.writeFailure(output, e, path),
-        }
+        var runner: command.Chain = .{ .middleware = chain.items, .context = &step, .last = GatewayStep.last };
+        try runner.run(0, &context);
+        if (runner.err) |e| try run.writeFailure(output, e, path);
     }
 
     /// Writes human validation errors followed by command help.
@@ -1592,41 +2135,209 @@ const Run = struct {
 /// A streamed chunk.
 const Chunk = command.Chunk;
 
-/// The final step of the middleware chain: parse input and call the handler.
-const Step = struct {
+/// Writes a stream as CLI output.
+const CliSink = struct {
     run: *Run,
-    cmd: *const Command,
-    argv: []const []const u8,
-    defaults: ?[]const Value.Entry,
     path: []const u8,
     output: *const Output,
-    result: ?Result = null,
-    streamed: bool = false,
+
+    fn sink(s: *CliSink) Sink {
+        return .{ .context = s, .consume = consume };
+    }
+
+    fn consume(context: *anyopaque, stream: command.Stream, cta: ?errors.CtaBlock) ServeError!ExecResult {
+        const s: *CliSink = @ptrCast(@alignCast(context));
+        try s.run.stream(stream, cta, s.path, s.output);
+        return .streamed;
+    }
+};
+
+/// The final step of a fetch-backed invocation: send the request and write the response.
+const GatewayStep = struct {
+    run: *Run,
+    gateway: *const Gateway,
+    argv: []const []const u8,
+    path: []const u8,
+    output: *const Output,
+
+    fn last(context: *anyopaque, c: *command.MiddlewareContext) ServeError!void {
+        const step: *GatewayStep = @ptrCast(@alignCast(context));
+        const run = step.run;
+        const a = run.a;
+        const output = step.output;
+        var input = switch (try fetch_api.parseArgv(a, step.argv)) {
+            .ok => |i| i,
+            .err => |message| return run.writeFailure(output, .{ .message = message }, step.path),
+        };
+        if (step.gateway.base_path) |prefix| input.path = try std.mem.concat(a, u8, &.{ prefix, input.path });
+        const request = try fetch_api.buildRequest(a, &input);
+        const response = step.gateway.fetch.send(a, &run.process, &request) catch |err|
+            return run.writeFailure(output, try c.failure.take(err), step.path);
+        if (fetch_api.isStreaming(&response)) {
+            var lines = fetch_api.Lines.init(response.body);
+            return run.stream(.{ .context = &lines, .next = struct {
+                fn next(ctx: *anyopaque, io: std.Io, al: Allocator) anyerror!?Chunk {
+                    const l: *fetch_api.Lines = @ptrCast(@alignCast(ctx));
+                    return l.next(io, al);
+                }
+            }.next }, null, step.path, output);
+        }
+        const data = try fetch_api.parseBody(a, response.body);
+        if (response.ok()) return run.writeOutput(output, true, data, step.path, null);
+        try run.writeOutput(output, false, try fetch_api.parseError(a, data, response.status), step.path, null);
+        run.exit = 1;
+    }
+};
+
+/// How a command receives its arguments and options.
+pub const Input = union(enum) {
+    /// Command-line tokens, with option defaults from a config file.
+    argv: struct { tokens: []const []const u8, defaults: ?[]const Value.Entry = null },
+    /// Positional arguments from path tokens and options as a JSON object, as over HTTP.
+    split: struct { tokens: []const []const u8, options: Value },
+    /// Arguments and options in one JSON object, as MCP tool arguments.
+    flat: Value,
+};
+
+/// The result of running a command, before a front end renders it.
+pub const ExecResult = union(enum) {
+    /// Data and suggested commands.
+    ok: struct { data: ?Value, cta: ?errors.CtaBlock = null },
+    /// A failure, with its suggested commands in `Error.cta`.
+    err: Error,
+    /// The sink consumed a stream.
+    streamed,
+};
+
+/// Consumes a command's stream inside the middleware chain, so middleware code after
+/// `next.run` runs once the stream ends.
+pub const Sink = struct {
+    /// The sink's state.
+    context: *anyopaque,
+    /// Consumes the stream and returns the result.
+    consume: *const fn (context: *anyopaque, stream: command.Stream, cta: ?errors.CtaBlock) ServeError!ExecResult,
+};
+
+/// Runs a command for any front end: the CLI, MCP, or HTTP.
+pub const Exec = struct {
+    /// Allocator for the invocation.
+    a: Allocator,
+    /// The process.
+    process: *const Process,
+    /// The CLI whose environment schema, variables, and middleware apply.
+    cli: *const Cli,
+    /// The display name.
+    display_name: []const u8,
+    /// Whether the consumer is an agent.
+    agent: bool,
+    /// The output format.
+    format: Format,
+    /// Whether the format was explicit.
+    format_explicit: bool,
+    /// Parsed global options.
+    globals: Value,
+    /// The HTTP request, for commands served over HTTP.
+    request: ?*const http.Request = null,
+    /// Consumes streams.
+    sink: Sink,
+
+    /// Parses input, runs CLI, group, and command middleware around the handler, and returns
+    /// its result.
+    pub fn run(e: *const Exec, cmd: *const Command, group_middleware: []const Middleware, path: []const u8, input: Input) ServeError!ExecResult {
+        const a = e.a;
+        const cli = e.cli;
+        var chain: std.ArrayList(Middleware) = .empty;
+        try chain.appendSlice(a, cli.middleware.items);
+        try chain.appendSlice(a, group_middleware);
+        try chain.appendSlice(a, cmd.middleware);
+        var vars: command.Vars = .{};
+        for (cli.options.vars) |v| try vars.put(a, v.key, v.value);
+        var failure: command.Failure = .{};
+        var context: command.MiddlewareContext = .{
+            .allocator = a,
+            .io = e.process.io,
+            .agent = e.agent,
+            .command = path,
+            .display_name = e.display_name,
+            .env = .null,
+            .format = e.format,
+            .format_explicit = e.format_explicit,
+            .globals = e.globals,
+            .name = cli.name,
+            .vars = &vars,
+            .version = cli.options.version,
+            .request = e.request,
+            .failure = &failure,
+        };
+        const cli_env = if (cli.options.env) |env| try parser.parseEnv(a, env, e.process.env) else parser.Result(Value){ .ok = .{ .object = &.{} } };
+        context.env = switch (cli_env) {
+            .err => |err| return .{ .err = err },
+            .ok => |env| env,
+        };
+        var step: Step = .{ .exec = e, .cmd = cmd, .input = input };
+        var runner: command.Chain = .{ .middleware = chain.items, .context = &step, .last = Step.last };
+        try runner.run(0, &context);
+        if (runner.err) |err| return .{ .err = err };
+        return step.result orelse .{ .ok = .{ .data = null } };
+    }
+};
+
+/// The final step of the middleware chain: parse input and call the handler.
+const Step = struct {
+    exec: *const Exec,
+    cmd: *const Command,
+    input: Input,
+    result: ?ExecResult = null,
 
     fn last(context: *anyopaque, c: *command.MiddlewareContext) ServeError!void {
         const step: *Step = @ptrCast(@alignCast(context));
-        const run = step.run;
-        const a = run.a;
+        const e = step.exec;
+        const a = e.a;
         const cmd = step.cmd;
-        const parsed = switch (try parser.parse(a, step.argv, cmd.args(), cmd.options(), step.defaults)) {
-            .ok => |p| p,
-            .err => |e| {
-                step.result = .{ .err = e };
-                return;
+        const parsed: parser.Parsed = switch (step.input) {
+            .argv => |argv| switch (try parser.parse(a, argv.tokens, cmd.args(), cmd.options(), argv.defaults)) {
+                .ok => |p| p,
+                .err => |err| return step.fail(err),
+            },
+            .split => |split| parsed: {
+                const args = switch (try parser.parse(a, split.tokens, cmd.args(), null, null)) {
+                    .ok => |p| p.args,
+                    .err => |err| return step.fail(err),
+                };
+                const options = if (cmd.options()) |o| switch (try parser.validate(a, o, split.options)) {
+                    .ok => |v| v,
+                    .err => |err| return step.fail(err),
+                } else Value{ .object = &.{} };
+                break :parsed .{ .args = args, .options = options };
+            },
+            .flat => |params| parsed: {
+                var args: json.ObjectBuilder = .{};
+                var options: json.ObjectBuilder = .{};
+                if (params == .object) for (params.object) |entry| {
+                    const is_arg = if (cmd.args()) |s| s.field(entry.key) != null else false;
+                    try (if (is_arg) &args else &options).put(a, entry.key, entry.value);
+                };
+                const parsed_args = if (cmd.args()) |s| switch (try parser.validate(a, s, args.finish())) {
+                    .ok => |v| v,
+                    .err => |err| return step.fail(err),
+                } else Value{ .object = &.{} };
+                const parsed_options = if (cmd.options()) |s| switch (try parser.validate(a, s, options.finish())) {
+                    .ok => |v| v,
+                    .err => |err| return step.fail(err),
+                } else Value{ .object = &.{} };
+                break :parsed .{ .args = parsed_args, .options = parsed_options };
             },
         };
-        const env = if (cmd.env()) |schema_env| switch (try parser.parseEnv(a, schema_env, run.process.env)) {
+        const env = if (cmd.env()) |schema_env| switch (try parser.parseEnv(a, schema_env, e.process.env)) {
             .ok => |v| v,
-            .err => |e| {
-                step.result = .{ .err = e };
-                return;
-            },
+            .err => |err| return step.fail(err),
         } else Value{ .object = &.{} };
         const h = cmd.run orelse {
-            step.result = .{ .ok = .{ .data = null, .cta = null } };
+            step.result = .{ .ok = .{ .data = null } };
             return;
         };
         const invocation: command.Invocation = .{
+            .context = h.context,
             .allocator = a,
             .io = c.io,
             .agent = c.agent,
@@ -1640,19 +2351,20 @@ const Step = struct {
             .options = parsed.options,
             .vars = c.vars,
             .version = c.version,
+            .request = c.request,
             .failure = c.failure,
+            .process = e.process,
         };
-        const outcome = h.call(&invocation) catch |err| {
-            step.result = .{ .err = try c.failure.take(err) };
-            return;
+        const outcome = h.call(&invocation) catch |err| return step.fail(try c.failure.take(err));
+        step.result = switch (outcome) {
+            .data => |d| .{ .ok = .{ .data = d.value, .cta = d.cta } },
+            .stream => |s| try e.sink.consume(e.sink.context, s.stream, s.cta),
         };
-        switch (outcome) {
-            .data => |d| step.result = .{ .ok = .{ .data = d.value, .cta = try FormattedCtaBlock.init(a, c.display_name, d.cta) } },
-            .stream => |s| {
-                step.streamed = true;
-                try run.stream(s.stream, s.cta, step.path, step.output);
-            },
-        }
+    }
+
+    /// Records a failure.
+    fn fail(step: *Step, err: Error) void {
+        step.result = .{ .err = err };
     }
 };
 
@@ -1690,6 +2402,11 @@ fn notFoundCta(a: Allocator, name: []const u8, argv: []const []const u8, token: 
     };
 }
 
+/// Appends a block's suggestions to another block, keeping its description.
+fn mergeCta(a: Allocator, block: FormattedCtaBlock, extra: FormattedCtaBlock) Allocator.Error!FormattedCtaBlock {
+    return .{ .description = block.description, .commands = try std.mem.concat(a, FormattedCta, &.{ block.commands, extra.commands }) };
+}
+
 /// Joins paths as Rust's `Path::join` does: an absolute or empty base yields `b` unchanged.
 fn join(a: Allocator, base: []const u8, b: []const u8) Allocator.Error![]const u8 {
     if (std.fs.path.isAbsolute(b) or base.len == 0) return b;
@@ -1712,6 +2429,7 @@ fn tree(a: Allocator, commands: Commands, root: ?*const Command, description: ?[
         .alias = n.entry == .alias,
         .node = switch (n.entry) {
             .alias, .command => |c| .{ .description = c.description, .options = c.options() },
+            .gateway => |g| .{ .description = g.description },
             .group => |g| try tree(a, g.commands.items, if (g.options.root) |*r| r else null, g.options.description),
         },
     };

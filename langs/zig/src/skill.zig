@@ -5,6 +5,7 @@ const js = @import("js.zig");
 const json = @import("json.zig");
 const schema = @import("schema.zig");
 const help = @import("help.zig");
+const yaml = @import("yaml.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -226,4 +227,172 @@ fn schemaTable(a: Allocator, js_schema: Value, prefix: []const u8) Allocator.Err
         }
     }
     return try std.fmt.allocPrint(a, "| Field | Type | Required | Description |\n|-------|------|----------|-------------|\n{s}", .{try std.mem.join(a, "\n", rows.items)});
+}
+
+/// A skill file: its directory, description, and Markdown content.
+pub const File = struct {
+    /// The skill name in the frontmatter.
+    name: []const u8,
+    /// The directory relative to the output root, empty for depth 0.
+    dir: []const u8,
+    /// The description in the frontmatter.
+    description: []const u8,
+    /// The `SKILL.md` content.
+    content: []const u8,
+};
+
+/// Splits commands into skill files grouped by their first `depth` path segments, sorted by
+/// directory.
+/// `depth` is a JavaScript number, applied as `slice(0, depth)`.
+pub fn split(a: Allocator, name: []const u8, commands: []const CommandInfo, groups: []const Group, depth: f64) Allocator.Error![]const File {
+    if (depth == 0) return a.dupe(File, &.{try renderFile(a, "", name, name, commands, groups, name)});
+    const Bucket = struct { key: []const u8, commands: std.ArrayList(CommandInfo) = .empty };
+    var buckets: std.ArrayList(Bucket) = .empty;
+    for (commands) |cmd| {
+        const key = if (cmd.name) |n| key: {
+            const parts = try leading(a, n, depth);
+            break :key try std.mem.join(a, "-", parts);
+        } else try slugify(a, name);
+        const bucket = for (buckets.items) |*b| {
+            if (std.mem.eql(u8, b.key, key)) break b;
+        } else bucket: {
+            try buckets.append(a, .{ .key = key });
+            break :bucket &buckets.items[buckets.items.len - 1];
+        };
+        try bucket.commands.append(a, cmd);
+    }
+    std.mem.sort(Bucket, buckets.items, {}, struct {
+        fn lessThan(_: void, x: Bucket, y: Bucket) bool {
+            return js.localeCompare(x.key, y.key) == .lt;
+        }
+    }.lessThan);
+    const files = try a.alloc(File, buckets.items.len);
+    for (buckets.items, files) |b, *slot| {
+        const first = b.commands.items[0];
+        const prefix = if (first.name) |n| prefix: {
+            const parts = try leading(a, n, depth);
+            break :prefix try std.mem.join(a, " ", parts);
+        } else "";
+        const title = if (prefix.len > 0) try std.fmt.allocPrint(a, "{s} {s}", .{ name, prefix }) else name;
+        slot.* = try renderFile(a, b.key, name, title, b.commands.items, groups, if (prefix.len > 0) prefix else null);
+    }
+    return files;
+}
+
+/// Returns the first `depth` space-separated segments of a command path.
+fn leading(a: Allocator, path: []const u8, depth: f64) Allocator.Error![]const []const u8 {
+    var segments: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, path, ' ');
+    while (it.next()) |segment| try segments.append(a, segment);
+    return segments.items[0..js.relativeIndex(depth, segments.items.len)];
+}
+
+/// Renders a skill file: frontmatter and command bodies.
+fn renderFile(a: Allocator, dir: []const u8, cli: []const u8, title: []const u8, commands: []const CommandInfo, groups: []const Group, prefix: ?[]const u8) Allocator.Error!File {
+    const group: ?[]const u8 = if (prefix) |p| for (groups) |g| {
+        if (std.mem.eql(u8, g.name, p)) break g.description;
+    } else null else null;
+    const fallback = if (commands.len == 1) errorsNonEmpty(commands[0].description) else null;
+    const description = if (errorsNonEmpty(group orelse fallback)) |d|
+        try std.fmt.allocPrint(a, "{s}. Run `{s} --help` for usage details.", .{ if (std.mem.endsWith(u8, d, ".")) d[0 .. d.len - 1] else d, title })
+    else
+        try std.fmt.allocPrint(a, "Run `{s} --help` for usage details.", .{title});
+    const slug = try slugify(a, title);
+    var fm: json.ObjectBuilder = .{};
+    try fm.put(a, "name", .{ .string = slug });
+    try fm.put(a, "description", .{ .string = description });
+    try fm.put(a, "requires_bin", .{ .string = cli });
+    try fm.put(a, "command", .{ .string = title });
+    const frontmatter = std.mem.trimEnd(u8, try yaml.stringifyUnfolded(a, fm.finish()), " \t\r\n");
+    var bodies: std.ArrayList([]const u8) = .empty;
+    for (commands) |cmd| try bodies.append(a, try body(a, cli, cmd, 1));
+    return .{
+        .name = slug,
+        .dir = dir,
+        .description = description,
+        .content = try std.fmt.allocPrint(a, "---\n{s}\n---\n\n{s}", .{ frontmatter, try std.mem.join(a, "\n\n---\n\n", bodies.items) }),
+    };
+}
+
+/// Returns the text unless it is null or empty.
+fn errorsNonEmpty(text: ?[]const u8) ?[]const u8 {
+    const t = text orelse return null;
+    return if (t.len == 0) null else t;
+}
+
+/// Converts text to a lowercase slug: runs of characters other than `a-z`, `0-9`, and `-` become
+/// one hyphen, and leading and trailing hyphens are dropped.
+pub fn slugify(a: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    const lower = try js.lowerString(a, text);
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < lower.len) {
+        const ch = lower[i];
+        if ((ch >= 'a' and ch <= 'z') or (ch >= '0' and ch <= '9') or ch == '-') {
+            try out.append(a, ch);
+            i += 1;
+            continue;
+        }
+        while (i < lower.len and !((lower[i] >= 'a' and lower[i] <= 'z') or (lower[i] >= '0' and lower[i] <= '9') or lower[i] == '-')) i += 1;
+        try out.append(a, '-');
+    }
+    var collapsed: std.ArrayList(u8) = .empty;
+    for (out.items) |ch| {
+        if (ch == '-' and collapsed.items.len > 0 and collapsed.items[collapsed.items.len - 1] == '-') continue;
+        try collapsed.append(a, ch);
+    }
+    var result = collapsed.items;
+    if (std.mem.startsWith(u8, result, "-")) result = result[1..];
+    if (std.mem.endsWith(u8, result, "-")) result = result[0 .. result.len - 1];
+    return result;
+}
+
+/// Computes the hash of the command structure that detects stale installed skills: the first
+/// 16 hex digits of the SHA-256 of the commands as JSON.
+pub fn hash(a: Allocator, commands: []const CommandInfo) Allocator.Error![]const u8 {
+    const items = try a.alloc(Value, commands.len);
+    for (commands, items) |cmd, *slot| {
+        var entry: json.ObjectBuilder = .{};
+        if (cmd.name) |n| try entry.put(a, "name", .{ .string = n });
+        if (cmd.description) |d| try entry.put(a, "description", .{ .string = d });
+        if (cmd.hint) |h| try entry.put(a, "hint", .{ .string = h });
+        inline for (.{ .{ "args", cmd.args }, .{ "env", cmd.env }, .{ "options", cmd.options }, .{ "output", cmd.output } }) |field| {
+            if (field[1]) |ty| try entry.put(a, field[0], try schema.jsonSchema(a, ty));
+        }
+        slot.* = entry.finish();
+    }
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(try json.stringify(a, .{ .array = items }), &digest, .{});
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    return a.dupe(u8, hex[0..16]);
+}
+
+/// A skill listed in a discovery index.
+pub const Discovered = struct {
+    /// The skill name.
+    name: []const u8,
+    /// What the skill does.
+    description: []const u8,
+    /// The served `SKILL.md`.
+    content: []const u8,
+};
+
+/// Returns the Agent Skills discovery index (v0.2.0) with each `SKILL.md` URL and digest.
+pub fn discovery(a: Allocator, origin: []const u8, skills: []const Discovered) Allocator.Error!Value {
+    const items = try a.alloc(Value, skills.len);
+    for (skills, items) |s, *slot| {
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(s.content, &digest, .{});
+        var entry: json.ObjectBuilder = .{};
+        try entry.put(a, "name", .{ .string = s.name });
+        try entry.put(a, "type", .{ .string = "skill-md" });
+        try entry.put(a, "description", .{ .string = s.description });
+        try entry.put(a, "url", .{ .string = try std.fmt.allocPrint(a, "{s}/.well-known/agent-skills/{s}/SKILL.md", .{ origin, s.name }) });
+        try entry.put(a, "digest", .{ .string = try std.fmt.allocPrint(a, "sha256:{s}", .{&std.fmt.bytesToHex(digest, .lower)}) });
+        slot.* = entry.finish();
+    }
+    var out: json.ObjectBuilder = .{};
+    try out.put(a, "$schema", .{ .string = "https://schemas.agentskills.io/discovery/0.2.0/schema.json" });
+    try out.put(a, "skills", .{ .array = items });
+    return out.finish();
 }

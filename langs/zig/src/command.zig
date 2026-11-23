@@ -7,6 +7,7 @@ const errors = @import("errors.zig");
 const derive = @import("derive.zig");
 const help = @import("help.zig");
 const formatter = @import("formatter.zig");
+const http = @import("http.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -32,6 +33,20 @@ pub const Failed = error{Failed};
 /// cancelation of the task serving the CLI, which handlers see as `error.Canceled` from `std.Io`.
 pub const ServeError = Allocator.Error || std.Io.Cancelable;
 
+/// Returns the name of an error to report, or propagates it when it is a `ServeError`.
+pub fn errorName(err: anyerror) ServeError![]const u8 {
+    return if (err == error.Canceled) error.Canceled else if (err == error.OutOfMemory) error.OutOfMemory else @errorName(err);
+}
+
+/// Returns the payload of a fallible result, or null when it failed with an error other than a
+/// `ServeError`, which propagates.
+pub fn optional(result: anytype) ServeError!?@typeInfo(@TypeOf(result)).error_union.payload {
+    return result catch |err| {
+        _ = try errorName(err);
+        return null;
+    };
+}
+
 /// Holds the `Error` recorded by `fail` until the CLI reports it.
 pub const Failure = struct {
     /// The recorded error.
@@ -44,8 +59,8 @@ pub const Failure = struct {
     }
 
     /// Converts a returned error into an incur error. Errors other than `error.Failed` become
-    /// `UNKNOWN` errors named after the Zig error; `error.OutOfMemory` and `error.Canceled`
-    /// propagate.
+    /// `UNKNOWN` errors named after the Zig error, except `error.FetchFailed`, which reports
+    /// `fetch failed`; `error.OutOfMemory` and `error.Canceled` propagate.
     pub fn take(f: *Failure, err: anyerror) ServeError!Error {
         if (err == error.OutOfMemory) return error.OutOfMemory;
         if (err == error.Canceled) return error.Canceled;
@@ -53,6 +68,8 @@ pub const Failure = struct {
             f.err = null;
             return e;
         };
+        // A request that never reached its server reports as JavaScript's `fetch` does.
+        if (err == error.FetchFailed) return .{ .message = "fetch failed" };
         return .{ .message = @errorName(err) };
     }
 };
@@ -109,6 +126,8 @@ pub fn Context(comptime input: Input) type {
         vars: *Vars,
         /// The CLI version.
         version: ?[]const u8,
+        /// The HTTP request when the command runs through `Cli.fetch`, or null.
+        request: ?*const http.Request,
         /// The failure slot `fail` writes.
         failure: *Failure,
 
@@ -220,6 +239,8 @@ pub const Outcome = union(enum) {
 
 /// The raw inputs a type-erased handler receives.
 pub const Invocation = struct {
+    /// The handler's `context`.
+    context: ?*const anyopaque = null,
     /// Allocator for this invocation.
     allocator: Allocator,
     /// The I/O implementation.
@@ -246,12 +267,19 @@ pub const Invocation = struct {
     vars: *Vars,
     /// CLI version.
     version: ?[]const u8,
+    /// The HTTP request, or null.
+    request: ?*const http.Request = null,
     /// The failure slot.
     failure: *Failure,
+    /// The process, which handlers generated from OpenAPI documents and MCP servers send
+    /// requests through.
+    process: ?*const @import("cli.zig").Process = null,
 };
 
 /// A type-erased handler with the schemas its context declares. Create one with `handler`.
 pub const Handler = struct {
+    /// State passed to `call` as `Invocation.context`, for handlers built at runtime.
+    context: ?*const anyopaque = null,
     /// Positional arguments schema.
     args: ?*const Type,
     /// Options schema.
@@ -298,6 +326,7 @@ pub fn handler(comptime f: anytype) Handler {
                     .options = try decodeInput(input.options, a, i.options),
                     .vars = i.vars,
                     .version = i.version,
+                    .request = i.request,
                     .failure = i.failure,
                 };
                 return f(&c);
@@ -309,6 +338,51 @@ pub fn handler(comptime f: anytype) Handler {
 /// Middleware: runs around command handlers in registration order. Call `next.run(c)` to run
 /// the rest of the chain, and `c.fail(...)` to report an error.
 pub const Middleware = *const fn (c: *MiddlewareContext, next: Next) anyerror!void;
+
+/// MCP tool annotations that describe a tool's behavior to clients.
+pub const Annotations = struct {
+    /// A human-readable title.
+    title: ?[]const u8 = null,
+    /// Whether the tool does not modify its environment.
+    read_only_hint: ?bool = null,
+    /// Whether the tool may perform destructive updates.
+    destructive_hint: ?bool = null,
+    /// Whether repeated calls with the same arguments have no additional effect.
+    idempotent_hint: ?bool = null,
+    /// Whether the tool may interact with external entities.
+    open_world_hint: ?bool = null,
+
+    /// Returns the annotations as MCP JSON, in declaration order.
+    pub fn toValue(an: Annotations, a: Allocator) Allocator.Error!Value {
+        var out: json.ObjectBuilder = .{};
+        if (an.title) |t| try out.put(a, "title", .{ .string = t });
+        inline for (.{ .{ "readOnlyHint", an.read_only_hint }, .{ "destructiveHint", an.destructive_hint }, .{ "idempotentHint", an.idempotent_hint }, .{ "openWorldHint", an.open_world_hint } }) |entry| {
+            if (entry[1]) |b| try out.put(a, entry[0], .{ .bool = b });
+        }
+        return out.finish();
+    }
+};
+
+/// How a command appears as an MCP tool.
+pub const Tool = struct {
+    /// The tool name. Defaults to the command path joined with `_`.
+    name: ?[]const u8 = null,
+    /// The tool description. Defaults to the command description.
+    description: ?[]const u8 = null,
+    /// Usage guidance sent as `_meta.instructions`.
+    instructions: ?[]const u8 = null,
+    /// Behavior annotations.
+    annotations: ?Annotations = null,
+    /// Annotations as JSON, kept in their original key order. Generated commands set this to
+    /// forward a remote tool's annotations; it takes precedence over `annotations`.
+    annotations_json: ?Value = null,
+
+    /// Returns the annotations as JSON, or null.
+    pub fn annotationsValue(t: Tool, a: Allocator) Allocator.Error!?Value {
+        if (t.annotations_json) |v| return v;
+        return if (t.annotations) |an| try an.toValue(a) else null;
+    }
+};
 
 /// A command definition.
 pub const Command = struct {
@@ -324,6 +398,8 @@ pub const Command = struct {
     format: ?formatter.Format = null,
     /// Guidance shown after examples.
     hint: ?[]const u8 = null,
+    /// MCP tool settings. Null hides the command from MCP.
+    mcp: ?Tool = .{},
     /// Per-command middleware, which runs after CLI and group middleware.
     middleware: []const Middleware = &.{},
     /// Output schema, such as `incur.schema(Output)`.
@@ -377,6 +453,8 @@ pub const MiddlewareContext = struct {
     vars: *Vars,
     /// The CLI version.
     version: ?[]const u8,
+    /// The HTTP request when the command runs through `Cli.fetch`, or null.
+    request: ?*const http.Request = null,
     /// The failure slot `fail` writes.
     failure: *Failure,
 

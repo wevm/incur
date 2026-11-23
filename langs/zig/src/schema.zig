@@ -7,6 +7,7 @@
 const std = @import("std");
 const js = @import("js.zig");
 const json = @import("json.zig");
+const regex = @import("regex.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -29,6 +30,17 @@ pub const Type = struct {
     /// The range of the Zig integer type that stores the value, which `incur.schema` sets for
     /// integer fields. Validation checks it after the declared bounds; JSON Schema omits it.
     int_range: ?IntRange = null,
+    /// Whether number and boolean input is converted first, as `z.coerce.number()` and
+    /// `z.coerce.boolean()` do with `Number(value)` and `Boolean(value)`.
+    coerce: bool = false,
+    /// Whether `.optional()` wraps the default, so the parsed value may still be absent in JSON
+    /// Schema and help even though parsing applies the default.
+    optional_outer: bool = false,
+    /// Whether an object keeps unknown keys, as `.passthrough()` does.
+    passthrough: bool = false,
+    /// The JSON Schema to emit instead of the derived one, as schemas converted from JSON Schema
+    /// carry to reproduce Zod's output exactly.
+    json: ?*const Emitted = null,
 
     /// Returns the fields of an object schema, or an empty slice.
     pub fn fields(ty: *const Type) []const Field {
@@ -43,7 +55,7 @@ pub const Type = struct {
 
     /// Whether the input may omit the field without a default, as Zod's `optout` reports.
     pub fn isOptional(ty: *const Type) bool {
-        return ty.optional and ty.default == null;
+        return ty.optional and (ty.default == null or ty.optional_outer);
     }
 
     /// Whether the option reads no value from the next token.
@@ -60,7 +72,7 @@ pub const Type = struct {
             .@"enum" => |values| std.mem.join(a, "|", values),
             .integer, .number => "number",
             .string => "string",
-            .object, .unknown => "value",
+            .object, .unknown, .null, .literal, .@"union" => "value",
         };
     }
 };
@@ -71,6 +83,38 @@ pub const IntRange = struct {
     min: i128,
     /// Maximum.
     max: i128,
+};
+
+/// The JSON Schema of a node for each side.
+pub const Emitted = struct {
+    /// The output JSON Schema.
+    output: Value,
+    /// The input JSON Schema.
+    input: Value,
+};
+
+/// A string format Zod checks with a regular expression, such as `z.iso.datetime()`.
+pub const Format = struct {
+    /// Zod's format name, reported in issues.
+    name: []const u8,
+    /// The JSON Schema `format` value, or null to omit it.
+    json_name: ?[]const u8,
+    /// The regular expression source.
+    pattern: []const u8,
+    /// The issue message.
+    message: []const u8,
+};
+
+/// String constraints.
+pub const StringKind = struct {
+    /// Maximum UTF-16 length, inclusive.
+    max: ?f64 = null,
+    /// Minimum UTF-16 length, inclusive.
+    min: ?f64 = null,
+    /// A format check.
+    format: ?Format = null,
+    /// Regular expression sources the string must match, as `.regex()` adds.
+    patterns: []const []const u8 = &.{},
 };
 
 /// Numeric bounds: values for numbers, UTF-16 length for strings, item count for arrays.
@@ -101,9 +145,15 @@ pub const Kind = union(enum) {
     /// An object with named fields, in declaration order.
     object: []const Field,
     /// A string.
-    string: Bounds,
+    string: StringKind,
     /// Any value.
     unknown,
+    /// `null`.
+    null,
+    /// One exact value.
+    literal: Value,
+    /// Any of several schemas, tried in order.
+    @"union": []const Type,
 };
 
 /// A named field of an object schema.
@@ -116,8 +166,22 @@ pub const Field = struct {
     ty: Type,
 };
 
+/// Which side of a schema JSON Schema describes.
+pub const Io = enum {
+    /// Parsed values: fields with defaults are required and objects reject unknown keys.
+    output,
+    /// Accepted input: fields with defaults are optional and objects accept unknown keys.
+    input,
+};
+
 /// Converts a schema to the JSON Schema Zod's `z.toJSONSchema()` emits, with the same key order.
 pub fn jsonSchema(a: Allocator, ty: *const Type) Allocator.Error!Value {
+    return jsonSchemaIo(a, ty, .output);
+}
+
+/// Converts a schema to JSON Schema for its output or its input, as Zod's `io` option does.
+pub fn jsonSchemaIo(a: Allocator, ty: *const Type, io: Io) Allocator.Error!Value {
+    if (ty.json) |emitted| return if (io == .output) emitted.output else emitted.input;
     var out: json.ObjectBuilder = .{};
     const wrapped = ty.optional or ty.default != null;
     // Zod lists wrapper metadata before the inner type and plain metadata after it.
@@ -128,7 +192,7 @@ pub fn jsonSchema(a: Allocator, ty: *const Type) Allocator.Error!Value {
             try bound(a, &out, "minItems", array.bounds.min);
             try bound(a, &out, "maxItems", array.bounds.max);
             try out.put(a, "type", .{ .string = "array" });
-            try out.put(a, "items", try jsonSchema(a, array.items));
+            try out.put(a, "items", try jsonSchemaIo(a, array.items, io));
         },
         .boolean => try out.put(a, "type", .{ .string = "boolean" }),
         .@"enum" => |values| {
@@ -150,19 +214,56 @@ pub fn jsonSchema(a: Allocator, ty: *const Type) Allocator.Error!Value {
             var properties: json.ObjectBuilder = .{};
             var required: std.ArrayList(Value) = .empty;
             for (fs) |*f| {
-                try properties.put(a, f.name, try jsonSchema(a, &f.ty));
-                if (!f.ty.isOptional()) try required.append(a, .{ .string = f.name });
+                try properties.put(a, f.name, try jsonSchemaIo(a, &f.ty, io));
+                const optional = if (io == .input) f.ty.optional or f.ty.default != null else f.ty.isOptional();
+                if (!optional) try required.append(a, .{ .string = f.name });
             }
             try out.put(a, "properties", properties.finish());
             if (required.items.len > 0) try out.put(a, "required", .{ .array = required.items });
-            try out.put(a, "additionalProperties", .{ .bool = false });
+            if (ty.passthrough)
+                try out.put(a, "additionalProperties", .{ .object = &.{} })
+            else if (io == .output)
+                try out.put(a, "additionalProperties", .{ .bool = false });
         },
         .string => |b| {
             try out.put(a, "type", .{ .string = "string" });
             try bound(a, &out, "minLength", b.min);
             try bound(a, &out, "maxLength", b.max);
+            var patterns: std.ArrayList([]const u8) = .empty;
+            if (b.format) |f| {
+                // A `pattern` check replaces the format Zod reports.
+                if (f.json_name) |name| if (b.patterns.len == 0) try out.put(a, "format", .{ .string = name });
+                try patterns.append(a, f.pattern);
+            }
+            try patterns.appendSlice(a, b.patterns);
+            // Several patterns combine with `allOf`.
+            if (patterns.items.len == 1) try out.put(a, "pattern", .{ .string = patterns.items[0] }) else if (patterns.items.len > 1) {
+                const all = try a.alloc(Value, patterns.items.len);
+                for (patterns.items, all) |pattern, *slot| {
+                    var entry: json.ObjectBuilder = .{};
+                    try entry.put(a, "pattern", .{ .string = pattern });
+                    slot.* = entry.finish();
+                }
+                try out.put(a, "allOf", .{ .array = all });
+            }
         },
         .unknown => {},
+        .null => try out.put(a, "type", .{ .string = "null" }),
+        .literal => |v| {
+            try out.put(a, "type", .{ .string = switch (v) {
+                .null => "null",
+                .bool => "boolean",
+                .integer, .big_integer, .float => "number",
+                .string => "string",
+                .array, .object => "object",
+            } });
+            try out.put(a, "const", v);
+        },
+        .@"union" => |options| {
+            const items = try a.alloc(Value, options.len);
+            for (options, items) |*option, *slot| slot.* = try jsonSchemaIo(a, option, io);
+            try out.put(a, "anyOf", .{ .array = items });
+        },
     }
     if (!wrapped) try metadata(a, ty, &out);
     return out.finish();
@@ -202,6 +303,8 @@ pub const Issue = struct {
         return switch (issue.kind) {
             .invalid_type => "invalid_type",
             .invalid_value => "invalid_value",
+            .invalid_format => "invalid_format",
+            .invalid_union => "invalid_union",
             .too_big => "too_big",
             .too_small => "too_small",
         };
@@ -219,7 +322,23 @@ pub const Issue = struct {
             },
             .invalid_value => |values| {
                 try out.put(a, "code", .{ .string = issue.code() });
-                try out.put(a, "values", try strings(a, values));
+                try out.put(a, "values", .{ .array = values });
+            },
+            .invalid_format => |f| {
+                try out.put(a, "origin", .{ .string = "string" });
+                try out.put(a, "code", .{ .string = issue.code() });
+                try out.put(a, "format", .{ .string = f.format });
+                try out.put(a, "pattern", .{ .string = f.pattern });
+            },
+            .invalid_union => |options| {
+                try out.put(a, "code", .{ .string = issue.code() });
+                const errors = try a.alloc(Value, options.len);
+                for (options, errors) |list, *slot| {
+                    const items = try a.alloc(Value, list.len);
+                    for (list, items) |nested, *item| item.* = try nested.toJson(a);
+                    slot.* = .{ .array = items };
+                }
+                try out.put(a, "errors", .{ .array = errors });
             },
             .too_big, .too_small => |b| {
                 const key = if (issue.kind == .too_big) "maximum" else "minimum";
@@ -262,8 +381,17 @@ pub const IssueKind = union(enum) {
         /// The received value, reported for non-finite numbers.
         received: ?[]const u8 = null,
     },
-    /// The value is not one of the enum values.
-    invalid_value: []const []const u8,
+    /// The value is not one of the allowed values.
+    invalid_value: []const Value,
+    /// A string does not match a format or pattern.
+    invalid_format: struct {
+        /// Zod's format name: `regex` for patterns.
+        format: []const u8,
+        /// The pattern: the regular expression source for formats and `/source/` for patterns.
+        pattern: []const u8,
+    },
+    /// No option of a union matched. Holds each option's issues.
+    invalid_union: []const []const Issue,
     /// The value exceeds a maximum.
     too_big: BoundIssue,
     /// The value is under a minimum.
@@ -298,14 +426,22 @@ pub const Validator = struct {
                 for (values) |allowed| try list.append(v.a, try json.stringify(v.a, .{ .string = allowed }));
                 break :message try std.fmt.allocPrint(v.a, "Invalid option: expected one of {s}", .{try std.mem.join(v.a, "|", list.items)});
             };
-            try v.issue(.{ .invalid_value = values }, message);
+            try v.issue(.{ .invalid_value = (try strings(v.a, values)).array }, message);
             return null;
         }
-        const present = value orelse {
+        if (ty.kind == .literal) {
+            const expected = ty.kind.literal;
+            if (value) |given| if (try equal(v.a, given, expected)) return given;
+            try v.issue(.{ .invalid_value = try v.a.dupe(Value, &.{expected}) }, try std.fmt.allocPrint(v.a, "Invalid input: expected {s}", .{try json.stringify(v.a, expected)}));
+            return null;
+        }
+        // Coercion converts a missing value too: `Number(undefined)` is NaN and
+        // `Boolean(undefined)` is false.
+        const present = value orelse if (ty.coerce) (if (ty.kind == .boolean) Value{ .bool = false } else Value{ .string = "NaN" }) else {
             try v.invalidType(ty, "undefined", null);
             return null;
         };
-        return v.parsePresent(ty, present);
+        return v.parsePresent(ty, if (ty.coerce) try coerced(v.a, ty, present) else present);
     }
 
     /// Validates a value that is present in the input.
@@ -323,6 +459,26 @@ pub const Validator = struct {
             },
             .boolean => if (value == .bool) return value,
             .unknown => return value,
+            .null => if (value == .null) return value,
+            .@"union" => |options| {
+                // Options validate on their own, so their issue paths are relative.
+                var failures: std.ArrayList([]const Issue) = .empty;
+                var continuing: std.ArrayList([]const Issue) = .empty;
+                for (options) |*option| {
+                    var nested: Validator = .{ .a = v.a };
+                    const parsed = try nested.parse(option, value);
+                    if (nested.issues.items.len == 0) return parsed;
+                    try failures.append(v.a, nested.issues.items);
+                    if (!aborted(nested.issues.items)) try continuing.append(v.a, nested.issues.items);
+                }
+                // The one option that failed only checks reports its issues, as Zod does.
+                if (continuing.items.len == 1) {
+                    for (continuing.items[0]) |found| try v.issues.append(v.a, .{ .kind = found.kind, .message = found.message, .path = try std.mem.concat(v.a, Value, &.{ v.path.items, found.path }) });
+                    return null;
+                }
+                try v.issue(.{ .invalid_union = failures.items }, "Invalid input");
+                return null;
+            },
             .integer, .number => |b| {
                 const number = value.toFloat() orelse {
                     try v.invalidType(ty, received(value), null);
@@ -360,17 +516,33 @@ pub const Validator = struct {
                     if (try v.parse(&f.ty, value.get(f.name))) |parsed| try out.put(v.a, f.name, parsed);
                     _ = v.path.pop();
                 }
+                if (ty.passthrough) for (value.object) |entry| {
+                    if (ty.field(entry.key) == null) try out.put(v.a, entry.key, entry.value);
+                };
                 return out.finish();
             },
             .string => |b| if (value == .string) {
-                try v.checkBounds(.{ .integer = js.utf16Len(value.string) }, b, "string");
-                return value;
+                const issues = v.issues.items.len;
+                try v.checkBounds(.{ .integer = js.utf16Len(value.string) }, .{ .min = b.min, .max = b.max }, "string");
+                if (b.format) |f| if (!try v.test_(f.pattern, value.string))
+                    try v.issue(.{ .invalid_format = .{ .format = f.name, .pattern = f.pattern } }, f.message);
+                for (b.patterns) |pattern| if (!try v.test_(pattern, value.string)) {
+                    const shown = try std.fmt.allocPrint(v.a, "/{s}/", .{pattern});
+                    try v.issue(.{ .invalid_format = .{ .format = "regex", .pattern = shown } }, try std.fmt.allocPrint(v.a, "Invalid string: must match pattern {s}", .{shown}));
+                };
+                return if (v.issues.items.len > issues) null else value;
             },
-            // `parse` handles enums before reaching here.
-            .@"enum" => {},
+            // `parse` handles enums and literals before reaching here.
+            .@"enum", .literal => {},
         }
         try v.invalidType(ty, received(value), null);
         return null;
+    }
+
+    /// Whether a pattern matches. Patterns this port cannot compile always match.
+    fn test_(v: *Validator, pattern: []const u8, text: []const u8) Allocator.Error!bool {
+        const compiled = try regex.Regex.compile(v.a, pattern) orelse return true;
+        return compiled.matches(v.a, text);
     }
 
     /// Records an issue at the current path.
@@ -385,8 +557,9 @@ pub const Validator = struct {
             .boolean => "boolean",
             .integer, .number => "number",
             .object => "object",
-            // Enums and unknown values never report a type mismatch.
-            .@"enum", .string, .unknown => "string",
+            .null => "null",
+            // Enums, literals, unions, and unknown values never report a type mismatch.
+            .@"enum", .string, .unknown, .literal, .@"union" => "string",
         };
         try v.issue(
             .{ .invalid_type = .{ .expected = expected, .received = reported } },
@@ -464,4 +637,44 @@ fn received(value: Value) []const u8 {
         .object => "object",
         .string => "string",
     };
+}
+
+/// Converts input as `Number(value)` or `Boolean(value)` does for coerced schemas.
+fn coerced(a: Allocator, ty: *const Type, value: Value) Allocator.Error!Value {
+    return switch (ty.kind) {
+        .boolean => .{ .bool = switch (value) {
+            .null => false,
+            .bool => |b| b,
+            .string => |text| text.len > 0,
+            .integer => |i| i != 0,
+            .big_integer => true,
+            .float => |f| f != 0 and !std.math.isNan(f),
+            .array, .object => true,
+        } },
+        .integer, .number => switch (value) {
+            .null => .{ .integer = 0 },
+            .bool => |b| .{ .integer = @intFromBool(b) },
+            .string => |text| .{ .float = js.toNumber(text) },
+            .integer, .big_integer, .float => value,
+            // An array converts through its string form.
+            .array => |items| if (items.len == 0) .{ .integer = 0 } else if (items.len == 1) coerced(a, ty, .{ .string = try json.toString(a, items[0]) }) else .{ .float = std.math.nan(f64) },
+            .object => .{ .float = std.math.nan(f64) },
+        },
+        else => value,
+    };
+}
+
+/// Whether issues stop Zod from trying later checks: type and value mismatches do, while failed
+/// bounds and formats let parsing continue.
+fn aborted(issues: []const Issue) bool {
+    for (issues) |found| switch (found.kind) {
+        .too_big, .too_small, .invalid_format => {},
+        else => return true,
+    };
+    return false;
+}
+
+/// Whether two JSON values are equal, as a literal check compares them.
+fn equal(a: Allocator, x: Value, y: Value) Allocator.Error!bool {
+    return std.mem.eql(u8, try json.stringify(a, x), try json.stringify(a, y));
 }

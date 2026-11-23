@@ -1,31 +1,91 @@
-# incur for Zig
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wevm/incur/main/.github/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/wevm/incur/main/.github/logo-light.svg">
+  <img alt="incur" src="https://raw.githubusercontent.com/wevm/incur/main/.github/logo-light.svg" width="100%" height="140px">
+</picture>
 
-A Zig port of [incur](../../README.md), the TypeScript framework for CLIs that serve humans and
-agents from one definition. Output, help, `--llms` manifests, shell completions, config files,
-and errors match the TypeScript reference byte for byte on the shared differential suite in
-[`langs/differential`](../differential).
+<br/>
 
-Requires Zig 0.17.1.
+<p align="center">
+  <a href="https://github.com/wevm/incur/blob/main/LICENSE">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/l/incur?colorA=21262d&colorB=21262d&style=flat">
+      <img src="https://img.shields.io/npm/l/incur?colorA=f6f8fa&colorB=f6f8fa&style=flat" alt="MIT License">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
+</p>
+
+[incur](https://github.com/wevm/incur) for Zig: one CLI definition that serves humans, agents, MCP clients, and HTTP, with output that matches the TypeScript framework byte for byte.
+
+## Features
+
+- [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) and `--llms` manifests
+- [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
+- **TOON output**: token-efficient default format, with JSON, YAML, Markdown, and JSONL alternatives
+- **Well-formed I/O**: plain structs as schemas for arguments, options, environment variables, and output
+- **Inferred types**: handlers receive typed structs, with no casts or manual parsing
+- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI
+- [**Middleware**](#middleware-and-variables): composable before/after hooks with typed variables via `cli.use()`
+- [**Mount APIs**](#mounting-apis): HTTP handlers, OpenAPI documents, and remote MCP servers become commands
+- [**Serve over HTTP**](#serving-over-http): the CLI as an HTTP handler, with MCP over HTTP at `/mcp`
+- **`std.Io` throughout**: handlers, middleware, and streams do I/O and run concurrently with `io.async`
 
 ## Install
 
+Requires Zig 0.17.1.
+
 ```sh
-zig fetch --save git+https://github.com/wevm/incur#<commit>
+zig fetch --save=incur git+https://github.com/wevm/incur
 ```
 
-Then import the module in `build.zig`, assuming the dependency is saved under the name `incur`:
-
-```txt
-const incur = b.dependency("incur", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("incur", incur.module("incur"));
+```zig
+// build.zig
+const incur = b.dependency("incur", .{});
+exe.root_module.addImport("incur", b.createModule(.{ .root_source_file = incur.path("langs/zig/src/root.zig") }));
 ```
 
-## Example
+## Usage
 
-Schemas are plain structs. Field types drive parsing, field defaults become option defaults, and
-a `pub const incur` declaration next to the fields carries per-field metadata. Handlers receive
-typed struct instances and the `std.Io` the CLI is served with. This example compiles and runs as
-part of `zig build test`.
+### Single-command CLI
+
+Pass `root` to `Cli.create()` for CLIs that do one thing. Schemas are plain structs; a `pub const incur` declaration carries field metadata.
+
+```zig
+const std = @import("std");
+const incur = @import("incur");
+
+const Args = struct {
+    name: []const u8,
+
+    pub const incur = .{ .fields = .{ .name = .{ .description = "Name to greet" } } };
+};
+
+fn greet(c: *incur.Context(.{ .args = Args })) !incur.Outcome {
+    return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "hello {s}", .{c.args.name}) });
+}
+
+pub fn main(init: std.process.Init) !void {
+    const cli = try incur.Cli.create(init.gpa, "greet", .{
+        .description = "A greeting CLI",
+        .root = .{ .run = incur.handler(greet) },
+    });
+    defer cli.destroy();
+    try cli.serve(init);
+}
+```
+
+```sh
+$ greet world
+# → message: hello world
+```
+
+### Multi-command CLI
+
+Call `cli.command()` to register subcommands.
 
 ```zig
 const std = @import("std");
@@ -37,180 +97,151 @@ const InstallArgs = struct {
     pub const incur = .{ .fields = .{ .package = .{ .description = "Package name" } } };
 };
 
-const Tag = enum { latest, next };
-
 const InstallOptions = struct {
     save_dev: bool = false,
-    retries: i64 = 3,
-    tag: Tag = .latest,
-    registry: ?[]const u8 = null,
 
     pub const incur = .{
         .rename_all = .camel_case,
-        .fields = .{
-            .save_dev = .{ .description = "Save as dev dependency", .alias = 'D' },
-            .retries = .{ .description = "Retry count", .min = 0, .max = 10 },
-            .tag = .{ .description = "Dist tag" },
-            .registry = .{ .description = "Registry URL", .deprecated = true },
-        },
+        .fields = .{ .save_dev = .{ .description = "Save as dev dependency", .alias = 'D' } },
     };
 };
 
+fn status(c: *incur.Context(.{})) !incur.Outcome {
+    return c.ok(.{ .clean = true });
+}
+
 fn install(c: *incur.Context(.{ .args = InstallArgs, .options = InstallOptions })) !incur.Outcome {
-    const package = c.args.package orelse
-        return c.fail(.{ .code = "MISSING_PACKAGE", .message = "Name a package to install" });
-    // Handlers do I/O through `c.io`, such as waiting before a retry.
-    if (c.options.retries == 0) try c.io.sleep(.fromMilliseconds(1), .awake);
-    return c.ok(.{ .added = package, .dev = c.options.save_dev, .tag = c.options.tag, .size = std.math.maxInt(u64) });
+    return c.ok(.{ .added = 1, .packages = 451, .dev = c.options.save_dev });
 }
 
-/// Builds the CLI. A real program calls `try cli.serve(init)` from `main(init: std.process.Init)`.
-fn build(gpa: std.mem.Allocator) !*incur.Cli {
-    const cli = try incur.Cli.create(gpa, "pkg", .{ .description = "A package manager", .version = "1.0.0" });
-    errdefer cli.destroy();
-    try cli.command("install", .{ .description = "Install a package", .aliases = &.{"i"}, .run = incur.handler(install) });
-    return cli;
-}
-
-test "serves typed commands" {
-    const gpa = std.testing.allocator;
-    const cli = try build(gpa);
+pub fn main(init: std.process.Init) !void {
+    const cli = try incur.Cli.create(init.gpa, "my-cli", .{ .description = "My CLI" });
     defer cli.destroy();
-
-    var env: std.process.Environ.Map = .init(gpa);
-    defer env.deinit();
-    var stdout: std.Io.Writer.Allocating = .init(gpa);
-    defer stdout.deinit();
-    var stderr: std.Io.Writer.Allocating = .init(gpa);
-    defer stderr.deinit();
-    const process: incur.Process = .{ .io = std.testing.io, .env = &env, .stdout = &stdout.writer, .stderr = &stderr.writer, .tty = false };
-
-    try std.testing.expectEqual(0, try cli.serveWith(&.{ "i", "zod", "-D", "--tag", "next", "--retries", "0" }, process));
-    try std.testing.expectEqualStrings("added: zod\ndev: true\ntag: next\nsize: 18446744073709551615\n", stdout.written());
-
-    stdout.clearRetainingCapacity();
-    try std.testing.expectEqual(1, try cli.serveWith(&.{"install"}, process));
-    try std.testing.expectEqualStrings("code: MISSING_PACKAGE\nmessage: Name a package to install\n", stdout.written());
+    try cli.command("status", .{ .description = "Show repo status", .run = incur.handler(status) });
+    try cli.command("install", .{ .description = "Install a package", .run = incur.handler(install) });
+    try cli.serve(init);
 }
 ```
 
-## Schemas
+```sh
+$ my-cli status
+# → clean: true
 
-| Zig field type           | Parsed as                        |
-| ------------------------ | -------------------------------- |
-| `[]const u8`             | string                           |
-| `bool`                   | boolean flag (`--no-<name>` too) |
-| `i64` and other integers | integer                          |
-| `f64`, `f32`             | number                           |
-| `enum { a, b }`          | one of the tag names             |
-| `[]const []const u8`     | repeatable option                |
-| `?T`                     | optional `T`                     |
-| a struct                 | object (env, output, and config) |
-| `incur.Value`            | any JSON value                   |
-
-A field without a default and without `?` is required. Pass a struct as `Context(.{ .args = A,
-.options = O, .env = E })` to type a handler, or as `incur.schema(T)` for a command `output`, the
-CLI `env`, or `globals` (read them with `c.globalsAs(T)`).
-
-Integer fields accept safe integers, as `z.number().int()` does, and their JSON Schema is the same.
-A value that does not fit the field's type, such as `200` for an `i8` or `-1` for a `u16`, fails
-validation with a `too_big` or `too_small` issue instead of overflowing. Count fields of an
-integer type reject fractional config values the same way.
-
-The `pub const incur` declaration accepts:
-
-- `rename_all`: `.camel_case`, `.pascal_case`, `.kebab_case`, or `.screaming_snake_case`.
-- `omit_null`: skip null optional fields when the struct is serialized.
-- `fields`: per-field options, keyed by the Zig field name:
-  - `description`: shown in help, `--llms`, and JSON Schema.
-  - `alias`: a one-character short flag, such as `'D'`.
-  - `min`, `max`: bounds on numbers, string lengths, and array lengths.
-  - `count`: a number option that counts repeated flags (`-vvv`).
-  - `deprecated`: marks the option deprecated in help and warns when it is used.
-  - `rename`: the external name, overriding `rename_all`.
-
-Unknown option names, unknown fields, and options that do not fit the field type are compile
-errors, such as `incur metadata names unknown field 'sav_dev' of main.InstallOptions`.
-
-## API
-
-- `incur.Cli.create(gpa, name, options)` returns a `*Cli`; `cli.destroy()` frees it and every
-  mounted group. Options include `description`, `version`, `env`, `vars`, `globals`, `config`
-  (`flag`, `files`, `loader`), `banner`, `root` (a root command), `format`, `aliases`, `sync`,
-  and `output_policy`.
-- `cli.command(name, .{ ... })` registers a `Command` with `description`, `run`, `output`,
-  `examples`, `hint`, `usage`, `aliases`, `destructive`, `middleware`, `format`, and
-  `output_policy`. `cli.group(child)` mounts another CLI. `cli.use(fn)` adds middleware.
-- `incur.handler(fn)` adapts a handler of type `fn (*incur.Context(.{ ... })) !incur.Outcome`.
-  Return `c.ok(value)` with any value `incur.encode` converts (structs, tuples, slices, enums,
-  optionals, integers, floats, strings, `incur.Value`), `c.stream(iterator)` or
-  `c.streamSlice(chunks)` for streams, or `c.fail(.{ .code, .message, .hint, .retryable,
-  .exit_code, .cta })`. Any other Zig error is reported as an `UNKNOWN` error carrying the error
-  name.
-- `c.stream(iterator)` takes a pointer to an iterator with a
-  `next(self, io: std.Io, a: Allocator) !?incur.Chunk` method. `next` may do I/O and wait; human
-  and TOON output writes and flushes each chunk as it arrives.
-- `cli.serve(init)` runs with the process arguments, environment, standard streams, and
-  `init.io`, and exits with the command's exit code. `cli.serveWith(argv, process)` takes an
-  explicit `incur.Process` (`io`, `env`, `stdout`, `stderr`, `tty`) and returns the exit code.
-
-## Concurrency
-
-The `std.Io` in `Process.io` reaches every piece of user code: `c.io` in handlers and middleware,
-the `io` argument of stream iterators and banner renderers, and `load.io` in config loaders. Use
-it for files, the network, and clocks, and use `c.io.async` or `c.io.concurrent` for concurrent
-work inside a command:
-
-```txt
-var first = c.io.async(fetch, .{ c.io, c.allocator, a });
-defer if (first.cancel(c.io)) |_| {} else |_| {};
-var second = c.io.async(fetch, .{ c.io, c.allocator, b });
-defer if (second.cancel(c.io)) |_| {} else |_| {};
-return c.ok(.{ .a = try first.await(c.io), .b = try second.await(c.io) });
+$ my-cli install express -D
+# → added: 1
+# → packages: 451
+# → dev: true
 ```
 
-Canceling the task that serves the CLI cancels the command: `error.Canceled` from `std.Io`
-propagates out of `serveWith` (`incur.ServeError`) instead of being reported as an incur error.
-`error.OutOfMemory` propagates the same way.
+### Sub-command CLI
 
-Every allocation goes through the allocator passed to `Cli.create`; each invocation uses an
-arena that is freed before `serveWith` returns, and handlers allocate from `c.allocator`. The
-arena is thread-safe when the CLI's allocator is, so concurrent tasks may share it.
+Create a separate `Cli` and mount it with `cli.group()` to nest command groups.
 
-## Values
+```zig
+const std = @import("std");
+const incur = @import("incur");
 
-`incur.Value` is a JSON value. Integers are exact: `.integer` holds an `i128`, and `.big_integer`
-holds the digits of larger integers, so `18446744073709551615` prints unchanged in JSON, JSONL,
-YAML, TOON, Markdown, filters, and token counts. `.float` values format as JavaScript's
-`String(number)` does (`1e+21`, `0.1`). Strings follow JavaScript strings: a JSON escape of an
-unpaired surrogate is kept, JSON output escapes it again (`"\ud800"`), and other output writes it
-as U+FFFD, as Node does. Fields of type `incur.Value` take defaults, such as
-`extra: incur.Value = .{ .integer = 7 }`.
+const ListOptions = struct { state: enum { open, closed, all } = .open };
+
+fn list(c: *incur.Context(.{ .options = ListOptions })) !incur.Outcome {
+    return c.ok(.{ .prs = [_][]const u8{}, .state = c.options.state });
+}
+
+pub fn main(init: std.process.Init) !void {
+    const cli = try incur.Cli.create(init.gpa, "my-cli", .{ .description = "My CLI" });
+    defer cli.destroy();
+    const pr = try incur.Cli.create(init.gpa, "pr", .{ .description = "Pull request commands" });
+    try pr.command("list", .{ .description = "List pull requests", .run = incur.handler(list) });
+    try cli.group(pr); // `cli` now owns `pr`.
+    try cli.serve(init);
+}
+```
+
+```sh
+$ my-cli pr list --state closed
+# → prs: []
+# → state: closed
+```
+
+## Walkthrough
+
+Each section is a short tour; the [TypeScript README](https://github.com/wevm/incur#walkthrough) covers the behavior in depth, and this port matches it.
+
+### Agent discovery
+
+```sh
+my-cli skills add   # generate and install skill files for detected agents
+my-cli mcp add      # register `my-cli --mcp` with your agents
+my-cli --llms       # print a Markdown manifest (--llms-full, --format json)
+```
+
+`skills add` writes one `SKILL.md` per command group (`--depth`) and links it for agents such as Claude Code; `Options.sync` adds included skill files, setup text, and suggested prompts. `--mcp` starts a stdio MCP server; `Options.mcp` sets the server name, instructions, and whether tools are listed directly or discovered progressively.
+
+### Call-to-actions
+
+Attach suggested next commands to any outcome:
+
+```zig
+return (try c.ok(.{ .items = items })).withCta(.{ .commands = &.{
+    .{ .command = "get 1", .description = "View item" },
+} });
+```
+
+### Streaming
+
+Return `c.stream(iterator)` from a handler. The iterator's `next(self, io, allocator) !?incur.Chunk` may do I/O and wait; human and TOON output prints each chunk as it arrives, JSONL writes one record per chunk, and MCP and HTTP clients receive the stream too.
+
+### Middleware and variables
+
+```zig
+fn auth(c: *incur.MiddlewareContext, next: incur.Next) !void {
+    try c.set("user", .{ .string = "alice" });
+    try next.run(c); // the command runs here
+}
+```
+
+Register with `cli.use(auth)`, per group, or per command (`.middleware`). Handlers read variables with `c.get("user")`; `Options.vars` sets defaults.
+
+### Global options
+
+Every CLI has `--filter-output`, `--format`, `--full-output`, `--help`, `--json`, `--llms`, `--mcp`, `--schema`, `--token-count`, `--token-limit`, `--token-offset`, `--update`, and `--version`. Add your own with `.globals = incur.schema(Globals)` and read them with `c.globalsAs(Globals)`.
+
+### Config file
+
+`.config = .{ .flag = "config", .files = &.{"~/.my-cli.json"} }` loads option defaults per command from the first file that exists, or from a custom `loader`.
+
+### Mounting APIs
+
+```zig
+try cli.gateway("api", .{ .fetch = incur.fetch.fromRequest("https://api.example.com", &.{}) });
+try cli.gateway("pets", .{ .fetch = incur.fetch.fromRequest("https://pets.example.com", &.{}), .openapi = .{ .url = "openapi.json" } });
+try cli.mcpSource("docs", .{ .url = "https://docs.example.com/mcp" });
+```
+
+A fetch gateway turns curl-style argv (`my-cli api users --limit 5 -X POST -d '{}'`) into HTTP requests; with `openapi`, each operation becomes a typed command; an MCP source turns a remote server's tools into commands. `fetch` also takes any `incur.http.Handler` (`.{ .handler = other.handler() }`); hosted URLs go out through `std.http.Client`.
+
+### Serving over HTTP
+
+`cli.fetch(allocator, &process, &request)` answers an `incur.http.Request`, and `incur.http.serveConnection` plugs `cli.handler()` into a `std.http.Server`. Paths map to commands, query parameters and JSON bodies to options, and responses use the `--full-output --format json` envelope. `/mcp` speaks MCP over HTTP (stateless by default, `.mcp = .{ .stateless = false }` for sessions), `/openapi.json` describes every command, and `/.well-known/agent-skills/` serves the skill files.
+
+### Update notices
+
+In a terminal, CLIs installed from npm check for a newer version once a day in a detached process and suggest `my-cli --update`, which installs it with npm, pnpm, or Bun. `.update = .{ .check = ..., .install = ... }` replaces both steps for other distributions, and `.update = null` turns updates off.
+
+### Filtering and token pagination
+
+```sh
+my-cli users --filter-output users[0,2].name   # keep only these key paths
+my-cli users --token-count                     # count output tokens
+my-cli users --token-limit 20 --token-offset 20  # page through long output
+```
 
 ## Differences from TypeScript
 
-- `--mcp`, `mcp add`, and `skills add` report an `UNSUPPORTED` error.
-- A config file that cannot be read for a reason other than not existing reports the Zig error
-  name (such as `IsDir`) instead of Node's message.
-- Integers in data keep their exact value; TypeScript rounds integers beyond 2^53 to the nearest
-  double, so `9007199254740993` prints as `9007199254740992` there.
-- Integer fields also reject values that do not fit their Zig type, which TypeScript has no type
-  for.
+- Integers in data keep their exact value; TypeScript rounds integers beyond 2^53.
+- Command options that reuse a global option's name are not rejected at registration; the global wins.
+- A config file that cannot be read for a reason other than not existing reports the Zig error name.
 
-## Development
+## License
 
-```sh
-zig build test       # API, README, compile-error, and differential tests
-zig build coverage   # requires kcov; fails unless every line of src/ is covered
-zig fmt --check .
-```
-
-`src/unicode.zig` holds the case mappings JavaScript's `toLowerCase` and case-insensitive regular
-expressions use. Regenerate it after a Node upgrade:
-
-```sh
-node tools/unicode_tables.mjs > src/unicode.zig && zig fmt src/unicode.zig
-```
-
-The differential test runs the TypeScript reference through Node (`pnpm install` at the repo
-root first). Set `INCUR_DIFFERENTIAL_DUMP=<path>` to write every case's result.
+[MIT](https://github.com/wevm/incur/blob/main/LICENSE)
