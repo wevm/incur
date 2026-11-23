@@ -1,0 +1,65 @@
+error: Schema can only be derived for structs with named fields
+ --> tests/ui/rejected.rs:7:8
+  |
+7 | struct Tuple(u8);
+  |        ^^^^^
+
+error: Schema can only be derived for enums with unit variants
+  --> tests/ui/rejected.rs:11:5
+   |
+11 |     Value(u8),
+   |     ^^^^^
+
+error: Schema cannot be derived for unions
+  --> tests/ui/rejected.rs:15:7
+   |
+15 | union Bits {
+   |       ^^^^
+
+error: incur schemas do not support `flatten`
+  --> tests/ui/rejected.rs:21:13
+   |
+21 |     #[serde(flatten)]
+   |             ^^^^^^^
+
+error: unknown incur attribute
+  --> tests/ui/rejected.rs:27:13
+   |
+27 |     #[incur(short)]
+   |             ^^^^^
+
+error: `alias` takes a single character
+  --> tests/ui/rejected.rs:33:21
+   |
+33 |     #[incur(alias = "ab")]
+   |                     ^^^^
+
+error: `alias` takes a single character
+  --> tests/ui/rejected.rs:39:21
+   |
+39 |     #[incur(alias = 1)]
+   |                     ^
+
+error: expected a number
+  --> tests/ui/rejected.rs:45:19
+   |
+45 |     #[incur(min = "1")]
+   |                   ^^^
+
+error: unknown rename rule `rename_all = "Title Case"`, expected one of "lowercase", "UPPERCASE", "PascalCase", "camelCase", "snake_case", "SCREAMING_SNAKE_CASE", "kebab-case", "SCREAMING-KEBAB-CASE"
+  --> tests/ui/rejected.rs:50:22
+   |
+50 | #[serde(rename_all = "Title Case")]
+   |                      ^^^^^^^^^^^^
+
+error: unknown rename rule
+  --> tests/ui/rejected.rs:50:22
+   |
+50 | #[serde(rename_all = "Title Case")]
+   |                      ^^^^^^^^^^^^
+
+error: incur supports only `#[serde(default)]` here
+  --> tests/ui/rejected.rs:56:9
+   |
+56 | #[serde(default = "make")]
+   |         ^^^^^^^

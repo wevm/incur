@@ -4,7 +4,12 @@
   "trailingComma": "all",
   "tabWidth": 2,
   "printWidth": 100,
-  "ignorePatterns": ["package.json"],
+  "ignorePatterns": [
+    "package.json",
+    // Shared differential fixtures: invalid JSON by design, and one case per line.
+    "langs/_differential/cases.json",
+    "langs/_differential/config",
+  ],
   "experimentalSortImports": {
     "groups": [
       ["value-builtin", "value-external", "type-import", "value-internal", "type-internal"],

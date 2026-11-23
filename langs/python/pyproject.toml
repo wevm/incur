@@ -1,0 +1,93 @@
+[project]
+name = "incur"
+version = "0.1.0"
+description = "Build CLIs for agents and humans: TOON output, LLM manifests, skills, and shell completions."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+keywords = ["agents", "cli", "llm", "mcp", "toon"]
+classifiers = ["Environment :: Console", "Programming Language :: Python :: 3", "Typing :: Typed"]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/wevm/incur"
+
+[dependency-groups]
+dev = ["coverage>=7.10", "inline-snapshot>=0.23", "pyright>=1.1.400", "pytest>=8", "ruff>=0.12"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+addopts = ["--doctest-modules", "-p", "no:cacheprovider"]
+doctest_optionflags = []
+
+[tool.coverage.run]
+branch = true
+source = ["incur"]
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "ANN",
+  "B",
+  "C4",
+  "D",
+  "E",
+  "F",
+  "FBT",
+  "I",
+  "N",
+  "PERF",
+  "PIE",
+  "PL",
+  "PT",
+  "PTH",
+  "RET",
+  "RUF",
+  "SIM",
+  "UP",
+  "W",
+]
+ignore = [
+  "D203", # Conflicts with D211.
+  "D213", # Conflicts with D212.
+  "D401", # Docstrings describe what functions return.
+  "PLR0911",
+  "PLR0912",
+  "PLR0913",
+  "PLR0915",
+  "PLR0917", # The port mirrors the reference's branching.
+  "PLR2004", # Magic values mirror the reference implementation.
+  "FBT001",
+  "FBT002",
+  "FBT003", # Boolean flags mirror the reference implementation.
+  "ANN401", # JSON data is dynamically typed.
+  "PTH", # Config paths are displayed exactly as joined, which `pathlib` normalizes.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/incur/_*.py" = ["D101", "D102", "D103", "D105", "D107"]
+"tests/**" = ["D", "ANN", "PLC0415", "N802", "RUF012", "E501", "RUF001"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.inline-snapshot]
+format-command = "ruff format --stdin-filename {filename}"

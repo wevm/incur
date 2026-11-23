@@ -1,0 +1,5 @@
+merge_derives = true
+newline_style = "Unix"
+reorder_modules = true
+style_edition = "2024"
+use_field_init_shorthand = true

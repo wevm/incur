@@ -52,6 +52,19 @@
 - **Install musl runtime libraries** — Bun musl executables require `libstdc++` and `libgcc`; install both before Alpine smoke tests.
 - **Test spaced version overrides** — command-local `--version <value>` must not be consumed as the root boolean `--version` flag.
 
+## Language Port Conventions
+
+- **TypeScript is the reference** — ports in `langs/<language>` match its stdout, stderr, and exit codes byte for byte. Fix a port, never the expectation.
+- **Shared differential suite** — `langs/_differential` holds the reference CLIs (`fixtures.ts`), the cases (`cases.json`, one per line), and config fixtures. Every port mirrors the fixtures and runs every case. A TypeScript behavior change adds cases there.
+- **Cover through cases** — reach port code through new fixture behavior and cases before anything else. Port-only APIs (trait impls, typed failures, unsupported built-ins) get public-API integration tests; unreachable code is restructured away, not excluded.
+- **Mirror JavaScript semantics** — numbers are doubles, `slice` and element reads follow ECMAScript, and dependency output (zod, yaml, toon, tokenx) is ported from the pinned version, key order included.
+- **Rust gate** — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (also with `--features incur/client`), and `cargo llvm-cov --workspace --fail-uncovered-lines 0` in `langs/rust`.
+- **Python gate** — `uv run ruff check`, `uv run ruff format --check`, `uv run pyright` (strict), and `uv run coverage erase && uv run coverage run -m pytest && uv run coverage report` (100% branch coverage; erase first, since stale `.coverage.*` files from subprocess runs otherwise merge in) in `langs/python`.
+- **Zig gate** — `zig fmt --check .`, `zig build test`, and `zig build coverage` (kcov, 100% of `src/` lines) in `langs/zig`, on Zig 0.17.1. No `test` blocks in `src/`; README programs run in `zig build test`.
+- **Package READMEs mirror the root** — each port's README is a concise version of the root README (header, Features, Install, Usage, Walkthrough, License) with tested examples; development commands live in `langs/README.md`.
+- **No unpaired surrogates in cases** — JavaScript strings can hold them; Rust, Python, and Zig strings cannot, so the suite never compares them.
+- **Node-independent expectations** — a case must not depend on the Node version's wording, such as `fs` error messages; test those per port instead.
+
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).

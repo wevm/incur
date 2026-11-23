@@ -1,0 +1,1 @@
+{"commands": {"echo": {"options": {"prefix": [1], "upper": "yes", "tags": [1, "a"], "meta": 5, "extra": {"any": true}}}}}

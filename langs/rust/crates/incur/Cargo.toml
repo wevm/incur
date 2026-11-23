@@ -1,0 +1,53 @@
+[package]
+name = "incur"
+description = "Build CLIs for agents and humans: TOON output, LLM manifests, skills, and shell completions."
+categories = ["command-line-interface"]
+edition.workspace = true
+keywords = ["agents", "cli", "llm", "mcp", "toon"]
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+# Runtime coverage is integration-only: tests live in `tests/`.
+test = false
+
+[dependencies]
+bytes = { workspace = true }
+futures-channel = { workspace = true }
+futures-core = { workspace = true }
+futures-util = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+incur-macros = { workspace = true }
+indexmap = { workspace = true }
+regex-lite = { workspace = true }
+ryu-js = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+# The blocking entries drive the CLI on a current-thread runtime. `enable_all` turns on every
+# driver the dependency graph enables, so handlers can use tokio timers and IO.
+tokio = { workspace = true, features = ["rt"] }
+ureq = { workspace = true, optional = true }
+
+[features]
+# A real HTTP client for hosted fetch sources, OpenAPI documents and MCP servers fetched by URL,
+# and npm registry update checks. Without it, those requests fail unless `Cli::client` sets one.
+client = ["dep:ureq"]
+
+[dev-dependencies]
+futures = { workspace = true }
+insta = { workspace = true }
+tokio = { workspace = true, features = ["macros", "time"] }
+trybuild = { workspace = true }
+
+[[test]]
+name = "differential"
+# `main` either runs the suite or, when re-executed with `INCUR_FIXTURE`, serves a fixture CLI.
+harness = false
+
+[lints]
+workspace = true
