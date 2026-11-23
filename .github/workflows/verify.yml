@@ -71,7 +71,9 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint crates
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --features incur/client -- -D warnings
 
       - name: Check docs
         run: cargo doc --workspace --no-deps
