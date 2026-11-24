@@ -1537,7 +1537,7 @@ const Run = struct {
                 if (!result.ok) run.exit = 1;
                 return;
             }
-            return run.mcpAdd(rest, flags, format);
+            return run.mcpAdd(rest, flags, format, human);
         }
         if (std.mem.eql(u8, found.name, "list")) return run.skillsList();
         return run.skillsAdd(rest, flags, format);
@@ -1627,7 +1627,7 @@ const Run = struct {
     }
 
     /// Registers the CLI as an MCP server for `mcp add`.
-    fn mcpAdd(run: *Run, rest: []const []const u8, flags: *const Flags, format: Format) ServeError!void {
+    fn mcpAdd(run: *Run, rest: []const []const u8, flags: *const Flags, format: Format, human: bool) ServeError!void {
         const a = run.a;
         const cli = run.cli;
         const settings = cli.options.mcp orelse Mcp{};
@@ -1636,14 +1636,19 @@ const Run = struct {
         try agents.appendSlice(a, settings.agents);
         var i: usize = 0;
         while (i < rest.len) : (i += 1) {
-            const has_value = i + 1 < rest.len and rest[i + 1].len > 0;
-            if ((std.mem.eql(u8, rest[i], "--command") or std.mem.eql(u8, rest[i], "-c")) and has_value) {
+            // `--command` / `-c` and `--agent`, spaced or with `=`. A blank or option-shaped value
+            // is missing, so it cannot swallow the next flag.
+            const eq = std.mem.findScalar(u8, rest[i], '=');
+            const flag = rest[i][0 .. eq orelse rest[i].len];
+            const is_agent = std.mem.eql(u8, flag, "--agent");
+            if (!is_agent and !std.mem.eql(u8, flag, "--command") and !std.mem.eql(u8, flag, "-c")) continue;
+            const value = if (eq) |e| rest[i][e + 1 ..] else value: {
                 i += 1;
-                command_override = rest[i];
-            } else if (std.mem.eql(u8, rest[i], "--agent") and has_value) {
-                i += 1;
-                try agents.append(a, rest[i]);
-            }
+                break :value if (i < rest.len) rest[i] else "";
+            };
+            if (js.trim(value).len == 0 or (value.len > 1 and value[0] == '-'))
+                return run.earlyError(.{ .message = try std.fmt.allocPrint(a, "Missing value for flag: {s}", .{flag}) }, human, format);
+            if (is_agent) try agents.append(a, value) else command_override = value;
         }
         const name = settings.name orelse cli.name;
         run.write("Registering MCP server...");

@@ -3544,6 +3544,58 @@ describe('built-in commands', () => {
     }
   })
 
+  test('mcp add accepts option values after `=`', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'second command', agents: ['Cursor', 'Amp'] })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { exitCode } = await serve(cli, [
+        'mcp',
+        'add',
+        '--agent=cursor',
+        '--agent',
+        'amp',
+        '--command=first command',
+        '-c=second command',
+      ])
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('test', {
+        command: 'second command',
+        global: true,
+        agents: ['cursor', 'amp'],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test.each([
+    { argv: ['--agent'], flag: '--agent' },
+    { argv: ['-c'], flag: '-c' },
+    { argv: ['--command', '--agent', 'amp'], flag: '--command' },
+    { argv: ['--agent', '-c', 'x'], flag: '--agent' },
+    { argv: ['--agent', ' '], flag: '--agent' },
+    { argv: ['--command='], flag: '--command' },
+    { argv: ['-c=--no-global'], flag: '-c' },
+  ])('mcp add rejects a missing value: $argv', async ({ argv, flag }) => {
+    const spy = vi.spyOn(SyncMcp, 'register')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add', ...argv, '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toEqual({
+        code: 'UNKNOWN',
+        message: `Missing value for flag: ${flag}`,
+      })
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('mcp add registers an overridden MCP name with the CLI command', async () => {
     const spy = vi
       .spyOn(SyncMcp, 'register')
