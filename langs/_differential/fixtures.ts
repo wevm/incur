@@ -1355,6 +1355,51 @@ const ask = Cli.create('ask', {
     },
   })
 
+/** Exercises MCP Apps: `ui://` views and the tools that link to them. */
+const view = Cli.create('view', {
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { tools: { discovery: 'direct' } },
+})
+  .resource('notes', { uri: 'view://notes', read: () => 'Notes' })
+  .app('dashboard', {
+    uri: 'ui://view/dashboard',
+    title: 'Dashboard',
+    description: 'Weather dashboard',
+    html: '<!doctype html><p>Weather</p>',
+    csp: {
+      resourceDomains: ['https://cdn.example.com'],
+      connectDomains: ['https://api.example.com', 'wss://live.example.com'],
+    },
+    prefersBorder: true,
+  })
+  .app('plain', { uri: 'ui://view/plain', html: '<p>Plain</p>' })
+  .app('framed', {
+    uri: 'ui://view/framed',
+    html: '',
+    csp: { baseUriDomains: ['https://base.example.com'], frameDomains: [] },
+    prefersBorder: false,
+  })
+  .app('open', { uri: 'ui://view/open', html: '<p>Open</p>', csp: {} })
+  .command('weather', {
+    description: 'Show the weather',
+    mcp: { app: 'dashboard', instructions: 'Render it' },
+    run: () => ({ temp: 20 }),
+  })
+  .command('plain', { description: 'Plain view', mcp: { app: 'plain' }, run: () => ({ ok: true }) })
+  .command('other', { description: 'No view', run: () => ({ ok: true }) })
+
+/** A command that links to an app the CLI never registers. */
+const viewmissing = Cli.create('viewmissing', { version: '1.0.0', update: false, sync: false })
+  .app('real', { uri: 'ui://viewmissing/real', html: '' })
+  .command('show', { description: 'Show', mcp: { app: 'ghost' }, run: () => ({}) })
+
+/** An app whose URI is not a `ui://` URI. */
+const viewscheme = Cli.create('viewscheme', { version: '1.0.0', update: false, sync: false })
+  .app('web', { uri: 'https://example.com/view', html: '' })
+  .command('show', { description: 'Show', run: () => ({}) })
+
 const hdrkey = badHeaders('hdrkey', { a: 'A', missing: 'Missing' })
 const hdrtoken = badHeaders('hdrtoken', { a: 'Bad Header' })
 const hdrempty = badHeaders('hdrempty', { a: '' })
@@ -1876,6 +1921,9 @@ export const clis = {
   hdrtoken,
   kb,
   kbbad,
+  view,
+  viewmissing,
+  viewscheme,
   kit,
   kitbad,
   kitcmd,

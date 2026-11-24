@@ -186,7 +186,7 @@ impl Mcp {
     }
 }
 
-pub use crate::features::{Completer, Prompt, Resource, ResourceTemplate};
+pub use crate::features::{App, AppCsp, Completer, Prompt, Resource, ResourceTemplate};
 
 /// How long MCP 2026-07-28 clients may cache a result, and who may share it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -339,6 +339,8 @@ impl Annotations {
 pub struct Tool {
     /// Behavior hints.
     pub(crate) annotations: Option<Map<String, Value>>,
+    /// The name of the app hosts render results in.
+    pub(crate) app: Option<String>,
     /// The tool description, defaulting to the command description.
     pub(crate) description: Option<String>,
     /// Whether the command is exposed.
@@ -375,6 +377,7 @@ impl Tool {
     pub fn new() -> Self {
         Self {
             annotations: None,
+            app: None,
             description: None,
             enabled: true,
             headers: Vec::new(),
@@ -404,6 +407,14 @@ impl Tool {
     #[must_use]
     pub fn icons(mut self, icons: impl IntoIterator<Item = Icon>) -> Self {
         self.icons = Some(icons.into_iter().collect());
+        self
+    }
+
+    /// Links the tool to an app registered with [`Cli::app`](crate::Cli::app), which hosts
+    /// render its results in. Applies to directly listed tools.
+    #[must_use]
+    pub fn app(mut self, name: impl Into<String>) -> Self {
+        self.app = Some(name.into());
         self
     }
 
@@ -448,6 +459,8 @@ impl Tool {
 pub(crate) struct ToolEntry {
     /// Behavior hints.
     annotations: Option<Map<String, Value>>,
+    /// The app the tool links to: its name, until [`link_apps`] resolves it to the app's URI.
+    app: Option<String>,
     /// The command.
     command: Command,
     /// The description.
@@ -552,6 +565,25 @@ pub(crate) fn collect(
     }
     tools.sort_by(|a, b| js::locale_compare(&a.name, &b.name));
     Ok(tools)
+}
+
+/// Resolves the apps tools link to into their URIs.
+///
+/// # Errors
+///
+/// Returns an error naming the first tool linking to an app no app has the name of.
+pub(crate) fn link_apps(tools: &mut [ToolEntry], apps: &[App]) -> Result<(), Error> {
+    for tool in tools {
+        let Some(name) = &tool.app else { continue };
+        let Some(app) = apps.iter().find(|app| app.name() == name) else {
+            return Err(Error::unknown(format!(
+                "Tool \"{}\" links to unknown MCP app \"{name}\".",
+                tool.name
+            )));
+        };
+        tool.app = Some(app.uri().into());
+    }
+    Ok(())
 }
 
 /// Whether a name matches a pattern where `*` matches any characters.
@@ -684,6 +716,7 @@ fn tool(
     }
     Ok(ToolEntry {
         annotations: settings.and_then(|t| t.annotations.clone()),
+        app: settings.and_then(|t| t.app.clone()),
         command: command.clone(),
         description: settings
             .and_then(|t| t.description.clone())
@@ -1158,8 +1191,15 @@ impl Server<'_> {
                 if let Some(icons) = &tool.icons {
                     out.insert("icons".into(), icons.clone());
                 }
+                let mut meta = Map::new();
                 if let Some(instructions) = &tool.instructions {
-                    out.insert("_meta".into(), json!({ "instructions": instructions }));
+                    meta.insert("instructions".into(), instructions.clone().into());
+                }
+                if let Some(uri) = &tool.app {
+                    meta.insert("ui".into(), json!({ "resourceUri": uri }));
+                }
+                if !meta.is_empty() {
+                    out.insert("_meta".into(), meta.into());
                 }
                 if let Some(output) = &tool.output_schema {
                     out.insert("outputSchema".into(), output.clone());

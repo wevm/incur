@@ -298,6 +298,8 @@ pub const Cli = struct {
     resources: std.ArrayList(mcp.Resource) = .empty,
     /// MCP resource templates.
     resource_templates: std.ArrayList(mcp.ResourceTemplate) = .empty,
+    /// MCP Apps.
+    apps: std.ArrayList(mcp.App) = .empty,
     /// Where a generated group's commands come from.
     source: ?Source = null,
     /// Whether generated commands have been loaded.
@@ -424,6 +426,12 @@ pub const Cli = struct {
     /// Registers an MCP prompt template clients can list, render, and complete arguments for.
     pub fn prompt(cli: *Cli, definition: mcp.Prompt) Allocator.Error!void {
         try cli.prompts.append(cli.arena.allocator(), definition);
+    }
+
+    /// Registers an MCP App: an HTML view at a `ui://` URI that hosts render for commands linking
+    /// to it with `Tool.app`.
+    pub fn app(cli: *Cli, definition: mcp.App) Allocator.Error!void {
+        try cli.apps.append(cli.arena.allocator(), definition);
     }
 
     /// Registers an MCP resource clients can list and read at a fixed URI.

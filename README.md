@@ -551,6 +551,21 @@ Cli.create('kb')
 
 A read returns text, a `{ text }` or `{ blob }` (base64) object, or a list of them. A prompt returns text, which becomes one user message, or a list of messages. `mcp.cache` also covers the resource, template, and prompt lists.
 
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) let hosts that support them render a tool's results in an HTML view. Register the view at a `ui://` URI and link commands to it by name:
+
+```ts
+Cli.create('weather')
+  .app('dashboard', {
+    uri: 'ui://weather/dashboard',
+    html: dashboardHtml,
+    csp: { connectDomains: ['https://api.example.com'] }, // origins the view may reach
+    prefersBorder: true,
+  })
+  .command('forecast', { mcp: { app: 'dashboard' }, run: () => getForecast() })
+```
+
+Apps are listed and read as `text/html;profile=mcp-app` resources. Linked tools carry `_meta.ui.resourceUri` when listed directly. Other hosts show the tool's usual result.
+
 A command running as a tool can ask the user for input through [elicitation](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation):
 
 ```ts

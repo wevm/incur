@@ -23,15 +23,25 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
     import('@modelcontextprotocol/server/stdio'),
   ])
   // Instances are created on the first message, so surface tool registration errors now.
-  collectTools(commands, [], [], options.tools, options.globals, options.defaults?.options)
-  // `cli.resource()`, `cli.resourceTemplate()`, and `cli.prompt()` pass their typed definitions here.
-  const { prompts, resources, resourceTemplates } = options as Features
+  // `cli.resource()`, `cli.resourceTemplate()`, `cli.prompt()`, and `cli.app()` pass their typed definitions here.
+  const { apps, prompts, resources, resourceTemplates } = options as Features
+  const tools = collectTools(
+    commands,
+    [],
+    [],
+    options.tools,
+    options.globals,
+    options.defaults?.options,
+  )
+  for (const tool of tools) appUri(apps, tool)
+  for (const app of apps ?? []) appResource(app)
   for (const template of resourceTemplates ?? []) templatePattern(template.uriTemplate)
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   serveStdio(
     () =>
       createServer(mcp, name, version, commands, {
+        apps,
         defaults: options.defaults,
         env: options.env,
         globals: options.globals,
@@ -68,6 +78,7 @@ export function createServer(
     },
   )
   registerTools(server, commands, {
+    apps: options.apps,
     defaults: options.defaults,
     env: options.env,
     fromJsonSchema,
@@ -164,6 +175,39 @@ export type ResourceTemplate = {
   read: (uri: string, variables: Record<string, string>) => ReadResult | Promise<ReadResult>
 }
 
+/** An MCP App: an HTML view that hosts supporting the `io.modelcontextprotocol/ui` extension render for the tools that link to it. Commands link to an app with `mcp: { app: name }`. */
+export type App = {
+  /** The `ui://` URI hosts read the view from. */
+  uri: string
+  /** Programmatic name, which commands link to. */
+  name: string
+  /** Human-readable title. */
+  title?: string | undefined
+  /** Description. */
+  description?: string | undefined
+  /** The HTML document. */
+  html: string
+  /** External origins the view may reach. Hosts block every other origin. */
+  csp?: AppCsp | undefined
+  /** Whether the host draws a border and background around the view. Hosts decide when omitted. */
+  prefersBorder?: boolean | undefined
+}
+
+/** External origins an MCP App may reach, as hosts map them to Content Security Policy directives. */
+export type AppCsp = {
+  /** Origins for fetch, XHR, and WebSocket connections (`connect-src`). */
+  connectDomains?: string[] | undefined
+  /** Origins for scripts, styles, images, fonts, and media. */
+  resourceDomains?: string[] | undefined
+  /** Origins for nested iframes (`frame-src`). */
+  frameDomains?: string[] | undefined
+  /** Allowed document base URIs (`base-uri`). */
+  baseUriDomains?: string[] | undefined
+}
+
+/** The MIME type of MCP App views. */
+const appMimeType = 'text/html;profile=mcp-app'
+
 /** A content block in a prompt message, passed to clients as is. */
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -211,14 +255,17 @@ export type Features = {
   resources?: Resource[] | undefined
   /** Resource templates. */
   resourceTemplates?: ResourceTemplate[] | undefined
+  /** MCP Apps, listed and read as resources after the others. */
+  apps?: App[] | undefined
 }
 
 /** Registers `resources/*`, `prompts/*`, and `completion/complete` for configured features. */
 function registerFeatures(
   mcp: typeof import('@modelcontextprotocol/server'),
   server: McpServer,
-  { prompts = [], resources = [], resourceTemplates = [] }: Features,
+  { prompts = [], resourceTemplates = [], ...features }: Features,
 ) {
+  const resources = [...(features.resources ?? []), ...(features.apps ?? []).map(appResource)]
   const { ProtocolError, ResourceNotFoundError } = mcp
   const invalid = (message: string, data?: unknown) =>
     new ProtocolError(-32602 as any, message, data)
@@ -355,6 +402,21 @@ function contents(result: ReadResult, uri: string, mimeType: string | undefined)
       ...body,
     }
   })
+}
+
+/** Lists and reads an app as a resource whose contents carry its rendering hints in `_meta.ui`. */
+function appResource({ html, csp, prefersBorder, ...app }: App): Resource {
+  if (!app.uri.startsWith('ui://'))
+    throw new Error(`MCP app "${app.name}" needs a ui:// URI, got "${app.uri}".`)
+  const keys = ['connectDomains', 'resourceDomains', 'frameDomains', 'baseUriDomains'] as const
+  const ui = {
+    ...(csp
+      ? { csp: Object.fromEntries(keys.filter((key) => csp[key]).map((key) => [key, csp[key]])) }
+      : undefined),
+    ...(prefersBorder !== undefined ? { prefersBorder } : undefined),
+  }
+  const meta = Object.keys(ui).length > 0 ? { _meta: { ui } } : undefined
+  return { ...app, mimeType: appMimeType, read: () => ({ text: html, ...meta }) }
 }
 
 /** Lists a prompt's arguments as `prompts/list` shows them. */
@@ -693,6 +755,8 @@ export type ToolEntry = {
   title?: string | undefined
   icons?: Icon[] | undefined
   headers?: Record<string, string> | undefined
+  /** Name of the MCP App the tool links to. */
+  app?: string | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
 }
@@ -792,6 +856,7 @@ export function registerTools(
   const globals = withDefaults(options.globals, options.defaults?.globals)
   const resolved = { ...options, globals }
   const tools = collectTools(commands, [], [], options.tools, globals, options.defaults?.options)
+  for (const tool of tools) appUri(options.apps, tool)
   if (tools.length === 0) return
   if ((options.tools?.discovery ?? 'progressive') === 'direct') {
     for (const tool of tools) registerDirectTool(server, tool, resolved)
@@ -803,6 +868,8 @@ export function registerTools(
 export declare namespace registerTools {
   /** Options shared by stdio and HTTP MCP tool registration. */
   type Options = {
+    /** MCP Apps tools link to. */
+    apps?: App[] | undefined
     /** Values for tool calls that do not pass their own. */
     defaults?: Defaults | undefined
     /** CLI-level env schema. */
@@ -826,6 +893,14 @@ export declare namespace registerTools {
     /** MCP server version. */
     version: string
   }
+}
+
+/** Returns the URI of the app a tool links to, failing when no app has that name. */
+function appUri(apps: App[] | undefined, tool: ToolEntry) {
+  if (!tool.app) return undefined
+  const app = apps?.find((app) => app.name === tool.app)
+  if (!app) throw new Error(`Tool "${tool.name}" links to unknown MCP app "${tool.app}".`)
+  return app.uri
 }
 
 function registerDirectTool(
@@ -854,7 +929,14 @@ function registerDirectTool(
         ? { outputSchema: options.fromJsonSchema(tool.outputSchema) }
         : undefined),
       ...(tool.annotations ? { annotations: tool.annotations } : undefined),
-      ...(tool.instructions ? { _meta: { instructions: tool.instructions } } : undefined),
+      ...(tool.instructions || tool.app
+        ? {
+            _meta: {
+              ...(tool.instructions ? { instructions: tool.instructions } : undefined),
+              ...(tool.app ? { ui: { resourceUri: appUri(options.apps, tool) } } : undefined),
+            },
+          }
+        : undefined),
     },
     async (...callArgs: any[]) => {
       // registerTool passes (args, extra) when inputSchema is set, (extra) when not.
@@ -1110,6 +1192,7 @@ function toToolEntry(
     ...(mcp?.icons ? { icons: mcp.icons } : undefined),
     ...(mcp?.headers ? { headers: mcp.headers } : undefined),
     ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
+    ...(mcp?.app ? { app: mcp.app } : undefined),
     command,
     ...(middlewares.length > 0 ? { middlewares } : undefined),
   }

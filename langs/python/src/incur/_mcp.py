@@ -112,6 +112,11 @@ class McpTool:
 
     `{"region": "Region"}` sends `region` as `Mcp-Param-Region`. Applies to directly listed tools.
     """
+    app: str | None = None
+    """The name of an app registered with `Cli.app`, which hosts render the tool's results in.
+
+    Applies to directly listed tools.
+    """
 
     def meta(self) -> ToolMeta:
         """Returns the tool settings as commands store them."""
@@ -125,6 +130,7 @@ class McpTool:
             self.title,
             list[Json](icons) if icons is not None else None,
             self.headers,
+            self.app,
         )
 
 
@@ -181,6 +187,7 @@ class Tool:
     title: str | None = None
     icons: list[Json] | None = None
     headers: dict[str, str] | None = None
+    app: str | None = None
 
 
 #: Returns the config section of a command path, such as `project list`.
@@ -306,6 +313,7 @@ def _tool(
         title=meta.title,
         icons=meta.icons,
         headers=meta.headers,
+        app=meta.app,
     )
 
 
@@ -598,10 +606,15 @@ class Server:
         self.title = options.title
         self.instructions = options.instructions
         self.cache = options.cache
-        self.features = Features(spec.resources, spec.resource_templates, spec.prompts)
         self.version = spec.version or "0.0.0"
         self.env = env
-        self.tools = self._register(collect(spec, filter_, config), filter_)
+        tools = collect(spec, filter_, config)
+        self.apps = {app.name: app.uri for app in spec.apps}
+        for tool in tools:
+            if tool.app is not None and tool.app not in self.apps:
+                raise unknown(f'Tool "{tool.name}" links to unknown MCP app "{tool.app}".')
+        self.tools = self._register(tools, filter_)
+        self.features = Features(spec.resources, spec.resource_templates, spec.prompts, spec.apps)
 
     def _register(self, tools: list[Tool], filter_: ToolFilter | None) -> dict[str, _Registered]:
         if not tools:
@@ -729,11 +742,20 @@ class Server:
             run,
             tool.annotations,
             tool.output,
-            {"instructions": tool.instructions} if tool.instructions else None,
+            self._meta(tool),
             tool.title,
             tool.icons,
             headers,
         )
+
+    def _meta(self, tool: Tool) -> dict[str, Json] | None:
+        """A direct tool's `_meta`: its instructions, then the app it links to."""
+        meta: dict[str, Json] = {}
+        if tool.instructions:
+            meta["instructions"] = tool.instructions
+        if tool.app is not None:
+            meta["ui"] = {"resourceUri": self.apps[tool.app]}
+        return meta or None
 
     def capabilities(self) -> dict[str, Json]:
         """The server's capabilities: tools, then any configured features."""

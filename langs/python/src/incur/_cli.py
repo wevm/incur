@@ -76,7 +76,15 @@ from ._http import FetchHandler, Request, RequestSource, Response, asgi, call
 from ._js import Json
 from ._mcp import HttpHandler, Icon, McpOptions, McpTool, serve_stdio, with_defaults
 from ._mcp import Server as McpServer
-from ._mcp_features import Completer, Prompt, ReadResult, Resource, ResourceTemplate
+from ._mcp_features import (
+    App,
+    AppCsp,
+    Completer,
+    Prompt,
+    ReadResult,
+    Resource,
+    ResourceTemplate,
+)
 from ._model import SchemaError, build, caller_locals, to_json, type_of
 from ._openapi import OpenapiConfig, OpenapiSource
 from ._openapi import commands as openapi_commands
@@ -565,6 +573,24 @@ class Cli(Generic[_T_co]):
         """
         self._spec.middleware.append(middleware)
         return middleware
+
+    def app(
+        self,
+        name: str,
+        *,
+        uri: str,
+        html: str,
+        title: str | None = None,
+        description: str | None = None,
+        csp: AppCsp | None = None,
+        prefers_border: bool | None = None,
+    ) -> None:
+        """Registers an MCP App: an HTML view at a `ui://` URI that hosts render for commands.
+
+        Commands link to it with `McpTool(app=name)`. It is listed and read as a resource after
+        the others.
+        """
+        self._spec.apps.append(App(uri, name, html, title, description, csp, prefers_border))
 
     def resource(
         self,

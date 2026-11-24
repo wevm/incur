@@ -1382,6 +1382,53 @@ describe('features', () => {
       }),
     ).rejects.toThrow('Unsupported URI template: x://{+path}')
   })
+
+  test('serves apps as resources and links tools to them', async () => {
+    const commands = new Map<string, any>([
+      ['chart', { mcp: { app: 'chart' }, run: () => ({ points: [] }) }],
+    ])
+    const apps: Mcp.App[] = [
+      {
+        name: 'chart',
+        uri: 'ui://test/chart',
+        html: '<canvas></canvas>',
+        csp: { frameDomains: ['https://embed.example.com'], connectDomains: [] },
+      },
+    ]
+    const [, tools, read] = await mcpSession(
+      commands,
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/list', params: {} },
+        { id: 3, method: 'resources/read', params: { uri: 'ui://test/chart' } },
+      ],
+      { apps },
+    )
+    expect(tools.result.tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://test/chart' } })
+    // CSP keys follow the spec's order, whatever order they were declared in.
+    expect(JSON.stringify(read.result.contents)).toBe(
+      JSON.stringify([
+        {
+          uri: 'ui://test/chart',
+          mimeType: 'text/html;profile=mcp-app',
+          text: '<canvas></canvas>',
+          _meta: {
+            ui: { csp: { connectDomains: [], frameDomains: ['https://embed.example.com'] } },
+          },
+        },
+      ]),
+    )
+    const serve = (features: Mcp.Features) =>
+      Mcp.serve('test-cli', '1.0.0', commands, {
+        input: new PassThrough(),
+        output: new PassThrough(),
+        ...features,
+      })
+    await expect(serve({})).rejects.toThrow('Tool "chart" links to unknown MCP app "chart".')
+    await expect(serve({ apps: [{ ...apps[0]!, uri: 'https://x.dev' }] })).rejects.toThrow(
+      'MCP app "chart" needs a ui:// URI, got "https://x.dev".',
+    )
+  })
 })
 
 describe('elicitation', () => {

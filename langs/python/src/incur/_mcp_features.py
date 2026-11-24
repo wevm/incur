@@ -70,6 +70,44 @@ class ResourceTemplate:
 
 
 @dataclass
+class AppCsp:
+    """External origins an MCP App may reach, as hosts map them to Content Security Policy."""
+
+    connect_domains: list[str] | None = None
+    """Origins for fetch, XHR, and WebSocket connections (`connect-src`)."""
+    resource_domains: list[str] | None = None
+    """Origins for scripts, styles, images, fonts, and media."""
+    frame_domains: list[str] | None = None
+    """Origins for nested iframes (`frame-src`)."""
+    base_uri_domains: list[str] | None = None
+    """Allowed document base URIs (`base-uri`)."""
+
+
+@dataclass
+class App:
+    """An MCP App: an HTML view hosts render for the tools that link to it.
+
+    Commands link to an app with `McpTool(app=name)`.
+    """
+
+    uri: str
+    """The `ui://` URI hosts read the view from."""
+    name: str
+    """Programmatic name, which commands link to."""
+    html: str
+    """The HTML document."""
+    title: str | None = None
+    """Human-readable title."""
+    description: str | None = None
+    """Description."""
+    csp: AppCsp | None = None
+    """External origins the view may reach. Hosts block every other origin."""
+    prefers_border: bool | None = None
+    """Whether the host draws a border and background around the view. Hosts decide when
+    omitted."""
+
+
+@dataclass
 class Prompt:
     """A prompt template clients can list and render."""
 
@@ -178,8 +216,9 @@ class Features:
         resources: list[Resource],
         templates: list[ResourceTemplate],
         prompts: list[Prompt],
+        apps: list[App],
     ) -> None:
-        self.resources = resources
+        self.resources = [*resources, *map(_app_resource, apps)]
         self.templates = [(template, *_pattern(template.uri_template)) for template in templates]
         self.prompts = prompts
         self.args: dict[str, Type] = {
@@ -339,6 +378,32 @@ class Features:
         return {
             "completion": {"values": listed, "total": len(values), "hasMore": len(values) > 100}
         }
+
+
+def _app_resource(app: App) -> Resource:
+    """Lists and reads an app as a resource whose contents carry its hints in `_meta.ui`.
+
+    Raises:
+        Error: When the URI is not a `ui://` URI.
+    """
+    if not app.uri.startswith("ui://"):
+        raise unknown(f'MCP app "{app.name}" needs a ui:// URI, got "{app.uri}".')
+    ui: dict[str, Json] = {}
+    if app.csp is not None:
+        domains = {
+            "connectDomains": app.csp.connect_domains,
+            "resourceDomains": app.csp.resource_domains,
+            "frameDomains": app.csp.frame_domains,
+            "baseUriDomains": app.csp.base_uri_domains,
+        }
+        ui["csp"] = {key: [*value] for key, value in domains.items() if value is not None}
+    if app.prefers_border is not None:
+        ui["prefersBorder"] = app.prefers_border
+    contents: dict[str, Json] = {"text": app.html}
+    if ui:
+        contents["_meta"] = {"ui": ui}
+    mime_type = "text/html;profile=mcp-app"
+    return Resource(app.uri, app.name, lambda: contents, app.title, app.description, mime_type)
 
 
 def _contents(result: ReadResult, uri: str, mime_type: str | None) -> list[Json]:

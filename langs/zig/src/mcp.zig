@@ -46,6 +46,10 @@ pub const Resource = features.Resource;
 pub const ResourceTemplate = features.ResourceTemplate;
 /// A prompt template clients can list and render.
 pub const Prompt = features.Prompt;
+/// An MCP App: an HTML view hosts render for the tools that link to it.
+pub const App = features.App;
+/// External origins an MCP App may reach.
+pub const AppCsp = features.AppCsp;
 /// A completer for one prompt argument or template variable.
 pub const Completion = features.Completion;
 
@@ -93,6 +97,8 @@ pub const Tool = struct {
     annotations: ?Value,
     /// Usage guidance.
     instructions: ?[]const u8,
+    /// The name of the app the tool links to.
+    app: ?[]const u8,
     /// The output schema, when the command's output is an object.
     output: ?Value,
     /// The non-empty title.
@@ -119,6 +125,12 @@ pub const Defaults = struct {
 };
 
 /// Returns an object schema with parsed values as the defaults of their fields.
+/// The URI of the app named `name`, or null when no app has that name.
+fn appUri(apps: []const App, name: []const u8) ?[]const u8 {
+    for (apps) |app| if (std.mem.eql(u8, app.name, name)) return app.uri;
+    return null;
+}
+
 fn withDefaults(a: Allocator, ty: *const Type, values: []const Value.Entry) Allocator.Error!*const Type {
     const fields = try a.dupe(schema.Field, ty.fields());
     for (fields) |*f| for (values) |entry| if (std.mem.eql(u8, entry.key, f.name)) {
@@ -229,6 +241,7 @@ fn toTool(a: Allocator, cli: *const Cli, config: ?Value, original: *const Comman
         .middleware = middleware,
         .annotations = try settings.annotationsValue(a),
         .instructions = settings.instructions,
+        .app = settings.app,
         .output = output,
         .title = errors.nonEmpty(settings.title),
         .icons = if (settings.icons) |icons| icons: {
@@ -389,25 +402,28 @@ const Server = struct {
         const settings = cli.options.mcp orelse cli_.Mcp{};
         var filter = settings.tools;
         if (direct) filter.discovery = .direct;
-        const served = switch (try features.Features.init(a, cli.resources.items, cli.resource_templates.items, cli.prompts.items)) {
+        const tools = switch (try collect(a, cli, filter, defaults.config)) {
+            .err => |e| return .{ .err = e },
+            .ok => |tools| tools,
+        };
+        for (tools) |tool| if (tool.app) |app| if (appUri(cli.apps.items, app) == null)
+            return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Tool \"{s}\" links to unknown MCP app \"{s}\".", .{ tool.name, app }) } };
+        const served = switch (try features.Features.init(a, cli.resources.items, cli.resource_templates.items, cli.prompts.items, cli.apps.items)) {
             .err => |message| return .{ .err = .{ .message = message } },
             .ok => |f| f,
         };
         // Default values become schema defaults, so a call's own arguments still win.
         const globals = if (cli.options.globals) |g| try withDefaults(a, g, defaults.globals) else null;
-        return switch (try collect(a, cli, filter, defaults.config)) {
-            .err => |e| .{ .err = e },
-            .ok => |tools| .{ .ok = .{
-                .a = a,
-                .cli = cli,
-                .process = process,
-                .globals = globals,
-                .tools = tools,
-                .direct = filter.discovery == .direct,
-                .name = settings.name orelse cli.name,
-                .features = served,
-            } },
-        };
+        return .{ .ok = .{
+            .a = a,
+            .cli = cli,
+            .process = process,
+            .globals = globals,
+            .tools = tools,
+            .direct = filter.discovery == .direct,
+            .name = settings.name orelse cli.name,
+            .features = served,
+        } };
     }
 
     /// Answers a request, or returns null for messages without responses.
@@ -549,11 +565,15 @@ const Server = struct {
                 try entry.put(a, "inputSchema", try s.directSchema(&tool));
                 if (tool.annotations) |an| try entry.put(a, "annotations", an);
                 if (tool.icons) |icons| try entry.put(a, "icons", icons);
-                if (errors.nonEmpty(tool.instructions)) |i| {
-                    var meta: json.ObjectBuilder = .{};
-                    try meta.put(a, "instructions", .{ .string = i });
-                    try entry.put(a, "_meta", meta.finish());
+                var meta: json.ObjectBuilder = .{};
+                if (errors.nonEmpty(tool.instructions)) |i| try meta.put(a, "instructions", .{ .string = i });
+                if (tool.app) |app| {
+                    var ui: json.ObjectBuilder = .{};
+                    try ui.put(a, "resourceUri", .{ .string = appUri(s.cli.apps.items, app).? });
+                    try meta.put(a, "ui", ui.finish());
                 }
+                const hints = meta.finish();
+                if (hints.object.len > 0) try entry.put(a, "_meta", hints);
                 if (tool.output) |o| try entry.put(a, "outputSchema", o);
                 slot.* = entry.finish();
             }

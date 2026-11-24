@@ -6,8 +6,8 @@ use std::io::Write as _;
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, stream};
 use incur::mcp::{
-    Annotations, CacheHint, CacheScope, Discovery, Icon, Mcp, Prompt, Resource, ResourceTemplate,
-    Theme, Tool,
+    Annotations, App, AppCsp, CacheHint, CacheScope, Discovery, Icon, Mcp, Prompt, Resource,
+    ResourceTemplate, Theme, Tool,
 };
 use incur::openapi::{Mode, Openapi, Versions};
 use incur::update::{CheckContext, InstallContext};
@@ -754,6 +754,94 @@ pub(crate) fn ask() -> Cli {
 }
 
 /// A resource template incur cannot match.
+/// Exercises MCP Apps: `ui://` views and the tools that link to them.
+pub(crate) fn view() -> Cli {
+    let domains = |list: &[&str]| Some(list.iter().map(|d| (*d).to_owned()).collect());
+    client(Cli::new("view"))
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .mcp(Mcp::new().discovery(Discovery::Direct))
+        .resource(Resource::new("view://notes", "notes", || json!("Notes")))
+        .app(
+            App::new(
+                "ui://view/dashboard",
+                "dashboard",
+                "<!doctype html><p>Weather</p>",
+            )
+            .title("Dashboard")
+            .description("Weather dashboard")
+            .csp(AppCsp {
+                resource_domains: domains(&["https://cdn.example.com"]),
+                connect_domains: domains(&["https://api.example.com", "wss://live.example.com"]),
+                ..AppCsp::default()
+            })
+            .prefers_border(true),
+        )
+        .app(App::new("ui://view/plain", "plain", "<p>Plain</p>"))
+        .app(
+            App::new("ui://view/framed", "framed", "")
+                .csp(AppCsp {
+                    base_uri_domains: domains(&["https://base.example.com"]),
+                    frame_domains: domains(&[]),
+                    ..AppCsp::default()
+                })
+                .prefers_border(false),
+        )
+        .app(App::new("ui://view/open", "open", "<p>Open</p>").csp(AppCsp::default()))
+        .command(
+            "weather",
+            Command::new()
+                .description("Show the weather")
+                .mcp(Tool::new().app("dashboard").instructions("Render it"))
+                .run(|_: Context| data(json!({ "temp": 20 }))),
+        )
+        .command(
+            "plain",
+            Command::new()
+                .description("Plain view")
+                .mcp(Tool::new().app("plain"))
+                .run(|_: Context| data(json!({ "ok": true }))),
+        )
+        .command(
+            "other",
+            Command::new()
+                .description("No view")
+                .run(|_: Context| data(json!({ "ok": true }))),
+        )
+}
+
+/// A command that links to an app the CLI never registers.
+pub(crate) fn viewmissing() -> Cli {
+    client(Cli::new("viewmissing"))
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .app(App::new("ui://viewmissing/real", "real", ""))
+        .command(
+            "show",
+            Command::new()
+                .description("Show")
+                .mcp(Tool::new().app("ghost"))
+                .run(|_: Context| data(json!({}))),
+        )
+}
+
+/// An app whose URI is not a `ui://` URI.
+pub(crate) fn viewscheme() -> Cli {
+    client(Cli::new("viewscheme"))
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .app(App::new("https://example.com/view", "web", ""))
+        .command(
+            "show",
+            Command::new()
+                .description("Show")
+                .run(|_: Context| data(json!({}))),
+        )
+}
+
 pub(crate) fn kbbad() -> Cli {
     client(Cli::new("kbbad"))
         .version("1.0.0")

@@ -271,6 +271,8 @@ pub struct Cli {
     pub(crate) prompts: Vec<mcp::Prompt>,
     /// MCP resource templates.
     pub(crate) resource_templates: Vec<mcp::ResourceTemplate>,
+    /// MCP Apps.
+    pub(crate) apps: Vec<mcp::App>,
     /// MCP resources at fixed URIs.
     pub(crate) resources: Vec<mcp::Resource>,
     /// The root command.
@@ -322,6 +324,7 @@ impl Cli {
             parse_only: false,
             prompts: Vec::new(),
             resource_templates: Vec::new(),
+            apps: Vec::new(),
             resources: Vec::new(),
             root: None,
             root_fetch: None,
@@ -531,6 +534,14 @@ impl Cli {
     #[must_use]
     pub fn prompt(mut self, prompt: mcp::Prompt) -> Self {
         self.prompts.push(prompt);
+        self
+    }
+
+    /// Registers an MCP App: an HTML view at a `ui://` URI that hosts render for commands linking
+    /// to it with [`Tool::app`](mcp::Tool::app).
+    #[must_use]
+    pub fn app(mut self, app: mcp::App) -> Self {
+        self.apps.push(app);
         self
     }
 

@@ -1746,6 +1746,85 @@ def ask() -> incur.Cli:
     return cli
 
 
+def view() -> incur.Cli:
+    """Exercises MCP Apps: `ui://` views and the tools that link to them."""
+    cli = incur.Cli(
+        "view",
+        version="1.0.0",
+        update=False,
+        sync=False,
+        mcp=incur.McpOptions(tools=incur.ToolFilter(discovery="direct")),
+    )
+
+    @cli.resource("notes", uri="view://notes")
+    def notes() -> str:
+        return "Notes"
+
+    cli.app(
+        "dashboard",
+        uri="ui://view/dashboard",
+        title="Dashboard",
+        description="Weather dashboard",
+        html="<!doctype html><p>Weather</p>",
+        csp=incur.AppCsp(
+            resource_domains=["https://cdn.example.com"],
+            connect_domains=["https://api.example.com", "wss://live.example.com"],
+        ),
+        prefers_border=True,
+    )
+    cli.app("plain", uri="ui://view/plain", html="<p>Plain</p>")
+    cli.app(
+        "framed",
+        uri="ui://view/framed",
+        html="",
+        csp=incur.AppCsp(base_uri_domains=["https://base.example.com"], frame_domains=[]),
+        prefers_border=False,
+    )
+    cli.app("open", uri="ui://view/open", html="<p>Open</p>", csp=incur.AppCsp())
+
+    @cli.command(
+        "weather",
+        description="Show the weather",
+        mcp=incur.McpTool(app="dashboard", instructions="Render it"),
+    )
+    def weather(c: Context) -> Data:
+        return {"temp": 20}
+
+    @cli.command("plain", description="Plain view", mcp=incur.McpTool(app="plain"))
+    def plain(c: Context) -> Data:
+        return {"ok": True}
+
+    @cli.command("other", description="No view")
+    def other(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+def viewmissing() -> incur.Cli:
+    """A command that links to an app the CLI never registers."""
+    cli = incur.Cli("viewmissing", version="1.0.0", update=False, sync=False)
+    cli.app("real", uri="ui://viewmissing/real", html="")
+
+    @cli.command("show", description="Show", mcp=incur.McpTool(app="ghost"))
+    def show(c: Context) -> Data:
+        return {}
+
+    return cli
+
+
+def viewscheme() -> incur.Cli:
+    """An app whose URI is not a `ui://` URI."""
+    cli = incur.Cli("viewscheme", version="1.0.0", update=False, sync=False)
+    cli.app("web", uri="https://example.com/view", html="")
+
+    @cli.command("show", description="Show")
+    def show(c: Context) -> Data:
+        return {}
+
+    return cli
+
+
 def kbbad() -> incur.Cli:
     """A resource template incur cannot match."""
     cli = incur.Cli("kbbad", version="1.0.0", update=False, sync=False)
@@ -2394,6 +2473,9 @@ def cli(name: str) -> incur.Cli:
         "kb": kb,
         "ask": ask,
         "kbbad": kbbad,
+        "view": view,
+        "viewmissing": viewmissing,
+        "viewscheme": viewscheme,
         "oaroot": oaroot,
         "params": params,
         "plain": plain,

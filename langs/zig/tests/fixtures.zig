@@ -1434,6 +1434,60 @@ fn ask(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
+fn notes(a: Allocator) Allocator.Error!Value {
+    _ = a;
+    return .{ .string = "Notes" };
+}
+
+fn weather(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .temp = 20 });
+}
+
+fn emptyObject(c: *Context(.{})) !Outcome {
+    return c.ok(.{});
+}
+
+/// Exercises MCP Apps: `ui://` views and the tools that link to them.
+fn view(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "view", .{ .version = "1.0.0", .update = null, .sync = null, .mcp = .{ .tools = .{ .discovery = .direct } } });
+    errdefer cli.destroy();
+    try cli.resource(.{ .uri = "view://notes", .name = "notes", .read = notes });
+    try cli.app(.{
+        .uri = "ui://view/dashboard",
+        .name = "dashboard",
+        .title = "Dashboard",
+        .description = "Weather dashboard",
+        .html = "<!doctype html><p>Weather</p>",
+        .csp = .{ .resource_domains = &.{"https://cdn.example.com"}, .connect_domains = &.{ "https://api.example.com", "wss://live.example.com" } },
+        .prefers_border = true,
+    });
+    try cli.app(.{ .uri = "ui://view/plain", .name = "plain", .html = "<p>Plain</p>" });
+    try cli.app(.{ .uri = "ui://view/framed", .name = "framed", .html = "", .csp = .{ .base_uri_domains = &.{"https://base.example.com"}, .frame_domains = &.{} }, .prefers_border = false });
+    try cli.app(.{ .uri = "ui://view/open", .name = "open", .html = "<p>Open</p>", .csp = .{} });
+    try cli.command("weather", .{ .description = "Show the weather", .mcp = .{ .app = "dashboard", .instructions = "Render it" }, .run = incur.handler(weather) });
+    try cli.command("plain", .{ .description = "Plain view", .mcp = .{ .app = "plain" }, .run = incur.handler(okTrue) });
+    try cli.command("other", .{ .description = "No view", .run = incur.handler(okTrue) });
+    return cli;
+}
+
+/// A command that links to an app the CLI never registers.
+fn viewmissing(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "viewmissing", .{ .version = "1.0.0", .update = null, .sync = null });
+    errdefer cli.destroy();
+    try cli.app(.{ .uri = "ui://viewmissing/real", .name = "real", .html = "" });
+    try cli.command("show", .{ .description = "Show", .mcp = .{ .app = "ghost" }, .run = incur.handler(emptyObject) });
+    return cli;
+}
+
+/// An app whose URI is not a `ui://` URI.
+fn viewscheme(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "viewscheme", .{ .version = "1.0.0", .update = null, .sync = null });
+    errdefer cli.destroy();
+    try cli.app(.{ .uri = "https://example.com/view", .name = "web", .html = "" });
+    try cli.command("show", .{ .description = "Show", .run = incur.handler(emptyObject) });
+    return cli;
+}
+
 fn kbbad(gpa: Allocator) !*incur.Cli {
     const cli = try incur.Cli.create(gpa, "kbbad", .{ .version = "1.0.0", .update = null, .sync = null });
     errdefer cli.destroy();
@@ -1967,17 +2021,18 @@ fn updbad(gpa: Allocator) !*incur.Cli {
 /// Returns the fixture CLI with the given key from `cases.json`.
 pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
     const fixtures = .{
-        .{ "app", app },               .{ "bare", bare },         .{ "catalog", catalog },     .{ "cfg", cfg },
-        .{ "dupe", dupe },             .{ "gateway", gateway },   .{ "globals", globals },     .{ "greet", greetCli },
-        .{ "plain", plain },           .{ "proxy", proxy },       .{ "raw", raw },             .{ "rooted", rooted },
-        .{ "tools", tools },           .{ "web", web },           .{ "oa", oa },               .{ "oaroot", oaroot },
-        .{ "remote", remote },         .{ "kit", kit },           .{ "kitpkg", kitpkg },       .{ "kitcmd", kitcmd },
-        .{ "kitbad", kitbad },         .{ "kitver", kitver },     .{ "spaced", spaced },       .{ "upd", upd },
-        .{ "updbeta", updbeta },       .{ "updcheck", updcheck }, .{ "updnone", updnone },     .{ "updpkg", updpkg },
-        .{ "updbad", updbad },         .{ "shadow", shadow },     .{ "kitcwd", kitcwd },       .{ "kitrun", kitrun },
-        .{ "shadowall", shadowall },   .{ "params", paramsCli },  .{ "hdrarray", hdrarray },   .{ "hdrdupe", hdrdupe },
-        .{ "hdrempty", hdrempty },     .{ "hdrkey", hdrkey },     .{ "hdrnumber", hdrnumber }, .{ "hdrtoken", hdrtoken },
-        .{ "hdrnewline", hdrnewline }, .{ "kb", kb },             .{ "kbbad", kbbad },         .{ "ask", ask },
+        .{ "app", app },               .{ "bare", bare },               .{ "catalog", catalog },       .{ "cfg", cfg },
+        .{ "dupe", dupe },             .{ "gateway", gateway },         .{ "globals", globals },       .{ "greet", greetCli },
+        .{ "plain", plain },           .{ "proxy", proxy },             .{ "raw", raw },               .{ "rooted", rooted },
+        .{ "tools", tools },           .{ "web", web },                 .{ "oa", oa },                 .{ "oaroot", oaroot },
+        .{ "remote", remote },         .{ "kit", kit },                 .{ "kitpkg", kitpkg },         .{ "kitcmd", kitcmd },
+        .{ "kitbad", kitbad },         .{ "kitver", kitver },           .{ "spaced", spaced },         .{ "upd", upd },
+        .{ "updbeta", updbeta },       .{ "updcheck", updcheck },       .{ "updnone", updnone },       .{ "updpkg", updpkg },
+        .{ "updbad", updbad },         .{ "shadow", shadow },           .{ "kitcwd", kitcwd },         .{ "kitrun", kitrun },
+        .{ "shadowall", shadowall },   .{ "params", paramsCli },        .{ "hdrarray", hdrarray },     .{ "hdrdupe", hdrdupe },
+        .{ "hdrempty", hdrempty },     .{ "hdrkey", hdrkey },           .{ "hdrnumber", hdrnumber },   .{ "hdrtoken", hdrtoken },
+        .{ "hdrnewline", hdrnewline }, .{ "kb", kb },                   .{ "kbbad", kbbad },           .{ "ask", ask },
+        .{ "view", view },             .{ "viewmissing", viewmissing }, .{ "viewscheme", viewscheme },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

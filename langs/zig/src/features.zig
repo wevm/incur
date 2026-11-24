@@ -43,6 +43,69 @@ pub const Resource = struct {
     read: *const fn (a: Allocator) Allocator.Error!Value,
 };
 
+/// External origins an MCP App may reach, as hosts map them to Content Security Policy
+/// directives.
+pub const AppCsp = struct {
+    /// Origins for fetch, XHR, and WebSocket connections (`connect-src`).
+    connect_domains: ?[]const []const u8 = null,
+    /// Origins for scripts, styles, images, fonts, and media.
+    resource_domains: ?[]const []const u8 = null,
+    /// Origins for nested iframes (`frame-src`).
+    frame_domains: ?[]const []const u8 = null,
+    /// Allowed document base URIs (`base-uri`).
+    base_uri_domains: ?[]const []const u8 = null,
+};
+
+/// An MCP App: an HTML view hosts render for the tools that link to it with `Tool.app`. It is
+/// listed and read as a resource after the others.
+pub const App = struct {
+    /// The `ui://` URI hosts read the view from.
+    uri: []const u8,
+    /// Programmatic name, which tools link to.
+    name: []const u8,
+    /// The HTML document.
+    html: []const u8,
+    /// Human-readable title.
+    title: ?[]const u8 = null,
+    /// Description.
+    description: ?[]const u8 = null,
+    /// External origins the view may reach. Hosts block every other origin.
+    csp: ?AppCsp = null,
+    /// Whether the host draws a border and background around the view. Hosts decide when null.
+    prefers_border: ?bool = null,
+
+    /// The view as `resources/read` returns it, with the app's hints in `_meta.ui`.
+    fn contents(app: App, a: Allocator) Allocator.Error!Value {
+        var ui: json.ObjectBuilder = .{};
+        if (app.csp) |csp| {
+            var out: json.ObjectBuilder = .{};
+            const domains = [_]struct { []const u8, ?[]const []const u8 }{
+                .{ "connectDomains", csp.connect_domains },
+                .{ "resourceDomains", csp.resource_domains },
+                .{ "frameDomains", csp.frame_domains },
+                .{ "baseUriDomains", csp.base_uri_domains },
+            };
+            for (domains) |domain| if (domain[1]) |list| {
+                const items = try a.alloc(Value, list.len);
+                for (list, items) |origin, *slot| slot.* = .{ .string = origin };
+                try out.put(a, domain[0], .{ .array = items });
+            };
+            try ui.put(a, "csp", out.finish());
+        }
+        if (app.prefers_border) |border| try ui.put(a, "prefersBorder", .{ .bool = border });
+        var item: json.ObjectBuilder = .{};
+        try item.put(a, "uri", .{ .string = app.uri });
+        try item.put(a, "mimeType", .{ .string = app_mime_type });
+        try item.put(a, "text", .{ .string = app.html });
+        const hints = ui.finish();
+        if (hints.object.len > 0) try item.put(a, "_meta", try single(a, "ui", hints));
+        return .{ .array = try a.dupe(Value, &.{item.finish()}) };
+    }
+};
+
+/// The MIME type of MCP App views.
+const app_mime_type = "text/html;profile=mcp-app";
+
 /// Resources whose URIs match a template such as `docs://{section}/{page}`. Templates support
 /// `{name}` expressions, which match one or more characters other than `/` and `,`.
 pub const ResourceTemplate = struct {
@@ -159,18 +222,22 @@ pub const Features = struct {
     templates: []const ResourceTemplate,
     patterns: []const Pattern,
     prompts: []const Prompt,
+    apps: []const App,
 
-    /// Compiles the features, or returns the error text for an unsupported template.
-    pub fn init(a: Allocator, resources: []const Resource, templates: []const ResourceTemplate, prompts: []const Prompt) Allocator.Error!union(enum) { ok: Features, err: []const u8 } {
+    /// Compiles the features, or returns the error text for an app without a `ui://` URI or an
+    /// unsupported template.
+    pub fn init(a: Allocator, resources: []const Resource, templates: []const ResourceTemplate, prompts: []const Prompt, apps: []const App) Allocator.Error!union(enum) { ok: Features, err: []const u8 } {
+        for (apps) |app| if (!std.mem.startsWith(u8, app.uri, "ui://"))
+            return .{ .err = try std.fmt.allocPrint(a, "MCP app \"{s}\" needs a ui:// URI, got \"{s}\".", .{ app.name, app.uri }) };
         const patterns = try a.alloc(Pattern, templates.len);
         for (templates, patterns) |template, *slot|
             slot.* = try Pattern.compile(a, template.uri_template) orelse
                 return .{ .err = try std.fmt.allocPrint(a, "Unsupported URI template: {s}", .{template.uri_template}) };
-        return .{ .ok = .{ .resources = resources, .templates = templates, .patterns = patterns, .prompts = prompts } };
+        return .{ .ok = .{ .resources = resources, .templates = templates, .patterns = patterns, .prompts = prompts, .apps = apps } };
     }
 
     fn hasResources(f: Features) bool {
-        return f.resources.len > 0 or f.templates.len > 0;
+        return f.resources.len > 0 or f.templates.len > 0 or f.apps.len > 0;
     }
 
     fn hasCompletions(f: Features) bool {
@@ -199,8 +266,9 @@ pub const Features = struct {
     /// Answers a method `handles` accepts.
     pub fn answer(f: Features, a: Allocator, method: []const u8, params: Value) Allocator.Error!Answer {
         if (std.mem.eql(u8, method, "resources/list")) {
-            const items = try a.alloc(Value, f.resources.len);
-            for (f.resources, items) |r, *slot| slot.* = try entry(a, "uri", r.uri, r.name, r.title, r.description, r.mime_type, r.icons);
+            const items = try a.alloc(Value, f.resources.len + f.apps.len);
+            for (f.resources, items[0..f.resources.len]) |r, *slot| slot.* = try entry(a, "uri", r.uri, r.name, r.title, r.description, r.mime_type, r.icons);
+            for (f.apps, items[f.resources.len..]) |app, *slot| slot.* = try entry(a, "uri", app.uri, app.name, app.title, app.description, app_mime_type, null);
             return .{ .ok = try single(a, "resources", .{ .array = items }) };
         }
         if (std.mem.eql(u8, method, "resources/templates/list")) {
@@ -222,6 +290,8 @@ pub const Features = struct {
     fn read(f: Features, a: Allocator, uri: []const u8) Allocator.Error!Answer {
         for (f.resources) |r| if (std.mem.eql(u8, r.uri, uri))
             return .{ .ok = try single(a, "contents", try contents(a, try r.read(a), uri, r.mime_type)) };
+        for (f.apps) |app| if (std.mem.eql(u8, app.uri, uri))
+            return .{ .ok = try single(a, "contents", try app.contents(a)) };
         for (f.templates, f.patterns) |t, p| {
             const values = try a.alloc([]const u8, p.names.len);
             if (!try p.match(a, uri, values)) continue;

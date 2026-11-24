@@ -753,12 +753,15 @@ impl Cli {
             .globals
             .as_ref()
             .map(|globals| mcp::with_defaults(globals, &defaults.globals));
+        let mut tools = mcp::collect(tree, globals.as_ref(), settings, defaults.options)?;
+        mcp::link_apps(&mut tools, &self.apps)?;
         Ok(mcp::Server {
             cache: settings.cache.clone(),
             features: crate::features::Features::new(
                 &self.resources,
                 &self.resource_templates,
                 &self.prompts,
+                &self.apps,
             )
             .map_err(Error::unknown)?,
             context: mcp::Context {
@@ -773,7 +776,7 @@ impl Cli {
             instructions: settings.instructions.clone(),
             name: settings.name.clone().unwrap_or_else(|| self.name.clone()),
             title: settings.title.clone(),
-            tools: mcp::collect(tree, globals.as_ref(), settings, defaults.options)?,
+            tools,
             version: self.version.clone().unwrap_or_else(|| "0.0.0".into()),
         })
     }

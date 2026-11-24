@@ -132,6 +132,8 @@ export type Cli<
   fetch(req: Request): Promise<Response>
   /** Discovers and registers command modules from a directory. Defaults to files beside the executed entrypoint. */
   fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals, cliName>
+  /** Registers an MCP App: an HTML view at a `ui://` URI that hosts render for commands linking to it with `mcp: { app: name }`. */
+  app(name: string, definition: Omit<Mcp.App, 'name'>): Cli<commands, vars, env, globals, cliName>
   /** Registers an MCP prompt template clients can list, render, and complete arguments for. */
   prompt<const args extends z.ZodObject<any> | undefined = undefined>(
     name: string,
@@ -313,6 +315,7 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const features = {
+    apps: [] as Mcp.App[],
     prompts: [] as Mcp.Prompt<any>[],
     resources: [] as Mcp.Resource[],
     resourceTemplates: [] as Mcp.ResourceTemplate[],
@@ -486,6 +489,11 @@ export function create(
           }
         })(),
       )
+      return cli
+    },
+
+    app(name: string, definition: any): any {
+      features.apps.push({ name, ...definition })
       return cli
     },
 
@@ -2230,6 +2238,7 @@ function createMcpHttpHandler(
   ) {
     return () =>
       Mcp.createServer(mcp, name, version, commands, {
+        apps: options.apps,
         env: mcpOptions?.env,
         globals: mcpOptions?.globals,
         cache: options.cache,
@@ -4303,6 +4312,8 @@ type CommandDefinition<
         description?: string | undefined
         /** MCP tool annotations that describe tool behavior to clients. */
         annotations?: Mcp.ToolAnnotations | undefined
+        /** Name of an app registered with `cli.app()`, which hosts render the tool's results in. Applies to directly listed tools. */
+        app?: string | undefined
         /** HTTP headers 2026-07-28 clients mirror arguments into, keyed by argument or option name. `{ region: 'Region' }` sends `region` as `Mcp-Param-Region`. Applies to directly listed tools. */
         headers?:
           | Partial<Record<keyof z.output<args> | keyof z.output<options>, string>>
