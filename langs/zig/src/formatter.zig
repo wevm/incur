@@ -57,6 +57,13 @@ fn isFlat(entries: []const Value.Entry) bool {
     return true;
 }
 
+/// Renders a value outside a table: arrays that nest values as compact JSON, anything else as
+/// `String(value)` does.
+fn text(a: Allocator, value: Value) Allocator.Error![]const u8 {
+    if (value == .array) for (value.array) |item| if (item == .array or item == .object) return json.stringify(a, value);
+    return json.toString(a, value);
+}
+
 /// Whether a value is a non-empty array of objects.
 fn isArrayOfObjects(value: Value) bool {
     if (value != .array or value.array.len == 0) return false;
@@ -121,7 +128,7 @@ fn columnarTable(a: Allocator, items: []const Value) Allocator.Error![]const u8 
 fn markdown(a: Allocator, value: Value) Allocator.Error![]const u8 {
     if (isArrayOfObjects(value)) return columnarTable(a, value.array);
     if (value == .object) return if (isFlat(value.object)) kvTable(a, value.object) else sections(a, value.object, &.{});
-    return json.toString(a, value);
+    return text(a, value);
 }
 
 /// Formats each entry of a nested object as a section headed by its dotted path.
@@ -135,7 +142,7 @@ fn sections(a: Allocator, entries: []const Value.Entry, path: []const []const u8
                 try parts.append(a, try sections(a, nested, child));
                 continue;
             },
-            else => if (isArrayOfObjects(entry.value)) try columnarTable(a, entry.value.array) else try json.toString(a, entry.value),
+            else => if (isArrayOfObjects(entry.value)) try columnarTable(a, entry.value.array) else try text(a, entry.value),
         };
         try parts.append(a, try std.fmt.allocPrint(a, "## {s}\n\n{s}", .{ heading, body }));
     }

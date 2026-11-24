@@ -324,6 +324,21 @@ describe('format md', () => {
     `)
   })
 
+  test('formats arrays that nest values outside tables as compact JSON', () => {
+    expect(
+      Formatter.format({ mixed: [{ a: { b: 1 } }, 'x', [1, { y: 2 }]], grid: [[1, 2], [3]] }, 'md'),
+    ).toMatchInlineSnapshot(`
+        "## mixed
+
+        [{"a":{"b":1}},"x",[1,{"y":2}]]
+
+        ## grid
+
+        [[1,2],[3]]"
+      `)
+    expect(Formatter.format([1, { a: 'x|y' }], 'md')).toMatchInlineSnapshot(`"[1,{"a":"x|y"}]"`)
+  })
+
   test('formats single-entry flat object at root as kvTable (line 85)', () => {
     // Single flat object at root returns kvTable directly (line 85)
     // Line 106 (kvTable fallback) appears unreachable — needsHeadings is always

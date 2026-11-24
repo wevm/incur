@@ -122,6 +122,7 @@ pub(crate) async fn upstream(request: http::Request<Body>) -> Result<http::Respo
             &json!({ "message": "Bad input", "error": { "code": 7 } }),
             400,
         ),
+        "bad-object" => json_response(&json!({ "message": { "detail": "Bad input" } }), 422),
         "boom" => text_response("Internal failure", 500),
         "down" => json_response(&json!({ "status": "down" }), 503),
         "empty" => respond(204, &[], Body::empty()),

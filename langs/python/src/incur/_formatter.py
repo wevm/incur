@@ -43,6 +43,13 @@ def _is_flat(data: dict[str, Json]) -> bool:
     return all(_is_scalar(v) for v in data.values())
 
 
+def _text(value: Json) -> str:
+    """Renders a value outside a table: arrays that nest values as compact JSON."""
+    if isinstance(value, list) and not all(_is_scalar(v) for v in value):
+        return _js.stringify(value)
+    return _js.to_string(value)
+
+
 def _is_array_of_objects(value: Json) -> TypeGuard[list[dict[str, Json]]]:
     return isinstance(value, list) and bool(value) and all(isinstance(v, dict) for v in value)
 
@@ -95,7 +102,7 @@ def _markdown(value: Json) -> str:
         return _columnar_table(value)
     if isinstance(value, dict):
         return _kv_table(value) if _is_flat(value) else _sections(value, [])
-    return _js.to_string(value)
+    return _text(value)
 
 
 def _sections(data: dict[str, Json], path: list[str]) -> str:
@@ -115,5 +122,5 @@ def _sections(data: dict[str, Json], path: list[str]) -> str:
         elif _is_array_of_objects(value):
             out.append(heading(child, _columnar_table(value)))
         else:
-            out.append(heading(child, _js.to_string(value)))
+            out.append(heading(child, _text(value)))
     return "\n\n".join(out)
