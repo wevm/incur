@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from . import _js
+from ._errors import unknown
 from ._js import Json
 
 
@@ -37,7 +38,7 @@ _Container: TypeAlias = "list[Json] | dict[str, Json]"
 
 
 def parse(expression: str) -> list[list[Segment]]:
-    """Parses a filter expression into paths."""
+    """Parses a filter expression into paths. Raises an `UNKNOWN` error on an unclosed `[`."""
     tokens: list[str] = []
     current = ""
     depth = 0
@@ -65,12 +66,14 @@ def parse(expression: str) -> list[list[Segment]]:
                 break
             path.extend(part for part in remaining[:open_].split(".") if part)
             close = remaining.find("]", open_)
-            inner = remaining[open_ + 1 : close if close >= 0 else len(remaining)]
+            if close < 0:
+                raise unknown(f'Unclosed bracket in filter expression: "{token}"')
+            inner = remaining[open_ + 1 : close]
             bounds = inner.split(",")
             start = _js.to_number(bounds[0])
             end = _js.to_number(bounds[1]) if len(bounds) > 1 else math.nan
             path.append(Slice(start, end))
-            remaining = remaining[close + 1 :] if close >= 0 else ""
+            remaining = remaining[close + 1 :]
             remaining = remaining.removeprefix(".")
         paths.append(path)
     return paths

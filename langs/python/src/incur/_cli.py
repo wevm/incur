@@ -610,7 +610,7 @@ class _Flags:
 
     config_disabled: bool = False
     config_path: str | None = None
-    filter_output: str | None = None
+    filter_output: list[list[_filter.Segment]] | None = None
     format: Format = "toon"
     format_explicit: bool = False
     full_output: bool = False
@@ -670,7 +670,7 @@ def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True
             flags.format_explicit = True
             i += 1
         elif token == "--filter-output" and nxt is not None:
-            flags.filter_output = nxt
+            flags.filter_output = _filter.parse(nxt)
             i += 1
         elif token in ("--token-limit", "--token-offset") and nxt is not None:
             value = _js.to_number(nxt)
@@ -1069,7 +1069,7 @@ class _Run:
             flags=flags,
             format=fmt,
             human=human,
-            filter=_filter.parse(flags.filter_output) if flags.filter_output is not None else None,
+            filter=flags.filter_output,
             render=not (human and policy == "agent-only"),
         )
 

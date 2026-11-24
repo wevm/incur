@@ -2,6 +2,7 @@
 
 use serde_json::{Map, Value};
 
+use crate::errors::Error;
 use crate::js;
 
 /// One step of a filter path.
@@ -19,7 +20,11 @@ pub enum Segment {
 }
 
 /// Parses a filter expression into paths.
-pub fn parse(expression: &str) -> Vec<Vec<Segment>> {
+///
+/// # Errors
+///
+/// Returns an `UNKNOWN` error when a `[` has no closing `]`.
+pub fn parse(expression: &str) -> Result<Vec<Vec<Segment>>, Error> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut depth = 0i32;
@@ -55,16 +60,21 @@ pub fn parse(expression: &str) -> Vec<Vec<Segment>> {
                     break;
                 };
                 keys(&remaining[..open], &mut path);
-                let close = remaining[open..].find(']').map(|i| open + i);
-                let inner = &remaining[open + 1..close.unwrap_or(remaining.len())];
+                let Some(close) = remaining[open..].find(']').map(|i| open + i) else {
+                    return Err(Error::new(
+                        "UNKNOWN",
+                        format!("Unclosed bracket in filter expression: \"{token}\""),
+                    ));
+                };
+                let inner = &remaining[open + 1..close];
                 let mut bounds = inner.split(',');
                 let start = js::to_number(bounds.next().unwrap_or_default());
                 let end = bounds.next().map_or(f64::NAN, js::to_number);
                 path.push(Segment::Slice { end, start });
-                remaining = close.map_or("", |close| &remaining[close + 1..]);
+                remaining = &remaining[close + 1..];
                 remaining = remaining.strip_prefix('.').unwrap_or(remaining);
             }
-            path
+            Ok(path)
         })
         .collect()
 }

@@ -1109,8 +1109,8 @@ struct Flags {
     config_disabled: bool,
     /// `--<config> <path>`.
     config_path: Option<String>,
-    /// `--filter-output`.
-    filter_output: Option<String>,
+    /// Parsed `--filter-output` paths.
+    filter_output: Option<Vec<Vec<filter::Segment>>>,
     /// `--format` or `--json`.
     format: Format,
     /// Whether the format was explicit.
@@ -1191,7 +1191,7 @@ fn extract_flags(
                 i += 1;
             }
             "--filter-output" if next.is_some() => {
-                flags.filter_output = next.cloned();
+                flags.filter_output = Some(filter::parse(next.map_or("", String::as_str))?);
                 i += 1;
             }
             "--token-limit" | "--token-offset" if next.is_some() => {
@@ -1916,7 +1916,7 @@ impl Run<'_, '_> {
             flags: &flags,
             format,
             human,
-            filter: flags.filter_output.as_deref().map(filter::parse),
+            filter: flags.filter_output.clone(),
             render: !(human && policy == Some(OutputPolicy::AgentOnly)),
         };
 
