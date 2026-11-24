@@ -31,9 +31,9 @@ class _Names:
         return next((f.name for f in fields if f.name == raw), None)
 
     def ty(self, name: str) -> Type | None:
-        """Returns the schema of an option."""
+        """Returns the schema of an option, reading a `T | null` union as `T`."""
         f = self.schema.field(name) if self.schema else None
-        return f.ty if f else None
+        return f.ty.unwrap() if f else None
 
     def is_count(self, name: str) -> bool:
         ty = self.ty(name)
@@ -176,7 +176,7 @@ def parse(
     if args is not None:
         fields = args.fields
         for j, f in enumerate(fields):
-            if f.ty.kind == "array":
+            if f.ty.unwrap().kind == "array":
                 if j != len(fields) - 1:
                     raise unknown(
                         f'Variadic arg "{f.name}" must be the last key in the args schema'
@@ -213,9 +213,10 @@ def parse_env(schema: Type, env: EnvSource) -> dict[str, Json]:
         value = env(f.name)
         if value is None:
             continue
-        if f.ty.kind in ("number", "integer"):
-            raw[f.name] = _number(value, f.ty)
-        elif f.ty.kind == "boolean":
+        ty = f.ty.unwrap()
+        if ty.kind in ("number", "integer"):
+            raw[f.name] = _number(value, ty)
+        elif ty.kind == "boolean":
             raw[f.name] = value in ("true", "1")
         else:
             raw[f.name] = value

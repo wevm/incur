@@ -239,6 +239,17 @@ describe('formatCommand', () => {
     expect(result).toContain('--level <low|medium|high>')
   })
 
+  test('shows the inner type of T | null union options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        tags: z.union([z.array(z.string()), z.null()]).optional(),
+        value: z.union([z.string(), z.number(), z.null()]).optional(),
+      }),
+    })
+    expect(result).toContain('--tags <array>')
+    expect(result).toContain('--value <value>')
+  })
+
   test('shows [deprecated] tag for deprecated options', () => {
     const result = Help.formatCommand('tool deploy', {
       description: 'Deploy app',

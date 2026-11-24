@@ -340,11 +340,17 @@ function isCountSchema(schema: unknown): boolean {
   return typeof s?.meta === 'function' && s.meta()?.count === true
 }
 
-/** Unwraps optional/default/nullable wrappers to get the inner type. */
+/** Unwraps optional/default/nullable wrappers and `T | null` unions to get the inner type. */
 function unwrap(schema: unknown): unknown {
   if (schema instanceof z.ZodOptional) return unwrap(schema.unwrap())
   if (schema instanceof z.ZodDefault) return unwrap(schema.removeDefault())
   if (schema instanceof z.ZodNullable) return unwrap(schema.unwrap())
+  if (schema instanceof z.ZodUnion) {
+    const options = (schema.options as z.ZodType[]).filter(
+      (option) => !(option instanceof z.ZodNull) && !(option instanceof z.ZodUndefined),
+    )
+    if (options.length === 1) return unwrap(options[0])
+  }
   return schema
 }
 

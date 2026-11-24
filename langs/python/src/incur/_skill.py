@@ -101,8 +101,8 @@ def collect(
 
 
 def _type_name(ty: Type) -> str:
-    """Returns the JSON Schema type name, mapping `integer` to `number`."""
-    return {"integer": "number", "enum": "string"}.get(ty.kind, ty.kind)
+    """Returns the JSON Schema type name, mapping `integer` to `number`; a union has none."""
+    return {"integer": "number", "enum": "string", "union": "unknown"}.get(ty.kind, ty.kind)
 
 
 def _required(ty: Type) -> str:

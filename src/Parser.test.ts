@@ -134,6 +134,25 @@ describe('parse', () => {
     expect(result.options).toEqual({ limit: 10, offset: 2, ratio: 0.5 })
   })
 
+  test('treats T | null unions as T', () => {
+    const options = z.object({
+      label: z.union([z.array(z.string()), z.null()]).optional(),
+      tag: z.union([z.array(z.string()), z.null()]).optional(),
+      limit: z.union([z.null(), z.number()]).optional(),
+      force: z.union([z.boolean(), z.null()]).optional(),
+      value: z.union([z.string(), z.number(), z.null()]).optional(),
+    })
+    const argv = '--label bug --label feature --tag x --limit 10 --force --value 7'.split(' ')
+    const result = Parser.parse(argv, { options })
+    expect(result.options).toEqual({
+      label: ['bug', 'feature'],
+      tag: ['x'],
+      limit: 10,
+      force: true,
+      value: '7',
+    })
+  })
+
   test('coerces string to boolean', () => {
     const result = Parser.parse(['--dry', 'true'], {
       options: z.object({ dry: z.boolean() }),

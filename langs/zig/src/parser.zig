@@ -53,10 +53,10 @@ const Names = struct {
         return null;
     }
 
-    /// Returns the schema of an option.
+    /// Returns the schema of an option, reading a `T | null` union as `T`.
     fn ty(n: Names, name: []const u8) ?*const Type {
         const f = (n.schema orelse return null).field(name) orelse return null;
-        return &f.ty;
+        return f.ty.unwrap();
     }
 
     /// Whether an option counts repeated flags.
@@ -185,7 +185,7 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
     if (args) |s| {
         const fields = s.fields();
         for (fields, 0..) |f, j| {
-            if (f.ty.kind == .array) {
+            if (f.ty.unwrap().kind == .array) {
                 if (j != fields.len - 1) return .{ .err = try parseError(a, "Variadic arg \"{s}\" must be the last key in the args schema", .{f.name}) };
                 if (j < positionals.items.len) try raw_args.put(a, f.name, try schema.strings(a, positionals.items[j..]));
             } else if (j < positionals.items.len) {
@@ -216,7 +216,7 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
 pub fn parseEnv(a: Allocator, ty: *const Type, env: *const std.process.Environ.Map) Allocator.Error!Result(Value) {
     var raw: json.ObjectBuilder = .{};
     for (ty.fields()) |f| if (env.get(f.name)) |value| {
-        const coerced: Value = switch (f.ty.kind) {
+        const coerced: Value = switch (f.ty.unwrap().kind) {
             .number, .integer => .{ .float = js.toNumber(value) },
             .boolean => .{ .bool = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1") },
             else => .{ .string = value },
