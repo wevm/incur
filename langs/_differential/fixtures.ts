@@ -1224,6 +1224,7 @@ const remote = Cli.create('remote', {
 function kitCli(
   name: string,
   options: {
+    cwd?: string
     mcp?: { agents?: string[]; command?: string; name?: string }
     package?: string
     version?: string
@@ -1236,6 +1237,7 @@ function kitCli(
     ...(options.package === undefined ? undefined : { package: options.package }),
     ...(options.mcp === undefined ? undefined : { mcp: options.mcp }),
     sync: {
+      ...(options.cwd === undefined ? undefined : { cwd: options.cwd }),
       include: ['skills/*', '_root'],
       body: 'Run `kit auth login` to finish setup.',
       suggestions: ['Show my status', 'Deploy the app'],
@@ -1274,6 +1276,7 @@ const kitcmd = kitCli('kitcmd', {
 const kitbad = kitCli('kitbad', { package: 'Bad Name', version: '1' })
 const kitver = kitCli('kitver', { package: 'kitver', version: 'latest' })
 const spaced = kitCli('kit tool')
+const kitcwd = kitCli('kitcwd', { cwd: 'vendor' })
 
 const upd = Cli.create('upd', {
   description: 'Custom updates',
@@ -1346,6 +1349,7 @@ export const clis = {
   kit,
   kitbad,
   kitcmd,
+  kitcwd,
   kitpkg,
   kitver,
   oa,

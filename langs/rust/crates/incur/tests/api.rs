@@ -1169,8 +1169,6 @@ fn syncs_skills_for_agents() {
         run(&second, &["skills", "add"], &env, &[], false),
         run(&second, &["status"], &env, &[], false),
         run(&second, &["skills", "list"], &env, &[], false),
-        run(&first, &["skills", "add", "--no-global"], &env, &[], false),
-        run(&second, &["skills", "add", "--no-global"], &env, &[], false),
     ];
     let mut tree = walk(&sandbox.path(""), &sandbox);
     tree.retain(|line| !line.starts_with("tmp"));
@@ -1195,14 +1193,6 @@ fn syncs_skills_for_agents() {
         (
             0,
             "  ✓ kit-status  A command. Run `kit status --help` for usage details.\n  ✓ nested      Nested\n  ✓ plain\n\n3 skills (3 installed)\n",
-        ),
-        (
-            0,
-            "Syncing...\r\u{1b}[K  ✓ kit-old     A command. Run `kit old --help` for usage details.\n  ✓ kit-status  A command. Run `kit status --help` for usage details.\n  ✓ nested      Nested\n  ✓ plain\n\n4 skills synced\n\nRun `kit --help` to see the full command reference.\n",
-        ),
-        (
-            0,
-            "Syncing...\r\u{1b}[K  ✓ kit-status  A command. Run `kit status --help` for usage details.\n  ✓ nested      Nested\n  ✓ plain\n\n3 skills synced\n\nRun `kit --help` to see the full command reference.\n",
         ),
     ]
     .agents/

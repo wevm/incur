@@ -2821,12 +2821,7 @@ impl Run<'_, '_> {
         }
         let env = self.io.env;
         let stored = sync::read_hash(&cli.name, env)?;
-        let cwd = cli
-            .sync
-            .cwd
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        if !sync::has_installed(&cli.name, env, &cwd) {
+        if !sync::has_installed(&cli.name, env) {
             return None;
         }
         let tree = cli.tree(&Scope::All).await.ok()?;

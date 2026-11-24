@@ -4016,11 +4016,12 @@ describe('built-in commands', () => {
 
   test('skills add prints the sync body before the suggestions', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'clac-body-'))
+    const cwd = process.cwd()
+    process.chdir(tmp)
     try {
       const cli = Cli.create('test', {
         sync: {
           body: 'Steps to finish:\n  1. Authorize the app\n  2. Add the line to AGENTS.md',
-          cwd: tmp,
           suggestions: ['do the thing'],
         },
       })
@@ -4032,15 +4033,18 @@ describe('built-in commands', () => {
       expect(output).toContain('2. Add the line to AGENTS.md')
       expect(output.indexOf('Steps to finish')).toBeLessThan(output.indexOf('Try asking'))
     } finally {
+      process.chdir(cwd)
       await rm(tmp, { force: true, recursive: true })
     }
   })
 
   test('skills add carries the sync body in the structured output', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'clac-body-json-'))
+    const cwd = process.cwd()
+    process.chdir(tmp)
     try {
       const cli = Cli.create('test', {
-        sync: { body: 'Authorize the app', cwd: tmp },
+        sync: { body: 'Authorize the app' },
       })
       cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
       const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
@@ -4048,6 +4052,7 @@ describe('built-in commands', () => {
       expect(output).toContain('"body"')
       expect(output).toContain('Authorize the app')
     } finally {
+      process.chdir(cwd)
       await rm(tmp, { force: true, recursive: true })
     }
   })

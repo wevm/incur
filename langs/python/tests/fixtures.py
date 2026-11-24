@@ -1582,6 +1582,7 @@ class DeployTargetArgs:
 def kit_cli(
     name: str,
     *,
+    cwd: str | None = None,
     mcp: incur.McpOptions | None = None,
     package: str | None = None,
     version: str = "1.4.0",
@@ -1595,6 +1596,7 @@ def kit_cli(
         package=package,
         mcp=mcp,
         sync=incur.Sync(
+            cwd=cwd,
             include=["skills/*", "_root"],
             body="Run `kit auth login` to finish setup.",
             suggestions=["Show my status", "Deploy the app"],
@@ -1737,6 +1739,7 @@ def cli(name: str) -> incur.Cli:
         "kitcmd": lambda: kit_cli(
             "kitcmd", mcp=incur.McpOptions(agents=["cursor", "amp"], command="kit serve --stdio")
         ),
+        "kitcwd": lambda: kit_cli("kitcwd", cwd="vendor"),
         "kitpkg": lambda: kit_cli(
             "kitpkg", package="@acme/kit", mcp=incur.McpOptions(name="acme", agents=["amp"])
         ),

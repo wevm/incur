@@ -709,7 +709,7 @@ export declare namespace create {
       | {
           /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
           body?: string | undefined
-          /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
+          /** Directory that `include` globs resolve against, in both `skills add` and `skills list`. Defaults to the package root of the running bin (the nearest `package.json` above `process.argv[1]`). Project installs (`skills add --no-global`) always go to the working directory, not here. */
           cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
           depth?: number | undefined
@@ -1034,7 +1034,7 @@ async function serveImpl(
     const isMcpAdd = builtinIdx(filtered, name, commands, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
-      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: sync?.cwd })) {
+      if (stored && SyncSkills.hasInstalledSkills(name)) {
         // The stored hash covers every command, deferred groups included.
         await options.load?.()
         const groups = new Map<string, string>()
@@ -1195,10 +1195,10 @@ async function serveImpl(
       }
       try {
         const result = await SyncSkills.list(name, commands, {
-          cwd: sync?.cwd,
           depth: sync?.depth ?? 1,
           description: options.description,
           include: sync?.include,
+          root: sync?.cwd,
           rootCommand: options.rootCommand,
         })
         if (result.length === 0) {
@@ -1251,11 +1251,11 @@ async function serveImpl(
     try {
       stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
-        cwd: sync?.cwd,
         depth,
         description: options.description,
         global,
         include: sync?.include,
+        root: sync?.cwd,
         rootCommand: options.rootCommand,
       })
       stdout('\r\x1b[K')

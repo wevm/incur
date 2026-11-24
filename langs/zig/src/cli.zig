@@ -129,8 +129,9 @@ pub const Options = struct {
 pub const Sync = struct {
     /// Text shown after `skills add` lists the synced skills.
     body: ?[]const u8 = null,
-    /// The directory `include` patterns resolve against. Defaults to the package root for global
-    /// installs and the working directory otherwise.
+    /// The directory `include` patterns resolve against, for `skills add` and `skills list`.
+    /// Defaults to the package root. Project installs (`skills add --no-global`) always go to the
+    /// working directory.
     cwd: ?[]const u8 = null,
     /// Grouping depth for skill files.
     depth: f64 = 1,

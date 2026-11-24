@@ -104,6 +104,34 @@ test('sync results are sorted alphabetically', async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('resolves include globs against root and installs project skills to cwd', async () => {
+  const tmp = join(tmpdir(), `clac-sync-root-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const pkg = join(tmp, 'pkg')
+  const project = join(tmp, 'project')
+  mkdirSync(join(pkg, 'skills', 'extra'), { recursive: true })
+  mkdirSync(project, { recursive: true })
+  writeFileSync(
+    join(pkg, 'skills', 'extra', 'SKILL.md'),
+    ['---', 'name: extra', 'description: Extra skill.', '---', '', '# extra'].join('\n'),
+  )
+
+  const cli = Cli.create('test')
+  const commands = Cli.toCommands.get(cli)!
+  const options = { cwd: project, include: ['skills/*'], root: pkg }
+
+  const result = await SyncSkills.sync('test', commands, { ...options, global: false })
+  expect(result.paths).toEqual([join(project, '.agents', 'skills', 'extra')])
+  expect(existsSync(join(pkg, '.agents'))).toBe(false)
+
+  const listed = await SyncSkills.list('test', commands, options)
+  expect(listed).toEqual([{ name: 'extra', description: 'Extra skill.', installed: true }])
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('writes hash after successful sync', async () => {
   const tmp = join(tmpdir(), `clac-hash-test-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })

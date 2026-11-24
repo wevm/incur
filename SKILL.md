@@ -678,6 +678,7 @@ const cli = Cli.create('my-cli', {
 | Option        | Type       | Description                                                                                          |
 | ------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
 | `body`        | `string`   | Text printed verbatim after the synced skills, for whatever installing them cannot do itself         |
+| `cwd`         | `string`   | Directory `include` globs resolve against. Default: the CLI's package root                           |
 | `depth`       | `number`   | Grouping depth for skill files. `0` = single file, `1` = one per top-level command. Default: `1`     |
 | `include`     | `string[]` | Glob patterns for additional SKILL.md files to include. Use `'_root'` for the project-level SKILL.md |
 | `suggestions` | `string[]` | Example prompts shown after sync to help users get started                                           |

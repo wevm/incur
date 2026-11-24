@@ -255,6 +255,8 @@ Line two. Run `kit ping --help` for usage details.
     monkeypatch.chdir(gone)
     gone.rmdir()
     assert serve(kit(tmp_path, "a"), home, "skills", "list")[0] == 0
+    # Without an entry point, the package root falls back to the missing working directory.
+    monkeypatch.setattr(sys, "argv", [""])
     unrooted = incur.Cli("kit", update=False)
     assert serve(unrooted, home, "skills", "list") == snapshot(
         (
