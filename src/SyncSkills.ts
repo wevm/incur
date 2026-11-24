@@ -24,7 +24,7 @@ export async function sync(
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
   const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
-  const files = Skill.split(name, entries, depth, groups)
+  const files = Skill.split(name, entries, depth, groups, options.command)
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `incur-skills-${name}-`))
   try {
@@ -89,6 +89,8 @@ export async function sync(
 export declare namespace sync {
   /** Options for syncing skills. */
   type Options = {
+    /** Command the generated skill files show in place of the CLI name, such as `bunx @scope/my-cli`. Defaults to the CLI name. */
+    command?: string | undefined
     /** Project directory that `global: false` installs go to. Also resolves `include` globs when `root` is unset. Defaults to `process.cwd()`. */
     cwd?: string | undefined
     /** Grouping depth for skill files. Defaults to `1`. */
@@ -151,7 +153,7 @@ export async function list(
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
   const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
-  const files = Skill.split(name, entries, depth, groups)
+  const files = Skill.split(name, entries, depth, groups, options.command)
 
   const skills: list.Skill[] = []
   const installed = readInstalledSkills(name, { cwd })
@@ -202,6 +204,8 @@ export function hasInstalledSkills(
 export declare namespace list {
   /** Options for listing skills. */
   type Options = {
+    /** Command the generated skill files show in place of the CLI name, such as `bunx @scope/my-cli`. Defaults to the CLI name. */
+    command?: string | undefined
     /** Project directory checked for skills installed with `global: false`. Also resolves `include` globs when `root` is unset. Defaults to `process.cwd()`. */
     cwd?: string | undefined
     /** Grouping depth for skill files. Defaults to `1`. */

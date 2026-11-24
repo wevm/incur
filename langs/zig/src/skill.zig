@@ -245,7 +245,13 @@ pub const File = struct {
 /// directory.
 /// `depth` is a JavaScript number, applied as `slice(0, depth)`.
 pub fn split(a: Allocator, name: []const u8, commands: []const CommandInfo, groups: []const Group, depth: f64) Allocator.Error![]const File {
-    if (depth == 0) return a.dupe(File, &.{try renderFile(a, "", name, name, commands, groups, name)});
+    return splitAs(a, name, name, commands, groups, depth);
+}
+
+/// Splits commands into skill files as `split` does, with the commands the files show starting
+/// with `command` instead of the CLI name. Skill names still derive from `name`.
+pub fn splitAs(a: Allocator, name: []const u8, command: []const u8, commands: []const CommandInfo, groups: []const Group, depth: f64) Allocator.Error![]const File {
+    if (depth == 0) return a.dupe(File, &.{try renderFile(a, "", name, command, name, commands, groups, name)});
     const Bucket = struct { key: []const u8, commands: std.ArrayList(CommandInfo) = .empty };
     var buckets: std.ArrayList(Bucket) = .empty;
     for (commands) |cmd| {
@@ -274,7 +280,7 @@ pub fn split(a: Allocator, name: []const u8, commands: []const CommandInfo, grou
             break :prefix try std.mem.join(a, " ", parts);
         } else "";
         const title = if (prefix.len > 0) try std.fmt.allocPrint(a, "{s} {s}", .{ name, prefix }) else name;
-        slot.* = try renderFile(a, b.key, name, title, b.commands.items, groups, if (prefix.len > 0) prefix else null);
+        slot.* = try renderFile(a, b.key, name, command, title, b.commands.items, groups, if (prefix.len > 0) prefix else null);
     }
     return files;
 }
@@ -287,25 +293,29 @@ fn leading(a: Allocator, path: []const u8, depth: f64) Allocator.Error![]const [
     return segments.items[0..js.relativeIndex(depth, segments.items.len)];
 }
 
-/// Renders a skill file: frontmatter and command bodies.
-fn renderFile(a: Allocator, dir: []const u8, cli: []const u8, title: []const u8, commands: []const CommandInfo, groups: []const Group, prefix: ?[]const u8) Allocator.Error!File {
+/// Renders a skill file: frontmatter and command bodies. `title` names the skill; the commands
+/// shown start with `command` instead of `cli`.
+fn renderFile(a: Allocator, dir: []const u8, cli: []const u8, command: []const u8, title: []const u8, commands: []const CommandInfo, groups: []const Group, prefix: ?[]const u8) Allocator.Error!File {
     const group: ?[]const u8 = if (prefix) |p| for (groups) |g| {
         if (std.mem.eql(u8, g.name, p)) break g.description;
     } else null else null;
     const fallback = if (commands.len == 1) errorsNonEmpty(commands[0].description) else null;
+    const shown = try std.fmt.allocPrint(a, "{s}{s}", .{ command, title[cli.len..] });
     const description = if (errorsNonEmpty(group orelse fallback)) |d|
-        try std.fmt.allocPrint(a, "{s}. Run `{s} --help` for usage details.", .{ if (std.mem.endsWith(u8, d, ".")) d[0 .. d.len - 1] else d, title })
+        try std.fmt.allocPrint(a, "{s}. Run `{s} --help` for usage details.", .{ if (std.mem.endsWith(u8, d, ".")) d[0 .. d.len - 1] else d, shown })
     else
-        try std.fmt.allocPrint(a, "Run `{s} --help` for usage details.", .{title});
+        try std.fmt.allocPrint(a, "Run `{s} --help` for usage details.", .{shown});
+    // The binary the commands run, such as `bunx` for `bunx @scope/cli`.
+    const bin = if (std.mem.eql(u8, command, cli)) cli else command[0 .. std.mem.indexOfScalar(u8, command, ' ') orelse command.len];
     const slug = try slugify(a, title);
     var fm: json.ObjectBuilder = .{};
     try fm.put(a, "name", .{ .string = slug });
     try fm.put(a, "description", .{ .string = description });
-    try fm.put(a, "requires_bin", .{ .string = cli });
-    try fm.put(a, "command", .{ .string = title });
+    try fm.put(a, "requires_bin", .{ .string = bin });
+    try fm.put(a, "command", .{ .string = shown });
     const frontmatter = std.mem.trimEnd(u8, try yaml.stringifyUnfolded(a, fm.finish()), " \t\r\n");
     var bodies: std.ArrayList([]const u8) = .empty;
-    for (commands) |cmd| try bodies.append(a, try body(a, cli, cmd, 1));
+    for (commands) |cmd| try bodies.append(a, try body(a, command, cmd, 1));
     return .{
         .name = slug,
         .dir = dir,

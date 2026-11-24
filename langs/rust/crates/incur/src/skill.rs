@@ -339,16 +339,19 @@ pub(crate) struct File {
 }
 
 /// Splits commands into skill files, one per group of `depth` leading command segments. Depth
-/// 0 puts every command in one root-level file.
+/// 0 puts every command in one root-level file. Skill names derive from `name`; the commands
+/// the files show start with `command`.
 pub(crate) fn split(
     name: &str,
     commands: &[CommandInfo],
     depth: usize,
     groups: &IndexMap<String, String>,
+    command: &str,
 ) -> Vec<File> {
     if depth == 0 {
         return vec![render_group(
             name,
+            command,
             name,
             commands,
             groups,
@@ -380,14 +383,16 @@ pub(crate) fn split(
                 format!("{name} {prefix}")
             };
             let prefix = (!prefix.is_empty()).then_some(prefix.as_str());
-            render_group(name, &title, &cmds, groups, prefix, dir)
+            render_group(name, command, &title, &cmds, groups, prefix, dir)
         })
         .collect()
 }
 
-/// Renders a skill file: frontmatter, then command bodies.
+/// Renders a skill file: frontmatter, then command bodies. `title` names the skill; the commands
+/// shown start with `command` instead of `cli`.
 fn render_group(
     cli: &str,
+    command: &str,
     title: &str,
     cmds: &[CommandInfo],
     groups: &IndexMap<String, String>,
@@ -399,23 +404,30 @@ fn render_group(
         _ => None,
     };
     let desc = prefix.and_then(|p| groups.get(p).cloned()).or(fallback);
+    let shown = format!("{command}{}", &title[cli.len()..]);
     let description = match desc {
         Some(desc) => format!(
-            "{}. Run `{title} --help` for usage details.",
+            "{}. Run `{shown} --help` for usage details.",
             desc.strip_suffix('.').unwrap_or(&desc)
         ),
-        None => format!("Run `{title} --help` for usage details."),
+        None => format!("Run `{shown} --help` for usage details."),
+    };
+    // The binary the commands run, such as `bunx` for `bunx @scope/cli`.
+    let bin = if command == cli {
+        cli
+    } else {
+        command.split(' ').next().unwrap_or_default()
     };
     let name = slugify(title);
     let mut meta = serde_json::Map::new();
     meta.insert("name".into(), name.clone().into());
     meta.insert("description".into(), description.clone().into());
-    meta.insert("requires_bin".into(), cli.into());
-    meta.insert("command".into(), title.into());
+    meta.insert("requires_bin".into(), bin.into());
+    meta.insert("command".into(), shown.into());
     let frontmatter = crate::yaml::stringify_unfolded(&Value::Object(meta));
     let body = cmds
         .iter()
-        .map(|cmd| body(cli, cmd, 1))
+        .map(|cmd| body(command, cmd, 1))
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
     File {

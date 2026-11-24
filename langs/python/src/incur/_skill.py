@@ -259,15 +259,21 @@ def slugify(value: str) -> str:
 
 
 def split(
-    name: str, commands: list[CommandInfo], depth: float, groups: dict[str, str]
+    name: str,
+    commands: list[CommandInfo],
+    depth: float,
+    groups: dict[str, str],
+    command: str | None = None,
 ) -> list[File]:
     """Splits commands into skill files, grouped by their first `depth` name segments.
 
     `depth` bounds a JavaScript `slice`, as `--depth` parses it: fractions truncate, negative
-    values count from the end, and `NaN` takes no segments.
+    values count from the end, and `NaN` takes no segments. Skill names derive from `name`; the
+    commands the files show start with `command`, which defaults to `name`.
     """
+    shown = name if command is None else command
     if depth == 0:
-        return [_group(name, name, commands, groups, name, "")]
+        return [_group(name, shown, name, commands, groups, name, "")]
 
     def head(cmd: str) -> list[str]:
         segments = cmd.split(" ")
@@ -283,32 +289,38 @@ def split(
         first = cmds[0]
         prefix = " ".join(head(first.name)) if first.name else ""
         title = f"{name} {prefix}" if prefix else name
-        files.append(_group(name, title, cmds, groups, prefix or None, key))
+        files.append(_group(name, shown, title, cmds, groups, prefix or None, key))
     return files
 
 
 def _group(
     cli: str,
+    command: str,
     title: str,
     cmds: list[CommandInfo],
     groups: dict[str, str],
     prefix: str | None,
     directory: str,
 ) -> File:
-    """Renders a skill file: frontmatter, then command bodies."""
+    """Renders a skill file: frontmatter, then command bodies.
+
+    `title` names the skill; the commands shown start with `command` instead of `cli`.
+    """
     described = groups.get(prefix) if prefix else None
     fallback = cmds[0].description if len(cmds) == 1 and cmds[0].description else None
     desc = described if described is not None else fallback
-    usage = f"Run `{title} --help` for usage details."
+    shown = command + title[len(cli) :]
+    usage = f"Run `{shown} --help` for usage details."
     description = f"{desc.removesuffix('.')}. {usage}" if desc else usage
     frontmatter = {
         "name": slugify(title),
         "description": description,
-        "requires_bin": cli,
-        "command": title,
+        # The binary the commands run, such as `bunx` for `bunx @scope/cli`.
+        "requires_bin": cli if command == cli else command.split(" ", maxsplit=1)[0],
+        "command": shown,
     }
     meta = _yaml.stringify(typing.cast("Json", frontmatter), line_width=0).rstrip()
-    body = "\n\n---\n\n".join(_body(cli, cmd, 1) for cmd in cmds)
+    body = "\n\n---\n\n".join(_body(command, cmd, 1) for cmd in cmds)
     return File(directory, f"---\n{meta}\n---\n\n{body}", description)
 
 

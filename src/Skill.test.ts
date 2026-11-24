@@ -461,6 +461,35 @@ describe('split', () => {
     expect(files[0]!.content).toContain('# test\n\nFetch a URL')
     expect(files[0]!.content).toContain('# test ping')
   })
+
+  test('shows command in place of the CLI name, keeping skill names', () => {
+    const files = Skill.split(
+      'gh',
+      [{ name: 'pr list', description: 'List PRs', examples: [{ command: 'pr list' }] }],
+      1,
+      groups,
+      'bunx @acme/gh',
+    )
+    expect(files.map((f) => f.dir)).toEqual(['pr'])
+    expect(files[0]!.content).toMatchInlineSnapshot(`
+      "---
+      name: gh-pr
+      description: Manage pull requests. Run \`bunx @acme/gh pr --help\` for usage details.
+      requires_bin: bunx
+      command: bunx @acme/gh pr
+      ---
+
+      # bunx @acme/gh pr list
+
+      List PRs
+
+      ## Examples
+
+      \`\`\`sh
+      bunx @acme/gh pr list
+      \`\`\`"
+    `)
+  })
 })
 
 describe('discovery', () => {

@@ -1463,6 +1463,7 @@ class _Run:
         assert sync is not None
         return SyncOptions(
             env=self.env_map,
+            command=sync.command,
             cwd=sync.cwd,
             depth=sync.depth,
             description=cli.description,

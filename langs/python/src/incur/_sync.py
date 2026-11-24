@@ -28,6 +28,9 @@ class Sync:
 
     body: str | None = None
     """Text printed after the synced skills, for whatever installing skills cannot do itself."""
+    command: str | None = None
+    """Command generated skill files show in place of the CLI name, such as `bunx @scope/my-cli`.
+    Skill names still derive from the CLI name."""
     cwd: str | None = None
     """Directory that resolves `include` globs, for `skills add` and `skills list`. Defaults to the
     package root: the nearest directory above the entry point with a `package.json`. Project
@@ -46,6 +49,7 @@ class Options:
     """The settings of one sync or listing."""
 
     env: Mapping[str, str]
+    command: str | None = None
     cwd: str | None = None
     depth: float = 1
     description: str | None = None
@@ -300,7 +304,7 @@ def _included(pattern: str, cwd: str) -> list[str]:
 def _generated(
     name: str, infos: list[_skill.CommandInfo], groups: dict[str, str], options: Options
 ) -> list[tuple[_skill.File, str, str | None]]:
-    files = _skill.split(name, infos, options.depth, groups)
+    files = _skill.split(name, infos, options.depth, groups, options.command)
     out: list[tuple[_skill.File, str, str | None]] = []
     for file in files:
         # The rendered description, which a block scalar in the frontmatter would obscure.

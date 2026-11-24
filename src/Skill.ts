@@ -91,14 +91,16 @@ export function generate(
   return sections.join('\n\n')
 }
 
-/** Splits commands into skill files grouped by depth. */
+/** Splits commands into skill files grouped by depth. Skill names derive from `name`; the commands the files show start with `command`, which defaults to `name`. */
 export function split(
   name: string,
   commands: CommandInfo[],
   depth: number,
   groups: Map<string, string> = new Map(),
+  command = name,
 ): File[] {
-  if (depth === 0) return [{ dir: '', content: renderGroup(name, name, commands, groups, name) }]
+  if (depth === 0)
+    return [{ dir: '', content: renderGroup(name, command, name, commands, groups, name) }]
 
   const buckets = new Map<string, CommandInfo[]>()
   for (const cmd of commands) {
@@ -122,13 +124,14 @@ export function split(
       const first = cmds[0]!
       const prefix = !first.name ? '' : first.name.split(' ').slice(0, depth).join(' ')
       const title = prefix ? `${name} ${prefix}` : name
-      return { dir, content: renderGroup(name, title, cmds, groups, prefix || undefined) }
+      return { dir, content: renderGroup(name, command, title, cmds, groups, prefix || undefined) }
     })
 }
 
-/** @internal Renders a group-level frontmatter + command bodies. */
+/** @internal Renders a group-level frontmatter + command bodies. `title` names the skill; the commands shown start with `command` instead of `cli`. */
 function renderGroup(
   cli: string,
+  command: string,
   title: string,
   cmds: CommandInfo[],
   groups: Map<string, string>,
@@ -137,19 +140,26 @@ function renderGroup(
   const groupDesc = prefix ? groups.get(prefix) : undefined
   const fallbackDesc = cmds.length === 1 && cmds[0]!.description ? cmds[0]!.description : undefined
   const desc = groupDesc ?? fallbackDesc
+  const shown = command + title.slice(cli.length)
   const description = desc
-    ? `${desc.replace(/\.$/, '')}. Run \`${title} --help\` for usage details.`
-    : `Run \`${title} --help\` for usage details.`
+    ? `${desc.replace(/\.$/, '')}. Run \`${shown} --help\` for usage details.`
+    : `Run \`${shown} --help\` for usage details.`
 
   const fm = Yaml.loadSync()
     .stringify(
-      { name: slugify(title), description, requires_bin: cli, command: title },
+      {
+        name: slugify(title),
+        description,
+        // The binary the commands run, such as `bunx` for `bunx @scope/cli`.
+        requires_bin: command === cli ? cli : command.split(' ')[0],
+        command: shown,
+      },
       { lineWidth: 0 },
     )
     .trimEnd()
   const fmBlock = `---\n${fm}\n---`
 
-  const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')
+  const body = cmds.map((cmd) => renderCommandBody(command, cmd)).join('\n\n---\n\n')
   return `${fmBlock}\n\n${body}`
 }
 

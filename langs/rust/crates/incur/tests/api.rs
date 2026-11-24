@@ -2193,7 +2193,7 @@ fn describes_builders_and_bodies() {
     Openapi { mode: Operation, versions: All, .. }
     Mcp { agents: [], command: None, discovery: Progressive, enabled: true, exclude: [], include: [], instructions: None, name: None, stateless: true, title: None }
     Tool { annotations: None, description: None, enabled: true, instructions: None, name: None }
-    SkillSync { body: None, cwd: None, depth: None, enabled: true, include: [], suggestions: [] }
+    SkillSync { body: None, command: None, cwd: None, depth: None, enabled: true, include: [], suggestions: [] }
     "#);
 }
 

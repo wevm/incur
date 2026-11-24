@@ -40,6 +40,8 @@ pub(crate) fn home(env: &dyn Fn(&str) -> Option<String>) -> PathBuf {
 pub struct SkillSync {
     /// Text printed after the synced skills.
     pub(crate) body: Option<String>,
+    /// The command generated skill files show in place of the CLI name.
+    pub(crate) command: Option<String>,
     /// Directory `include` globs resolve against.
     pub(crate) cwd: Option<PathBuf>,
     /// Default grouping depth.
@@ -72,6 +74,7 @@ impl SkillSync {
     pub fn new() -> Self {
         Self {
             body: None,
+            command: None,
             cwd: None,
             depth: None,
             enabled: true,
@@ -85,6 +88,14 @@ impl SkillSync {
     #[must_use]
     pub fn body(mut self, body: impl Into<String>) -> Self {
         self.body = Some(body.into());
+        self
+    }
+
+    /// Sets the command generated skill files show in place of the CLI name, such as
+    /// `bunx @scope/my-cli`. Skill names still derive from the CLI name.
+    #[must_use]
+    pub fn command(mut self, command: impl Into<String>) -> Self {
+        self.command = Some(command.into());
         self
     }
 
@@ -784,6 +795,7 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
         source.commands,
         depth(depth_value),
         source.groups,
+        source.settings.command.as_deref().unwrap_or(source.name),
     );
     let tmp = temp_dir(source.env, source.name)?;
     let result = (|| {
@@ -904,6 +916,7 @@ pub(crate) fn list(source: &Source<'_>, depth_value: f64) -> Vec<Skill> {
         source.commands,
         depth(depth_value),
         source.groups,
+        source.settings.command.as_deref().unwrap_or(source.name),
     );
     let installed = installed_skills(source.name, source.env);
     let mut skills = files
