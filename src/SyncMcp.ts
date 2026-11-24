@@ -16,8 +16,7 @@ export async function register(
 ): Promise<register.Result> {
   const runner = detectRunner()
   const command =
-    options.command ??
-    defaultCommand(options.cli ?? name, runner, options.package, options.version)
+    options.command ?? defaultCommand(options.cli ?? name, runner, options.package, options.version)
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 

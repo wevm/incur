@@ -19,8 +19,11 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
+      # `pnpm check` fixes files in place, so fail when it leaves changes.
       - name: Check code
-        run: pnpm check
+        run: |
+          pnpm check
+          git diff --exit-code
 
       - name: Check types
         run: pnpm check:types
