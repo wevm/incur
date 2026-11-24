@@ -141,8 +141,10 @@ Run the workflow by hand (Actions → Release Language Ports → Run workflow on
 current version, for example after the one-time setup:
 
 - crates.io: publish the first versions of `incur-macros` and `incur` by hand
-  (`cargo publish -p incur-macros && cargo publish -p incur`), then add `wevm/incur` with workflow
-  `release-langs.yml` and environment `crates-io` as a trusted publisher on both crates.
+  (`cargo publish -p incur-macros && cargo publish -p incur`), then add `wevm/incur` with environment
+  `crates-io` as a trusted publisher on both crates, once with workflow `main.yml` and once with
+  `release-langs.yml`. crates.io matches the calling workflow, which is `main.yml` for releases
+  and `release-langs.yml` for manual runs.
 - PyPI: add a pending trusted publisher for project `incur-cli` with workflow `release-langs.yml` and
   environment `pypi`.
 - GitHub: create the `crates-io` and `pypi` environments (optionally with required reviewers).
