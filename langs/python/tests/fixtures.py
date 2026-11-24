@@ -1364,7 +1364,9 @@ def raw() -> incur.Cli:
 
 
 def oa() -> incur.Cli:
-    cli = incur.Cli("oa", description="OpenAPI commands", update=False, sync=False)
+    cli = incur.Cli(
+        "oa", description="OpenAPI commands", update=False, sync=False, config=incur.Config()
+    )
     cli.gateway("ops", upstream, description="Operation mode", openapi=PET_SPEC)
     cli.gateway(
         "ns",

@@ -709,6 +709,7 @@ pub(crate) fn oa() -> Cli {
         .description("OpenAPI commands")
         .update(false)
         .sync(false)
+        .config(Config::default())
         .fetch_command(
             "ops",
             FetchCommand::new(upstream_fetch())

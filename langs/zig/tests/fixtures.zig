@@ -1269,7 +1269,7 @@ fn searchOperation(op: incur.openapi.Operation) bool {
 }
 
 fn oa(gpa: Allocator) !*incur.Cli {
-    const cli = try incur.Cli.create(gpa, "oa", .{ .description = "OpenAPI commands", .update = null, .sync = null });
+    const cli = try incur.Cli.create(gpa, "oa", .{ .description = "OpenAPI commands", .update = null, .sync = null, .config = .{} });
     errdefer cli.destroy();
     try cli.gateway("ops", .{ .description = "Operation mode", .fetch = upstream_source, .openapi = .{ .json = pet_spec } });
     try cli.gateway("ns", .{ .description = "Namespace mode", .fetch = upstream_source, .base_path = "/base", .openapi = .{ .json = pet_spec }, .openapi_config = .{

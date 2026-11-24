@@ -128,10 +128,20 @@ ConfigSection = Callable[[str], "dict[str, Json] | None"]
 def with_defaults(ty: Type, values: dict[str, Json]) -> Type:
     """Returns a schema with parsed values as the defaults of their fields."""
     fields = [
-        replace(f, ty=replace(f.ty, default=values[f.name])) if f.name in values else f
+        replace(f, ty=_with_default(f.ty, values[f.name])) if f.name in values else f
         for f in ty.fields
     ]
     return replace(ty, fields=fields)
+
+
+def _with_default(ty: Type, value: Json) -> Type:
+    """Returns a field schema with a new default."""
+    if ty.raw is None:
+        return replace(ty, default=value)
+    # `.default()` wraps a converted schema: its JSON leads with the new default, and the field
+    # is no longer optional.
+    raw = {"default": value, **{k: v for k, v in ty.raw.items() if k != "default"}}
+    return replace(ty, default=value, optional=False, required=None, raw=raw)
 
 
 def collect(

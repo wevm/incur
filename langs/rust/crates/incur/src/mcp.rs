@@ -328,15 +328,39 @@ pub(crate) struct Defaults<'a> {
 
 /// Returns a schema with parsed values as the defaults of their fields.
 pub(crate) fn with_defaults(ty: &Type, values: &Map<String, Value>) -> Type {
-    let mut ty = ty.clone();
-    if let Kind::Object(fields) = &mut ty.kind {
-        for field in fields {
+    let fields = ty
+        .fields()
+        .iter()
+        .map(|field| {
+            let mut field = field.clone();
             if let Some(value) = values.get(&field.name) {
                 field.ty.default = Some(value.clone());
+                if let Some(converted) = &mut field.ty.converted {
+                    // `.default()` wraps a converted schema: its JSON leads with the new default,
+                    // and the field is no longer optional.
+                    field.ty.optional = false;
+                    converted.json = with_default(&converted.json, value);
+                }
             }
+            field
+        })
+        .collect();
+    Type {
+        kind: Kind::Object(fields),
+        ..ty.clone()
+    }
+}
+
+/// Returns a JSON Schema node led by `default`, replacing any default it has.
+fn with_default(json: &Value, value: &Value) -> Value {
+    let mut out = Map::new();
+    out.insert("default".into(), value.clone());
+    for (key, node) in json.as_object().into_iter().flatten() {
+        if key != "default" {
+            out.insert(key.clone(), node.clone());
         }
     }
-    ty
+    Value::Object(out)
 }
 
 /// Collects the tools of a command tree, filtered and sorted by name.
@@ -408,13 +432,8 @@ fn entries(
                 }
             }
             Entry::Fetch(fetch) => {
-                out.push(tool(
-                    &fetch.as_command(),
-                    &path,
-                    middleware,
-                    globals,
-                    config,
-                )?);
+                let command = fetch.as_command();
+                out.push(tool(&command, &path, middleware, globals, config)?);
             }
             Entry::Group(group) => {
                 if !group.mcp {

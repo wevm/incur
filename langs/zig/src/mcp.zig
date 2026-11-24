@@ -102,11 +102,27 @@ fn withDefaults(a: Allocator, ty: *const Type, values: []const Value.Entry) Allo
     const fields = try a.dupe(schema.Field, ty.fields());
     for (fields) |*f| for (values) |entry| if (std.mem.eql(u8, entry.key, f.name)) {
         f.ty.default = entry.value;
+        // `.default()` wraps a converted schema: its JSON leads with the new default, and the
+        // field is no longer optional.
+        const emitted = f.ty.json orelse continue;
+        f.ty.optional = false;
+        f.ty.optional_outer = false;
+        const json_ = try a.create(schema.Emitted);
+        json_.* = .{ .output = try withDefault(a, emitted.output, entry.value), .input = try withDefault(a, emitted.input, entry.value) };
+        f.ty.json = json_;
     };
     const out = try a.create(Type);
     out.* = ty.*;
     out.kind = .{ .object = fields };
     return out;
+}
+
+/// Returns a JSON Schema node led by `default`, replacing any default it has.
+fn withDefault(a: Allocator, node: Value, value: Value) Allocator.Error!Value {
+    var out: json.ObjectBuilder = .{};
+    try out.put(a, "default", value);
+    for (node.object) |entry| if (!std.mem.eql(u8, entry.key, "default")) try out.put(a, entry.key, entry.value);
+    return out.finish();
 }
 
 /// Collects the CLI's commands as tools, filtered and sorted by name. Each command's section of

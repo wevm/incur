@@ -1032,6 +1032,7 @@ const oa = Cli.create('oa', {
   description: 'OpenAPI commands',
   update: false,
   sync: false,
+  config: {},
 })
   .command('ops', { description: 'Operation mode', fetch: upstream, openapi: petSpec })
   .command('ns', {
