@@ -898,6 +898,7 @@
 {"cli": "app", "argv": ["tags", "t", "--", "--tag", "x"]},
 {"cli": "app", "argv": ["tags", "t", "--", "--json"]},
 {"cli": "app", "argv": ["greet", "bob", "--", "--json"]},
+{"cli": "cfg", "argv": ["echo", "hello", "--prefix", "--", "--json"]},
 {"cli": "globals", "argv": ["show", "--verbose", "true"]},
 {"cli": "greet", "argv": ["--bogus"]},
 {"cli": "greet", "argv": ["--bogus"], "tty": true},

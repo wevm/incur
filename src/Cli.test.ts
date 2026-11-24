@@ -3117,19 +3117,6 @@ describe('help', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  test('-- keeps built-in flag-shaped tokens positional', async () => {
-    const run = vi.fn(() => ({ cleaned: 'a' }))
-    const cli = Cli.create('mycli').command('clean', {
-      args: z.object({ target: z.string() }),
-      run,
-    })
-
-    const { output, exitCode } = await serve(cli, ['clean', 'a', '--', '--json'])
-    expect(exitCode).toBe(1)
-    expect(output).toContain('Unexpected argument: --json')
-    expect(run).not.toHaveBeenCalled()
-  })
-
   test('global boolean leaves a required boolean-looking positional intact', async () => {
     const cli = Cli.create('mycli', {
       globals: z.object({ dryRun: z.boolean().default(false) }),

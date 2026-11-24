@@ -2837,10 +2837,6 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
-    if (token === '--') {
-      rest.push(...argv.slice(i))
-      break
-    }
     if (token === '--full-output') fullOutput = true
     else if (token === '--llms') llms = true
     else if (token === '--llms-full') llmsFull = true
