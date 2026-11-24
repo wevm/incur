@@ -24,6 +24,9 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
   ])
   // Instances are created on the first message, so surface tool registration errors now.
   collectTools(commands, [], [], options.tools, options.globals, options.defaults?.options)
+  // `cli.resource()`, `cli.resourceTemplate()`, and `cli.prompt()` pass their typed definitions here.
+  const { prompts, resources, resourceTemplates } = options as Features
+  for (const template of resourceTemplates ?? []) templatePattern(template.uriTemplate)
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   serveStdio(
@@ -35,6 +38,9 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
         cache: options.cache,
         instructions: options.instructions,
         middlewares: options.middlewares as MiddlewareHandler[] | undefined,
+        prompts,
+        resources,
+        resourceTemplates,
         title: options.title,
         tools: options.tools,
         vars: options.vars,
@@ -74,6 +80,7 @@ export function createServer(
     vars: options.vars,
     version,
   })
+  registerFeatures(mcp, server, options)
   return server
 }
 
@@ -82,12 +89,338 @@ function cacheHints({ ttlMs, cacheScope }: CacheHint) {
     ...(ttlMs !== undefined ? { ttlMs } : undefined),
     ...(cacheScope ? { cacheScope } : undefined),
   }
-  return { 'tools/list': hint, 'server/discover': hint }
+  return {
+    'tools/list': hint,
+    'prompts/list': hint,
+    'resources/list': hint,
+    'resources/templates/list': hint,
+    'server/discover': hint,
+  }
+}
+
+/** A resource's contents, as `resources/read` returns them. `uri` defaults to the URI read, and `mimeType` to the resource's. */
+export type ResourceContents =
+  | {
+      /** The URI of these contents. */
+      uri?: string | undefined
+      /** The MIME type. */
+      mimeType?: string | undefined
+      /** The text. */
+      text: string
+    }
+  | {
+      /** The URI of these contents. */
+      uri?: string | undefined
+      /** The MIME type. */
+      mimeType?: string | undefined
+      /** The bytes, base64-encoded. */
+      blob: string
+    }
+
+/** What a resource read returns: text, one set of contents, or several. */
+export type ReadResult = string | ResourceContents | ResourceContents[]
+
+/** Suggests values for a prompt argument or URI template variable from its partial `value`. `context.arguments` holds the values already chosen. Clients receive the first 100. */
+export type Completer = (
+  value: string,
+  context: { arguments: Record<string, string> },
+) => string[] | Promise<string[]>
+
+/** A resource at a fixed URI. */
+export type Resource = {
+  /** The URI clients read, matched exactly. */
+  uri: string
+  /** Programmatic name. */
+  name: string
+  /** Human-readable title. */
+  title?: string | undefined
+  /** Description. */
+  description?: string | undefined
+  /** MIME type of the contents. */
+  mimeType?: string | undefined
+  /** Icons clients may show. */
+  icons?: Icon[] | undefined
+  /** Reads the contents. */
+  read: () => ReadResult | Promise<ReadResult>
+}
+
+/** Resources whose URIs match a template such as `docs://{section}/{page}`. Templates support `{name}` expressions, which match one or more characters other than `/` and `,`. */
+export type ResourceTemplate = {
+  /** The URI template. */
+  uriTemplate: string
+  /** Programmatic name. */
+  name: string
+  /** Human-readable title. */
+  title?: string | undefined
+  /** Description. */
+  description?: string | undefined
+  /** MIME type of the contents. */
+  mimeType?: string | undefined
+  /** Icons clients may show. */
+  icons?: Icon[] | undefined
+  /** Completers keyed by template variable. */
+  complete?: Record<string, Completer> | undefined
+  /** Reads the contents of a matching URI. */
+  read: (uri: string, variables: Record<string, string>) => ReadResult | Promise<ReadResult>
+}
+
+/** A content block in a prompt message, passed to clients as is. */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image' | 'audio'; data: string; mimeType: string }
+  | { type: 'resource_link'; uri: string; name: string; mimeType?: string | undefined }
+  | { type: 'resource'; resource: ResourceContents & { uri: string } }
+
+/** A message a prompt renders. */
+export type PromptMessage = {
+  /** Who speaks the message. */
+  role: 'user' | 'assistant'
+  /** The message content. */
+  content: ContentBlock
+}
+
+/** A prompt template clients can list and render. */
+export type Prompt<args extends z.ZodObject<any> | undefined = z.ZodObject<any> | undefined> = {
+  /** Programmatic name. */
+  name: string
+  /** Human-readable title. */
+  title?: string | undefined
+  /** Description. */
+  description?: string | undefined
+  /** Icons clients may show. */
+  icons?: Icon[] | undefined
+  /** Arguments schema. MCP clients send every argument as a string. */
+  args?: args | undefined
+  /** Completers keyed by argument name. */
+  complete?:
+    | (args extends z.ZodObject<any>
+        ? Partial<Record<keyof z.output<args>, Completer>>
+        : Record<string, Completer>)
+    | undefined
+  /** Renders the prompt: text becomes one user message. */
+  get: (
+    args: args extends z.ZodObject<any> ? z.output<args> : Record<string, string>,
+  ) => string | PromptMessage[] | Promise<string | PromptMessage[]>
+}
+
+/** @internal Resources, resource templates, and prompts served next to tools, registered with `cli.resource()`, `cli.resourceTemplate()`, and `cli.prompt()`, which type each prompt from its own schema. */
+export type Features = {
+  /** Prompts. */
+  prompts?: Prompt<any>[] | undefined
+  /** Resources at fixed URIs. */
+  resources?: Resource[] | undefined
+  /** Resource templates. */
+  resourceTemplates?: ResourceTemplate[] | undefined
+}
+
+/** Registers `resources/*`, `prompts/*`, and `completion/complete` for configured features. */
+function registerFeatures(
+  mcp: typeof import('@modelcontextprotocol/server'),
+  server: McpServer,
+  { prompts = [], resources = [], resourceTemplates = [] }: Features,
+) {
+  const { ProtocolError, ResourceNotFoundError } = mcp
+  const invalid = (message: string, data?: unknown) =>
+    new ProtocolError(-32602 as any, message, data)
+  const templates = resourceTemplates.map((template) => ({
+    template,
+    pattern: templatePattern(template.uriTemplate),
+  }))
+  const low = server.server
+  const icons = (value: { icons?: Icon[] | undefined }) =>
+    value.icons ? { icons: value.icons } : undefined
+  if (resources.length > 0 || templates.length > 0) {
+    low.registerCapabilities({ resources: { listChanged: true } })
+    low.setRequestHandler('resources/list', () => ({
+      resources: resources.map((resource) => ({
+        uri: resource.uri,
+        name: resource.name,
+        ...describe(resource),
+        ...(resource.mimeType ? { mimeType: resource.mimeType } : undefined),
+        ...icons(resource),
+      })),
+    }))
+    low.setRequestHandler('resources/templates/list', () => ({
+      resourceTemplates: resourceTemplates.map((template) => ({
+        uriTemplate: template.uriTemplate,
+        name: template.name,
+        ...describe(template),
+        ...(template.mimeType ? { mimeType: template.mimeType } : undefined),
+        ...icons(template),
+      })),
+    }))
+    low.setRequestHandler('resources/read', async (request: any) => {
+      const { uri } = request.params as { uri: string }
+      const resource = resources.find((resource) => resource.uri === uri)
+      if (resource) return { contents: contents(await resource.read(), uri, resource.mimeType) }
+      for (const { template, pattern } of templates) {
+        const variables = matchTemplate(pattern, uri)
+        if (!variables) continue
+        return { contents: contents(await template.read(uri, variables), uri, template.mimeType) }
+      }
+      throw new ResourceNotFoundError(uri)
+    })
+  }
+  if (prompts.length > 0) {
+    low.registerCapabilities({ prompts: { listChanged: true } })
+    low.setRequestHandler('prompts/list', () => ({
+      prompts: prompts.map((prompt) => ({
+        name: prompt.name,
+        ...describe(prompt),
+        ...(prompt.args ? { arguments: promptArguments(prompt.args) } : undefined),
+        ...icons(prompt),
+      })),
+    }))
+    low.setRequestHandler('prompts/get', async (request: any) => {
+      const { name, arguments: raw = {} } = request.params as {
+        name: string
+        arguments?: Record<string, string>
+      }
+      const prompt = prompts.find((prompt) => prompt.name === name)
+      if (!prompt) throw invalid(`Prompt ${name} not found`)
+      let args: any = raw
+      if (prompt.args) {
+        const parsed = prompt.args.safeParse(raw)
+        if (!parsed.success)
+          throw invalid(`Invalid arguments for prompt ${name}: ${issues(parsed.error.issues)}`)
+        args = parsed.data
+      }
+      const rendered = await prompt.get(args)
+      return {
+        ...(prompt.description ? { description: prompt.description } : undefined),
+        messages:
+          typeof rendered === 'string'
+            ? [{ role: 'user', content: { type: 'text', text: rendered } }]
+            : rendered,
+      }
+    })
+  }
+  if (prompts.length > 0 || templates.length > 0) {
+    low.registerCapabilities({ completions: {} })
+    low.setRequestHandler('completion/complete', async (request: any) => {
+      const { ref, argument, context } = request.params as {
+        ref: { type: string; name?: string; uri?: string }
+        argument: { name: string; value: string }
+        context?: { arguments?: Record<string, string> }
+      }
+      const completer = (() => {
+        // A prompt argument.
+        if (ref.type === 'ref/prompt') {
+          const prompt = prompts.find((prompt) => prompt.name === ref.name)
+          if (!prompt) throw invalid(`Prompt ${ref.name} not found`)
+          return own(prompt.complete, argument.name)
+        }
+        // A template variable; a fixed resource has nothing to complete.
+        const template = resourceTemplates.find((template) => template.uriTemplate === ref.uri)
+        if (template) return own(template.complete, argument.name)
+        if (resources.some((resource) => resource.uri === ref.uri)) return undefined
+        throw invalid(`Resource template ${ref.uri} not found`)
+      })()
+      const values = completer
+        ? await completer(argument.value, { arguments: context?.arguments ?? {} })
+        : []
+      return {
+        completion: {
+          values: values.slice(0, 100),
+          ...(completer ? { total: values.length } : undefined),
+          hasMore: values.length > 100,
+        },
+      }
+    })
+  }
+}
+
+/** The title and description of a feature, when set. */
+function describe(value: { title?: string | undefined; description?: string | undefined }) {
+  return {
+    ...(value.title ? { title: value.title } : undefined),
+    ...(value.description ? { description: value.description } : undefined),
+  }
+}
+
+/** Returns a completer the definition itself declares, ignoring inherited properties such as `toString`. */
+function own(complete: Partial<Record<string, Completer>> | undefined, name: string) {
+  return complete && Object.hasOwn(complete, name) ? complete[name] : undefined
+}
+
+/** Normalizes what a read returned into `resources/read` contents. */
+function contents(result: ReadResult, uri: string, mimeType: string | undefined) {
+  const list =
+    typeof result === 'string' ? [{ text: result }] : Array.isArray(result) ? result : [result]
+  return list.map((item) => {
+    const { uri: own, mimeType: type, ...body } = item as ResourceContents
+    return {
+      uri: own ?? uri,
+      ...((type ?? mimeType) ? { mimeType: type ?? mimeType } : undefined),
+      ...body,
+    }
+  })
+}
+
+/** Lists a prompt's arguments as `prompts/list` shows them. */
+function promptArguments(args: z.ZodObject<any>) {
+  return Object.entries(args.shape as Record<string, z.ZodType>).map(([name, schema]) => ({
+    name,
+    ...(schema.description ? { description: schema.description } : undefined),
+    required: !schema.safeParse(undefined).success,
+  }))
+}
+
+/** Formats validation issues as tool input errors do. */
+function issues(list: readonly { path: PropertyKey[]; message: string }[]) {
+  return list
+    .map((issue) =>
+      issue.path.length > 0
+        ? `${issue.path.map(String).join('.')}: ${issue.message}`
+        : issue.message,
+    )
+    .join(', ')
+}
+
+/** Splits a level 1 URI template such as `docs://{section}` into the literals around its variables and their names. */
+function templatePattern(template: string) {
+  if (!/^(?:[^{}]|\{\w+\})*$/.test(template))
+    throw new Error(`Unsupported URI template: ${template}`)
+  const parts = template.split(/\{(\w+)\}/)
+  return {
+    literals: parts.filter((_, i) => i % 2 === 0),
+    names: parts.filter((_, i) => i % 2 === 1),
+  }
+}
+
+/**
+ * Matches a URI against a template, returning its variables. Each variable takes one or more
+ * characters other than `/` and `,`: as many as still let the rest match, as a greedy regex
+ * would. Failed positions are remembered, so matching stays polynomial in the URI length.
+ */
+function matchTemplate(
+  { literals, names }: ReturnType<typeof templatePattern>,
+  uri: string,
+): Record<string, string> | undefined {
+  const values: string[] = []
+  const failed = new Set<number>()
+  const from = (index: number, start: number): boolean => {
+    if (index === names.length) return start === uri.length
+    const key = index * (uri.length + 1) + start
+    if (failed.has(key)) return false
+    let end = start
+    while (end < uri.length && uri[end] !== '/' && uri[end] !== ',') end++
+    const literal = literals[index + 1]!
+    for (let stop = end; stop > start; stop--) {
+      if (!uri.startsWith(literal, stop)) continue
+      values[index] = uri.slice(start, stop)
+      if (from(index + 1, stop + literal.length)) return true
+    }
+    failed.add(key)
+    return false
+  }
+  if (!uri.startsWith(literals[0]!) || !from(0, literals[0]!.length)) return undefined
+  return Object.fromEntries(names.map((name, i) => [name, values[i]!]))
 }
 
 export declare namespace createServer {
   /** Options for an MCP server instance. */
-  type Options = {
+  type Options = Features & {
     /** Values for tool calls that do not pass their own. */
     defaults?: Defaults | undefined
     /** CLI-level env schema. */

@@ -16,6 +16,7 @@ from ._command import Command, Middleware, MiddlewareContext, Stream, ToolMeta, 
 from ._errors import Error, format_cta, unknown
 from ._http import Request, Response
 from ._js import Json
+from ._mcp_features import Features, RpcError
 from ._mcp_modern import is_message
 from ._model import build, to_json
 from ._parser import check, parse_defaults, parse_env
@@ -586,6 +587,7 @@ class Server:
         self.title = options.title
         self.instructions = options.instructions
         self.cache = options.cache
+        self.features = Features(spec.resources, spec.resource_templates, spec.prompts)
         self.version = spec.version or "0.0.0"
         self.env = env
         self.tools = self._register(collect(spec, filter_, config), filter_)
@@ -722,6 +724,10 @@ class Server:
             headers,
         )
 
+    def capabilities(self) -> dict[str, Json]:
+        """The server's capabilities: tools, then any configured features."""
+        return {"tools": {"listChanged": True}, **self.features.capabilities()}
+
     def info(self) -> dict[str, Json]:
         """The server's name, title, and version."""
         info: dict[str, Json] = {"name": self.name}
@@ -736,7 +742,7 @@ class Server:
         version = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
         out: dict[str, Json] = {
             "protocolVersion": version,
-            "capabilities": {"tools": {"listChanged": True}},
+            "capabilities": self.capabilities(),
             "serverInfo": self.info(),
         }
         if self.instructions:
@@ -824,7 +830,8 @@ class Server:
         method = message.get("method")
         if "id" not in message or "method" not in message:
             return None
-        if method not in ("server/discover", "tools/list", "tools/call"):
+        known = method in ("server/discover", "tools/list", "tools/call")
+        if not known and not (isinstance(method, str) and self.features.handles(method)):
             return _rpc_error(message["id"], -32601, "Method not found")
         problem = _mcp_modern.envelope_error(message.get("params"))
         if problem is not None:
@@ -832,7 +839,7 @@ class Server:
         if method == "server/discover":
             result: dict[str, Json] = {
                 "supportedVersions": [_mcp_modern.VERSION],
-                "capabilities": {"tools": {"listChanged": True}},
+                "capabilities": self.capabilities(),
             }
             if self.instructions:
                 result["instructions"] = self.instructions
@@ -892,10 +899,12 @@ class Server:
 
                     progress = send_progress
                 result = await self.call(params, progress, request)
+            elif self.features.handles(method):
+                result = self.features.answer(method, params)
             else:
                 raise RpcError(-32601, "Method not found")
         except RpcError as error:
-            return _rpc_error(id_, error.code, error.message)
+            return _rpc_error(id_, error.code, error.message, error.data)
         return {"result": result, "jsonrpc": "2.0", "id": id_}
 
 
@@ -904,15 +913,6 @@ def _rpc_error(id_: Json, code: int, message: str, data: Json = None) -> dict[st
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": id_, "error": error}
-
-
-class RpcError(Exception):
-    """A JSON-RPC error response."""
-
-    def __init__(self, code: int, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 async def serve_stdio(server: Server, stdin: TextIO, stdout: TextIO) -> None:

@@ -5,7 +5,10 @@ use std::io::Write as _;
 
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, stream};
-use incur::mcp::{Annotations, CacheHint, CacheScope, Discovery, Icon, Mcp, Theme, Tool};
+use incur::mcp::{
+    Annotations, CacheHint, CacheScope, Discovery, Icon, Mcp, Prompt, Resource, ResourceTemplate,
+    Theme, Tool,
+};
 use incur::openapi::{Mode, Openapi, Versions};
 use incur::update::{CheckContext, InstallContext};
 use incur::{
@@ -478,6 +481,136 @@ pub(crate) fn params() -> Cli {
                 .mcp(Tool::new().title(""))
                 .run(|_: Context| data(json!({ "ok": true }))),
         )
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ReviewStyle {
+    Brief,
+    Deep,
+}
+
+fn brief() -> ReviewStyle {
+    ReviewStyle::Brief
+}
+
+#[derive(Deserialize, Schema)]
+#[expect(dead_code, reason = "Only the schema is used.")]
+struct ReviewArgs {
+    /// Code to review
+    code: String,
+    /// Depth
+    #[serde(default = "brief")]
+    style: ReviewStyle,
+    focus: Option<String>,
+}
+
+/// The pages of each docs section, in order.
+const SECTIONS: [(&str, [&str; 2]); 2] = [("guide", ["intro", "install"]), ("api", ["cli", "mcp"])];
+
+/// Keeps the values starting with a prefix.
+fn starting(values: &[&str], prefix: &str) -> Vec<String> {
+    values
+        .iter()
+        .filter(|v| v.starts_with(prefix))
+        .map(|v| (*v).to_owned())
+        .collect()
+}
+
+/// Exercises MCP resources, resource templates, prompts, and completion.
+pub(crate) fn kb() -> Cli {
+    let docs = ResourceTemplate::new("docs://{section}/{page}", "docs", |uri, v| {
+        json!(format!("{}/{} at {uri}", v["section"], v["page"]))
+    })
+    .title("Docs")
+    .description("A docs page")
+    .mime_type("text/plain")
+    .icons([Icon::new("https://example.com/docs.png").mime_type("image/png")])
+    .complete("section", |value, _| {
+        starting(&SECTIONS.map(|(name, _)| name), value)
+    })
+    .complete("page", |value, chosen| {
+        let section = chosen.get("section").map_or("", String::as_str);
+        let pages = SECTIONS.iter().find(|(name, _)| *name == section);
+        pages.map_or_else(Vec::new, |(_, pages)| starting(pages, value))
+    });
+    let numbers =
+        ResourceTemplate::new("num://{n}.txt", "numbers", |_, v| json!({ "text": v["n"] }))
+            .complete("n", |value, _| {
+                (0..150).map(|i| format!("{value}{i}")).collect()
+            });
+    let review = Prompt::new("review", |args| {
+        let focus = args.get("focus").and_then(Value::as_str).unwrap_or("all");
+        json!([
+            { "role": "user", "content": { "type": "text", "text": format!("Review ({}): {}", args["style"].as_str().unwrap_or_default(), args["code"].as_str().unwrap_or_default()) } },
+            { "role": "assistant", "content": { "type": "resource", "resource": { "uri": "kb://readme", "mimeType": "text/markdown", "text": focus } } },
+        ])
+    })
+    .title("Review code")
+    .description("Review a snippet")
+    .icons([Icon::new("https://example.com/review.svg").theme(Theme::Dark)])
+    .args(<ReviewArgs as incur::schema::Schema>::schema())
+    .complete("style", |value, _| starting(&["brief", "deep"], value));
+    let hello = Prompt::new("hello", |args| {
+        json!(format!(
+            "Hello {}",
+            serde_json::to_string(args).unwrap_or_default()
+        ))
+    });
+    client(Cli::new("kb"))
+        .description("Knowledge base")
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .mcp(Mcp::new().cache(CacheHint {
+            ttl_ms: Some(5000),
+            cache_scope: None,
+        }))
+        .resource(
+            Resource::new("kb://readme", "readme", || json!("# Knowledge base"))
+                .title("Read me")
+                .description("Start here")
+                .mime_type("text/markdown")
+                .icons([Icon::new("https://example.com/readme.png")]),
+        )
+        .resource(Resource::new("kb://logo", "logo", || {
+            json!({ "blob": "iVBORw0K", "mimeType": "image/png" })
+        }))
+        .resource(
+            Resource::new("kb://pair", "pair", || {
+                json!([{ "text": "one" }, { "uri": "kb://pair#2", "text": "two", "mimeType": "text/csv" }])
+            })
+            .mime_type("text/plain"),
+        )
+        .resource_template(docs)
+        .resource_template(numbers)
+        .resource_template(ResourceTemplate::new(
+            "pkg://{name}-{version}-{os}.zip",
+            "packages",
+            |_, v| json!(format!("{} {} {}", v["name"], v["version"], v["os"])),
+        ))
+        .resource_template(ResourceTemplate::new("kv://{a}{b}", "pairs", |_, v| {
+            json!(format!("{}|{}", v["a"], v["b"]))
+        }))
+        .prompt(review)
+        .prompt(hello)
+        .command(
+            "ping",
+            Command::new()
+                .description("Ping")
+                .run(|_: Context| data(json!({ "pong": true }))),
+        )
+}
+
+/// A resource template incur cannot match.
+pub(crate) fn kbbad() -> Cli {
+    client(Cli::new("kbbad"))
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .resource_template(ResourceTemplate::new("x://{+path}", "bad", |_, _| {
+            json!("")
+        }))
 }
 
 #[derive(Deserialize, Schema)]

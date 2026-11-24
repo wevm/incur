@@ -71,7 +71,8 @@ const initParams = {
 async function mcpSession(
   commands: Map<string, any>,
   messages: { method: string; params?: unknown; id?: number }[],
-  options: Omit<Mcp.serve.Options<z.ZodObject<any> | undefined>, 'input' | 'output'> = {},
+  options: Omit<Mcp.serve.Options<z.ZodObject<any> | undefined>, 'input' | 'output'> &
+    Mcp.Features = {},
 ) {
   const input = new PassThrough()
   const output = new PassThrough()
@@ -1326,9 +1327,67 @@ describe('Mcp', () => {
   })
 })
 
+describe('features', () => {
+  test('reads template URIs, validates prompt arguments, and truncates completions', async () => {
+    const [, read, unmatched, invalid, completed] = await mcpSession(
+      new Map(),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'resources/read', params: { uri: 'num://1.2.txt' } },
+        { id: 3, method: 'resources/read', params: { uri: 'num://a/b.txt' } },
+        { id: 4, method: 'prompts/get', params: { name: 'count', arguments: {} } },
+        {
+          id: 5,
+          method: 'completion/complete',
+          params: {
+            ref: { type: 'ref/resource', uri: 'num://{n}.txt' },
+            argument: { name: 'n', value: '' },
+          },
+        },
+      ],
+      {
+        resourceTemplates: [
+          {
+            uriTemplate: 'num://{n}.txt',
+            name: 'numbers',
+            complete: { n: () => Array.from({ length: 101 }, (_, i) => `${i}`) },
+            read: (_uri, variables) => ({ text: variables.n! }),
+          },
+        ],
+        prompts: [{ name: 'count', args: z.object({ to: z.string() }), get: (args) => args.to }],
+      },
+    )
+    // The variable gives back characters until the literal suffix matches.
+    expect(read.result).toEqual({ contents: [{ uri: 'num://1.2.txt', text: '1.2' }] })
+    expect(unmatched.error).toEqual({
+      code: -32602,
+      message: 'Resource not found: num://a/b.txt',
+      data: { uri: 'num://a/b.txt' },
+    })
+    expect(invalid.error.message).toBe(
+      'Invalid arguments for prompt count: to: Invalid input: expected string, received undefined',
+    )
+    expect(completed.result.completion).toMatchObject({ total: 101, hasMore: true })
+    expect(completed.result.completion.values).toHaveLength(100)
+  })
+
+  test('rejects URI templates beyond simple expansion', async () => {
+    await expect(
+      Mcp.serve('test-cli', '1.0.0', new Map(), {
+        input: new PassThrough(),
+        output: new PassThrough(),
+        ...({
+          resourceTemplates: [{ uriTemplate: 'x://{+path}', name: 'x', read: () => '' }],
+        } satisfies Mcp.Features),
+      }),
+    ).rejects.toThrow('Unsupported URI template: x://{+path}')
+  })
+})
+
 describe('globals', () => {
   type Discovery = 'direct' | 'progressive'
-  type SessionOptions = Omit<Mcp.serve.Options<z.ZodObject<any> | undefined>, 'input' | 'output'>
+  type SessionOptions = Omit<Mcp.serve.Options<z.ZodObject<any> | undefined>, 'input' | 'output'> &
+    Mcp.Features
 
   const globals = z.object({
     network: z.enum(['mainnet', 'testnet']).default('mainnet').describe('Network to use'),

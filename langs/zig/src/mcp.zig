@@ -15,6 +15,7 @@ const http = @import("http.zig");
 const parser = @import("parser.zig");
 const cli_ = @import("cli.zig");
 const modern = @import("modern.zig");
+const features = @import("features.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -37,6 +38,15 @@ pub const Discovery = enum {
 
 /// How long MCP 2026-07-28 clients may cache a result, and who may share it.
 pub const CacheHint = modern.CacheHint;
+
+/// A resource at a fixed URI.
+pub const Resource = features.Resource;
+/// Resources whose URIs match a template such as `docs://{section}/{page}`.
+pub const ResourceTemplate = features.ResourceTemplate;
+/// A prompt template clients can list and render.
+pub const Prompt = features.Prompt;
+/// A completer for one prompt argument or template variable.
+pub const Completion = features.Completion;
 
 /// Which commands become tools, and how clients discover them.
 pub const Filter = struct {
@@ -368,11 +378,16 @@ const Server = struct {
     name: []const u8,
     /// The global options schema, with the server's globals as defaults.
     globals: ?*const Type,
+    features: features.Features,
 
     fn init(a: Allocator, cli: *Cli, process: *const Process, direct: bool, defaults: Defaults) Allocator.Error!union(enum) { ok: Server, err: Error } {
         const settings = cli.options.mcp orelse cli_.Mcp{};
         var filter = settings.tools;
         if (direct) filter.discovery = .direct;
+        const served = switch (try features.Features.init(a, cli.resources.items, cli.resource_templates.items, cli.prompts.items)) {
+            .err => |message| return .{ .err = .{ .message = message } },
+            .ok => |f| f,
+        };
         // Default values become schema defaults, so a call's own arguments still win.
         const globals = if (cli.options.globals) |g| try withDefaults(a, g, defaults.globals) else null;
         return switch (try collect(a, cli, filter, defaults.config)) {
@@ -385,6 +400,7 @@ const Server = struct {
                 .tools = tools,
                 .direct = filter.discovery == .direct,
                 .name = settings.name orelse cli.name,
+                .features = served,
             } },
         };
     }
@@ -406,6 +422,9 @@ const Server = struct {
             const name = if (params.get("name")) |n| (if (n == .string) n.string else "") else "";
             break :result try s.call(name, params) orelse
                 return try rpcError(a, id, -32602, try std.fmt.allocPrint(a, "Tool {s} not found", .{name}));
+        } else if (s.features.handles(method)) switch (try s.features.answer(a, method, params)) {
+            .ok => |r| r,
+            .err => |r| return try r.response(a, id),
         } else return try rpcError(a, id, -32601, "Method not found");
         var out: json.ObjectBuilder = .{};
         try out.put(a, "result", result);
@@ -434,20 +453,16 @@ const Server = struct {
         const method = message.get("method").?.string;
         const params = message.get("params") orelse Value{ .object = &.{} };
         const discover = std.mem.eql(u8, method, "server/discover");
-        if (!discover and !std.mem.eql(u8, method, "tools/list") and !std.mem.eql(u8, method, "tools/call")) {
+        if (!discover and !std.mem.eql(u8, method, "tools/list") and !std.mem.eql(u8, method, "tools/call") and !s.features.handles(method)) {
             unknown.* = true;
             return try rpcError(a, id, -32601, "Method not found");
         }
         if (try modern.envelopeError(a, params)) |text| return try rpcError(a, id, -32602, text);
         const response = if (discover) response: {
             const settings = s.cli.options.mcp orelse cli_.Mcp{};
-            var tools: json.ObjectBuilder = .{};
-            try tools.put(a, "listChanged", .{ .bool = true });
-            var capabilities: json.ObjectBuilder = .{};
-            try capabilities.put(a, "tools", tools.finish());
             var result: json.ObjectBuilder = .{};
             try result.put(a, "supportedVersions", .{ .array = try a.dupe(Value, &.{.{ .string = modern.version }}) });
-            try result.put(a, "capabilities", capabilities.finish());
+            try result.put(a, "capabilities", try s.capabilities());
             if (errors.nonEmpty(settings.instructions)) |i| try result.put(a, "instructions", .{ .string = i });
             var out: json.ObjectBuilder = .{};
             try out.put(a, "result", result.finish());
@@ -463,6 +478,17 @@ const Server = struct {
         return out.finish();
     }
 
+    /// Returns the server's capabilities: tools, then any configured features.
+    fn capabilities(s: *Server) Allocator.Error!Value {
+        const a = s.a;
+        var tools: json.ObjectBuilder = .{};
+        try tools.put(a, "listChanged", .{ .bool = true });
+        var out: json.ObjectBuilder = .{};
+        try out.put(a, "tools", tools.finish());
+        try s.features.capabilities(a, &out);
+        return out.finish();
+    }
+
     /// Answers `initialize`.
     fn initialize(s: *Server, params: Value) Allocator.Error!Value {
         const a = s.a;
@@ -471,13 +497,9 @@ const Server = struct {
         const version = for (supported_versions) |v| {
             if (std.mem.eql(u8, v, requested)) break v;
         } else supported_versions[0];
-        var tools: json.ObjectBuilder = .{};
-        try tools.put(a, "listChanged", .{ .bool = true });
-        var capabilities: json.ObjectBuilder = .{};
-        try capabilities.put(a, "tools", tools.finish());
         var out: json.ObjectBuilder = .{};
         try out.put(a, "protocolVersion", .{ .string = version });
-        try out.put(a, "capabilities", capabilities.finish());
+        try out.put(a, "capabilities", try s.capabilities());
         try out.put(a, "serverInfo", try s.identity());
         if (errors.nonEmpty(settings.instructions)) |i| try out.put(a, "instructions", .{ .string = i });
         return out.finish();

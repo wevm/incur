@@ -1186,6 +1186,87 @@ const params = Cli.create('params', {
     run: () => ({ ok: true }),
   })
 
+const sections: Record<string, string[]> = { guide: ['intro', 'install'], api: ['cli', 'mcp'] }
+
+/** Exercises MCP resources, resource templates, prompts, and completion. */
+const kb = Cli.create('kb', {
+  description: 'Knowledge base',
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { cache: { ttlMs: 5000 } },
+})
+  .resource('readme', {
+    uri: 'kb://readme',
+    title: 'Read me',
+    description: 'Start here',
+    mimeType: 'text/markdown',
+    icons: [{ src: 'https://example.com/readme.png' }],
+    read: () => '# Knowledge base',
+  })
+  .resource('logo', {
+    uri: 'kb://logo',
+    read: () => ({ blob: 'iVBORw0K', mimeType: 'image/png' }),
+  })
+  .resource('pair', {
+    uri: 'kb://pair',
+    mimeType: 'text/plain',
+    read: () => [{ text: 'one' }, { uri: 'kb://pair#2', text: 'two', mimeType: 'text/csv' }],
+  })
+  .resourceTemplate('docs', {
+    uriTemplate: 'docs://{section}/{page}',
+    title: 'Docs',
+    description: 'A docs page',
+    mimeType: 'text/plain',
+    icons: [{ src: 'https://example.com/docs.png', mimeType: 'image/png' }],
+    complete: {
+      section: (value) => Object.keys(sections).filter((s) => s.startsWith(value)),
+      page: (value, c) =>
+        (sections[c.arguments.section ?? ''] ?? []).filter((p) => p.startsWith(value)),
+    },
+    read: (uri, v) => `${v.section}/${v.page} at ${uri}`,
+  })
+  .resourceTemplate('numbers', {
+    uriTemplate: 'num://{n}.txt',
+    complete: { n: (value) => Array.from({ length: 150 }, (_, i) => `${value}${i}`) },
+    read: (_uri, v) => ({ text: v.n! }),
+  })
+  .resourceTemplate('packages', {
+    uriTemplate: 'pkg://{name}-{version}-{os}.zip',
+    read: (_uri, v) => `${v.name} ${v.version} ${v.os}`,
+  })
+  .resourceTemplate('pairs', { uriTemplate: 'kv://{a}{b}', read: (_uri, v) => `${v.a}|${v.b}` })
+  .prompt('review', {
+    title: 'Review code',
+    description: 'Review a snippet',
+    icons: [{ src: 'https://example.com/review.svg', theme: 'dark' }],
+    args: z.object({
+      code: z.string().describe('Code to review'),
+      style: z.enum(['brief', 'deep']).default('brief').describe('Depth'),
+      focus: z.string().optional(),
+    }),
+    complete: { style: (value) => ['brief', 'deep'].filter((s) => s.startsWith(value)) },
+    get: (args) => [
+      { role: 'user', content: { type: 'text', text: `Review (${args.style}): ${args.code}` } },
+      {
+        role: 'assistant',
+        content: {
+          type: 'resource',
+          resource: { uri: 'kb://readme', mimeType: 'text/markdown', text: args.focus ?? 'all' },
+        },
+      },
+    ],
+  })
+  .prompt('hello', { get: (args) => `Hello ${JSON.stringify(args)}` })
+  .command('ping', { description: 'Ping', run: () => ({ pong: true }) })
+
+/** A resource template incur cannot match. */
+const kbbad = Cli.create('kbbad', {
+  version: '1.0.0',
+  update: false,
+  sync: false,
+}).resourceTemplate('bad', { uriTemplate: 'x://{+path}', read: () => '' })
+
 /** Builds a CLI whose one command declares an invalid `x-mcp-header`. */
 function badHeaders(name: string, headers: Record<string, string>) {
   return Cli.create(name, { version: '1.0.0', update: false, sync: false }).command('bad', {
@@ -1719,6 +1800,8 @@ export const clis = {
   hdrnewline,
   hdrnumber,
   hdrtoken,
+  kb,
+  kbbad,
   kit,
   kitbad,
   kitcmd,

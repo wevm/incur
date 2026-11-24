@@ -1145,6 +1145,189 @@ fn paramsCli(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
+const ReviewStyle = enum { brief, deep };
+
+const ReviewArgs = struct {
+    code: []const u8,
+    style: ReviewStyle = .brief,
+    focus: ?[]const u8 = null,
+
+    pub const incur = .{
+        .omit_null = true,
+        .fields = .{ .code = .{ .description = "Code to review" }, .style = .{ .description = "Depth" } },
+    };
+};
+
+/// Returns the values in `options` that start with `value`.
+fn prefixed(a: Allocator, options: []const []const u8, value: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    for (options) |o| if (std.mem.startsWith(u8, o, value)) try out.append(a, o);
+    return out.items;
+}
+
+fn readme(a: Allocator) Allocator.Error!Value {
+    _ = a;
+    return .{ .string = "# Knowledge base" };
+}
+
+fn logo(a: Allocator) Allocator.Error!Value {
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "blob", .{ .string = "iVBORw0K" });
+    try out.put(a, "mimeType", .{ .string = "image/png" });
+    return out.finish();
+}
+
+fn pair(a: Allocator) Allocator.Error!Value {
+    var first: incur.ObjectBuilder = .{};
+    try first.put(a, "text", .{ .string = "one" });
+    var second: incur.ObjectBuilder = .{};
+    try second.put(a, "uri", .{ .string = "kb://pair#2" });
+    try second.put(a, "text", .{ .string = "two" });
+    try second.put(a, "mimeType", .{ .string = "text/csv" });
+    return .{ .array = try a.dupe(Value, &.{ first.finish(), second.finish() }) };
+}
+
+fn docsRead(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
+    return .{ .string = try std.fmt.allocPrint(a, "{s}/{s} at {s}", .{ v.get("section").?.string, v.get("page").?.string, uri }) };
+}
+
+fn sectionComplete(a: Allocator, value: []const u8, chosen: Value) Allocator.Error![]const []const u8 {
+    _ = chosen;
+    return prefixed(a, &.{ "guide", "api" }, value);
+}
+
+fn pageComplete(a: Allocator, value: []const u8, chosen: Value) Allocator.Error![]const []const u8 {
+    const section = if (chosen.get("section")) |s| s.string else "";
+    const pages: []const []const u8 = if (std.mem.eql(u8, section, "guide"))
+        &.{ "intro", "install" }
+    else if (std.mem.eql(u8, section, "api")) &.{ "cli", "mcp" } else &.{};
+    return prefixed(a, pages, value);
+}
+
+fn numRead(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
+    _ = uri;
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "text", v.get("n").?);
+    return out.finish();
+}
+
+fn pairsRead(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
+    _ = uri;
+    return .{ .string = try std.fmt.allocPrint(a, "{s}|{s}", .{ v.get("a").?.string, v.get("b").?.string }) };
+}
+
+fn packagesRead(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
+    _ = uri;
+    return .{ .string = try std.fmt.allocPrint(a, "{s} {s} {s}", .{ v.get("name").?.string, v.get("version").?.string, v.get("os").?.string }) };
+}
+
+fn numComplete(a: Allocator, value: []const u8, chosen: Value) Allocator.Error![]const []const u8 {
+    _ = chosen;
+    const out = try a.alloc([]const u8, 150);
+    for (out, 0..) |*slot, i| slot.* = try std.fmt.allocPrint(a, "{s}{d}", .{ value, i });
+    return out;
+}
+
+fn styleComplete(a: Allocator, value: []const u8, chosen: Value) Allocator.Error![]const []const u8 {
+    _ = chosen;
+    return prefixed(a, &.{ "brief", "deep" }, value);
+}
+
+fn reviewGet(a: Allocator, args: Value) Allocator.Error!Value {
+    var text: incur.ObjectBuilder = .{};
+    try text.put(a, "type", .{ .string = "text" });
+    try text.put(a, "text", .{ .string = try std.fmt.allocPrint(a, "Review ({s}): {s}", .{ args.get("style").?.string, args.get("code").?.string }) });
+    var user: incur.ObjectBuilder = .{};
+    try user.put(a, "role", .{ .string = "user" });
+    try user.put(a, "content", text.finish());
+    var resource: incur.ObjectBuilder = .{};
+    try resource.put(a, "uri", .{ .string = "kb://readme" });
+    try resource.put(a, "mimeType", .{ .string = "text/markdown" });
+    try resource.put(a, "text", args.get("focus") orelse .{ .string = "all" });
+    var content: incur.ObjectBuilder = .{};
+    try content.put(a, "type", .{ .string = "resource" });
+    try content.put(a, "resource", resource.finish());
+    var assistant: incur.ObjectBuilder = .{};
+    try assistant.put(a, "role", .{ .string = "assistant" });
+    try assistant.put(a, "content", content.finish());
+    return .{ .array = try a.dupe(Value, &.{ user.finish(), assistant.finish() }) };
+}
+
+fn helloGet(a: Allocator, args: Value) Allocator.Error!Value {
+    return .{ .string = try std.fmt.allocPrint(a, "Hello {s}", .{try incur.json.stringify(a, args)}) };
+}
+
+fn pong(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .pong = true });
+}
+
+const kb_resources = [_]incur.mcp.Resource{
+    .{ .uri = "kb://readme", .name = "readme", .title = "Read me", .description = "Start here", .mime_type = "text/markdown", .icons = &.{.{ .src = "https://example.com/readme.png" }}, .read = readme },
+    .{ .uri = "kb://logo", .name = "logo", .read = logo },
+    .{ .uri = "kb://pair", .name = "pair", .mime_type = "text/plain", .read = pair },
+};
+
+const kb_templates = [_]incur.mcp.ResourceTemplate{
+    .{
+        .uri_template = "docs://{section}/{page}",
+        .name = "docs",
+        .title = "Docs",
+        .description = "A docs page",
+        .mime_type = "text/plain",
+        .icons = &.{.{ .src = "https://example.com/docs.png", .mime_type = "image/png" }},
+        .complete = &.{ .{ .name = "section", .complete = sectionComplete }, .{ .name = "page", .complete = pageComplete } },
+        .read = docsRead,
+    },
+    .{ .uri_template = "num://{n}.txt", .name = "numbers", .complete = &.{.{ .name = "n", .complete = numComplete }}, .read = numRead },
+    .{ .uri_template = "pkg://{name}-{version}-{os}.zip", .name = "packages", .read = packagesRead },
+    .{ .uri_template = "kv://{a}{b}", .name = "pairs", .read = pairsRead },
+};
+
+const kb_prompts = [_]incur.mcp.Prompt{
+    .{
+        .name = "review",
+        .title = "Review code",
+        .description = "Review a snippet",
+        .icons = &.{.{ .src = "https://example.com/review.svg", .theme = .dark }},
+        .args = incur.schema(ReviewArgs),
+        .complete = &.{.{ .name = "style", .complete = styleComplete }},
+        .get = reviewGet,
+    },
+    .{ .name = "hello", .get = helloGet },
+};
+
+/// Exercises MCP resources, resource templates, prompts, and completion.
+fn kb(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "kb", .{
+        .description = "Knowledge base",
+        .version = "1.0.0",
+        .update = null,
+        .sync = null,
+        .mcp = .{
+            .cache = .{ .ttl_ms = 5000 },
+        },
+    });
+    errdefer cli.destroy();
+    for (kb_resources) |r| try cli.resource(r);
+    for (kb_templates) |t| try cli.resourceTemplate(t);
+    for (kb_prompts) |p| try cli.prompt(p);
+    try cli.command("ping", .{ .description = "Ping", .run = incur.handler(pong) });
+    return cli;
+}
+
+fn empty(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
+    _ = .{ a, uri, v };
+    return .{ .string = "" };
+}
+
+/// A resource template incur cannot match.
+fn kbbad(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "kbbad", .{ .version = "1.0.0", .update = null, .sync = null });
+    errdefer cli.destroy();
+    try cli.resourceTemplate(.{ .uri_template = "x://{+path}", .name = "bad", .read = empty });
+    return cli;
+}
+
 const BadHeaderOptions = struct {
     a: []const u8,
     n: f64,
@@ -1681,7 +1864,7 @@ pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
         .{ "updbad", updbad },         .{ "shadow", shadow },     .{ "kitcwd", kitcwd },       .{ "kitrun", kitrun },
         .{ "shadowall", shadowall },   .{ "params", paramsCli },  .{ "hdrarray", hdrarray },   .{ "hdrdupe", hdrdupe },
         .{ "hdrempty", hdrempty },     .{ "hdrkey", hdrkey },     .{ "hdrnumber", hdrnumber }, .{ "hdrtoken", hdrtoken },
-        .{ "hdrnewline", hdrnewline },
+        .{ "hdrnewline", hdrnewline }, .{ "kb", kb },             .{ "kbbad", kbbad },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

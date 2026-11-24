@@ -8,6 +8,7 @@ mod convert;
 mod derive;
 mod errors;
 mod execute;
+mod features;
 mod fetch;
 pub mod filter;
 pub mod formatter;

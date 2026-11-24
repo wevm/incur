@@ -57,7 +57,7 @@ pub enum Discovery {
 pub struct Mcp {
     /// Agents `mcp add` registers with by default.
     pub(crate) agents: Vec<String>,
-    /// Cache hints for `tools/list` and `server/discover` under MCP 2026-07-28.
+    /// Cache hints for lists and `server/discover` under MCP 2026-07-28.
     pub(crate) cache: Option<CacheHint>,
     /// The command agents run, overriding the detected one.
     pub(crate) command: Option<String>,
@@ -185,6 +185,8 @@ impl Mcp {
     }
 }
 
+pub use crate::features::{Completer, Prompt, Resource, ResourceTemplate};
+
 /// How long MCP 2026-07-28 clients may cache a result, and who may share it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CacheHint {
@@ -264,7 +266,7 @@ impl Icon {
     }
 
     /// Returns the icon as MCP JSON.
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         let mut out = Map::new();
         out.insert("src".into(), self.src.clone().into());
         if let Some(mime_type) = &self.mime_type {
@@ -814,8 +816,10 @@ pub(crate) struct Context<'a> {
 
 /// An MCP server over a command tree.
 pub(crate) struct Server<'a> {
-    /// Cache hints for `tools/list` and `server/discover`.
+    /// Cache hints for lists and `server/discover`.
     pub(crate) cache: Option<CacheHint>,
+    /// Resources, templates, and prompts.
+    pub(crate) features: crate::features::Features,
     /// Call context.
     pub(crate) context: Context<'a>,
     /// Whether every command is its own tool.
@@ -909,6 +913,14 @@ fn error(id: &Value, code: i64, message: &str) -> Value {
 }
 
 impl Server<'_> {
+    /// The server's capabilities: tools, then any configured features.
+    fn capabilities(&self) -> Value {
+        let mut out = Map::new();
+        out.insert("tools".into(), json!({ "listChanged": true }));
+        self.features.capabilities(&mut out);
+        Value::Object(out)
+    }
+
     /// The server's name, title, and version.
     fn info(&self) -> Value {
         let mut info = Map::new();
@@ -930,7 +942,8 @@ impl Server<'_> {
         request: Option<Arc<http::request::Parts>>,
         notify: &mut (dyn FnMut(Value) + Send),
     ) -> (Value, bool) {
-        if !matches!(method, "server/discover" | "tools/list" | "tools/call") {
+        let known = matches!(method, "server/discover" | "tools/list" | "tools/call");
+        if !known && !self.features.handles(method) {
             return (error(id, -32601, "Method not found"), true);
         }
         if let Some(message) = modern::envelope_error(params) {
@@ -939,10 +952,7 @@ impl Server<'_> {
         let mut response = if method == "server/discover" {
             let mut out = Map::new();
             out.insert("supportedVersions".into(), json!([modern::VERSION]));
-            out.insert(
-                "capabilities".into(),
-                json!({ "tools": { "listChanged": true } }),
-            );
+            out.insert("capabilities".into(), self.capabilities());
             if let Some(instructions) = &self.instructions {
                 out.insert("instructions".into(), instructions.clone().into());
             }
@@ -978,10 +988,7 @@ impl Server<'_> {
                     .unwrap_or(PROTOCOL_VERSIONS[0]);
                 let mut out = Map::new();
                 out.insert("protocolVersion".into(), version.into());
-                out.insert(
-                    "capabilities".into(),
-                    json!({ "tools": { "listChanged": true } }),
-                );
+                out.insert("capabilities".into(), self.capabilities());
                 out.insert("serverInfo".into(), self.info());
                 if let Some(instructions) = &self.instructions {
                     out.insert("instructions".into(), instructions.clone().into());
@@ -1011,6 +1018,16 @@ impl Server<'_> {
                     None => error(id, -32602, &format!("Tool {name} not found")),
                 }
             }
+            _ if self.features.handles(method) => match self.features.answer(method, params) {
+                Ok(value) => result(id, value),
+                Err((code, message, data)) => {
+                    let mut out = error(id, code, &message);
+                    if let Some(data) = data {
+                        out["error"]["data"] = data;
+                    }
+                    out
+                }
+            },
             _ => error(id, -32601, "Method not found"),
         }
     }
@@ -1442,7 +1459,7 @@ fn number(value: &Value) -> usize {
 }
 
 /// Validates tool arguments as the MCP SDK does, joining issues with `, `.
-fn validate(ty: &Type, arguments: &Value) -> Result<Map<String, Value>, String> {
+pub(crate) fn validate(ty: &Type, arguments: &Value) -> Result<Map<String, Value>, String> {
     let mut issues = Vec::new();
     let parsed = schema::parse(ty, Some(arguments), &mut Vec::new(), &mut issues);
     if issues.is_empty() {

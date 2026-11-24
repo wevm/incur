@@ -74,8 +74,9 @@ from ._help import Example, Usage, format_command, format_root, global_flags
 from ._help import Options as HelpOptions
 from ._http import FetchHandler, Request, RequestSource, Response, asgi, call
 from ._js import Json
-from ._mcp import HttpHandler, McpOptions, McpTool, serve_stdio, with_defaults
+from ._mcp import HttpHandler, Icon, McpOptions, McpTool, serve_stdio, with_defaults
 from ._mcp import Server as McpServer
+from ._mcp_features import Completer, Prompt, ReadResult, Resource, ResourceTemplate
 from ._model import SchemaError, build, caller_locals, to_json, type_of
 from ._openapi import OpenapiConfig, OpenapiSource
 from ._openapi import commands as openapi_commands
@@ -109,6 +110,9 @@ from ._update import install as install_update
 from ._update import refresh as refresh_update
 
 _F = TypeVar("_F", bound=Callable[..., object])
+_Read = TypeVar("_Read", bound=Callable[[], ReadResult])
+_ReadMatch = TypeVar("_ReadMatch", bound=Callable[[str, dict[str, str]], ReadResult])
+_Render = TypeVar("_Render", bound=Callable[[Any], "str | list[Json]"])
 _T = TypeVar("_T")
 _C = TypeVar("_C", bound=Declared)
 
@@ -561,6 +565,84 @@ class Cli(Generic[_T_co]):
         """
         self._spec.middleware.append(middleware)
         return middleware
+
+    def resource(
+        self,
+        name: str,
+        *,
+        uri: str,
+        title: str | None = None,
+        description: str | None = None,
+        mime_type: str | None = None,
+        icons: list[Icon] | None = None,
+    ) -> Callable[[_Read], _Read]:
+        """Registers the decorated function as the reader of an MCP resource at a fixed URI.
+
+        The function takes no arguments and returns text, one contents dict as MCP spells it
+        (with `text` or base64 `blob`), or a list of them. `uri` defaults to the URI read and
+        `mimeType` to the resource's.
+        """
+
+        def register(read: _Read) -> _Read:
+            self._spec.resources.append(
+                Resource(uri, name, read, title, description, mime_type, icons)
+            )
+            return read
+
+        return register
+
+    def resource_template(
+        self,
+        name: str,
+        *,
+        uri_template: str,
+        title: str | None = None,
+        description: str | None = None,
+        mime_type: str | None = None,
+        icons: list[Icon] | None = None,
+        complete: dict[str, Completer] | None = None,
+    ) -> Callable[[_ReadMatch], _ReadMatch]:
+        """Registers the decorated function as the reader of an MCP resource template's URIs.
+
+        Templates look like `docs://{section}/{page}`. The function takes the URI and its
+        variables. `{name}` expressions match one or more
+        characters other than `/` and `,`.
+        """
+
+        def register(read: _ReadMatch) -> _ReadMatch:
+            self._spec.resource_templates.append(
+                ResourceTemplate(
+                    uri_template, name, read, title, description, mime_type, icons, complete or {}
+                )
+            )
+            return read
+
+        return register
+
+    def prompt(
+        self,
+        name: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        icons: list[Icon] | None = None,
+        args: type | None = None,
+        complete: dict[str, Completer] | None = None,
+    ) -> Callable[[_Render], _Render]:
+        """Registers the decorated function as the renderer of an MCP prompt template.
+
+        The function takes the arguments, parsed into the `args` schema class when given (clients
+        send every argument as a string), and returns text, which becomes one user message, or a
+        list of messages as MCP spells them.
+        """
+
+        def register(get: _Render) -> _Render:
+            self._spec.prompts.append(
+                Prompt(name, get, title, description, icons, args, complete or {})
+            )
+            return get
+
+        return register
 
     async def fetch(self, request: Request) -> Response:
         """Serves an HTTP request: runs the command its path names, or speaks MCP at `/mcp`.

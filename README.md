@@ -533,6 +533,24 @@ Cli.create('my-cli', { mcp: { cache: { ttlMs: 60_000, cacheScope: 'public' } } }
 
 Headers apply to string, integer, and boolean inputs of directly listed tools. The server rejects a 2026-07-28 call whose header is missing or disagrees with its argument.
 
+Next to tools, a CLI can serve [resources](https://modelcontextprotocol.io/specification/2026-07-28/server/resources), [prompts](https://modelcontextprotocol.io/specification/2026-07-28/server/prompts), and [completions](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/completion) for their arguments:
+
+```ts
+Cli.create('kb')
+  .resource('readme', { uri: 'kb://readme', mimeType: 'text/markdown', read: () => '# Read me' })
+  .resourceTemplate('docs', {
+    uriTemplate: 'docs://{section}/{page}', // {name} expressions match up to the next / or ,
+    complete: { section: (value) => ['guide', 'api'].filter((s) => s.startsWith(value)) },
+    read: (uri, { section, page }) => fetchPage(section!, page!),
+  })
+  .prompt('review', {
+    args: z.object({ code: z.string(), style: z.enum(['brief', 'deep']).default('brief') }),
+    get: ({ code, style }) => `Review this code (${style}):\n${code}`,
+  })
+```
+
+A read returns text, a `{ text }` or `{ blob }` (base64) object, or a list of them. A prompt returns text, which becomes one user message, or a list of messages. `mcp.cache` also covers the resource, template, and prompt lists.
+
 Non-`/mcp` paths continue routing to the command API as usual.
 
 ## Walkthrough

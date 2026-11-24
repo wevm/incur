@@ -32,7 +32,14 @@ SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
 _RESERVED = (VERSION_KEY, INFO_KEY, CAPABILITIES_KEY, LOG_KEY)
 _REQUIRED = (VERSION_KEY, CAPABILITIES_KEY)
 _LEVELS = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
-_CACHEABLE = ("tools/list", "server/discover")
+_CACHEABLE = (
+    "tools/list",
+    "prompts/list",
+    "resources/list",
+    "resources/templates/list",
+    "resources/read",
+    "server/discover",
+)
 _NAME_SOURCE = {"tools/call": "name", "prompts/get": "name", "resources/read": "uri"}
 _DECIMAL = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 _BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
@@ -155,8 +162,10 @@ def encode(
     out = dict(result)
     out["resultType"] = "complete"
     if method in _CACHEABLE:
-        ttl = cache.ttl_ms if cache is not None else None
-        scope = cache.cache_scope if cache is not None else None
+        # The server's hints cover lists and discovery; reads keep the defaults.
+        hint = cache if method != "resources/read" else None
+        ttl = hint.ttl_ms if hint is not None else None
+        scope = hint.cache_scope if hint is not None else None
         out["ttlMs"] = 0 if ttl is None else ttl
         out["cacheScope"] = scope or "private"
     meta = dict(_js.as_object(out["_meta"])) if "_meta" in out else {}

@@ -1535,6 +1535,128 @@ def params() -> incur.Cli:
     return cli
 
 
+SECTIONS = {"guide": ["intro", "install"], "api": ["cli", "mcp"]}
+
+
+@incur.schema
+class ReviewArgs:
+    code: Annotated[str, field("Code to review")]
+    style: Annotated[Literal["brief", "deep"], field("Depth")] = "brief"
+    focus: str | None = None
+
+
+def kb() -> incur.Cli:
+    """Exercises MCP resources, resource templates, prompts, and completion."""
+    cli = incur.Cli(
+        "kb",
+        description="Knowledge base",
+        version="1.0.0",
+        update=False,
+        sync=False,
+        mcp=incur.McpOptions(cache=incur.CacheHint(ttl_ms=5000)),
+    )
+
+    @cli.resource(
+        "readme",
+        uri="kb://readme",
+        title="Read me",
+        description="Start here",
+        mime_type="text/markdown",
+        icons=[incur.Icon("https://example.com/readme.png")],
+    )
+    def readme() -> str:
+        return "# Knowledge base"
+
+    @cli.resource("logo", uri="kb://logo")
+    def logo() -> dict[str, Any]:
+        return {"blob": "iVBORw0K", "mimeType": "image/png"}
+
+    @cli.resource("pair", uri="kb://pair", mime_type="text/plain")
+    def pair() -> list[dict[str, Any]]:
+        return [{"text": "one"}, {"uri": "kb://pair#2", "text": "two", "mimeType": "text/csv"}]
+
+    @cli.resource_template(
+        "docs",
+        uri_template="docs://{section}/{page}",
+        title="Docs",
+        description="A docs page",
+        mime_type="text/plain",
+        icons=[incur.Icon("https://example.com/docs.png", mime_type="image/png")],
+        complete={
+            "section": lambda value, _: [s for s in SECTIONS if s.startswith(value)],
+            "page": lambda value, chosen: [
+                p for p in SECTIONS.get(chosen.get("section", ""), []) if p.startswith(value)
+            ],
+        },
+    )
+    def docs(uri: str, v: dict[str, str]) -> str:
+        return f"{v['section']}/{v['page']} at {uri}"
+
+    @cli.resource_template(
+        "numbers",
+        uri_template="num://{n}.txt",
+        complete={"n": lambda value, _: [f"{value}{i}" for i in range(150)]},
+    )
+    def numbers(_: str, v: dict[str, str]) -> dict[str, Any]:
+        return {"text": v["n"]}
+
+    @cli.resource_template("packages", uri_template="pkg://{name}-{version}-{os}.zip")
+    def packages(_: str, v: dict[str, str]) -> str:
+        return f"{v['name']} {v['version']} {v['os']}"
+
+    @cli.resource_template("pairs", uri_template="kv://{a}{b}")
+    def pairs(_: str, v: dict[str, str]) -> str:
+        return f"{v['a']}|{v['b']}"
+
+    @cli.prompt(
+        "review",
+        title="Review code",
+        description="Review a snippet",
+        icons=[incur.Icon("https://example.com/review.svg", theme="dark")],
+        args=ReviewArgs,
+        complete={"style": lambda value, _: [s for s in ("brief", "deep") if s.startswith(value)]},
+    )
+    def review(args: ReviewArgs) -> list[Any]:
+        return [
+            {
+                "role": "user",
+                "content": {"type": "text", "text": f"Review ({args.style}): {args.code}"},
+            },
+            {
+                "role": "assistant",
+                "content": {
+                    "type": "resource",
+                    "resource": {
+                        "uri": "kb://readme",
+                        "mimeType": "text/markdown",
+                        "text": args.focus if args.focus is not None else "all",
+                    },
+                },
+            },
+        ]
+
+    @cli.prompt("hello")
+    def hello(args: dict[str, Any]) -> str:
+        return f"Hello {json.dumps(args, separators=(',', ':'))}"
+
+    @cli.command("ping", description="Ping")
+    def ping(c: Context) -> Data:
+        return {"pong": True}
+
+    return cli
+
+
+def kbbad() -> incur.Cli:
+    """A resource template incur cannot match."""
+    cli = incur.Cli("kbbad", version="1.0.0", update=False, sync=False)
+
+    @cli.resource_template("bad", uri_template="x://{+path}")
+    def bad(_: str, __: dict[str, str]) -> str:
+        return ""
+
+    return cli
+
+
 @incur.schema
 class BadHeaderOptions:
     a: str
@@ -2169,6 +2291,8 @@ def cli(name: str) -> incur.Cli:
         "kitrun": lambda: kit_cli("kitrun", command="bunx @acme/kit"),
         "kitver": lambda: kit_cli("kitver", package="kitver", version="latest"),
         "oa": oa,
+        "kb": kb,
+        "kbbad": kbbad,
         "oaroot": oaroot,
         "params": params,
         "plain": plain,
