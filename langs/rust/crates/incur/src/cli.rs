@@ -1163,6 +1163,11 @@ fn extract_flags(
         let token = argv[i].as_str();
         let next = argv.get(i + 1).filter(|next| !next.is_empty());
         match token {
+            // Tokens after `--` are positional, even when they look like built-in flags.
+            "--" => {
+                flags.rest.extend_from_slice(&argv[i..]);
+                break;
+            }
             "--full-output" => flags.full_output = true,
             "--llms" => flags.llms = true,
             "--llms-full" => flags.llms_full = true,

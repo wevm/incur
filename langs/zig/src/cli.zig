@@ -732,7 +732,11 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
                 return std.mem.eql(u8, x, y);
             }
         }.eql;
-        if (eql(token, "--full-output")) {
+        if (eql(token, "--")) {
+            // Tokens after `--` are positional, even when they look like built-in flags.
+            try rest.appendSlice(a, argv[i..]);
+            break;
+        } else if (eql(token, "--full-output")) {
             flags.full_output = true;
         } else if (eql(token, "--llms")) {
             flags.llms = true;

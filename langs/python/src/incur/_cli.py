@@ -639,6 +639,10 @@ def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True
     while i < len(argv):
         token = argv[i]
         nxt = argv[i + 1] if i + 1 < len(argv) and argv[i + 1] else None
+        if token == "--":
+            # Tokens after `--` are positional, even when they look like built-in flags.
+            flags.rest.extend(argv[i:])
+            break
         if token == "--full-output":
             flags.full_output = True
         elif token == "--llms":

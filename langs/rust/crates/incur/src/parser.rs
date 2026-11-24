@@ -74,6 +74,15 @@ fn parse_error(message: impl Into<String>) -> Error {
     Error::new("UNKNOWN", message)
 }
 
+/// Reads a `true` or `false` token as a boolean.
+fn literal(token: Option<&String>) -> Option<bool> {
+    match token?.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 /// Increments a counter option.
 fn increment(raw: &mut Map<String, Value>, name: &str) {
     let next = raw.get(name).and_then(Value::as_i64).unwrap_or(0) + 1;
@@ -149,15 +158,23 @@ pub fn parse(
     let names = Names::new(options);
     let mut positionals = Vec::new();
     let mut raw = Map::new();
+    // `true`/`false` tokens after boolean flags, kept as positionals until the arg count is known.
+    let mut candidates = Vec::new();
+    // The argv index of the last token that set each boolean option.
+    let mut last_boolean = IndexMap::new();
 
     let mut i = 0;
     while i < argv.len() {
         let token = &argv[i];
-        if let Some(rest) = token.strip_prefix("--no-").filter(|rest| !rest.is_empty()) {
+        if token == "--" {
+            positionals.extend_from_slice(&argv[i + 1..]);
+            break;
+        } else if let Some(rest) = token.strip_prefix("--no-").filter(|rest| !rest.is_empty()) {
             let name = names
                 .long(rest)
                 .ok_or_else(|| parse_error(format!("Unknown flag: {token}")))?;
             raw.insert(name.to_owned(), false.into());
+            last_boolean.insert(name, i);
             i += 1;
         } else if let Some(body) = token.strip_prefix("--") {
             if let Some((flag, value)) = body.split_once('=') {
@@ -165,6 +182,9 @@ pub fn parse(
                     .long(flag)
                     .ok_or_else(|| parse_error(format!("Unknown flag: --{flag}")))?;
                 set(&mut raw, &names, name, value);
+                if names.is_boolean(name) {
+                    last_boolean.insert(name, i);
+                }
                 i += 1;
             } else {
                 let name = names
@@ -175,6 +195,12 @@ pub fn parse(
                     i += 1;
                 } else if names.is_boolean(name) {
                     raw.insert(name.to_owned(), true.into());
+                    last_boolean.insert(name, i);
+                    if let Some(value) = literal(argv.get(i + 1)) {
+                        candidates.push((positionals.len(), name, value, i));
+                        positionals.push(argv[i + 1].clone());
+                        i += 1;
+                    }
                     i += 1;
                 } else {
                     let value = argv
@@ -196,6 +222,12 @@ pub fn parse(
                     increment(&mut raw, name);
                 } else if names.is_boolean(name) {
                     raw.insert(name.to_owned(), true.into());
+                    last_boolean.insert(name, i);
+                    if let Some(value) = literal(argv.get(i + 1)).filter(|_| last) {
+                        candidates.push((positionals.len(), name, value, i));
+                        positionals.push(argv[i + 1].clone());
+                        i += 1;
+                    }
                 } else if !last {
                     return Err(parse_error(format!(
                         "Non-boolean flag -{short} must be last in a stacked alias"
@@ -215,29 +247,53 @@ pub fn parse(
         }
     }
 
-    // Positionals fill args in order; a final array arg collects the rest.
-    let mut raw_args = Map::new();
-    if let Some(schema) = args {
-        let fields = schema.fields();
-        for (j, field) in fields.iter().enumerate() {
-            if matches!(field.ty.kind, Kind::Array { .. }) {
-                if j != fields.len() - 1 {
-                    return Err(parse_error(format!(
-                        "Variadic arg \"{}\" must be the last key in the args schema",
-                        field.name
-                    )));
-                }
-                let rest = positionals.get(j..).unwrap_or_default();
-                if !rest.is_empty() {
-                    raw_args.insert(
-                        field.name.clone(),
-                        rest.iter().cloned().map(Value::from).collect(),
-                    );
-                }
-            } else if let Some(value) = positionals.get(j) {
-                raw_args.insert(field.name.clone(), value.clone().into());
+    // A spaced `true`/`false` after a boolean flag is its value only when no positional slot is
+    // left for it, earliest first; a later assignment of the same flag still wins.
+    let fields = args.map_or(&[][..], Type::fields);
+    let variadic = fields
+        .last()
+        .is_some_and(|field| matches!(field.ty.kind, Kind::Array { .. }));
+    if !variadic {
+        let mut consumed = 0;
+        for &(_, name, value, flag) in &candidates {
+            if positionals.len() - consumed <= fields.len() {
+                break;
+            }
+            consumed += 1;
+            if last_boolean.get(name) == Some(&flag) {
+                raw.insert(name.to_owned(), value.into());
             }
         }
+        let mut index = 0;
+        positionals.retain(|_| {
+            index += 1;
+            !candidates[..consumed].iter().any(|c| c.0 == index - 1)
+        });
+    }
+
+    // Positionals fill args in order; a final array arg collects the rest.
+    let mut raw_args = Map::new();
+    for (j, field) in fields.iter().enumerate() {
+        if matches!(field.ty.kind, Kind::Array { .. }) {
+            if j != fields.len() - 1 {
+                return Err(parse_error(format!(
+                    "Variadic arg \"{}\" must be the last key in the args schema",
+                    field.name
+                )));
+            }
+            let rest = positionals.get(j..).unwrap_or_default();
+            if !rest.is_empty() {
+                raw_args.insert(
+                    field.name.clone(),
+                    rest.iter().cloned().map(Value::from).collect(),
+                );
+            }
+        } else if let Some(value) = positionals.get(j) {
+            raw_args.insert(field.name.clone(), value.clone().into());
+        }
+    }
+    if let Some(extra) = positionals.get(fields.len()).filter(|_| !variadic) {
+        return Err(parse_error(format!("Unexpected argument: {extra}")));
     }
     let args = match args {
         Some(schema) => validate(schema, &raw_args)?,
