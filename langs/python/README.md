@@ -178,6 +178,14 @@ Both entries share one definition. `parse()` returns the command to your code, w
 
 The builder (`@cli.command`, `@cli.root()`, and `cli.group`) declares CLIs too, for commands known only at run time, and mixes with declared ones: `cli.group(incur.Cli(Pr).handle(run))`.
 
+### Examples
+
+[`examples/`](https://github.com/wevm/incur/tree/main/langs/python/examples) ports the TypeScript examples, such as `npm`:
+
+```sh
+$ uv run examples/npm.py install express -D
+```
+
 ## Walkthrough
 
 ### Agent discovery

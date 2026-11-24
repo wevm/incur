@@ -38,7 +38,7 @@ show_missing = true
 skip_covered = true
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["examples", "src", "tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 
@@ -87,6 +87,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/incur/_*.py" = ["D101", "D102", "D103", "D105", "D107"]
+"examples/**" = ["D415"] # Docstrings are command descriptions, which match the TypeScript examples.
 "tests/**" = ["D", "ANN", "PLC0415", "N802", "RUF012", "E501", "RUF001"]
 
 [tool.ruff.lint.pydocstyle]

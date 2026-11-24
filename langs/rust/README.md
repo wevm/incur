@@ -386,6 +386,14 @@ $ my-cli users --token-limit 20 --token-offset 20
 
 See [filtering output](https://github.com/wevm/incur#filtering-output) and [token pagination](https://github.com/wevm/incur#token-pagination).
 
+## Examples
+
+[`examples/npm.rs`](https://github.com/wevm/incur/blob/main/langs/rust/crates/incur/examples/npm.rs) ports the TypeScript [`npm` example](https://github.com/wevm/incur/blob/main/examples/npm/cli.ts) with the same output:
+
+```sh
+cargo run -p incur --example npm -- --help
+```
+
 ## Differences from TypeScript
 
 - Integers in data keep their exact 64-bit value in every format, where JavaScript rounds beyond 2^53.

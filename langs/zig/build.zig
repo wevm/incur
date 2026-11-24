@@ -23,6 +23,14 @@ pub fn build(b: *std.Build) void {
     differential_step.dependOn(&run_differential.step);
     test_step.dependOn(&run_differential.step);
 
+    // The example compiles with the tests, so it cannot rot.
+    const npm = b.addExecutable(.{ .name = "npm", .root_module = testModule(b, b.path("examples/npm.zig"), incur) });
+    test_step.dependOn(&npm.step);
+    const run_npm = b.addRunArtifact(npm);
+    run_npm.addPassthruArgs();
+    const npm_step = b.step("npm", "Run the npm example: zig build npm -- <args>");
+    npm_step.dependOn(&run_npm.step);
+
     const compile_errors = b.step("compile-errors", "Check that invalid schema metadata fails to compile");
     addCompileErrorChecks(b, compile_errors);
     test_step.dependOn(compile_errors);
