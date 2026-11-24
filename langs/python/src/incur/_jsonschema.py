@@ -303,7 +303,8 @@ def coerce(ty: Type) -> Type:
     """
     if ty.default is not None:
         return ty
-    kinds = [v.kind for v in ty.variants] if ty.kind == "union" else [ty.kind]
+    # Union options with a default are `ZodDefault` wrappers, which `coerceIfNeeded` skips.
+    kinds = [v.kind for v in ty.variants if v.default is None] if ty.kind == "union" else [ty.kind]
     if "number" in kinds or "integer" in kinds:
         kind: Kind = "number"
     elif "boolean" in kinds:

@@ -78,6 +78,16 @@ pub(crate) struct Converted {
     /// Whether input converts to the kind first, as `z.coerce` does with `Number()` and
     /// `Boolean()`.
     pub(crate) coerce: bool,
+    /// The members of a type list such as `["string", "array"]`, which validate as `z.union`
+    /// does.
+    pub(crate) union: Vec<Type>,
+}
+
+impl Converted {
+    /// Whether the schema is `type: "null"`, which accepts only `null`.
+    fn is_null(&self) -> bool {
+        self.json.get("type") == Some(&Value::from("null"))
+    }
 }
 
 /// The shape of a schema node.
@@ -485,6 +495,9 @@ pub(crate) enum IssueKind {
         /// The checked type.
         origin: &'static str,
     },
+    /// No member of a union accepts the value: the issues of each member, with paths relative
+    /// to the union.
+    InvalidUnion(Vec<Vec<Issue>>),
 }
 
 impl Issue {
@@ -496,6 +509,7 @@ impl Issue {
             IssueKind::InvalidFormat { .. } => "invalid_format",
             IssueKind::TooBig { .. } => "too_big",
             IssueKind::TooSmall { .. } => "too_small",
+            IssueKind::InvalidUnion(_) => "invalid_union",
         }
     }
 
@@ -526,6 +540,14 @@ impl Issue {
                 out.insert("code".into(), self.code().into());
                 out.insert("format".into(), (*format).into());
                 out.insert("pattern".into(), pattern.clone().into());
+            }
+            IssueKind::InvalidUnion(errors) => {
+                out.insert("code".into(), self.code().into());
+                let errors = errors
+                    .iter()
+                    .map(|issues| issues.iter().map(Self::to_json).collect())
+                    .collect::<Vec<Value>>();
+                out.insert("errors".into(), errors.into());
             }
             IssueKind::TooBig {
                 maximum: bound,
@@ -626,17 +648,31 @@ pub(crate) fn parse(
     path: &mut Vec<Value>,
     issues: &mut Vec<Issue>,
 ) -> Option<Value> {
+    let converted = ty.converted.as_deref();
     if value.is_none() {
         if let Some(default) = &ty.default {
             return Some(default.clone());
         }
-        if ty.optional || ty.kind == Kind::Unknown {
-            return None;
+        // Unknown values accept `undefined`; nulls and unions validate it.
+        let checked = converted.is_some_and(|c| c.is_null() || !c.union.is_empty());
+        if ty.optional || ty.kind == Kind::Unknown && !checked {
+            // `.optional()` still runs a union with a defaulted member, whose `optin` is
+            // optional, and drops its issues.
+            let members = converted.map(|c| &c.union).filter(|members| {
+                ty.optional && members.iter().any(|member| member.default.is_some())
+            });
+            return members.and_then(|members| parse_union(members, None, path, &mut Vec::new()));
         }
     }
+    if let Some(members) = converted
+        .map(|c| &c.union)
+        .filter(|members| !members.is_empty())
+    {
+        return parse_union(members, value, path, issues);
+    }
     // `z.coerce` also converts a missing value: `Number(undefined)` is `NaN`.
-    let coerced = (ty.coerce || ty.converted.as_ref().is_some_and(|c| c.coerce))
-        .then(|| coerce(&ty.kind, value));
+    let coerced =
+        (ty.coerce || converted.is_some_and(|c| c.coerce)).then(|| coerce(&ty.kind, value));
     let value = coerced.as_ref().or(value);
     match (&ty.kind, value) {
         (Kind::Enum(values), _) => {
@@ -697,7 +733,7 @@ fn parse_present(
             Some(Value::Array(out))
         }
         (Kind::Boolean, Value::Bool(_)) => Some(value.clone()),
-        (Kind::Unknown, _) => Some(finite(value)),
+        (Kind::Unknown, _) if value.is_null() || !is_null(ty) => Some(finite(value)),
         (Kind::Integer { max, min } | Kind::Number { max, min }, _) => {
             let integer = matches!(ty.kind, Kind::Integer { .. });
             let number = match value {
@@ -800,6 +836,56 @@ fn parse_present(
     }
 }
 
+/// Validates a value with the members of a union: the first member without issues parses it,
+/// as `z.union` does. Otherwise the one member that failed only checks reports its issues, and
+/// any other failure reports every member's issues.
+fn parse_union(
+    members: &[Type],
+    value: Option<&Value>,
+    path: &[Value],
+    issues: &mut Vec<Issue>,
+) -> Option<Value> {
+    let mut failures = Vec::new();
+    for member in members {
+        let mut found = Vec::new();
+        let parsed = parse(member, value, &mut Vec::new(), &mut found);
+        if found.is_empty() {
+            return parsed;
+        }
+        failures.push(found);
+    }
+    let mut continuing = failures.iter().filter(|found| !aborted(found));
+    if let (Some(found), None) = (continuing.next(), continuing.next()) {
+        issues.extend(found.iter().map(|issue| Issue {
+            path: [path, &issue.path].concat(),
+            ..issue.clone()
+        }));
+        return None;
+    }
+    issues.push(Issue {
+        kind: IssueKind::InvalidUnion(failures),
+        message: "Invalid input".into(),
+        path: path.to_vec(),
+    });
+    None
+}
+
+/// Whether issues stop Zod from trying later checks: type and value mismatches do, while failed
+/// bounds and formats let parsing continue.
+fn aborted(issues: &[Issue]) -> bool {
+    issues.iter().any(|issue| {
+        !matches!(
+            issue.kind,
+            IssueKind::TooBig { .. } | IssueKind::TooSmall { .. } | IssueKind::InvalidFormat { .. }
+        )
+    })
+}
+
+/// Whether a schema is `type: "null"`.
+fn is_null(ty: &Type) -> bool {
+    ty.converted.as_ref().is_some_and(|c| c.is_null())
+}
+
 /// Reports an `invalid_type` issue for `ty`.
 fn invalid_type(
     ty: &Type,
@@ -809,6 +895,7 @@ fn invalid_type(
     issues: &mut Vec<Issue>,
 ) {
     let expected = match ty.kind {
+        Kind::Unknown if is_null(ty) => "null",
         Kind::Array { .. } => "array",
         Kind::Boolean => "boolean",
         Kind::Integer { .. } | Kind::Number { .. } => "number",

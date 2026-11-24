@@ -427,6 +427,12 @@ pub const Validator = struct {
     pub fn parse(v: *Validator, ty: *const Type, value: ?Value) Allocator.Error!?Value {
         if (value == null) {
             if (ty.default) |d| return d;
+            // `.optional()` still runs a union with a defaulted option, whose `optin` is optional,
+            // and drops its issues.
+            if (ty.optional and ty.kind == .@"union") for (ty.kind.@"union") |option| if (option.default != null) {
+                var nested: Validator = .{ .a = v.a };
+                return nested.parseUnion(ty.kind.@"union", null);
+            };
             if (ty.optional or ty.kind == .unknown) return null;
         }
         if (ty.kind == .@"enum") {
@@ -450,6 +456,7 @@ pub const Validator = struct {
             try v.issue(.{ .invalid_value = try v.a.dupe(Value, &.{expected}) }, try std.fmt.allocPrint(v.a, "Invalid input: expected {s}", .{try json.stringify(v.a, expected)}));
             return null;
         }
+        if (ty.kind == .@"union") return v.parseUnion(ty.kind.@"union", value);
         // Coercion converts a missing value too: `Number(undefined)` is NaN and
         // `Boolean(undefined)` is false.
         const present = value orelse if (ty.coerce) (if (ty.kind == .boolean) Value{ .bool = false } else Value{ .string = "NaN" }) else {
@@ -457,6 +464,28 @@ pub const Validator = struct {
             return null;
         };
         return v.parsePresent(ty, if (ty.coerce) try coerced(v.a, ty, present) else present);
+    }
+
+    /// Validates a value with the options of a union, as `z.union` does.
+    fn parseUnion(v: *Validator, options: []const Type, value: ?Value) Allocator.Error!?Value {
+        // Options validate on their own, so their issue paths are relative. A missing value
+        // reaches every option, as Zod passes `undefined` to each.
+        var failures: std.ArrayList([]const Issue) = .empty;
+        var continuing: std.ArrayList([]const Issue) = .empty;
+        for (options) |*option| {
+            var nested: Validator = .{ .a = v.a };
+            const parsed = try nested.parse(option, value);
+            if (nested.issues.items.len == 0) return parsed;
+            try failures.append(v.a, nested.issues.items);
+            if (!aborted(nested.issues.items)) try continuing.append(v.a, nested.issues.items);
+        }
+        // The one option that failed only checks reports its issues, as Zod does.
+        if (continuing.items.len == 1) {
+            for (continuing.items[0]) |found| try v.issues.append(v.a, .{ .kind = found.kind, .message = found.message, .path = try std.mem.concat(v.a, Value, &.{ v.path.items, found.path }) });
+            return null;
+        }
+        try v.issue(.{ .invalid_union = failures.items }, "Invalid input");
+        return null;
     }
 
     /// Validates a value that is present in the input.
@@ -475,25 +504,6 @@ pub const Validator = struct {
             .boolean => if (value == .bool) return value,
             .unknown => return value,
             .null => if (value == .null) return value,
-            .@"union" => |options| {
-                // Options validate on their own, so their issue paths are relative.
-                var failures: std.ArrayList([]const Issue) = .empty;
-                var continuing: std.ArrayList([]const Issue) = .empty;
-                for (options) |*option| {
-                    var nested: Validator = .{ .a = v.a };
-                    const parsed = try nested.parse(option, value);
-                    if (nested.issues.items.len == 0) return parsed;
-                    try failures.append(v.a, nested.issues.items);
-                    if (!aborted(nested.issues.items)) try continuing.append(v.a, nested.issues.items);
-                }
-                // The one option that failed only checks reports its issues, as Zod does.
-                if (continuing.items.len == 1) {
-                    for (continuing.items[0]) |found| try v.issues.append(v.a, .{ .kind = found.kind, .message = found.message, .path = try std.mem.concat(v.a, Value, &.{ v.path.items, found.path }) });
-                    return null;
-                }
-                try v.issue(.{ .invalid_union = failures.items }, "Invalid input");
-                return null;
-            },
             .integer, .number => |b| {
                 const number = value.toFloat() orelse {
                     try v.invalidType(ty, received(value), null);
@@ -547,8 +557,8 @@ pub const Validator = struct {
                 };
                 return if (v.issues.items.len > issues) null else value;
             },
-            // `parse` handles enums and literals before reaching here.
-            .@"enum", .literal => {},
+            // `parse` handles enums, literals, and unions before reaching here.
+            .@"enum", .literal, .@"union" => {},
         }
         try v.invalidType(ty, received(value), null);
         return null;
