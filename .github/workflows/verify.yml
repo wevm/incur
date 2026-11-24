@@ -47,7 +47,7 @@ jobs:
           CI: true
 
       - name: Upload coverage reports to Codecov
-        uses: wevm/actions/vendor/codecov/codecov-action/v4.6.0@b518cf981b50a4c745a8b7335fc693f34b108a75
+        uses: wevm/actions/vendor/codecov/codecov-action/v4.6.0@e0e99cfdac7c74eadc3ee7281015c0bf0496d6ac
 
   rust:
     name: Rust
@@ -65,7 +65,7 @@ jobs:
         uses: ./.github/actions/install-dependencies
 
       - name: Cache Rust builds
-        uses: wevm/actions/vendor/Swatinem/rust-cache/v2.9.2@8963daf30237417f873c8e2f17e3bf9415e3a7b9
+        uses: wevm/actions/vendor/Swatinem/rust-cache/v2.9.2@e0e99cfdac7c74eadc3ee7281015c0bf0496d6ac
         with:
           workspaces: langs/rust
           save-if: ${{ github.ref == 'refs/heads/main' }}
