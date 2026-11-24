@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -60,10 +61,12 @@ export async function sync(
     }
 
     const { paths, agents } = Agents.install(tmpDir, { global, cwd })
+    // Project installs keep their own metadata, so projects with same-named CLIs stay apart.
+    const project = global ? undefined : (cwd ?? process.cwd())
 
     // Remove stale skills from previous installs
     const currentNames = new Set(paths.map((p) => path.basename(p)))
-    const prev = readMeta(name)
+    const prev = readMeta(name, project)
     if (prev?.skills) {
       for (const old of prev.skills) {
         if (currentNames.has(old)) continue
@@ -75,6 +78,7 @@ export async function sync(
     const hashEntries = collectSkillCommands(commands, [], new Map(), options.rootCommand)
     writeMeta(
       name,
+      project,
       Skill.hash(hashEntries),
       [...currentNames],
       [...paths, ...agents.map((agent) => agent.path)],
@@ -194,11 +198,18 @@ export async function list(
 }
 
 /** Returns whether any previously synced skills are still installed on disk. */
-export function hasInstalledSkills(
-  name: string,
-  options: { cwd?: string | undefined } = {},
-): boolean {
-  return readInstalledSkills(name, options).size > 0
+export function hasInstalledSkills(name: string, options: scope.Options = {}): boolean {
+  return readScopeSkills(name, options).size > 0
+}
+
+export declare namespace scope {
+  /** Selects the skills metadata of one install scope. */
+  type Options = {
+    /** Project directory of `global: false` installs. Defaults to `process.cwd()`. */
+    cwd?: string | undefined
+    /** Read the metadata of global installs (`true`, the default) or of the project in `cwd` (`false`). */
+    global?: boolean | undefined
+  }
 }
 
 export declare namespace list {
@@ -268,15 +279,26 @@ function resolvePackageRoot(): string {
   return process.cwd()
 }
 
-/** Returns the hash file path for a CLI. */
-function hashPath(name: string): string {
-  const dir = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share')
-  return path.join(dir, 'incur', `${name}.json`)
+/** Returns the metadata file path for a CLI's global installs, or for its installs in a project directory. */
+function hashPath(name: string, project?: string | undefined): string {
+  const dir = path.join(
+    process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+    'incur',
+  )
+  if (project === undefined) return path.join(dir, `${name}.json`)
+  const key = createHash('sha256').update(path.resolve(project)).digest('hex').slice(0, 16)
+  return path.join(dir, 'projects', key, `${name}.json`)
 }
 
 /** @internal Writes the skills metadata for staleness detection and cleanup. */
-function writeMeta(name: string, hash: string, skills: string[], paths: string[]) {
-  const file = hashPath(name)
+function writeMeta(
+  name: string,
+  project: string | undefined,
+  hash: string,
+  skills: string[],
+  paths: string[],
+) {
+  const file = hashPath(name, project)
   const dir = path.dirname(file)
   if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true })
   fsSync.writeFileSync(
@@ -285,23 +307,34 @@ function writeMeta(name: string, hash: string, skills: string[], paths: string[]
   )
 }
 
-/** @internal Reads the stored metadata for a CLI. */
+/** @internal Reads the stored metadata for a CLI's global installs, or for its installs in a project directory. */
 function readMeta(
   name: string,
+  project?: string | undefined,
 ): { hash: string; paths?: string[] | undefined; skills?: string[] | undefined } | undefined {
   try {
-    return JSON.parse(fsSync.readFileSync(hashPath(name), 'utf-8'))
+    return JSON.parse(fsSync.readFileSync(hashPath(name, project), 'utf-8'))
   } catch {
     return undefined
   }
 }
 
-/** Reads the names of previously synced skills that are still installed on disk. */
+/** Reads the names of previously synced skills that are still installed on disk, globally or in the project. */
 function readInstalledSkills(
   name: string,
   options: { cwd?: string | undefined } = {},
 ): Set<string> {
-  const meta = readMeta(name)
+  return new Set([
+    ...readScopeSkills(name, options),
+    ...readScopeSkills(name, { ...options, global: false }),
+  ])
+}
+
+/** Reads the names of previously synced skills of one install scope that are still installed on disk. */
+function readScopeSkills(name: string, options: scope.Options = {}): Set<string> {
+  const { global = true } = options
+  const cwd = options.cwd ?? process.cwd()
+  const meta = readMeta(name, global ? undefined : cwd)
   if (!meta?.skills?.length) return new Set()
 
   if (meta.paths?.length) {
@@ -311,7 +344,6 @@ function readInstalledSkills(
     return new Set(installed)
   }
 
-  const cwd = options.cwd ?? process.cwd()
   const bases = [path.join(os.homedir(), '.agents', 'skills'), path.join(cwd, '.agents', 'skills')]
   const installed = meta.skills.filter((skill) =>
     bases.some((base) => isInstalledSkillPath(path.join(base, skill))),
@@ -324,7 +356,8 @@ function isInstalledSkillPath(skillPath: string): boolean {
   return fsSync.existsSync(path.join(skillPath, 'SKILL.md'))
 }
 
-/** Reads the stored skills hash for a CLI. Returns `undefined` if no hash exists. */
-export function readHash(name: string): string | undefined {
-  return readMeta(name)?.hash
+/** Reads the stored skills hash for a CLI's global installs, or with `global: false`, for its installs in the project. Returns `undefined` if no hash exists. */
+export function readHash(name: string, options: scope.Options = {}): string | undefined {
+  const { global = true } = options
+  return readMeta(name, global ? undefined : (options.cwd ?? process.cwd()))?.hash
 }

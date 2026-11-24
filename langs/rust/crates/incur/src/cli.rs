@@ -2849,8 +2849,11 @@ impl Run<'_, '_> {
             return None;
         }
         let env = self.io.env;
-        let stored = sync::read_hash(&cli.name, env)?;
-        if !sync::has_installed(&cli.name, env) {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        // Skills installed in this project take precedence over global ones.
+        let global = !sync::has_installed(&cli.name, env, &cwd, false);
+        let stored = sync::read_hash(&cli.name, env, (!global).then_some(cwd.as_path()))?;
+        if !sync::has_installed(&cli.name, env, &cwd, global) {
             return None;
         }
         let tree = cli.tree(&Scope::All).await.ok()?;
@@ -2861,14 +2864,15 @@ impl Run<'_, '_> {
         let present = |key: &str| env(key).is_some_and(|v| !v.is_empty());
         let runnable = (present("npm_config_user_agent") || present("npm_execpath"))
             && (cli.package.is_some() || sync::is_package_name(&cli.name));
+        let flag = if global { "" } else { " --no-global" };
         let command = if runnable {
             match sync::package_specifier(&cli.name, cli.package.as_deref(), cli.version.as_deref())
             {
-                Ok(specifier) => format!("{} {specifier} skills add", update::runner(env)),
-                Err(_) => format!("{} skills add", self.display_name),
+                Ok(specifier) => format!("{} {specifier} skills add{flag}", update::runner(env)),
+                Err(_) => format!("{} skills add{flag}", self.display_name),
             }
         } else {
-            format!("{} skills add", self.display_name)
+            format!("{} skills add{flag}", self.display_name)
         };
         Some(FormattedCtaBlock {
             description: "Skills are out of date:".into(),

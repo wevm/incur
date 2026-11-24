@@ -29,7 +29,9 @@ vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
   return {
     ...actual,
-    hasInstalledSkills: () => __mockSkillsInstalled,
+    // Mocks global installs; no skills are installed in the project.
+    hasInstalledSkills: (_name: string, options?: { global?: boolean | undefined }) =>
+      options?.global !== false && __mockSkillsInstalled,
     readHash: () => __mockSkillsHash,
   }
 })
@@ -4401,11 +4403,20 @@ describe('skills staleness', () => {
 
   test('does not warn for skills add', async () => {
     __mockSkillsHash = '0000000000000000'
+    // Keep the sync out of the real home directory, where other test files read skills metadata.
+    const spy = vi
+      .spyOn(SyncSkills, 'sync')
+      .mockResolvedValue({ agents: [], paths: [], skills: [] })
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
 
-    await serve(cli, ['skills', 'add'])
-    expect(stderrSpy).not.toHaveBeenCalled()
+    try {
+      await serve(cli, ['skills', 'add'])
+      expect(spy).toHaveBeenCalled()
+      expect(stderrSpy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test('does not warn for --help', async () => {

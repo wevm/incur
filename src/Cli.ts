@@ -1045,13 +1045,17 @@ async function serveImpl(
     const isSkillsAdd = builtinIdx(filtered, name, commands, 'skills') !== -1
     const isMcpAdd = builtinIdx(filtered, name, commands, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
-      const stored = SyncSkills.readHash(name)
-      if (stored && SyncSkills.hasInstalledSkills(name)) {
+      // Skills installed in this project take precedence over global ones.
+      const project = { global: false }
+      const scope = SyncSkills.hasInstalledSkills(name, project) ? project : {}
+      const stored = SyncSkills.readHash(name, scope)
+      if (stored && SyncSkills.hasInstalledSkills(name, scope)) {
         // The stored hash covers every command, deferred groups included.
         await options.load?.()
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
+          const flag = scope === project ? ' --no-global' : ''
           // A CLI name that is not a package name (e.g. `tempo wallet`) cannot be run by a package runner.
           const command =
             (process.env.npm_config_user_agent || process.env.npm_execpath) &&
@@ -1060,8 +1064,8 @@ async function serveImpl(
                   name,
                   options.package,
                   options.version,
-                )} skills add`
-              : `${displayName} skills add`
+                )} skills add${flag}`
+              : `${displayName} skills add${flag}`
           skillsCta = {
             description: 'Skills are out of date:',
             commands: [{ command, description: 'sync outdated skills' }],

@@ -16,6 +16,7 @@ Requires Node.js and the repository's `pnpm install`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -71,6 +72,8 @@ class Sandbox:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.home = root / "home"
+        # The hash of the sandbox path that names its project skills metadata directory.
+        self.project = hashlib.sha256(str(self.home).encode()).hexdigest()[:16]
         self.bin = root / "bin"
         self.tmp = root / "tmp"
         self.bin.mkdir()
@@ -94,7 +97,7 @@ class Sandbox:
         shutil.rmtree(self.home, ignore_errors=True)
         self.home.mkdir()
         for name, value in seed.items():
-            target = self.home / name
+            target = self.home / name.replace("<project>", self.project)
             target.parent.mkdir(parents=True, exist_ok=True)
             if value is None:
                 target.mkdir(parents=True, exist_ok=True)
@@ -104,21 +107,23 @@ class Sandbox:
                 target.symlink_to(self.expand(value["symlink"]))
 
     def tree(self) -> dict[str, Entry]:
-        """Lists every entry under the sandbox, sorted by path, with normalized contents."""
+        """Lists every entry under the sandbox, sorted by path, with normalized contents. The
+        sandbox path hash in entry paths becomes `<project>`."""
         entries: dict[str, Entry] = {}
 
         def visit(relative: str) -> None:
             for name in os.listdir(self.home / relative):
                 child = f"{relative}/{name}" if relative else name
+                key = child.replace(self.project, "<project>")
                 path = self.home / child
                 if path.is_symlink():
-                    entries[child] = {"symlink": self.normalize(os.readlink(path))}
+                    entries[key] = {"symlink": self.normalize(os.readlink(path))}
                 elif path.is_dir():
-                    entries[child] = None
+                    entries[key] = None
                     visit(child)
                 else:
                     text = path.read_bytes().decode("utf-8", "replace")
-                    entries[child] = metadata(self.normalize(text))
+                    entries[key] = metadata(self.normalize(text))
 
         visit("")
         return dict(sorted(entries.items(), key=lambda e: e[0].encode("utf-16-be")))

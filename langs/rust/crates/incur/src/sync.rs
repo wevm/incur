@@ -552,23 +552,30 @@ fn uninstall(name: &str, global: bool, cwd: &Path, paths: &Paths) {
     }
 }
 
-/// Returns the skills metadata path for a CLI.
-fn meta_path(name: &str, env: Env<'_>) -> PathBuf {
+/// Returns the skills metadata path for a CLI's global installs, or for its installs in a
+/// project directory.
+fn meta_path(name: &str, env: Env<'_>, project: Option<&Path>) -> PathBuf {
     let dir = env("XDG_DATA_HOME")
         .filter(|v| !v.is_empty())
-        .map_or_else(|| home(env).join(".local").join("share"), PathBuf::from);
-    dir.join("incur").join(format!("{name}.json"))
+        .map_or_else(|| home(env).join(".local").join("share"), PathBuf::from)
+        .join("incur");
+    let file = format!("{name}.json");
+    let Some(project) = project else {
+        return dir.join(file);
+    };
+    let key = skill::sha256_hex(project.to_string_lossy().as_bytes());
+    dir.join("projects").join(&key[..16]).join(file)
 }
 
-/// Reads the skills metadata of a CLI.
-fn read_meta(name: &str, env: Env<'_>) -> Option<Value> {
-    let text = std::fs::read_to_string(meta_path(name, env)).ok()?;
+/// Reads the skills metadata of a CLI's global installs, or of its installs in a project.
+fn read_meta(name: &str, env: Env<'_>, project: Option<&Path>) -> Option<Value> {
+    let text = std::fs::read_to_string(meta_path(name, env, project)).ok()?;
     js::json_parse(&text, |_| Value::Null).ok()
 }
 
-/// Returns the stored skills hash of a CLI.
-pub(crate) fn read_hash(name: &str, env: Env<'_>) -> Option<String> {
-    read_meta(name, env)?
+/// Returns the stored skills hash of a CLI's global installs, or of its installs in a project.
+pub(crate) fn read_hash(name: &str, env: Env<'_>, project: Option<&Path>) -> Option<String> {
+    read_meta(name, env, project)?
         .get("hash")
         .and_then(Value::as_str)
         .map(str::to_owned)
@@ -588,9 +595,10 @@ fn strings(meta: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Returns the names of previously synced skills still installed.
-fn installed_skills(name: &str, env: Env<'_>) -> Vec<String> {
-    let Some(meta) = read_meta(name, env) else {
+/// Returns the names of previously synced skills still installed, from the metadata of global
+/// installs or, with `global` false, of installs in the project at `cwd`.
+fn installed_skills(name: &str, env: Env<'_>, cwd: &Path, global: bool) -> Vec<String> {
+    let Some(meta) = read_meta(name, env, (!global).then_some(cwd)) else {
         return Vec::new();
     };
     let skills = strings(&meta, "skills");
@@ -608,7 +616,6 @@ fn installed_skills(name: &str, env: Env<'_>) -> Vec<String> {
             .collect();
     }
     let home = home(env);
-    let cwd = std::env::current_dir().unwrap_or_default();
     let bases = [home.join(".agents/skills"), cwd.join(".agents/skills")];
     skills
         .into_iter()
@@ -616,14 +623,21 @@ fn installed_skills(name: &str, env: Env<'_>) -> Vec<String> {
         .collect()
 }
 
-/// Whether any previously synced skill is still installed.
-pub(crate) fn has_installed(name: &str, env: Env<'_>) -> bool {
-    !installed_skills(name, env).is_empty()
+/// Whether any previously synced skill is still installed, globally or in the project at `cwd`.
+pub(crate) fn has_installed(name: &str, env: Env<'_>, cwd: &Path, global: bool) -> bool {
+    !installed_skills(name, env, cwd, global).is_empty()
 }
 
-/// Writes the skills metadata.
-fn write_meta(name: &str, env: Env<'_>, hash: &str, skills: &[String], paths: &[PathBuf]) {
-    let file = meta_path(name, env);
+/// Writes the skills metadata of a CLI's global installs, or of its installs in a project.
+fn write_meta(
+    name: &str,
+    env: Env<'_>,
+    project: Option<&Path>,
+    hash: &str,
+    skills: &[String],
+    paths: &[PathBuf],
+) {
+    let file = meta_path(name, env, project);
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -833,7 +847,9 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
             .iter()
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .collect::<Vec<_>>();
-        if let Some(meta) = read_meta(source.name, source.env) {
+        // Project installs keep their own metadata, so projects with same-named CLIs stay apart.
+        let project = (!global).then_some(cwd.as_path());
+        if let Some(meta) = read_meta(source.name, source.env, project) {
             for old in strings(&meta, "skills") {
                 if !current.contains(&old) {
                     uninstall(&old, global, &cwd, &paths);
@@ -848,7 +864,14 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
                 unique.push(name);
             }
         }
-        write_meta(source.name, source.env, &source.hash, &unique, &all);
+        write_meta(
+            source.name,
+            source.env,
+            project,
+            &source.hash,
+            &unique,
+            &all,
+        );
         skills.sort_by(|a, b| js::locale_compare(&a.name, &b.name));
         Ok::<_, std::io::Error>(Synced {
             skills,
@@ -918,7 +941,9 @@ pub(crate) fn list(source: &Source<'_>, depth_value: f64) -> Vec<Skill> {
         source.groups,
         source.settings.command.as_deref().unwrap_or(source.name),
     );
-    let installed = installed_skills(source.name, source.env);
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut installed = installed_skills(source.name, source.env, &cwd, true);
+    installed.extend(installed_skills(source.name, source.env, &cwd, false));
     let mut skills = files
         .into_iter()
         .map(|file| Skill {

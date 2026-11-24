@@ -149,8 +149,41 @@ test('writes hash after successful sync', async () => {
     cwd: installDir,
   })
 
-  const stored = SyncSkills.readHash('hash-test')
+  const stored = SyncSkills.readHash('hash-test', { cwd: installDir, global: false })
   expect(stored).toMatch(/^[0-9a-f]{16}$/)
+  // Project installs leave the global metadata alone.
+  expect(SyncSkills.readHash('hash-test')).toBeUndefined()
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('keeps project metadata apart for same-named CLIs', async () => {
+  const tmp = join(tmpdir(), `clac-projects-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const a = Cli.create('demo').command('alpha', { description: 'Alpha', run: () => ({}) })
+  const b = Cli.create('demo')
+    .command('beta', { description: 'Beta', run: () => ({}) })
+    .command('gamma', { description: 'Gamma', run: () => ({}) })
+  const dirA = join(tmp, 'a')
+  const dirB = join(tmp, 'b')
+  mkdirSync(dirA)
+  mkdirSync(dirB)
+
+  await SyncSkills.sync('demo', Cli.toCommands.get(a)!, { cwd: dirA, global: false })
+  const hashA = SyncSkills.readHash('demo', { cwd: dirA, global: false })
+  await SyncSkills.sync('demo', Cli.toCommands.get(b)!, { cwd: dirB, global: false })
+
+  expect(SyncSkills.readHash('demo', { cwd: dirA, global: false })).toBe(hashA)
+  expect(SyncSkills.readHash('demo', { cwd: dirB, global: false })).not.toBe(hashA)
+  expect(await SyncSkills.list('demo', Cli.toCommands.get(a)!, { cwd: dirA })).toEqual([
+    {
+      name: 'demo-alpha',
+      description: 'Alpha. Run `demo alpha --help` for usage details.',
+      installed: true,
+    },
+  ])
 
   rmSync(tmp, { recursive: true, force: true })
 })
@@ -296,7 +329,7 @@ test('list shows installed status after sync', async () => {
   })
 
   // Now list should show installed
-  const result = await SyncSkills.list('test', commands)
+  const result = await SyncSkills.list('test', commands, { cwd: installDir })
   expect(result.length).toBeGreaterThan(0)
   for (const s of result) expect(s.installed).toBe(true)
 

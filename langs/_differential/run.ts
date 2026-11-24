@@ -10,6 +10,7 @@
  * Usage: `node --import tsx langs/_differential/run.ts [cases-file]` from any directory. The cases
  * file defaults to `cases.json` beside this script.
  */
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -23,7 +24,7 @@ type Case = {
   env?: Record<string, string> | undefined
   /** HTTP requests sent in order to `cli.fetch` instead of serving `argv`. */
   requests?: HttpRequest[] | undefined
-  /** Files seeded into the sandbox: path → contents, `null` for a directory, or a symlink. */
+  /** Files seeded into the sandbox: path (`<project>` stands for the sandbox path hash) → contents, `null` for a directory, or a symlink. */
   sandbox?: Record<string, Entry> | undefined
   /** Lines written to stdin: strings verbatim, other values as JSON. */
   stdin?: unknown[] | undefined
@@ -65,6 +66,8 @@ const stateful = new Set<string>(['remote', 'web'])
 // directory), `bin` holds the stub runners on PATH, and `tmp` is TMPDIR.
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'incur-differential-')))
 const sandbox = path.join(root, 'home')
+// Project skills metadata lives in a directory named after this hash of the sandbox path.
+const project = createHash('sha256').update(sandbox).digest('hex').slice(0, 16)
 const stubs = path.join(root, 'bin')
 fs.mkdirSync(stubs)
 fs.mkdirSync(path.join(root, 'tmp'))
@@ -131,7 +134,7 @@ async function runSandboxed(c: Case, index: number): Promise<Result> {
   fs.rmSync(sandbox, { recursive: true, force: true })
   fs.mkdirSync(sandbox)
   for (const [name, value] of Object.entries(c.sandbox ?? {})) {
-    const target = path.join(sandbox, name)
+    const target = path.join(sandbox, name.replaceAll('<project>', project))
     fs.mkdirSync(path.dirname(target), { recursive: true })
     if (value === null) fs.mkdirSync(target, { recursive: true })
     else if (typeof value === 'string') fs.writeFileSync(target, expand(value))
@@ -273,23 +276,24 @@ function setEnv(env: Record<string, string | undefined>) {
     if (value !== undefined) process.env[key] = value
 }
 
-/** Lists every entry under the sandbox, sorted by path, with normalized file contents. */
+/**
+ * Lists every entry under the sandbox, sorted by path, with normalized file contents. The sandbox
+ * path hash in entry paths becomes `<project>`.
+ */
 function tree() {
   const entries: [string, Entry][] = []
   const visit = (relative: string) => {
     for (const name of fs.readdirSync(path.join(sandbox, relative))) {
       const child = relative ? `${relative}/${name}` : name
+      const key = child.replaceAll(project, '<project>')
       const stat = fs.lstatSync(path.join(sandbox, child))
       if (stat.isSymbolicLink())
-        entries.push([child, { symlink: normalize(fs.readlinkSync(path.join(sandbox, child))) }])
+        entries.push([key, { symlink: normalize(fs.readlinkSync(path.join(sandbox, child))) }])
       else if (stat.isDirectory()) {
-        entries.push([child, null])
+        entries.push([key, null])
         visit(child)
       } else
-        entries.push([
-          child,
-          metadata(normalize(fs.readFileSync(path.join(sandbox, child), 'utf8'))),
-        ])
+        entries.push([key, metadata(normalize(fs.readFileSync(path.join(sandbox, child), 'utf8')))])
     }
   }
   visit('')
