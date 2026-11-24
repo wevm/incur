@@ -125,7 +125,7 @@ struct DeployEnv {
     #[serde(default = "us")]
     deploy_region: String,
     /// Retries
-    deploy_retries: Option<f64>,
+    deploy_retries: Option<i64>,
     /// Dry run
     deploy_dry: Option<bool>,
 }

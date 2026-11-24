@@ -113,7 +113,7 @@ class ListArgs:
 class DeployEnv:
     deploy_token: Annotated[str, field("Deploy token")]
     deploy_region: Annotated[str, field("Region")] = "us"
-    deploy_retries: Annotated[float | None, field("Retries")] = None
+    deploy_retries: Annotated[int | None, field("Retries")] = None
     deploy_dry: Annotated[bool | None, field("Dry run")] = None
 
 

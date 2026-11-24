@@ -169,7 +169,7 @@ const app = Cli.create('app', {
     env: z.object({
       DEPLOY_TOKEN: z.string().describe('Deploy token'),
       DEPLOY_REGION: z.string().default('us').describe('Region'),
-      DEPLOY_RETRIES: z.number().optional().describe('Retries'),
+      DEPLOY_RETRIES: z.int().optional().describe('Retries'),
       DEPLOY_DRY: z.boolean().optional().describe('Dry run'),
     }),
     options: z.object({
@@ -242,7 +242,7 @@ const app = Cli.create('app', {
     options: z.object({
       verbose: z.number().default(0).describe('Verbosity').meta({ count: true }),
       quiet: z.boolean().optional().describe('Quiet'),
-      level: z.number().int().optional().describe('Level'),
+      level: z.int().optional().describe('Level'),
     }),
     alias: { verbose: 'v', quiet: 'q' },
     run: (c) => ({
