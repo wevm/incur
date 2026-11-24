@@ -61,7 +61,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
   const displayName = options.displayName ?? name
   const parseMode = options.parseMode ?? 'argv'
 
-  const varsMap: Record<string, unknown> = varsSchema ? varsSchema.parse({}) : {}
+  const varsMap = varDefaults(varsSchema)
   let result: execute.Result | undefined
   // For streaming with middleware: runCommand suspends on streamConsumed so middleware "after"
   // runs after the stream is consumed. The wrapped generator resolves it in its finally block.
@@ -213,6 +213,19 @@ export async function execute(command: any, options: execute.Options): Promise<e
   }
 
   return result ?? { ok: true, data: undefined }
+}
+
+/**
+ * Seeds the vars of one run with their schema defaults. Middleware sets the rest, so vars without
+ * a default, including required ones, stay unset instead of failing validation before it runs.
+ */
+export function varDefaults(schema: z.ZodObject<any> | undefined) {
+  const vars: Record<string, unknown> = {}
+  for (const [key, field] of Object.entries<z.ZodType>(schema?.shape ?? {})) {
+    const parsed = field.safeParse(undefined)
+    if (parsed.success && parsed.data !== undefined) vars[key] = parsed.data
+  }
+  return vars
 }
 
 /** @internal Builds the failed result for `error()` options. Every transport renders this shape. */

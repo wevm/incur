@@ -1897,7 +1897,7 @@ async function serveImpl(
         ? Parser.parseEnv(options.envSchema, options.env ?? process.env)
         : {}
       if (fetchMiddleware.length > 0) {
-        const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
+        const varsMap = Command.varDefaults(options.vars)
         const errorFn = (opts: Command.ErrorOptions): never =>
           ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {

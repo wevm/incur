@@ -7476,6 +7476,28 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ chain: 'mainnet' })
   })
 
+  test('required vars set by middleware do not fail before it runs (#188)', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ chain: z.string().default('ethereum') }),
+      // A refined schema rejects `.partial()`, so defaults must not depend on it.
+      vars: z
+        .object({ chain: z.string().nonoptional(), retries: z.number().default(3) })
+        .refine((vars) => vars.retries > 0),
+    })
+      .use(async (c, next) => {
+        c.set('chain', c.globals.chain)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { chain: c.var.chain, retries: c.var.retries }
+        },
+      })
+
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ chain: 'ethereum', retries: 3 })
+  })
+
   test('globals appear in --help output', async () => {
     const cli = Cli.create('test', {
       globals: z.object({
