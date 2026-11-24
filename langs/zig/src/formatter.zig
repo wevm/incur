@@ -91,7 +91,7 @@ fn kvTable(a: Allocator, entries: []const Value.Entry) Allocator.Error![]const u
     return table(a, &.{ "Key", "Value" }, rows);
 }
 
-/// Renders a columnar table from an array of objects.
+/// Renders a columnar table from an array of objects. Nested cells render as compact JSON.
 fn columnarTable(a: Allocator, items: []const Value) Allocator.Error![]const u8 {
     var keys: std.ArrayList([]const u8) = .empty;
     for (items) |item| for (item.object) |entry| {
@@ -104,7 +104,12 @@ fn columnarTable(a: Allocator, items: []const Value) Allocator.Error![]const u8 
         const cells = try a.alloc([]const u8, keys.items.len);
         for (keys.items, cells) |k, *cell| {
             const v = item.get(k) orelse Value.null;
-            cell.* = if (v == .null) "" else try json.toString(a, v);
+            cell.* = switch (v) {
+                .null => "",
+                // Escape pipes so the JSON stays inside its cell.
+                .array, .object => try std.mem.replaceOwned(u8, a, try json.stringify(a, v), "|", "\\|"),
+                else => try json.toString(a, v),
+            };
         }
         row.* = cells;
     }
