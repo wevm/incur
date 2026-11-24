@@ -162,6 +162,8 @@ pub(crate) struct Zod {
     loose: bool,
     /// Whether the schema coerces its input.
     coerced: bool,
+    /// The members of a type list, which validate as `z.union` does.
+    union: Vec<Type>,
 }
 
 /// Reads a numeric keyword.
@@ -231,8 +233,11 @@ impl Zod {
         zod
     }
 
-    /// Combines the schemas of a type list. A single type stays itself; the first non-null
-    /// member decides validation.
+    /// Combines the schemas of a type list. A single type stays itself; any other list
+    /// validates as a union of its members. The parser and help read a list with one non-null
+    /// member as that member and any other list as an opaque value. `coerceIfNeeded` coerces
+    /// the list to a number when a member is numeric, and otherwise to a boolean when a member is
+    /// boolean.
     fn union(mut members: Vec<Self>) -> Self {
         if members.len() < 2 {
             return members.pop().unwrap_or_else(|| Self::leaf(&Value::Null));
@@ -241,21 +246,30 @@ impl Zod {
             .iter()
             .map(|member| Value::Object(member.node.json()))
             .collect::<Vec<_>>();
-        let index = members
+        // Members with a default are `ZodDefault` wrappers, which `coerceIfNeeded` skips.
+        let coercible = members
             .iter()
-            .position(|member| member.node.own.get("type") != Some(&Value::from("null")))
-            .unwrap_or_default();
-        let main = members.swap_remove(index);
+            .filter(|member| member.wrapper != Wrapper::Default)
+            .filter_map(|member| member.coercible.clone())
+            .min_by_key(|kind| *kind == Kind::Boolean);
+        let mut values = members
+            .iter()
+            .filter(|member| member.node.own.get("type") != Some(&Value::from("null")));
+        let kind = match (values.next(), values.next()) {
+            (Some(main), None) => main.ty.kind.clone(),
+            _ => Kind::Unknown,
+        };
         let mut own = Map::new();
         own.insert("anyOf".into(), any_of.into());
         Self {
-            ty: Type::new(main.ty.kind.clone()),
+            ty: Type::new(kind),
             node: Node::new(own, None),
             wrapper: Wrapper::None,
-            coercible: main.coercible,
-            pattern: main.pattern,
-            loose: main.loose,
+            coercible,
+            pattern: None,
+            loose: false,
             coerced: false,
+            union: members.into_iter().map(Self::into_type).collect(),
         }
     }
 
@@ -424,6 +438,7 @@ impl Zod {
             pattern,
             loose,
             coerced: false,
+            union: Vec::new(),
         }
     }
 
@@ -488,6 +503,7 @@ impl Zod {
             pattern: None,
             loose: false,
             coerced: true,
+            union: Vec::new(),
         }
     }
 
@@ -499,6 +515,7 @@ impl Zod {
             pattern: self.pattern,
             loose: self.loose,
             coerce: self.coerced,
+            union: self.union,
         }));
         ty
     }
