@@ -1670,6 +1670,17 @@ class NoteInput:
 
 
 @incur.schema
+class TitledName:
+    name: str
+    title: str = "Dr"
+
+
+@incur.schema
+class NameOutput:
+    name: str
+
+
+@incur.schema
 class GoInput:
     go: bool
 
@@ -1719,6 +1730,13 @@ def ask() -> incur.Cli:
     @cli.command("note", description="Ask for optional input")
     def note(c: Context) -> Data:
         return answer(c.elicit("Any notes?", NoteInput))
+
+    @cli.command("typed", description="Ask with an output schema", output=NameOutput)
+    def typed(c: Context) -> Data:
+        given = c.elicit("Name?", TitledName)
+        if given.content is None:
+            return {"name": given.action}
+        return {"name": f"{given.content.title} {given.content.name}"}
 
     @cli.command("watch", description="Ask while streaming")
     async def watch(c: Context) -> AsyncStream:

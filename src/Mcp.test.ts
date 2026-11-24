@@ -1423,6 +1423,40 @@ describe('elicitation', () => {
     })
     expect(run).toHaveBeenCalledTimes(3)
   })
+
+  test('asks for what the schema accepts, which parsing then transforms', async () => {
+    const schema = z.object({
+      size: z
+        .string()
+        .transform((value) => value.length)
+        .pipe(z.number()),
+      unit: z.string().default('px'),
+    })
+    const run = async (c: any) => c.elicit({ message: 'Size?', schema })
+    const _meta = {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': { elicitation: {} },
+    }
+    const call = (id: number, retry: Record<string, unknown> = {}) => ({
+      id,
+      method: 'tools/call',
+      params: { name: 'size', arguments: {}, _meta, ...retry },
+    })
+    const [, asked, done] = await mcpSession(new Map([['size', { run }]]), [
+      { id: 1, method: 'server/discover', params: { _meta } },
+      call(2),
+      call(3, { inputResponses: { 'elicit-0': { action: 'accept', content: { size: 'abc' } } } }),
+    ])
+    expect(asked.result.inputRequests['elicit-0'].params.requestedSchema).toEqual({
+      type: 'object',
+      properties: { size: { type: 'string' }, unit: { type: 'string', default: 'px' } },
+      required: ['size'],
+    })
+    expect(JSON.parse(done.result.content[0].text)).toEqual({
+      action: 'accept',
+      content: { size: 3, unit: 'px' },
+    })
+  })
 })
 
 describe('globals', () => {

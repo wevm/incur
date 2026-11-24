@@ -822,6 +822,7 @@ class Server:
         if (
             tool.output is not None
             and not result.get("isError")
+            and result.get("resultType") != "input_required"
             and "structuredContent" not in result
         ):
             message = (

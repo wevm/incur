@@ -81,7 +81,8 @@ pub const Elicitation = struct {
     /// Asks for form input described by `T`.
     pub fn form(e: ?*Elicitation, a: Allocator, comptime T: type, message: []const u8) Allocator.Error!Asked(Elicited(T)) {
         const ty = derive.of(T);
-        const out = try schema.jsonSchema(a, ty);
+        // Clients answer with what the schema accepts, so defaulted fields are optional.
+        const out = try schema.jsonSchemaIo(a, ty, .input);
         var requested: json.ObjectBuilder = .{};
         try requested.put(a, "type", .{ .string = "object" });
         try requested.put(a, "properties", out.get("properties") orelse .{ .object = &.{} });

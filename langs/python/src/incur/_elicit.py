@@ -67,7 +67,8 @@ class Elicit:
         Code before the call runs again on each retry.
         """
         ty = type_of(schema, schema.__name__)
-        out = json_schema(ty)
+        # Clients answer with what the schema accepts, so defaulted fields are optional.
+        out = json_schema(ty, "input")
         requested: dict[str, Json] = {"type": "object", "properties": out.get("properties", {})}
         required = _js.as_list(out.get("required", []))
         if required:

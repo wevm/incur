@@ -5,8 +5,12 @@ import { z } from 'zod'
  * meta-property. Represents bigints and dates as `{ type: "string" }`
  * since JSON lacks native types for them.
  */
-export function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
+export function toJsonSchema(
+  schema: z.ZodType,
+  options: toJsonSchema.Options = {},
+): Record<string, unknown> {
   const result = z.toJSONSchema(schema, {
+    io: options.io ?? 'output',
     unrepresentable: 'any',
     override: (ctx) => {
       const type = ctx.zodSchema._zod?.def?.type
@@ -15,4 +19,12 @@ export function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
   }) as Record<string, unknown>
   delete result.$schema
   return result
+}
+
+export declare namespace toJsonSchema {
+  /** Options for `toJsonSchema`. */
+  type Options = {
+    /** Describe what the schema accepts (`'input'`) or what parsing returns (`'output'`). Defaults to `'output'`. */
+    io?: 'input' | 'output' | undefined
+  }
 }

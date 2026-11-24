@@ -1334,6 +1334,18 @@ const ask = Cli.create('ask', {
     run: (c) =>
       c.elicit({ message: 'Any notes?', schema: z.object({ note: z.string().optional() }) }),
   })
+  .command('typed', {
+    description: 'Ask with an output schema',
+    output: z.object({ name: z.string() }),
+    run: async (c) => {
+      const answer = await c.elicit({
+        message: 'Name?',
+        schema: z.object({ name: z.string(), title: z.string().default('Dr') }),
+      })
+      if (answer.action !== 'accept') return { name: answer.action }
+      return { name: `${answer.content.title} ${answer.content.name}` }
+    },
+  })
   .command('watch', {
     description: 'Ask while streaming',
     async *run(c) {

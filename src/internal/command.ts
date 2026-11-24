@@ -326,7 +326,8 @@ export function elicitation(input?: elicitation.Input) {
   const elicit = (options: { message: string; schema: z.ZodObject<any> }) => {
     const { message, schema } = options
     const properties: Record<string, unknown> = {}
-    const json = toJsonSchema(schema)
+    // Clients answer with what the schema accepts, which parsing then turns into its output.
+    const json = toJsonSchema(schema, { io: 'input' })
     Object.assign(properties, json.properties ?? {})
     const required = (json.required as string[] | undefined) ?? []
     const requestedSchema = {

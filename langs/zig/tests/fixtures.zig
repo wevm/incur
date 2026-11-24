@@ -1384,6 +1384,19 @@ fn askFallback(c: *Context(.{})) !Outcome {
     }
 }
 
+const TitledName = struct { name: []const u8, title: []const u8 = "Dr" };
+
+const NameOutput = struct { name: []const u8 };
+
+fn askTyped(c: *Context(.{})) !Outcome {
+    const a = c.allocator;
+    const answer = try c.elicit(TitledName, "Name?");
+    const name = if (answer.content) |given| try std.fmt.allocPrint(a, "{s} {s}", .{ given.title, given.name }) else @tagName(answer.action);
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "name", .{ .string = name });
+    return c.ok(out.finish());
+}
+
 fn askNote(c: *Context(.{})) !Outcome {
     return c.ok(try answerValue(c.allocator, try c.elicit(NoteInput, "Any notes?")));
 }
@@ -1416,6 +1429,7 @@ fn ask(gpa: Allocator) !*incur.Cli {
     try cli.command("link", .{ .description = "Send the user to a URL", .run = incur.handler(askLink) });
     try cli.command("fallback", .{ .description = "Ask by URL when the form fails", .run = incur.handler(askFallback) });
     try cli.command("note", .{ .description = "Ask for optional input", .run = incur.handler(askNote) });
+    try cli.command("typed", .{ .description = "Ask with an output schema", .output = incur.schema(NameOutput), .run = incur.handler(askTyped) });
     try cli.command("watch", .{ .description = "Ask while streaming", .run = incur.handler(askWatch) });
     return cli;
 }

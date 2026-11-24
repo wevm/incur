@@ -643,6 +643,23 @@ struct NoteInput {
 }
 
 #[derive(Deserialize, Schema, Serialize)]
+struct TitledName {
+    name: String,
+    #[serde(default = "doctor")]
+    title: String,
+}
+
+fn doctor() -> String {
+    "Dr".into()
+}
+
+#[derive(Schema)]
+#[expect(dead_code, reason = "Only the schema is used.")]
+struct NameOutput {
+    name: String,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
 struct GoInput {
     go: bool,
 }
@@ -707,6 +724,20 @@ pub(crate) fn ask() -> Cli {
             Command::new()
                 .description("Ask for optional input")
                 .run(|c: Context| data(json!(c.elicit.form::<NoteInput>("Any notes?")?))),
+        )
+        .command(
+            "typed",
+            Command::new()
+                .description("Ask with an output schema")
+                .output::<NameOutput>()
+                .run(|c: Context| {
+                    let answer = c.elicit.form::<TitledName>("Name?")?;
+                    let name = match answer.content {
+                        Some(given) => json!(format!("{} {}", given.title, given.name)),
+                        None => json!(answer.action),
+                    };
+                    data(json!({ "name": name }))
+                }),
         )
         .command(
             "watch",

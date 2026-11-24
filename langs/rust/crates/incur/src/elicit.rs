@@ -108,14 +108,23 @@ impl Elicit {
         let json = schema::json_schema(&ty);
         let mut requested = Map::new();
         requested.insert("type".into(), "object".into());
-        requested.insert(
-            "properties".into(),
-            json.get("properties").cloned().unwrap_or_else(|| json!({})),
-        );
-        if let Some(Value::Array(required)) = json.get("required")
-            && !required.is_empty()
-        {
-            requested.insert("required".into(), required.clone().into());
+        let properties = json.get("properties").cloned().unwrap_or_else(|| json!({}));
+        // Clients may omit defaulted fields, as the input side of the schema allows.
+        let required: Vec<Value> = json
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|key| {
+                properties[key.as_str().unwrap_or_default()]
+                    .get("default")
+                    .is_none()
+            })
+            .cloned()
+            .collect();
+        requested.insert("properties".into(), properties);
+        if !required.is_empty() {
+            requested.insert("required".into(), required.into());
         }
         let params = json!({ "message": message, "requestedSchema": requested });
         self.ask("form", params, |action, response| {
