@@ -12,7 +12,7 @@ const Value = json.Value;
 pub const version = "2026-07-28";
 const version_key = "io.modelcontextprotocol/protocolVersion";
 const info_key = "io.modelcontextprotocol/clientInfo";
-const capabilities_key = "io.modelcontextprotocol/clientCapabilities";
+pub const capabilities_key = "io.modelcontextprotocol/clientCapabilities";
 const log_key = "io.modelcontextprotocol/logLevel";
 const server_info_key = "io.modelcontextprotocol/serverInfo";
 const reserved = [_][]const u8{ version_key, info_key, capabilities_key, log_key };
@@ -153,7 +153,9 @@ pub fn envelopeError(a: Allocator, params: Value) Allocator.Error!?[]const u8 {
 pub fn encode(a: Allocator, method: []const u8, result: Value, info: Value, cache: CacheHint) Allocator.Error!Value {
     var out: json.ObjectBuilder = .{};
     for (result.object) |entry| try out.put(a, entry.key, entry.value);
-    try out.put(a, "resultType", .{ .string = "complete" });
+    const kind = result.get("resultType");
+    if (kind == null or kind.? != .string or !std.mem.eql(u8, kind.?.string, "input_required"))
+        try out.put(a, "resultType", .{ .string = "complete" });
     const cacheable = [_][]const u8{ "tools/list", "prompts/list", "resources/list", "resources/templates/list", "resources/read", "server/discover" };
     for (cacheable) |m| if (std.mem.eql(u8, m, method)) {
         // The server's hints cover lists and discovery; reads keep the defaults.

@@ -7,6 +7,7 @@ TypeScript package byte for byte.
 from ._cli import BannerMode, Cli, CliOptions, Config, Writer
 from ._command import Context, Middleware, MiddlewareContext, Next, Outcome, OutputPolicy, ok
 from ._derive import Command, Group, Handler
+from ._elicit import Elicit, Elicited
 from ._errors import Cta, CtaBlock, Error, FieldError
 from ._formatter import Format
 from ._help import Example, Usage
@@ -29,6 +30,8 @@ __all__ = [
     "Context",
     "Cta",
     "CtaBlock",
+    "Elicit",
+    "Elicited",
     "Error",
     "Example",
     "FetchHandler",

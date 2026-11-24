@@ -18,6 +18,7 @@ use crate::command::{
     self, Chunks, Command, Middleware, MiddlewareContext, Next, Outcome, OutputPolicy, Vars,
 };
 use crate::completions::{self, Shell};
+use crate::elicit::Elicit;
 use crate::errors::{CtaBlock, Error, FormattedCta, FormattedCtaBlock, human_error};
 use crate::execute::{self, Executed};
 use crate::fetch::{self, Fetch, FetchCommand};
@@ -3545,7 +3546,14 @@ impl Run<'_, '_> {
             };
             Ok((parsed, env))
         });
-        let executed = execute::execute(chain, context, command.handler.clone(), parsed).await;
+        let executed = execute::execute(
+            chain,
+            context,
+            command.handler.clone(),
+            parsed,
+            Elicit::default(),
+        )
+        .await;
         self.report(executed, Some(command), path, output).await;
     }
 
@@ -3614,7 +3622,8 @@ impl Run<'_, '_> {
             },
             Value::Object(Map::new()),
         ));
-        let executed = execute::execute(chain, context, Some(handler), input).await;
+        let executed =
+            execute::execute(chain, context, Some(handler), input, Elicit::default()).await;
         self.report(executed, None, path, output).await;
     }
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import os
 import re
 import typing
@@ -13,6 +14,7 @@ from typing import Any, Literal, TextIO
 
 from . import _js, _mcp_modern
 from ._command import Command, Middleware, MiddlewareContext, Stream, ToolMeta, execute
+from ._elicit import Elicit, responses
 from ._errors import Error, format_cta, unknown
 from ._http import Request, Response
 from ._js import Json
@@ -333,6 +335,12 @@ def _check_headers(name: str, headers: dict[str, str], properties: dict[str, Jso
         seen[header.lower()] = header
 
 
+#: The `c.elicit` of the tool call being answered.
+_ELICIT: contextvars.ContextVar[Elicit | None] = contextvars.ContextVar("elicit", default=None)
+
+#: Methods that may answer `input_required`, and so check an echoed `requestState`.
+_INPUT_REQUIRED = ("tools/call", "prompts/get", "resources/read")
+
 #: Sends a progress message for a streamed chunk.
 Progress = Callable[[Json], Awaitable[None]]
 
@@ -413,7 +421,10 @@ async def call_tool(
             context.env = build(spec.env, parse_env(spec.env, source.get))
     except Error as error:
         return _failure(error, name)
-    outcome = await execute(command, context, chain, parse, sink)
+    elicit = _ELICIT.get()
+    outcome = await execute(command, context, chain, parse, sink, elicit)
+    if elicit is not None and elicit.pending is not None:
+        return elicit.pending
     if outcome is None:
         return streamed[0]
     if isinstance(outcome, Error):
@@ -849,7 +860,7 @@ class Server:
                 "id": message["id"],
             }
         else:
-            response = await self.handle(message, notify, request)
+            response = await self.handle(message, notify, request, modern=True)
         assert response is not None
         if "result" in response:
             result = _js.as_object(response["result"])
@@ -861,6 +872,8 @@ class Server:
         message: dict[str, Json],
         notify: Callable[[dict[str, Json]], Awaitable[None]],
         request: Request | None = None,
+        *,
+        modern: bool = False,
     ) -> dict[str, Json] | None:
         """Answers one JSON-RPC request. Returns `None` for notifications and other messages."""
         method = message.get("method")
@@ -870,6 +883,11 @@ class Server:
         params = message.get("params")
         params = params if isinstance(params, dict) else {}
         try:
+            state = params.get("requestState")
+            if method in _INPUT_REQUIRED and state is not None and not isinstance(state, str):
+                raise RpcError(
+                    -32602, "Invalid or expired requestState", {"reason": "invalid_request_state"}
+                )
             if method == "initialize":
                 result = self.initialize(params)
             elif method == "ping":
@@ -898,6 +916,12 @@ class Server:
                         )
 
                     progress = send_progress
+                # Only 2026-07-28 requests carry client capabilities; 2025 sessions cannot answer
+                # `input_required`.
+                capabilities = (
+                    meta.get(_mcp_modern.CAPABILITIES_KEY) if isinstance(meta, dict) else None
+                )
+                _ELICIT.set(Elicit(capabilities, responses(params), mcp=modern))
                 result = await self.call(params, progress, request)
             elif self.features.handles(method):
                 result = self.features.answer(method, params)

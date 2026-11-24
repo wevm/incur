@@ -279,6 +279,8 @@ A command's `mcp` settings take `title`, `icons`, and `headers` (`{ region: 'Reg
 
 `cli.resource(name, { uri, read })`, `cli.resourceTemplate(name, { uriTemplate, read, complete })`, and `cli.prompt(name, { args, get, complete })` serve MCP resources, resource templates (`{name}` expressions only), and prompts, with argument completion.
 
+`await c.elicit({ message, schema })` asks the MCP client's user for form input (flat, non-sensitive fields) and `await c.elicit.url({ message, url })` sends them to a URL. Each answers the tool call with `input_required`; the client retries with the answer and the command reruns from the start. Outside MCP, or when the client lacks the mode, it fails with `ELICITATION_UNSUPPORTED`.
+
 ## Arguments & Options
 
 All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.

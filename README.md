@@ -551,6 +551,27 @@ Cli.create('kb')
 
 A read returns text, a `{ text }` or `{ blob }` (base64) object, or a list of them. A prompt returns text, which becomes one user message, or a list of messages. `mcp.cache` also covers the resource, template, and prompt lists.
 
+A command running as a tool can ask the user for input through [elicitation](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation):
+
+```ts
+cli.command('deploy', {
+  async run(c) {
+    const answer = await c.elicit({
+      message: 'Deploy where?',
+      schema: z.object({ env: z.enum(['staging', 'production']) }),
+    })
+    if (answer.action !== 'accept') return c.error({ code: 'CANCELLED', message: 'Not deployed' })
+    const consent = await c.elicit.url({
+      message: 'Approve the release',
+      url: 'https://example.com/approve',
+    })
+    return { env: answer.content.env, approved: consent.action === 'accept' }
+  },
+})
+```
+
+Each call answers the tool call with `input_required`. When the client retries the call with the user's answer, the command runs again from the start and the call returns it, so code before it runs once per round. Use form mode only for non-sensitive input with flat, primitive fields; use `c.elicit.url` for credentials, payments, and other input that must not pass through the client. Outside MCP, and for clients that do not declare the mode, `c.elicit` fails with `ELICITATION_UNSUPPORTED`.
+
 Non-`/mcp` paths continue routing to the command API as usual.
 
 ## Walkthrough

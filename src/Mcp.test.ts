@@ -602,7 +602,7 @@ describe('Mcp', () => {
 
   test('tools/call validation error includes fieldErrors', async () => {
     const tool = Mcp.collectTools(createTestCommands(), []).find((tool) => tool.name === 'echo')!
-    const result = await Mcp.callTool(tool, { message: 123 })
+    const result = (await Mcp.callTool(tool, { message: 123 })) as Mcp.callTool.Result
     expect(result.isError).toBe(true)
     const [content] = result.content
     expect(content).toBeDefined()
@@ -1384,6 +1384,47 @@ describe('features', () => {
   })
 })
 
+describe('elicitation', () => {
+  test('reruns the command with each answer and carries earlier answers in requestState', async () => {
+    const run = vi.fn(async (c: any) => {
+      const first = await c.elicit({ message: 'Name?', schema: z.object({ name: z.string() }) })
+      const second = await c.elicit({ message: 'Color?', schema: z.object({ color: z.string() }) })
+      return { first, second }
+    })
+    const _meta = {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': { elicitation: {} },
+    }
+    const call = (id: number, retry: Record<string, unknown> = {}) => ({
+      id,
+      method: 'tools/call',
+      params: { name: 'pair', arguments: {}, _meta, ...retry },
+    })
+    const accept = (content: unknown) => ({ action: 'accept', content })
+    const [, asked, again, done] = await mcpSession(new Map([['pair', { run }]]), [
+      { id: 1, method: 'server/discover', params: { _meta } },
+      call(2),
+      call(3, { inputResponses: { 'elicit-0': accept({ name: 'Ann' }) } }),
+      call(4, {
+        inputResponses: { 'elicit-1': accept({ color: 'red' }) },
+        requestState: JSON.stringify({ 'elicit-0': accept({ name: 'Ann' }) }),
+      }),
+    ])
+    expect(asked.result).toMatchObject({
+      resultType: 'input_required',
+      inputRequests: { 'elicit-0': { method: 'elicitation/create', params: { mode: 'form' } } },
+    })
+    expect(asked.result.requestState).toBeUndefined()
+    expect(again.result.inputRequests['elicit-1'].params.message).toBe('Color?')
+    expect(JSON.parse(again.result.requestState)).toEqual({ 'elicit-0': accept({ name: 'Ann' }) })
+    expect(JSON.parse(done.result.content[0].text)).toEqual({
+      first: accept({ name: 'Ann' }),
+      second: accept({ color: 'red' }),
+    })
+    expect(run).toHaveBeenCalledTimes(3)
+  })
+})
+
 describe('globals', () => {
   type Discovery = 'direct' | 'progressive'
   type SessionOptions = Omit<Mcp.serve.Options<z.ZodObject<any> | undefined>, 'input' | 'output'> &
@@ -1581,7 +1622,11 @@ describe('globals', () => {
     const middleware = vi.fn(async (_c: any, next: () => Promise<void>) => next())
     const [tool] = Mcp.collectTools(deployCommands(), [])
     const options = { globals, middlewares: [middleware] }
-    const result = await Mcp.callTool(tool!, { network: 'devnet' }, options)
+    const result = (await Mcp.callTool(
+      tool!,
+      { network: 'devnet' },
+      options,
+    )) as Mcp.callTool.Result
     expect(middleware).not.toHaveBeenCalled()
     expect(result.isError).toBe(true)
     expect(JSON.parse(result.content[0]!.text)).toMatchObject({

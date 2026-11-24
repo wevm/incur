@@ -1646,6 +1646,88 @@ def kb() -> incur.Cli:
     return cli
 
 
+@incur.schema
+class Profile:
+    name: Annotated[str, field("Your name")]
+    age: Annotated[int | None, field(min=0)] = None
+    role: Literal["dev", "ops"] = "dev"
+    subscribe: bool | None = None
+
+
+@incur.schema
+class NameInput:
+    name: str
+
+
+@incur.schema
+class ColorInput:
+    color: str
+
+
+@incur.schema
+class NoteInput:
+    note: str | None = None
+
+
+@incur.schema
+class GoInput:
+    go: bool
+
+
+def answer(elicited: incur.Elicited[Any]) -> Data:
+    """Renders an answer as the TypeScript fixture returns it."""
+    if elicited.content is None:
+        return {"action": elicited.action}
+    return {"action": elicited.action, "content": incur.dump(elicited.content)}
+
+
+def ask() -> incur.Cli:
+    """Exercises MCP elicitation through `input_required`."""
+    cli = incur.Cli(
+        "ask",
+        description="MCP elicitation",
+        version="1.0.0",
+        update=False,
+        sync=False,
+        mcp=incur.McpOptions(tools=incur.ToolFilter(discovery="direct")),
+    )
+
+    @cli.command("profile", description="Ask for a profile")
+    def profile(c: Context) -> Data:
+        given = c.elicit("Who are you?", Profile)
+        if given.content is None:
+            return {"action": given.action}
+        return {"greeting": f"Hi {given.content.name}", **incur.dump(given.content)}
+
+    @cli.command("pair", description="Ask twice")
+    def pair(c: Context) -> Data:
+        first = c.elicit("Name?", NameInput)
+        second = c.elicit("Color?", ColorInput)
+        return {"first": answer(first), "second": answer(second)}
+
+    @cli.command("link", description="Send the user to a URL")
+    def link(c: Context) -> Data:
+        return answer(c.elicit.url("Connect your account", "https://example.com/connect"))
+
+    @cli.command("fallback", description="Ask by URL when the form fails")
+    def fallback(c: Context) -> Data:
+        try:
+            return answer(c.elicit("Name?", NameInput))
+        except incur.Error:
+            return answer(c.elicit.url("Use the website", "https://example.com/name"))
+
+    @cli.command("note", description="Ask for optional input")
+    def note(c: Context) -> Data:
+        return answer(c.elicit("Any notes?", NoteInput))
+
+    @cli.command("watch", description="Ask while streaming")
+    async def watch(c: Context) -> AsyncStream:
+        yield {"step": "start"}
+        yield {"step": "answer", "answer": answer(c.elicit("Continue?", GoInput))}
+
+    return cli
+
+
 def kbbad() -> incur.Cli:
     """A resource template incur cannot match."""
     cli = incur.Cli("kbbad", version="1.0.0", update=False, sync=False)
@@ -2292,6 +2374,7 @@ def cli(name: str) -> incur.Cli:
         "kitver": lambda: kit_cli("kitver", package="kitver", version="latest"),
         "oa": oa,
         "kb": kb,
+        "ask": ask,
         "kbbad": kbbad,
         "oaroot": oaroot,
         "params": params,

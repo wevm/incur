@@ -1011,6 +1011,7 @@ pub(crate) fn cli(name: &str) -> Cli {
         "hdrtoken" => sandboxed::bad_headers("hdrtoken", &[("a", "Bad Header")]),
         "params" => sandboxed::params(),
         "kb" => sandboxed::kb(),
+        "ask" => sandboxed::ask(),
         "kbbad" => sandboxed::kbbad(),
         "gateway" => sandboxed::gateway(),
         "kit" => sandboxed::kit(),
