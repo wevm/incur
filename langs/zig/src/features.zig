@@ -114,15 +114,22 @@ const Pattern = struct {
         return .{ .literals = literals.items, .names = names.items };
     }
 
-    /// Matches a URI, filling `values` with the variables. Variables take as much as they can,
-    /// then give back, like a greedy regex.
-    fn match(p: Pattern, uri: []const u8, values: [][]const u8) bool {
+    /// Matches a URI, filling `values` with the variables. Each variable takes as much as still
+    /// lets the rest match, like a greedy regex. Failed positions are remembered, so matching
+    /// stays polynomial in the URI length.
+    fn match(p: Pattern, a: Allocator, uri: []const u8, values: [][]const u8) Allocator.Error!bool {
         if (!std.mem.startsWith(u8, uri, p.literals[0])) return false;
-        return p.from(0, uri[p.literals[0].len..], values);
+        const rest = uri[p.literals[0].len..];
+        // One flag per variable and remaining length: whether matching from there failed.
+        const failed = try a.alloc(bool, p.names.len * (rest.len + 1));
+        @memset(failed, false);
+        return p.from(0, rest, values, failed);
     }
 
-    fn from(p: Pattern, index: usize, uri: []const u8, values: [][]const u8) bool {
+    fn from(p: Pattern, index: usize, uri: []const u8, values: [][]const u8, failed: []bool) bool {
         if (index == p.names.len) return uri.len == 0;
+        const seen = &failed[index * (failed.len / p.names.len) + uri.len];
+        if (seen.*) return false;
         var longest: usize = 0;
         while (longest < uri.len and uri[longest] != '/' and uri[longest] != ',') longest += 1;
         var len = longest;
@@ -131,8 +138,9 @@ const Pattern = struct {
             const literal = p.literals[index + 1];
             if (!std.mem.startsWith(u8, after, literal)) continue;
             values[index] = uri[0..len];
-            if (p.from(index + 1, after[literal.len..], values)) return true;
+            if (p.from(index + 1, after[literal.len..], values, failed)) return true;
         }
+        seen.* = true;
         return false;
     }
 };
@@ -190,12 +198,12 @@ pub const Features = struct {
     pub fn answer(f: Features, a: Allocator, method: []const u8, params: Value) Allocator.Error!Answer {
         if (std.mem.eql(u8, method, "resources/list")) {
             const items = try a.alloc(Value, f.resources.len);
-            for (f.resources, items) |r, *slot| slot.* = try entry(a, "uri", r.uri, r.name, r.title, r.description, r.icons);
+            for (f.resources, items) |r, *slot| slot.* = try entry(a, "uri", r.uri, r.name, r.title, r.description, r.mime_type, r.icons);
             return .{ .ok = try single(a, "resources", .{ .array = items }) };
         }
         if (std.mem.eql(u8, method, "resources/templates/list")) {
             const items = try a.alloc(Value, f.templates.len);
-            for (f.templates, items) |t, *slot| slot.* = try entry(a, "uriTemplate", t.uri_template, t.name, t.title, t.description, t.icons);
+            for (f.templates, items) |t, *slot| slot.* = try entry(a, "uriTemplate", t.uri_template, t.name, t.title, t.description, t.mime_type, t.icons);
             return .{ .ok = try single(a, "resourceTemplates", .{ .array = items }) };
         }
         if (std.mem.eql(u8, method, "resources/read")) return f.read(a, text(params.get("uri")));
@@ -214,7 +222,7 @@ pub const Features = struct {
             return .{ .ok = try single(a, "contents", try contents(a, try r.read(a), uri, r.mime_type)) };
         for (f.templates, f.patterns) |t, p| {
             const values = try a.alloc([]const u8, p.names.len);
-            if (!p.match(uri, values)) continue;
+            if (!try p.match(a, uri, values)) continue;
             var variables: json.ObjectBuilder = .{};
             for (p.names, values) |name, value| try variables.put(a, name, .{ .string = value });
             return .{ .ok = try single(a, "contents", try contents(a, try t.read(a, uri, variables.finish()), uri, t.mime_type)) };
@@ -325,12 +333,13 @@ fn putIcons(a: Allocator, out: *json.ObjectBuilder, icons: ?[]const Icon) Alloca
 }
 
 /// Lists a resource or template.
-fn entry(a: Allocator, key: []const u8, uri: []const u8, name: []const u8, title: ?[]const u8, description: ?[]const u8, icons: ?[]const Icon) Allocator.Error!Value {
+fn entry(a: Allocator, key: []const u8, uri: []const u8, name: []const u8, title: ?[]const u8, description: ?[]const u8, mime_type: ?[]const u8, icons: ?[]const Icon) Allocator.Error!Value {
     var out: json.ObjectBuilder = .{};
     try out.put(a, key, .{ .string = uri });
     try out.put(a, "name", .{ .string = name });
     if (nonEmpty(title)) |t| try out.put(a, "title", .{ .string = t });
     if (nonEmpty(description)) |d| try out.put(a, "description", .{ .string = d });
+    if (nonEmpty(mime_type)) |m| try out.put(a, "mimeType", .{ .string = m });
     try putIcons(a, &out, icons);
     return out.finish();
 }

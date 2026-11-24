@@ -289,6 +289,9 @@ impl Features {
                 out.insert("uri".into(), resource.uri.clone().into());
                 out.insert("name".into(), resource.name.clone().into());
                 resource.display.describe(&mut out);
+                if let Some(mime_type) = resource.mime_type.as_ref().filter(|m| !m.is_empty()) {
+                    out.insert("mimeType".into(), mime_type.clone().into());
+                }
                 resource.display.icons(&mut out);
                 Value::Object(out)
             }).collect::<Vec<_>>() })),
@@ -298,6 +301,9 @@ impl Features {
                 out.insert("uriTemplate".into(), template.uri_template.clone().into());
                 out.insert("name".into(), template.name.clone().into());
                 template.display.describe(&mut out);
+                if let Some(mime_type) = template.mime_type.as_ref().filter(|m| !m.is_empty()) {
+                    out.insert("mimeType".into(), mime_type.clone().into());
+                }
                 template.display.icons(&mut out);
                 Value::Object(out)
             }).collect::<Vec<_>>() }),
@@ -489,6 +495,9 @@ fn contents(read: Value, uri: &str, mime_type: Option<&str>) -> Vec<Value> {
 }
 
 /// Compiles a level 1 URI template into its variable names and a regex.
+///
+/// `regex_lite` matches without backtracking, so templates with several variables in one
+/// segment cannot stall a read.
 ///
 /// # Errors
 ///

@@ -1600,6 +1600,10 @@ def kb() -> incur.Cli:
     def numbers(_: str, v: dict[str, str]) -> dict[str, Any]:
         return {"text": v["n"]}
 
+    @cli.resource_template("packages", uri_template="pkg://{name}-{version}-{os}.zip")
+    def packages(_: str, v: dict[str, str]) -> str:
+        return f"{v['name']} {v['version']} {v['os']}"
+
     @cli.prompt(
         "review",
         title="Review code",

@@ -234,6 +234,7 @@ function registerFeatures(
         uri: resource.uri,
         name: resource.name,
         ...describe(resource),
+        ...(resource.mimeType ? { mimeType: resource.mimeType } : undefined),
         ...icons(resource),
       })),
     }))
@@ -242,6 +243,7 @@ function registerFeatures(
         uriTemplate: template.uriTemplate,
         name: template.name,
         ...describe(template),
+        ...(template.mimeType ? { mimeType: template.mimeType } : undefined),
         ...icons(template),
       })),
     }))
@@ -250,9 +252,8 @@ function registerFeatures(
       const resource = resources.find((resource) => resource.uri === uri)
       if (resource) return { contents: contents(await resource.read(), uri, resource.mimeType) }
       for (const { template, pattern } of templates) {
-        const match = pattern.regex.exec(uri)
-        if (!match) continue
-        const variables = Object.fromEntries(pattern.names.map((name, i) => [name, match[i + 1]!]))
+        const variables = matchTemplate(pattern, uri)
+        if (!variables) continue
         return { contents: contents(await template.read(uri, variables), uri, template.mimeType) }
       }
       throw new ResourceNotFoundError(uri)
@@ -305,11 +306,11 @@ function registerFeatures(
         if (ref.type === 'ref/prompt') {
           const prompt = prompts.find((prompt) => prompt.name === ref.name)
           if (!prompt) throw invalid(`Prompt ${ref.name} not found`)
-          return prompt.complete?.[argument.name]
+          return own(prompt.complete, argument.name)
         }
         // A template variable; a fixed resource has nothing to complete.
         const template = resourceTemplates.find((template) => template.uriTemplate === ref.uri)
-        if (template) return template.complete?.[argument.name]
+        if (template) return own(template.complete, argument.name)
         if (resources.some((resource) => resource.uri === ref.uri)) return undefined
         throw invalid(`Resource template ${ref.uri} not found`)
       })()
@@ -333,6 +334,11 @@ function describe(value: { title?: string | undefined; description?: string | un
     ...(value.title ? { title: value.title } : undefined),
     ...(value.description ? { description: value.description } : undefined),
   }
+}
+
+/** Returns a completer the definition itself declares, ignoring inherited properties such as `toString`. */
+function own(complete: Partial<Record<string, Completer>> | undefined, name: string) {
+  return complete && Object.hasOwn(complete, name) ? complete[name] : undefined
 }
 
 /** Normalizes what a read returned into `resources/read` contents. */
@@ -369,17 +375,45 @@ function issues(list: readonly { path: PropertyKey[]; message: string }[]) {
     .join(', ')
 }
 
-/** Compiles a level 1 URI template such as `docs://{section}`. */
+/** Splits a level 1 URI template such as `docs://{section}` into the literals around its variables and their names. */
 function templatePattern(template: string) {
   if (!/^(?:[^{}]|\{\w+\})*$/.test(template))
     throw new Error(`Unsupported URI template: ${template}`)
-  const names: string[] = []
-  const source = template.replace(/\{(\w+)\}|[.*+?^$()|[\]\\]/g, (match, name?: string) => {
-    if (!name) return `\\${match}`
-    names.push(name)
-    return '([^/,]+)'
-  })
-  return { names, regex: new RegExp(`^${source}$`) }
+  const parts = template.split(/\{(\w+)\}/)
+  return {
+    literals: parts.filter((_, i) => i % 2 === 0),
+    names: parts.filter((_, i) => i % 2 === 1),
+  }
+}
+
+/**
+ * Matches a URI against a template, returning its variables. Each variable takes one or more
+ * characters other than `/` and `,`: as many as still let the rest match, as a greedy regex
+ * would. Failed positions are remembered, so matching stays polynomial in the URI length.
+ */
+function matchTemplate(
+  { literals, names }: ReturnType<typeof templatePattern>,
+  uri: string,
+): Record<string, string> | undefined {
+  const values: string[] = []
+  const failed = new Set<number>()
+  const from = (index: number, start: number): boolean => {
+    if (index === names.length) return start === uri.length
+    const key = index * (uri.length + 1) + start
+    if (failed.has(key)) return false
+    let end = start
+    while (end < uri.length && uri[end] !== '/' && uri[end] !== ',') end++
+    const literal = literals[index + 1]!
+    for (let stop = end; stop > start; stop--) {
+      if (!uri.startsWith(literal, stop)) continue
+      values[index] = uri.slice(start, stop)
+      if (from(index + 1, stop + literal.length)) return true
+    }
+    failed.add(key)
+    return false
+  }
+  if (!uri.startsWith(literals[0]!) || !from(0, literals[0]!.length)) return undefined
+  return Object.fromEntries(names.map((name, i) => [name, values[i]!]))
 }
 
 export declare namespace createServer {

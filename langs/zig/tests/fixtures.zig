@@ -1211,6 +1211,11 @@ fn numRead(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
     return out.finish();
 }
 
+fn packagesRead(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
+    _ = uri;
+    return .{ .string = try std.fmt.allocPrint(a, "{s} {s} {s}", .{ v.get("name").?.string, v.get("version").?.string, v.get("os").?.string }) };
+}
+
 fn numComplete(a: Allocator, value: []const u8, chosen: Value) Allocator.Error![]const []const u8 {
     _ = chosen;
     const out = try a.alloc([]const u8, 150);
@@ -1269,6 +1274,7 @@ const kb_templates = [_]incur.mcp.ResourceTemplate{
         .read = docsRead,
     },
     .{ .uri_template = "num://{n}.txt", .name = "numbers", .complete = &.{.{ .name = "n", .complete = numComplete }}, .read = numRead },
+    .{ .uri_template = "pkg://{name}-{version}-{os}.zip", .name = "packages", .read = packagesRead },
 };
 
 const kb_prompts = [_]incur.mcp.Prompt{

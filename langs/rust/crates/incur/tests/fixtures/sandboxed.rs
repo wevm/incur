@@ -584,6 +584,11 @@ pub(crate) fn kb() -> Cli {
         )
         .resource_template(docs)
         .resource_template(numbers)
+        .resource_template(ResourceTemplate::new(
+            "pkg://{name}-{version}-{os}.zip",
+            "packages",
+            |_, v| json!(format!("{} {} {}", v["name"], v["version"], v["os"])),
+        ))
         .prompt(review)
         .prompt(hello)
         .command(

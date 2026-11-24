@@ -115,17 +115,48 @@ METHODS = (
 )
 
 
-def _pattern(template: str) -> tuple[list[str], re.Pattern[str]]:
-    """Compiles a level 1 URI template.
+def _pattern(template: str) -> tuple[list[str], list[str]]:
+    """Splits a level 1 URI template into its variable names and the literals around them.
 
     Raises:
         Error: When the template has other expressions or stray braces.
     """
     if not _TEMPLATE.fullmatch(template):
         raise unknown(f"Unsupported URI template: {template}")
-    names = _EXPRESSION.findall(template)
-    parts = _EXPRESSION.split(template)[::2]
-    return names, re.compile("([^/,]+)".join(re.escape(part) for part in parts))
+    parts = _EXPRESSION.split(template)
+    return parts[1::2], parts[::2]
+
+
+def _match(names: list[str], literals: list[str], uri: str) -> dict[str, str] | None:
+    """Matches a URI against a template, returning its variables.
+
+    Each variable takes one or more characters other than `/` and `,`: as many as still let the
+    rest match, as a greedy regex would. Failed positions are remembered, so matching stays
+    polynomial in the URI length.
+    """
+    values = [""] * len(names)
+    failed: set[tuple[int, int]] = set()
+
+    def rest(index: int, start: int) -> bool:
+        if index == len(names):
+            return start == len(uri)
+        if (index, start) in failed:
+            return False
+        end = start
+        while end < len(uri) and uri[end] not in "/,":
+            end += 1
+        literal = literals[index + 1]
+        for stop in range(end, start, -1):
+            if uri.startswith(literal, stop):
+                values[index] = uri[start:stop]
+                if rest(index + 1, stop + len(literal)):
+                    return True
+        failed.add((index, start))
+        return False
+
+    if not uri.startswith(literals[0]) or not rest(0, len(literals[0])):
+        return None
+    return dict(zip(names, values, strict=True))
 
 
 def _icons(icons: list[Any] | None) -> list[Json] | None:
@@ -178,8 +209,18 @@ class Features:
         """Answers a feature request.
 
         Raises:
-            RpcError: For unknown resources, prompts, and invalid prompt arguments.
+            RpcError: For unknown resources, prompts, and invalid prompt arguments, and with
+                code -32603 when a reader, renderer, or completer raises, as the MCP SDK reports
+                handler failures.
         """
+        try:
+            return self._answer(method, params)
+        except RpcError:
+            raise
+        except Exception as error:
+            raise RpcError(-32603, str(error)) from error
+
+    def _answer(self, method: str, params: dict[str, Json]) -> dict[str, Json]:
         if method == "resources/list":
             return {"resources": [self._resource(r) for r in self.resources]}
         if method == "resources/templates/list":
@@ -195,6 +236,8 @@ class Features:
     def _resource(self, resource: Resource) -> Json:
         out: dict[str, Json] = {"uri": resource.uri, "name": resource.name}
         _describe(out, resource.title, resource.description)
+        if resource.mime_type:
+            out["mimeType"] = resource.mime_type
         icons = _icons(resource.icons)
         if icons is not None:
             out["icons"] = icons
@@ -203,6 +246,8 @@ class Features:
     def _template(self, template: ResourceTemplate) -> Json:
         out: dict[str, Json] = {"uriTemplate": template.uri_template, "name": template.name}
         _describe(out, template.title, template.description)
+        if template.mime_type:
+            out["mimeType"] = template.mime_type
         icons = _icons(template.icons)
         if icons is not None:
             out["icons"] = icons
@@ -230,10 +275,9 @@ class Features:
         for resource in self.resources:
             if resource.uri == uri:
                 return {"contents": _contents(resource.read(), uri, resource.mime_type)}
-        for template, names, pattern in self.templates:
-            match = pattern.fullmatch(uri)
-            if match is not None:
-                variables = dict(zip(names, match.groups(), strict=True))
+        for template, names, literals in self.templates:
+            variables = _match(names, literals, uri)
+            if variables is not None:
                 contents = _contents(template.read(uri, variables), uri, template.mime_type)
                 return {"contents": contents}
         raise RpcError(-32602, f"Resource not found: {uri}", {"uri": uri})

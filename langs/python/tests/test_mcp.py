@@ -287,3 +287,22 @@ def test_http_transport() -> None:
             },
         )
     )
+
+
+def test_feature_exceptions() -> None:
+    """A failing reader answers with -32603, as the MCP SDK reports handler errors, and the
+    connection keeps serving."""
+    cli = incur.Cli("kb", update=False)
+
+    @cli.resource("gone", uri="kb://gone")
+    def gone() -> str:
+        raise FileNotFoundError("gone")
+
+    read = {"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": "kb://gone"}}
+    ping = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+    assert mcp(cli, read, ping) == snapshot(
+        [
+            {"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "gone"}},
+            {"result": {}, "jsonrpc": "2.0", "id": 2},
+        ]
+    )

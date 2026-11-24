@@ -1231,6 +1231,10 @@ const kb = Cli.create('kb', {
     complete: { n: (value) => Array.from({ length: 150 }, (_, i) => `${value}${i}`) },
     read: (_uri, v) => ({ text: v.n! }),
   })
+  .resourceTemplate('packages', {
+    uriTemplate: 'pkg://{name}-{version}-{os}.zip',
+    read: (_uri, v) => `${v.name} ${v.version} ${v.os}`,
+  })
   .prompt('review', {
     title: 'Review code',
     description: 'Review a snippet',
