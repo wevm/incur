@@ -15,8 +15,8 @@ export async function sync(
   commands: Map<string, any>,
   options: sync.Options = {},
 ): Promise<sync.Result> {
-  const { depth = 1, description, global = true } = options
-  const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
+  const { cwd, depth = 1, description, global = true } = options
+  const root = options.root ?? cwd ?? resolvePackageRoot()
 
   // Pre-load yaml for the sync call paths below (`Skill.split`, `parseFrontmatter`).
   await Yaml.load()
@@ -43,9 +43,9 @@ export async function sync(
     if (options.include) {
       for (const pattern of options.include) {
         const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
-        for await (const match of fs.glob(globPattern, { cwd })) {
+        for await (const match of fs.glob(globPattern, { cwd: root })) {
           try {
-            const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
+            const content = await fs.readFile(path.resolve(root, match), 'utf8')
             const meta = parseSkillFrontmatter(content)
             const skillName =
               pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
@@ -89,7 +89,7 @@ export async function sync(
 export declare namespace sync {
   /** Options for syncing skills. */
   type Options = {
-    /** Working directory for resolving `include` globs. Defaults to `process.cwd()`. */
+    /** Project directory that `global: false` installs go to. Also resolves `include` globs when `root` is unset. Defaults to `process.cwd()`. */
     cwd?: string | undefined
     /** Grouping depth for skill files. Defaults to `1`. */
     depth?: number | undefined
@@ -99,6 +99,8 @@ export declare namespace sync {
     global?: boolean | undefined
     /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). Skill name is the parent directory name. */
     include?: string[] | undefined
+    /** Directory that `include` globs resolve against. Defaults to `cwd` when set, otherwise the package root of the running bin (the nearest `package.json` above `process.argv[1]`). */
+    root?: string | undefined
     /** Root command definition (when the CLI itself has a `run` handler). */
     rootCommand?:
       | {
@@ -140,8 +142,8 @@ export async function list(
   commands: Map<string, any>,
   options: list.Options = {},
 ): Promise<list.Skill[]> {
-  const { depth = 1, description } = options
-  const cwd = options.cwd ?? process.cwd()
+  const { cwd, depth = 1, description } = options
+  const root = options.root ?? cwd ?? resolvePackageRoot()
 
   // Pre-load yaml for the sync call paths below (`Skill.split`, `parseFrontmatter`).
   await Yaml.load()
@@ -168,9 +170,9 @@ export async function list(
   if (options.include) {
     for (const pattern of options.include) {
       const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
-      for await (const match of fs.glob(globPattern, { cwd })) {
+      for await (const match of fs.glob(globPattern, { cwd: root })) {
         try {
-          const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
+          const content = await fs.readFile(path.resolve(root, match), 'utf8')
           const meta = parseSkillFrontmatter(content)
           const skillName =
             pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
@@ -200,7 +202,7 @@ export function hasInstalledSkills(
 export declare namespace list {
   /** Options for listing skills. */
   type Options = {
-    /** Working directory for resolving `include` globs. Defaults to `process.cwd()`. */
+    /** Project directory checked for skills installed with `global: false`. Also resolves `include` globs when `root` is unset. Defaults to `process.cwd()`. */
     cwd?: string | undefined
     /** Grouping depth for skill files. Defaults to `1`. */
     depth?: number | undefined
@@ -208,6 +210,8 @@ export declare namespace list {
     description?: string | undefined
     /** Glob patterns for directories containing SKILL.md files to include. */
     include?: string[] | undefined
+    /** Directory that `include` globs resolve against. Defaults to `cwd` when set, otherwise the package root of the running bin (the nearest `package.json` above `process.argv[1]`). */
+    root?: string | undefined
     /** Root command definition (when the CLI itself is a command). */
     rootCommand?:
       | {

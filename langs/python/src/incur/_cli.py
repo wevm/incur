@@ -1137,7 +1137,7 @@ class _Run:
                 return None
         env = self.env_map
         stored = read_hash(cli.name, env)
-        if stored is None or not has_installed_skills(cli.name, env, cli.sync.cwd):
+        if stored is None or not has_installed_skills(cli.name, env):
             return None
         # The stored hash covers every command, deferred groups included.
         await cli.load()

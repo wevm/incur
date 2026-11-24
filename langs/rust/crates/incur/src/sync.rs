@@ -88,9 +88,9 @@ impl SkillSync {
         self
     }
 
-    /// Sets the directory `include` globs resolve against. Defaults to the directory of the
-    /// nearest `package.json` above the program for global installs, and to the working
-    /// directory otherwise.
+    /// Sets the directory `include` globs resolve against, for `skills add` and `skills list`.
+    /// Defaults to the directory of the nearest `package.json` above the program. Project
+    /// installs (`skills add --no-global`) always go to the working directory.
     #[must_use]
     pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
@@ -574,7 +574,7 @@ fn strings(meta: &Value, key: &str) -> Vec<String> {
 }
 
 /// Returns the names of previously synced skills still installed.
-fn installed_skills(name: &str, env: Env<'_>, cwd: &Path) -> Vec<String> {
+fn installed_skills(name: &str, env: Env<'_>) -> Vec<String> {
     let Some(meta) = read_meta(name, env) else {
         return Vec::new();
     };
@@ -593,6 +593,7 @@ fn installed_skills(name: &str, env: Env<'_>, cwd: &Path) -> Vec<String> {
             .collect();
     }
     let home = home(env);
+    let cwd = std::env::current_dir().unwrap_or_default();
     let bases = [home.join(".agents/skills"), cwd.join(".agents/skills")];
     skills
         .into_iter()
@@ -601,8 +602,8 @@ fn installed_skills(name: &str, env: Env<'_>, cwd: &Path) -> Vec<String> {
 }
 
 /// Whether any previously synced skill is still installed.
-pub(crate) fn has_installed(name: &str, env: Env<'_>, cwd: &Path) -> bool {
-    !installed_skills(name, env, cwd).is_empty()
+pub(crate) fn has_installed(name: &str, env: Env<'_>) -> bool {
+    !installed_skills(name, env).is_empty()
 }
 
 /// Writes the skills metadata.
@@ -768,14 +769,12 @@ fn depth(depth: f64) -> usize {
 
 /// Generates skill files and installs them for agents. Returns an error message on failure.
 pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Result<Synced, Error> {
-    let working = std::env::current_dir().unwrap_or_default();
-    let cwd = source.settings.cwd.clone().unwrap_or_else(|| {
-        if global {
-            package_root(&working)
-        } else {
-            working.clone()
-        }
-    });
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let root = source
+        .settings
+        .cwd
+        .clone()
+        .unwrap_or_else(|| package_root(&cwd));
     let files = skill::split(
         source.name,
         source.commands,
@@ -794,8 +793,8 @@ pub(crate) fn sync(source: &Source<'_>, depth_value: f64, global: bool) -> Resul
             });
         }
         for pattern in &source.settings.include {
-            for found in glob(pattern, &cwd) {
-                let Ok(content) = std::fs::read_to_string(cwd.join(&found)) else {
+            for found in glob(pattern, &root) {
+                let Ok(content) = std::fs::read_to_string(root.join(&found)) else {
                     continue;
                 };
                 let Some((name, description)) = included(pattern, &found, &content, source.name)
@@ -891,18 +890,18 @@ fn temp_dir(env: Env<'_>, name: &str) -> Result<PathBuf, Error> {
 
 /// Lists generated and included skills with their install status.
 pub(crate) fn list(source: &Source<'_>, depth_value: f64) -> Vec<Skill> {
-    let cwd = source
+    let root = source
         .settings
         .cwd
         .clone()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        .unwrap_or_else(|| package_root(&std::env::current_dir().unwrap_or_default()));
     let files = skill::split(
         source.name,
         source.commands,
         depth(depth_value),
         source.groups,
     );
-    let installed = installed_skills(source.name, source.env, &cwd);
+    let installed = installed_skills(source.name, source.env);
     let mut skills = files
         .into_iter()
         .map(|file| Skill {
@@ -912,8 +911,8 @@ pub(crate) fn list(source: &Source<'_>, depth_value: f64) -> Vec<Skill> {
         })
         .collect::<Vec<_>>();
     for pattern in &source.settings.include {
-        for found in glob(pattern, &cwd) {
-            let Ok(content) = std::fs::read_to_string(cwd.join(&found)) else {
+        for found in glob(pattern, &root) {
+            let Ok(content) = std::fs::read_to_string(root.join(&found)) else {
                 continue;
             };
             let Some((name, description)) = included(pattern, &found, &content, source.name) else {

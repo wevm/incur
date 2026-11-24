@@ -985,6 +985,7 @@ pub(crate) fn cli(name: &str) -> Cli {
         "kit" => sandboxed::kit(),
         "kitbad" => sandboxed::kitbad(),
         "kitcmd" => sandboxed::kitcmd(),
+        "kitcwd" => sandboxed::kitcwd(),
         "kitpkg" => sandboxed::kitpkg(),
         "kitver" => sandboxed::kitver(),
         "oa" => sandboxed::oa(),
