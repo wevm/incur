@@ -137,11 +137,13 @@ def with_defaults(ty: Type, values: dict[str, Json]) -> Type:
 def _with_default(ty: Type, value: Json) -> Type:
     """Returns a field schema with a new default."""
     if ty.raw is None:
-        return replace(ty, default=value)
+        return replace(ty, default=value, null_default=value is None)
     # `.default()` wraps a converted schema: its JSON leads with the new default, and the field
     # is no longer optional.
     raw = {"default": value, **{k: v for k, v in ty.raw.items() if k != "default"}}
-    return replace(ty, default=value, optional=False, required=None, raw=raw)
+    return replace(
+        ty, default=value, null_default=value is None, optional=False, required=None, raw=raw
+    )
 
 
 def collect(
