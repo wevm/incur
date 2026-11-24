@@ -15,6 +15,7 @@ pub mod help;
 mod js;
 pub mod json;
 pub mod mcp;
+mod modern;
 pub mod openapi;
 pub mod parser;
 mod remote;

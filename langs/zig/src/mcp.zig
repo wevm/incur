@@ -14,6 +14,7 @@ const command = @import("command.zig");
 const http = @import("http.zig");
 const parser = @import("parser.zig");
 const cli_ = @import("cli.zig");
+const modern = @import("modern.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -222,7 +223,7 @@ fn glob(pattern: []const u8, name: []const u8) bool {
 }
 
 /// A JSON-RPC message's role.
-const Kind = enum { request, notification, response, invalid };
+const Kind = modern.Kind;
 
 /// Classifies a message as the MCP SDK's JSON-RPC schemas do.
 fn classify(message: Value) Kind {
@@ -330,6 +331,54 @@ const Server = struct {
         return out.finish();
     }
 
+    /// Returns the server's name, title, and version.
+    fn identity(s: *Server) Allocator.Error!Value {
+        const a = s.a;
+        const settings = s.cli.options.mcp orelse cli_.Mcp{};
+        var out: json.ObjectBuilder = .{};
+        try out.put(a, "name", .{ .string = s.name });
+        if (errors.nonEmpty(settings.title)) |t| try out.put(a, "title", .{ .string = t });
+        try out.put(a, "version", .{ .string = s.cli.options.version orelse "0.0.0" });
+        return out.finish();
+    }
+
+    /// Answers a request under protocol revision 2026-07-28, or returns null for messages
+    /// without responses. Sets `unknown` for an unknown method.
+    fn handleModern(s: *Server, message: Value, unknown: *bool) ServeError!?Value {
+        if (classify(message) != .request) return null;
+        const a = s.a;
+        const id = message.get("id").?;
+        const method = message.get("method").?.string;
+        const params = message.get("params") orelse Value{ .object = &.{} };
+        const discover = std.mem.eql(u8, method, "server/discover");
+        if (!discover and !std.mem.eql(u8, method, "tools/list") and !std.mem.eql(u8, method, "tools/call")) {
+            unknown.* = true;
+            return try rpcError(a, id, -32601, "Method not found");
+        }
+        if (try modern.envelopeError(a, params)) |text| return try rpcError(a, id, -32602, text);
+        const response = if (discover) response: {
+            const settings = s.cli.options.mcp orelse cli_.Mcp{};
+            var tools: json.ObjectBuilder = .{};
+            try tools.put(a, "listChanged", .{ .bool = true });
+            var capabilities: json.ObjectBuilder = .{};
+            try capabilities.put(a, "tools", tools.finish());
+            var result: json.ObjectBuilder = .{};
+            try result.put(a, "supportedVersions", .{ .array = try a.dupe(Value, &.{.{ .string = modern.version }}) });
+            try result.put(a, "capabilities", capabilities.finish());
+            if (errors.nonEmpty(settings.instructions)) |i| try result.put(a, "instructions", .{ .string = i });
+            var out: json.ObjectBuilder = .{};
+            try out.put(a, "result", result.finish());
+            try out.put(a, "jsonrpc", .{ .string = "2.0" });
+            try out.put(a, "id", id);
+            break :response out.finish();
+        } else (try s.handle(message)).?;
+        const result = response.get("result") orelse return response;
+        var out: json.ObjectBuilder = .{};
+        for (response.object) |entry| try out.put(a, entry.key, entry.value);
+        try out.put(a, "result", try modern.encode(a, method, result, try s.identity()));
+        return out.finish();
+    }
+
     /// Answers `initialize`.
     fn initialize(s: *Server, params: Value) Allocator.Error!Value {
         const a = s.a;
@@ -342,14 +391,10 @@ const Server = struct {
         try tools.put(a, "listChanged", .{ .bool = true });
         var capabilities: json.ObjectBuilder = .{};
         try capabilities.put(a, "tools", tools.finish());
-        var info: json.ObjectBuilder = .{};
-        try info.put(a, "name", .{ .string = s.name });
-        if (errors.nonEmpty(settings.title)) |t| try info.put(a, "title", .{ .string = t });
-        try info.put(a, "version", .{ .string = s.cli.options.version orelse "0.0.0" });
         var out: json.ObjectBuilder = .{};
         try out.put(a, "protocolVersion", .{ .string = version });
         try out.put(a, "capabilities", capabilities.finish());
-        try out.put(a, "serverInfo", info.finish());
+        try out.put(a, "serverInfo", try s.identity());
         if (errors.nonEmpty(settings.instructions)) |i| try out.put(a, "instructions", .{ .string = i });
         return out.finish();
     }
@@ -799,6 +844,7 @@ pub fn serveStdio(a: Allocator, cli: *Cli, process: *const Process, defaults: De
     };
     server.notifications = process.stdout;
     const reader = process.stdin orelse return null;
+    var era: Era = .opening;
     var line: std.Io.Writer.Allocating = .init(a);
     while (true) {
         line.clearRetainingCapacity();
@@ -809,8 +855,48 @@ pub fn serveStdio(a: Allocator, cli: *Cli, process: *const Process, defaults: De
         reader.toss(1);
         var message: []const u8 = undefined;
         const value = try command.optional(json.parse(a, line.written(), &message)) orelse continue;
-        if (try server.handle(value)) |response| writeLine(process.stdout, try json.stringify(a, response));
+        const kind = classify(value);
+        if (kind == .invalid) continue;
+        // The opening message picks the era: a 2026-07-28 envelope pins the connection to
+        // per-request `_meta` serving (after any `server/discover` probes), anything else to
+        // the 2025 handshake.
+        if (era == .opening or era == .probe) {
+            const opened = try openStdio(a, value, kind, process.stdout) orelse continue;
+            const discover = kind == .request and std.mem.eql(u8, value.get("method").?.string, "server/discover");
+            era = if (opened == .legacy) .legacy else if (discover) .probe else if (era == .opening or kind == .request) .modern else era;
+        }
+        const params = value.get("params") orelse Value{ .object = &.{} };
+        var unknown = false;
+        const response = if (era == .legacy)
+            try server.handle(value)
+        else if (kind == .request and std.mem.eql(u8, value.get("method").?.string, "initialize") and !try modern.validClaim(a, params))
+            try (try modern.initializeReject(a, params)).response(a, value.get("id").?)
+        else
+            try server.handleModern(value, &unknown);
+        if (response) |r| writeLine(process.stdout, try json.stringify(a, r));
     }
+}
+
+/// The protocol era of an MCP stdio connection.
+const Era = enum { opening, probe, modern, legacy };
+
+/// Classifies a message on a stdio connection without an era. Returns null after answering or
+/// dropping it.
+fn openStdio(a: Allocator, value: Value, kind: Kind, stdout: *std.Io.Writer) Allocator.Error!?Era {
+    if (kind == .response) return null;
+    const method = value.get("method").?.string;
+    const params = value.get("params") orelse Value{ .object = &.{} };
+    if (std.mem.eql(u8, method, "initialize") and !try modern.validClaim(a, params) or !modern.hasClaim(params)) return .legacy;
+    const issues = try modern.paramsIssues(a, params);
+    const claim = modern.claimed(params) orelse "";
+    const reject = if (issues.len > 0)
+        try modern.envelopeReject(a, issues[0])
+    else if (std.mem.eql(u8, claim, modern.version))
+        return .modern
+    else
+        try modern.unsupported(a, claim);
+    if (kind == .request) writeLine(stdout, try json.stringify(a, try reject.response(a, value.get("id").?)));
+    return null;
 }
 
 /// The result of `doctor`: whether the server starts and lists tools, and the report.
@@ -881,6 +967,12 @@ pub fn handleHttp(a: Allocator, cli: *Cli, process: *const Process, request: *co
         try response.headers.set(a, "allow", "POST");
         return response;
     }
+    if (std.mem.eql(u8, request.method, "POST")) {
+        const headers = modern.Headers.of(request);
+        var message: []const u8 = undefined;
+        const body = try command.optional(json.parse(a, request.body orelse "", &message));
+        if (modern.isModernRequest(headers, body)) return handleModern(a, cli, process, request, headers, body.?);
+    }
     const state = session orelse &stateless_session;
     if (std.mem.eql(u8, request.method, "GET")) {
         const accept = request.headers.get("accept") orelse "";
@@ -942,6 +1034,39 @@ pub fn handleHttp(a: Allocator, cli: *Cli, process: *const Process, request: *co
     var response = try http.Response.json(a, if (body == .array) .{ .array = responses.items } else responses.items[0], 200);
     if (session) |s| try response.headers.set(a, "mcp-session-id", try a.dupe(u8, &s.id));
     return response;
+}
+
+/// Answers a request that claims protocol revision 2026-07-28 with a fresh server.
+fn handleModern(a: Allocator, cli: *Cli, process: *const Process, request: *const http.Request, headers: modern.Headers, body: Value) ServeError!http.Response {
+    if (!modern.isJson(request.headers.get("content-type")))
+        return transportError(a, 415, -32000, "Unsupported Media Type: Content-Type must be application/json");
+    const method = body.get("method");
+    const raw_id = if (method != null and method.? == .string) body.get("id") else null;
+    const id: Value = if (raw_id != null and raw_id.? != .object and raw_id.? != .array and raw_id.? != .bool and raw_id.? != .null) raw_id.? else .null;
+    const routed = switch (try modern.classify(a, headers, body, &classify)) {
+        .reject => |r| return rejectResponse(a, r, id, 400),
+        .ok => |ok| ok,
+    };
+    if (!std.mem.eql(u8, routed.revision, modern.version)) return rejectResponse(a, try modern.unsupported(a, routed.revision), id, 400);
+    if (classify(routed.message) == .notification) return .{ .status = 202 };
+    if (try modern.checkHeaders(a, headers, routed.message, routed.revision)) |r| return rejectResponse(a, r, id, 400);
+    var server = switch (try Server.init(a, cli, process, false, .{})) {
+        .ok => |s| s,
+        .err => return rejectResponse(a, .{ .code = -32603, .message = "Internal server error" }, id, 500),
+    };
+    server.request = request;
+    var unknown = false;
+    const response = (try server.handleModern(routed.message, &unknown)).?;
+    return http.Response.json(a, response, if (unknown) 404 else 200);
+}
+
+/// Returns a rejection as an HTTP JSON-RPC error response.
+fn rejectResponse(a: Allocator, reject: modern.Reject, id: Value, status: u16) Allocator.Error!http.Response {
+    var out: json.ObjectBuilder = .{};
+    try out.put(a, "jsonrpc", .{ .string = "2.0" });
+    try out.put(a, "error", try reject.err(a));
+    try out.put(a, "id", id);
+    return http.Response.json(a, out.finish(), status);
 }
 
 /// Rejects requests that do not belong to the stateful session.

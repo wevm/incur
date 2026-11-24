@@ -117,6 +117,45 @@ describe('Mcp', () => {
     expect(res.result.capabilities.tools).toBeDefined()
   })
 
+  test('serves 2026-07-28 requests after server/discover without initialize', async () => {
+    const _meta = {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': {},
+    }
+    const responses = await mcpSession(createTestCommands(), [
+      { id: 1, method: 'server/discover', params: { _meta } },
+      { id: 2, method: 'tools/call', params: { name: 'ping', arguments: {}, _meta } },
+      { id: 3, method: 'initialize', params: initParams },
+    ])
+    // The rejected handshake is answered without dispatch, so it can arrive first.
+    const [discover, call, initialize] = responses.sort((a, b) => a.id - b.id)
+    expect(discover.result).toMatchInlineSnapshot(`
+      {
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": "test-cli",
+            "version": "1.0.0",
+          },
+        },
+        "cacheScope": "private",
+        "capabilities": {
+          "tools": {
+            "listChanged": true,
+          },
+        },
+        "resultType": "complete",
+        "supportedVersions": [
+          "2026-07-28",
+        ],
+        "ttlMs": 0,
+      }
+    `)
+    expect(call.result.resultType).toBe('complete')
+    expect(call.result.content).toEqual([{ type: 'text', text: '{"pong":true}' }])
+    // The connection is pinned to 2026-07-28, so the 2025 handshake is refused.
+    expect(initialize.error.code).toBe(-32022)
+  })
+
   test('initialize includes the server title', async () => {
     const input = new PassThrough()
     const output = new PassThrough()

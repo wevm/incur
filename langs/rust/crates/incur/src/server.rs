@@ -18,6 +18,7 @@ use crate::fetch;
 use crate::formatter::Format;
 use crate::js;
 use crate::mcp;
+use crate::modern;
 use crate::openapi;
 use crate::parser;
 use crate::skill;
@@ -486,6 +487,11 @@ impl Cli {
         if stateless && method != http::Method::POST {
             return response(405, &[("allow", "POST")], Body::empty());
         }
+        let text = String::from_utf8_lossy(bytes);
+        if method == http::Method::POST && modern::is_modern_request(&modern_headers(&parts), &text)
+        {
+            return self.mcp_modern(tree, parts, &text).await;
+        }
         if method == http::Method::GET {
             if !header(&parts, "accept").is_some_and(|a| a.contains("text/event-stream")) {
                 return rpc_error(
@@ -535,7 +541,7 @@ impl Cli {
                 "Unsupported Media Type: Content-Type must be application/json",
             );
         }
-        let Ok(raw) = js::json_parse(&String::from_utf8_lossy(bytes), |_| Value::Null) else {
+        let Ok(raw) = js::json_parse(&text, |_| Value::Null) else {
             return rpc_error(400, -32700, "Parse error: Invalid JSON");
         };
         let raw_messages = match &raw {
@@ -621,6 +627,78 @@ impl Cli {
         response(200, &headers, Body::from(js::stringify(&body)))
     }
 
+    /// Serves a request that claims MCP protocol revision 2026-07-28 with a fresh server.
+    async fn mcp_modern(
+        &self,
+        tree: &IndexMap<String, Entry>,
+        parts: http::request::Parts,
+        text: &str,
+    ) -> http::Response<Body> {
+        if !modern::is_json(header(&parts, "content-type")) {
+            return rpc_error(
+                415,
+                -32000,
+                "Unsupported Media Type: Content-Type must be application/json",
+            );
+        }
+        let body = js::json_parse(text, |_| Value::Null).unwrap_or_default();
+        let id = body
+            .as_object()
+            .filter(|object| object.get("method").is_some_and(Value::is_string))
+            .and_then(|object| object.get("id"))
+            .filter(|id| id.is_string() || id.is_number())
+            .cloned()
+            .unwrap_or(Value::Null);
+        let headers = modern_headers(&parts);
+        let routed = modern::classify(&headers, &body).and_then(|(message, revision)| {
+            if revision != modern::VERSION {
+                return Err(modern::Reject::unsupported(&revision));
+            }
+            if message.contains_key("id") {
+                modern::check_headers(&headers, &message, &revision)?;
+            }
+            Ok(message)
+        });
+        let message = match routed {
+            Ok(message) => message,
+            Err(reject) => {
+                return json_response(
+                    400,
+                    &json!({ "jsonrpc": "2.0", "error": reject.error(), "id": id }),
+                );
+            }
+        };
+        let Some(request_id) = message.get("id") else {
+            return response(202, &[], Body::empty());
+        };
+        let Ok(server) = self.mcp_server(tree, &process_env, false, &mcp::Defaults::default())
+        else {
+            return json_response(
+                500,
+                &json!({ "jsonrpc": "2.0", "error": { "code": -32603, "message": "Internal server error" }, "id": id }),
+            );
+        };
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let params = message
+            .get("params")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let (body, unknown) = server
+            .handle_modern(
+                request_id,
+                method,
+                &params,
+                Some(Arc::new(parts)),
+                &mut |_| {},
+            )
+            .await;
+        json_response(if unknown { 404 } else { 200 }, &body)
+    }
+
     /// Validates the session header of a stateful MCP request.
     async fn validate_session(&self, parts: &http::request::Parts) -> Option<http::Response<Body>> {
         let session = self.state.session.lock().await;
@@ -686,6 +764,16 @@ fn json_response_with(
     let mut all = headers.to_vec();
     all.push(("content-type", "application/json"));
     response(status, &all, Body::from(js::stringify(value)))
+}
+
+/// The standard MCP request headers, trimmed of spaces and tabs.
+fn modern_headers(parts: &http::request::Parts) -> modern::Headers<'_> {
+    let get = |name| header(parts, name).map(|value| value.trim_matches([' ', '\t']));
+    modern::Headers {
+        version: get("mcp-protocol-version"),
+        method: get("mcp-method"),
+        name: get("mcp-name"),
+    }
 }
 
 /// Validates the `mcp-protocol-version` header.

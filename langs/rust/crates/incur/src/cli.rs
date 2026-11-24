@@ -26,6 +26,7 @@ use crate::formatter::{self, Format};
 use crate::help::{self, Entry as HelpEntry, Example};
 use crate::js;
 use crate::mcp::{self, Mcp};
+use crate::modern;
 use crate::openapi;
 use crate::parser::{self, GlobalsOptions};
 use crate::remote::McpSource;
@@ -2820,23 +2821,80 @@ impl Run<'_, '_> {
                 return;
             }
         };
+        // The opening message picks the era: a 2026-07-28 envelope pins the connection to
+        // per-request `_meta` serving (after any `server/discover` probes), anything else to the
+        // 2025 handshake.
+        let mut era = Era::Opening;
         while let Some(line) = futures_util::StreamExt::next(&mut *self.io.stdin).await {
             let Ok(value) = js::json_parse(&line, |_| Value::Null) else {
                 continue;
             };
-            let Some(mcp::Message::Request { id, method, params }) = mcp::message(&value) else {
+            let Some(parsed) = mcp::message(&value) else {
+                continue;
+            };
+            let request = matches!(parsed, mcp::Message::Request { .. });
+            if matches!(era, Era::Opening | Era::Probe) {
+                let Some(opened) = self.open_stdio(&value, request) else {
+                    continue;
+                };
+                let discover = value.get("method") == Some(&Value::from("server/discover"));
+                era = match opened {
+                    Era::Legacy => Era::Legacy,
+                    _ if discover && request => Era::Probe,
+                    _ if era == Era::Opening || request => Era::Modern,
+                    _ => era,
+                };
+            }
+            let mcp::Message::Request { id, method, params } = parsed else {
                 continue;
             };
             let mut notifications = Vec::new();
-            let response = server
-                .handle(&id, &method, &params, None, &mut |n| notifications.push(n))
-                .await;
+            let response = if era == Era::Legacy {
+                server
+                    .handle(&id, &method, &params, None, &mut |n| notifications.push(n))
+                    .await
+            } else if method == "initialize" && !modern::valid_claim(&params) {
+                modern::Reject::initialize(&params).response(&id)
+            } else {
+                server
+                    .handle_modern(&id, &method, &params, None, &mut |n| {
+                        notifications.push(n);
+                    })
+                    .await
+                    .0
+            };
             for notification in notifications {
                 self.writeln(&js::stringify(&notification));
             }
             self.writeln(&js::stringify(&response));
             let _ = self.io.stdout.flush();
         }
+    }
+
+    /// Classifies a message on a stdio connection without an era. Returns `None` after
+    /// answering or dropping it.
+    fn open_stdio(&mut self, value: &Value, request: bool) -> Option<Era> {
+        let method = value.get("method")?.as_str()?;
+        let empty = Map::new();
+        let params = value
+            .get("params")
+            .and_then(Value::as_object)
+            .unwrap_or(&empty);
+        if method == "initialize" && !modern::valid_claim(params) || !modern::has_claim(params) {
+            return Some(Era::Legacy);
+        }
+        let id = value.get("id").cloned().unwrap_or_default();
+        let reject = match modern::params_issues(params).into_iter().next() {
+            Some(issue) => modern::Reject::envelope(issue),
+            None => match modern::claimed(params) {
+                Some(modern::VERSION) => return Some(Era::Modern),
+                claimed => modern::Reject::unsupported(claimed.unwrap_or_default()),
+            },
+        };
+        if request {
+            self.writeln(&js::stringify(&reject.response(&id)));
+        }
+        None
     }
 
     /// Runs `--update`.
@@ -3800,4 +3858,17 @@ fn config_section(
             format!("Invalid config 'options' for '{path}': expected an object"),
         )),
     }
+}
+
+/// The protocol era of an MCP stdio connection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Era {
+    /// No message has picked an era yet.
+    Opening,
+    /// Only `server/discover` probes have arrived.
+    Probe,
+    /// The 2026-07-28 revision, with a per-request envelope.
+    Modern,
+    /// The 2025 `initialize` handshake.
+    Legacy,
 }
