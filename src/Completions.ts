@@ -44,7 +44,6 @@ export function register(shell: Shell, name: string): string {
   }
 }
 
-
 /**
  * Computes completion candidates for the given argv words and cursor index.
  * Walks the command tree to resolve the active command, then suggests
@@ -291,16 +290,16 @@ function bashRegister(name: string): string {
     for _c in "\${_completions[@]}"; do
         if [[ "$_c" == *$'\\001' ]]; then
             _nospace=true
-            COMPREPLY+=("\${_c%$'\\001'}")
-        else
-            COMPREPLY+=("$_c")
+            _c=\${_c%$'\\001'}
         fi
+        COMPREPLY+=("$_c")
     done
     if [[ $_nospace == true ]]; then
-        compopt -o nospace
+        compopt -o nospace 2>/dev/null
     fi
 }
-complete -o default -o bashdefault -o nosort -F _incur_complete_${id} ${name}`
+complete -o default -o bashdefault -o nosort -F _incur_complete_${id} ${name} 2>/dev/null ||
+    complete -o default -o bashdefault -F _incur_complete_${id} ${name}`
 }
 
 function zshRegister(name: string): string {

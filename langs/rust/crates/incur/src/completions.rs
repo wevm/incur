@@ -133,16 +133,16 @@ pub fn register(shell: Shell, name: &str) -> String {
     for _c in "${{_completions[@]}}"; do
         if [[ "$_c" == *$'\001' ]]; then
             _nospace=true
-            COMPREPLY+=("${{_c%$'\001'}}")
-        else
-            COMPREPLY+=("$_c")
+            _c=${{_c%$'\001'}}
         fi
+        COMPREPLY+=("$_c")
     done
     if [[ $_nospace == true ]]; then
-        compopt -o nospace
+        compopt -o nospace 2>/dev/null
     fi
 }}
-complete -o default -o bashdefault -o nosort -F _incur_complete_{id} {name}"#
+complete -o default -o bashdefault -o nosort -F _incur_complete_{id} {name} 2>/dev/null ||
+    complete -o default -o bashdefault -F _incur_complete_{id} {name}"#
         ),
         Shell::Zsh => format!(
             r#"#compdef {name}

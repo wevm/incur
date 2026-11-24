@@ -77,16 +77,16 @@ pub fn register(a: Allocator, shell: Shell, name: []const u8) Allocator.Error![]
             \\    for _c in "${{_completions[@]}}"; do
             \\        if [[ "$_c" == *$'\001' ]]; then
             \\            _nospace=true
-            \\            COMPREPLY+=("${{_c%$'\001'}}")
-            \\        else
-            \\            COMPREPLY+=("$_c")
+            \\            _c=${{_c%$'\001'}}
             \\        fi
+            \\        COMPREPLY+=("$_c")
             \\    done
             \\    if [[ $_nospace == true ]]; then
-            \\        compopt -o nospace
+            \\        compopt -o nospace 2>/dev/null
             \\    fi
             \\}}
-            \\complete -o default -o bashdefault -o nosort -F _incur_complete_{[id]s} {[name]s}
+            \\complete -o default -o bashdefault -o nosort -F _incur_complete_{[id]s} {[name]s} 2>/dev/null ||
+            \\    complete -o default -o bashdefault -F _incur_complete_{[id]s} {[name]s}
         , .{ .id = id, .name = name }),
         .zsh => std.fmt.allocPrint(a,
             \\#compdef {[name]s}
