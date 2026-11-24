@@ -1390,6 +1390,22 @@ const view = Cli.create('view', {
   .command('plain', { description: 'Plain view', mcp: { app: 'plain' }, run: () => ({ ok: true }) })
   .command('other', { description: 'No view', run: () => ({ ok: true }) })
 
+/** Mounts a CLI whose command links to its own app. A parent app with the same name wins. */
+const viewhost = Cli.create('viewhost', {
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { tools: { discovery: 'direct' } },
+})
+  .app('chart', { uri: 'ui://viewhost/chart', html: '<p>Host</p>' })
+  .command(
+    Cli.create('kid', { description: 'Mounted views' })
+      .app('chart', { uri: 'ui://kid/chart', html: '<p>Kid chart</p>' })
+      .app('table', { uri: 'ui://kid/table', html: '<p>Kid table</p>' })
+      .command('chart', { description: 'Chart', mcp: { app: 'chart' }, run: () => ({}) })
+      .command('table', { description: 'Table', mcp: { app: 'table' }, run: () => ({}) }),
+  )
+
 /** A command that links to an app the CLI never registers. */
 const viewmissing = Cli.create('viewmissing', { version: '1.0.0', update: false, sync: false })
   .app('real', { uri: 'ui://viewmissing/real', html: '' })
@@ -1922,6 +1938,7 @@ export const clis = {
   kb,
   kbbad,
   view,
+  viewhost,
   viewmissing,
   viewscheme,
   kit,

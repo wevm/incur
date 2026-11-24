@@ -1801,6 +1801,31 @@ def view() -> incur.Cli:
     return cli
 
 
+def viewhost() -> incur.Cli:
+    """Mounts a CLI whose command links to its own app. A parent app with the same name wins."""
+    cli = incur.Cli(
+        "viewhost",
+        version="1.0.0",
+        update=False,
+        sync=False,
+        mcp=incur.McpOptions(tools=incur.ToolFilter(discovery="direct")),
+    )
+    cli.app("chart", uri="ui://viewhost/chart", html="<p>Host</p>")
+    kid = incur.Cli("kid", description="Mounted views")
+    kid.app("chart", uri="ui://kid/chart", html="<p>Kid chart</p>")
+    kid.app("table", uri="ui://kid/table", html="<p>Kid table</p>")
+
+    @kid.command("chart", description="Chart", mcp=incur.McpTool(app="chart"))
+    def chart(c: Context) -> Data:
+        return {}
+
+    @kid.command("table", description="Table", mcp=incur.McpTool(app="table"))
+    def table(c: Context) -> Data:
+        return {}
+
+    return cli.group(kid)
+
+
 def viewmissing() -> incur.Cli:
     """A command that links to an app the CLI never registers."""
     cli = incur.Cli("viewmissing", version="1.0.0", update=False, sync=False)
@@ -2474,6 +2499,7 @@ def cli(name: str) -> incur.Cli:
         "ask": ask,
         "kbbad": kbbad,
         "view": view,
+        "viewhost": viewhost,
         "viewmissing": viewmissing,
         "viewscheme": viewscheme,
         "oaroot": oaroot,

@@ -811,6 +811,35 @@ pub(crate) fn view() -> Cli {
         )
 }
 
+/// Mounts a CLI whose command links to its own app. A parent app with the same name wins.
+pub(crate) fn viewhost() -> Cli {
+    let kid = Cli::new("kid")
+        .description("Mounted views")
+        .app(App::new("ui://kid/chart", "chart", "<p>Kid chart</p>"))
+        .app(App::new("ui://kid/table", "table", "<p>Kid table</p>"))
+        .command(
+            "chart",
+            Command::new()
+                .description("Chart")
+                .mcp(Tool::new().app("chart"))
+                .run(|_: Context| data(json!({}))),
+        )
+        .command(
+            "table",
+            Command::new()
+                .description("Table")
+                .mcp(Tool::new().app("table"))
+                .run(|_: Context| data(json!({}))),
+        );
+    client(Cli::new("viewhost"))
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .mcp(Mcp::new().discovery(Discovery::Direct))
+        .app(App::new("ui://viewhost/chart", "chart", "<p>Host</p>"))
+        .group(kid)
+}
+
 /// A command that links to an app the CLI never registers.
 pub(crate) fn viewmissing() -> Cli {
     client(Cli::new("viewmissing"))

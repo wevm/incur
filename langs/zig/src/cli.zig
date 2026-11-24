@@ -451,6 +451,8 @@ pub const Cli = struct {
     pub fn group(cli: *Cli, child: *Cli) Allocator.Error!void {
         const a = cli.arena.allocator();
         try cli.children.ensureUnusedCapacity(a, 1);
+        // Linked commands need their apps, so mounting carries them over.
+        try cli.apps.appendSlice(a, child.apps.items);
         child.options.root = child.rootCommand();
         if (child.options.root != null and child.commands.items.len == 0) {
             const root = try a.create(Command);

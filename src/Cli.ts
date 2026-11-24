@@ -422,6 +422,7 @@ export function create(
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMcpDisabled = toMcpDisabled.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
+      features.apps.push(...toApps.get(sub)!)
       // Mounted CLIs resolve their remote groups up front; only the root CLI defers them.
       const subPending = [
         ...(toPending.get(sub) ?? []),
@@ -594,6 +595,7 @@ export function create(
     }
   }
   toMiddlewares.set(cli, middlewares)
+  toApps.set(cli, features.apps)
   toCommands.set(cli, commands)
   toPending.set(cli, pending)
   toLazy.set(cli, lazy)
@@ -3690,6 +3692,9 @@ function assertNoGlobalOptionConflicts(
     }
   }
 }
+
+/** Maps CLI instances to their MCP Apps, which mounting carries to the parent for linked commands. */
+const toApps = new WeakMap<Cli, Mcp.App[]>()
 
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()

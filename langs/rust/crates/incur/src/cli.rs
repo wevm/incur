@@ -464,6 +464,8 @@ impl Cli {
     #[must_use]
     pub fn group(mut self, cli: Self) -> Self {
         let name = cli.name.clone();
+        // Linked commands need their apps, so mounting carries them over.
+        self.apps.extend(cli.apps);
         let root = cli.root.map(|mut root| {
             if root.description.is_none() {
                 root.description.clone_from(&cli.description);

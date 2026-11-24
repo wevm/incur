@@ -609,7 +609,9 @@ class Server:
         self.version = spec.version or "0.0.0"
         self.env = env
         tools = collect(spec, filter_, config)
-        self.apps = {app.name: app.uri for app in spec.apps}
+        self.apps: dict[str, str] = {}
+        for app in spec.apps:
+            self.apps.setdefault(app.name, app.uri)
         for tool in tools:
             if tool.app is not None and tool.app not in self.apps:
                 raise unknown(f'Tool "{tool.name}" links to unknown MCP app "{tool.app}".')

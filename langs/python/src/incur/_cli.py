@@ -531,6 +531,8 @@ class Cli(Generic[_T_co]):
     def group(self, cli: Cli[Any]) -> Self:
         """Mounts another CLI as a command group. Returns this CLI."""
         sub = cli._spec
+        # Linked commands need their apps, so mounting carries them over.
+        self._spec.apps.extend(sub.apps)
         root = sub.root_command()
         entry: Entry
         if root is not None and not sub.commands:

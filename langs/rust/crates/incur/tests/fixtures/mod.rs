@@ -1014,6 +1014,7 @@ pub(crate) fn cli(name: &str) -> Cli {
         "ask" => sandboxed::ask(),
         "kbbad" => sandboxed::kbbad(),
         "view" => sandboxed::view(),
+        "viewhost" => sandboxed::viewhost(),
         "viewmissing" => sandboxed::viewmissing(),
         "viewscheme" => sandboxed::viewscheme(),
         "gateway" => sandboxed::gateway(),
