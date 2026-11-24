@@ -178,7 +178,7 @@ const Npm = union(enum) {
 
 fn run(c: *Context, command: Npm) !Outcome {
     return switch (command) {
-        .install => |install| if (install.package == null)
+        .install => |install| if (install.package == null or install.package.?.len == 0)
             c.ok(.{ .added = 120, .removed = 0, .changed = 0, .packages = 450 })
         else
             c.ok(.{ .added = 1, .removed = 0, .changed = 0, .packages = 451 }),

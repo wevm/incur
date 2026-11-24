@@ -218,12 +218,14 @@ fn main() {
             "audit my repo",
         ]))
         .handle(|command, _| match command {
-            Npm::Install { package: None, .. } => incur::ok(Installed {
-                added: 120.0,
-                removed: 0.0,
-                changed: 0.0,
-                packages: 450.0,
-            }),
+            Npm::Install { package, .. } if package.as_deref().unwrap_or_default().is_empty() => {
+                incur::ok(Installed {
+                    added: 120.0,
+                    removed: 0.0,
+                    changed: 0.0,
+                    packages: 450.0,
+                })
+            }
             Npm::Install { .. } => incur::ok(Installed {
                 added: 1.0,
                 removed: 0.0,
