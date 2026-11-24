@@ -91,10 +91,10 @@ async def exec(argv: list[str], env: Mapping[str, str]) -> str:
             raise RuntimeError(f"spawn {command} ENOENT") from error
         out, err = await process.communicate()
         code = process.returncode
-    stdout = out.decode()
+    stdout = out.decode(errors="replace")
     if code == 0:
         return stdout
-    message = err.decode().strip() or stdout.strip()
+    message = err.decode(errors="replace").strip() or stdout.strip()
     raise RuntimeError(message or f"Command failed: {' '.join(argv)}")
 
 
