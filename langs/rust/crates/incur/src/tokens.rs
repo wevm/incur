@@ -108,25 +108,8 @@ pub(crate) fn estimate(text: &str) -> usize {
     segments(text).iter().map(|s| segment_tokens(s)).sum()
 }
 
-/// Returns the text between token positions `start` and `end`. Negative positions count from
-/// the end, as in `Array.prototype.slice`.
+/// Returns the text between the nonnegative token positions `start` and `end`.
 pub(crate) fn slice(text: &str, start: f64, end: f64) -> String {
-    #[expect(clippy::cast_precision_loss, reason = "Token counts are small.")]
-    let total = if start < 0.0 || end < 0.0 {
-        estimate(text) as f64
-    } else {
-        0.0
-    };
-    let start = if start < 0.0 {
-        (total + start).max(0.0)
-    } else {
-        start
-    };
-    let end = if end < 0.0 {
-        (total + end).max(0.0)
-    } else {
-        end
-    };
     if start >= end {
         return String::new();
     }

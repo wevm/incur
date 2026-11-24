@@ -674,7 +674,7 @@ def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True
             i += 1
         elif token in ("--token-limit", "--token-offset") and nxt is not None:
             value = _js.to_number(nxt)
-            if not math.isfinite(value) or not _js.trim(nxt):
+            if not math.isfinite(value) or value < 0 or not _js.trim(nxt):
                 raise unknown(f'Invalid value for {token}: "{nxt}"')
             if token == "--token-limit":
                 flags.token_limit = value
@@ -1739,10 +1739,11 @@ class _Run:
         if offset == 0 and end >= total:
             return text, False, None
         sliced = _tokens.slice_tokens(text, offset, end)
+        start = min(offset, total)
         actual_end = min(end, total)
         nxt = actual_end if actual_end < total else None
         note = (
-            f"[truncated: showing tokens {_js.number_to_string(offset)}\u2013"
+            f"[truncated: showing tokens {_js.number_to_string(start)}\u2013"
             f"{_js.number_to_string(actual_end)} of {_js.number_to_string(total)}]"
         )
         return f"{sliced}\n{note}", True, nxt

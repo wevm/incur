@@ -765,7 +765,7 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
             i += 1;
         } else if ((eql(token, "--token-limit") or eql(token, "--token-offset")) and next != null) {
             const value = js.toNumber(next.?);
-            if (!std.math.isFinite(value) or js.trim(next.?).len == 0)
+            if (!std.math.isFinite(value) or value < 0 or js.trim(next.?).len == 0)
                 return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid value for {s}: \"{s}\"", .{ token, next.? }) } };
             if (eql(token, "--token-limit")) flags.token_limit = value else flags.token_offset = value;
             i += 1;
@@ -1762,7 +1762,7 @@ const Run = struct {
         return .{
             try std.fmt.allocPrint(a, "{s}\n[truncated: showing tokens {s}\u{2013}{s} of {s}]", .{
                 sliced,
-                try js.numberToString(a, offset),
+                try js.numberToString(a, @min(offset, total)),
                 try js.numberToString(a, actual_end),
                 try js.numberToString(a, total),
             }),

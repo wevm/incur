@@ -434,7 +434,7 @@ describe('--token-limit and --token-offset', () => {
     const { output } = await serve(createApp(), ['ping', '--token-offset', '6'])
     expect(output).toMatchInlineSnapshot(`
       "
-      [truncated: showing tokens 6–3 of 3]
+      [truncated: showing tokens 3–3 of 3]
       "
     `)
   })

@@ -1197,7 +1197,10 @@ fn extract_flags(
             "--token-limit" | "--token-offset" if next.is_some() => {
                 let raw = next.map_or("", String::as_str);
                 let value = js::to_number(raw);
-                if !value.is_finite() || raw.trim_matches(js::is_whitespace).is_empty() {
+                if !value.is_finite()
+                    || value < 0.0
+                    || raw.trim_matches(js::is_whitespace).is_empty()
+                {
                     return Err(Error::new(
                         "UNKNOWN",
                         format!("Invalid value for {token}: \"{raw}\""),
@@ -3024,12 +3027,13 @@ impl Run<'_, '_> {
             return (text.to_owned(), false, None);
         }
         let sliced = tokens::slice(text, offset, end);
+        let start = offset.min(total);
         let actual_end = end.min(total);
         let next = (actual_end < total).then_some(actual_end);
         (
             format!(
                 "{sliced}\n[truncated: showing tokens {}\u{2013}{} of {}]",
-                js::number_to_string(offset),
+                js::number_to_string(start),
                 js::number_to_string(actual_end),
                 js::number_to_string(total)
             ),
