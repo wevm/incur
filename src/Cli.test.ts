@@ -3453,6 +3453,27 @@ describe('built-in commands', () => {
     expect(output).toContain('Generate shell completion script')
   })
 
+  test('registered commands and aliases shadow built-ins of the same name', async () => {
+    const cli = Cli.create('test')
+      .command('mcp', { run: () => ({ user: true }) })
+      .command('skill', { args: z.object({ id: z.string() }), run: (c) => ({ id: c.args.id }) })
+      .command('shell', { aliases: ['completions'], run: () => ({ shell: true }) })
+    expect((await serve(cli, ['mcp'])).output).toMatchInlineSnapshot(`
+      "user: true
+      "
+    `)
+    expect((await serve(cli, ['skill', 'abc'])).output).toMatchInlineSnapshot(`
+      "id: abc
+      "
+    `)
+    expect((await serve(cli, ['completions'])).output).toMatchInlineSnapshot(`
+      "shell: true
+      "
+    `)
+    // Names nothing shadows still reach the built-in
+    expect((await serve(cli, ['skills'])).output).toContain('test skills')
+  })
+
   test('bare mcp shows help with subcommands', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })

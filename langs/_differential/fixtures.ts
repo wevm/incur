@@ -443,6 +443,27 @@ const rooted = Cli.create('rooted', {
     }),
   )
 
+const shadow = Cli.create('shadow', {
+  description: 'Commands named like built-ins',
+  update: false,
+})
+  .command(
+    Cli.create('mcp', { description: 'Manage servers' }).command('add', {
+      description: 'Add a server',
+      run: () => ({ added: true }),
+    }),
+  )
+  .command('skill', {
+    description: 'Show a skill',
+    args: z.object({ id: z.string().describe('Skill id') }),
+    run: (c) => ({ id: c.args.id }),
+  })
+  .command('shell', {
+    description: 'Show the shell',
+    aliases: ['completions'],
+    run: () => ({ shell: true }),
+  })
+
 /**
  * The fake network. Every outgoing `fetch` (hosted sources, OpenAPI URLs, the npm registry, MCP
  * URLs without a handler) lands here. `hosted.test` and `registry.test` answer; any other host
@@ -1333,6 +1354,7 @@ export const clis = {
   raw,
   remote,
   rooted,
+  shadow,
   spaced,
   tools,
   upd,

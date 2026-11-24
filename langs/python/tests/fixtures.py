@@ -633,6 +633,32 @@ def rooted() -> incur.Cli:
     return cli.group(nest)
 
 
+@incur.schema
+class ShadowSkillArgs:
+    id: Annotated[str, field("Skill id")]
+
+
+def shadow() -> incur.Cli:
+    cli = incur.Cli("shadow", description="Commands named like built-ins", update=False)
+    mcp = incur.Cli("mcp", description="Manage servers")
+
+    @mcp.command("add", description="Add a server")
+    def add(c: Context) -> Data:
+        return {"added": True}
+
+    cli.group(mcp)
+
+    @cli.command("skill", description="Show a skill")
+    def skill(c: Context[ShadowSkillArgs]) -> Data:
+        return {"id": c.args.id}
+
+    @cli.command("shell", description="Show the shell", aliases=["completions"])
+    def shell(c: Context) -> Data:
+        return {"shell": True}
+
+    return cli
+
+
 def network(request: incur.Request) -> incur.Response | Awaitable[incur.Response]:
     """The fake network: `hosted.test` reaches `upstream`, `registry.test` is a fake npm
     registry, and any other host fails like an unreachable server."""
@@ -1721,6 +1747,7 @@ def cli(name: str) -> incur.Cli:
         "raw": raw,
         "remote": remote,
         "rooted": rooted,
+        "shadow": shadow,
         "spaced": lambda: kit_cli("kit tool"),
         "tools": tools,
         "upd": upd,

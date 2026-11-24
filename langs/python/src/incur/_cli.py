@@ -776,6 +776,11 @@ def _find_builtin(token: str) -> str | None:
     )
 
 
+def _find_unshadowed_builtin(commands: dict[str, Entry], token: str) -> str | None:
+    """Resolves a token to a built-in command name unless a command or alias shadows it."""
+    return None if token in commands else _find_builtin(token)
+
+
 def _string_type(description: str) -> Type:
     return Type("string", optional=True, description=description)
 
@@ -936,12 +941,12 @@ class _Run:
             return
 
         def builtin_index(builtin: str) -> int | None:
-            if filtered and _find_builtin(filtered[0]) == builtin:
+            if filtered and _find_unshadowed_builtin(cli.commands, filtered[0]) == builtin:
                 return 0
             if (
                 len(filtered) > 1
                 and filtered[0] == cli.name
-                and _find_builtin(filtered[1]) == builtin
+                and _find_unshadowed_builtin(cli.commands, filtered[1]) == builtin
             ):
                 return 1
             return None
@@ -1126,7 +1131,9 @@ class _Run:
         for index in (0, 1):
             if index == 1 and (not filtered or filtered[0] != cli.name):
                 break
-            if len(filtered) > index and _find_builtin(filtered[index]) in ("skills", "mcp"):
+            if len(filtered) > index and _find_unshadowed_builtin(
+                cli.commands, filtered[index]
+            ) in ("skills", "mcp"):
                 return None
         env = self.env_map
         stored = read_hash(cli.name, env)
@@ -1662,7 +1669,7 @@ class _Run:
                         _completions.Candidate(name, description, name != "completions")
                     )
         elif non_flags is not None and len(non_flags) == 2:
-            builtin = _find_builtin(non_flags[1])
+            builtin = _find_unshadowed_builtin(cli.commands, non_flags[1])
             if builtin is not None and builtin != "completions" and builtin in self.builtin_names():
                 for sub in _BUILTIN_SUBCOMMANDS:
                     if sub[0] != builtin:

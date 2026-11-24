@@ -871,7 +871,8 @@ async function serveImpl(
         }
       } else if (nonFlags?.length === 2) {
         const parent = nonFlags[nonFlags.length - 1]!
-        const builtin = findBuiltin(parent)
+        // A registered command with the same name shadows the builtin
+        const builtin = commands.has(parent) ? undefined : findBuiltin(parent)
         if (builtin?.subcommands && builtins.includes(builtin))
           for (const sub of builtin.subcommands)
             for (const value of [sub.name, ...(sub.aliases ?? [])])
@@ -1026,8 +1027,8 @@ async function serveImpl(
     !updateCheck &&
     !version
   ) {
-    const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
-    const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
+    const isSkillsAdd = builtinIdx(filtered, name, commands, 'skills') !== -1
+    const isMcpAdd = builtinIdx(filtered, name, commands, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
       if (stored && SyncSkills.hasInstalledSkills(name, { cwd: sync?.cwd })) {
@@ -1118,7 +1119,7 @@ async function serveImpl(
   }
 
   // completions <shell>: print shell hook script to stdout
-  const completionsIdx = builtinIdx(filtered, name, 'completions')
+  const completionsIdx = builtinIdx(filtered, name, commands, 'completions')
   if (completionsIdx !== -1) {
     const shell = filtered[completionsIdx + 1]
     if (help || !shell) {
@@ -1149,7 +1150,7 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx = skillsEnabled ? builtinIdx(filtered, name, 'skills') : -1
+  const skillsIdx = skillsEnabled ? builtinIdx(filtered, name, commands, 'skills') : -1
   if (skillsIdx !== -1) {
     const builtin = findBuiltin('skills')!
     const skillsSub = filtered[skillsIdx + 1]
@@ -1301,7 +1302,7 @@ async function serveImpl(
   }
 
   // mcp add/doctor: register or smoke-test CLI MCP server integration.
-  const mcpIdx = builtinIdx(filtered, name, 'mcp')
+  const mcpIdx = builtinIdx(filtered, name, commands, 'mcp')
   if (mcpIdx !== -1) {
     const builtin = findBuiltin('mcp')!
     const mcpSub = filtered[mcpIdx + 1]
@@ -3066,12 +3067,22 @@ function collectHelpCommands(
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-/** @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found. */
-function builtinIdx(filtered: string[], cliName: string, builtin: string): number {
+/**
+ * @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found.
+ * A registered command or alias with the same name shadows the builtin.
+ */
+function builtinIdx(
+  filtered: string[],
+  cliName: string,
+  commands: Map<string, CommandEntry>,
+  builtin: string,
+): number {
+  const matches = (token: string | undefined) =>
+    token !== undefined && !commands.has(token) && findBuiltin(token)?.name === builtin
   // e.g. `skills add` or `skill add`
-  if (findBuiltin(filtered[0]!)?.name === builtin) return 0
+  if (matches(filtered[0])) return 0
   // e.g. `my-cli skills add`
-  if (filtered[0] === cliName && findBuiltin(filtered[1]!)?.name === builtin) return 1
+  if (filtered[0] === cliName && matches(filtered[1])) return 1
   // not a match
   return -1
 }
