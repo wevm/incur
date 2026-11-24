@@ -724,7 +724,7 @@ describe('serve integration', () => {
         "mycli --network ": "",
         "mycli --network db ": "build db completions mcp skills",
         "mycli --network testnet com": "completions",
-        "mycli --network testnet skills ": "build db add list ls",
+        "mycli --network testnet skills ": "add list ls",
         "mycli --token-limit 5 --token-offset 10 ": "build db completions mcp skills",
         "mycli --version ": "build db completions mcp skills",
         "mycli -n testnet com": "completions",

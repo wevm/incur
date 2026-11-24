@@ -873,11 +873,14 @@ async function serveImpl(
         const parent = nonFlags[nonFlags.length - 1]!
         // A registered command with the same name shadows the builtin
         const builtin = commands.has(parent) ? undefined : findBuiltin(parent)
-        if (builtin?.subcommands && builtins.includes(builtin))
+        // A built-in group completes its own subcommands in place of root commands
+        if (builtin?.subcommands && builtins.includes(builtin) && !current.startsWith('-')) {
+          candidates.length = 0
           for (const sub of builtin.subcommands)
             for (const value of [sub.name, ...(sub.aliases ?? [])])
-              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+              if (value.startsWith(current))
                 candidates.push({ value, description: sub.description })
+        }
       }
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)

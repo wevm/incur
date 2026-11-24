@@ -1670,14 +1670,19 @@ class _Run:
                     )
         elif non_flags is not None and len(non_flags) == 2:
             builtin = _find_unshadowed_builtin(cli.commands, non_flags[1])
-            if builtin is not None and builtin != "completions" and builtin in self.builtin_names():
+            # A built-in group completes its own subcommands in place of root commands
+            if (
+                builtin is not None
+                and builtin != "completions"
+                and builtin in self.builtin_names()
+                and not current.startswith("-")
+            ):
+                candidates.clear()
                 for sub in _BUILTIN_SUBCOMMANDS:
                     if sub[0] != builtin:
                         continue
                     for value in (sub[1], *sub[3]):
-                        if value.startswith(current) and not any(
-                            c.value == value for c in candidates
-                        ):
+                        if value.startswith(current):
                             candidates.append(_completions.Candidate(value, sub[2]))
         out = _completions.format_candidates(shell, candidates)
         if out:
