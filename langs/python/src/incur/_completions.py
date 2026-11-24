@@ -53,16 +53,16 @@ def register(shell: str, name: str) -> str:
     for _c in "${{_completions[@]}}"; do
         if [[ "$_c" == *$'\\001' ]]; then
             _nospace=true
-            COMPREPLY+=("${{_c%$'\\001'}}")
-        else
-            COMPREPLY+=("$_c")
+            _c=${{_c%$'\\001'}}
         fi
+        COMPREPLY+=("$_c")
     done
     if [[ $_nospace == true ]]; then
-        compopt -o nospace
+        compopt -o nospace 2>/dev/null
     fi
 }}
-complete -o default -o bashdefault -o nosort -F _incur_complete_{ident} {name}"""
+complete -o default -o bashdefault -o nosort -F _incur_complete_{ident} {name} 2>/dev/null ||
+    complete -o default -o bashdefault -F _incur_complete_{ident} {name}"""
     if shell == "zsh":
         return f"""#compdef {name}
 _incur_complete_{ident}() {{

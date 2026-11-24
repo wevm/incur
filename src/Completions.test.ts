@@ -390,6 +390,14 @@ describe('register', () => {
     expect(script).toContain('compopt -o nospace')
   })
 
+  test('bash: falls back without nosort for Bash before 4.4', () => {
+    const script = Completions.register('bash', 'mycli')
+    expect(script).toContain(
+      `complete -o default -o bashdefault -o nosort -F _incur_complete_mycli mycli 2>/dev/null ||
+    complete -o default -o bashdefault -F _incur_complete_mycli mycli`,
+    )
+  })
+
   test.skipIf(!bash)('bash: exports completion env vars to the CLI subprocess', async () => {
     await withFakeCli(async (dir) => {
       const output = await exec(
