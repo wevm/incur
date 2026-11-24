@@ -442,9 +442,9 @@ export async function generateCommands(
       ...(config?.security === false ? [] : securityHeaderParams(resolved, op)),
     ])
 
-    const bodySchema = op.requestBody?.content?.['application/json']?.schema
-    const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
-    const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
+    const body = bodyFields(op.requestBody?.content?.['application/json']?.schema)
+    const bodyProps = body.properties
+    const bodyRequired = new Set(body.required)
 
     // Header options take names that query parameters and body properties leave free.
     const usedOptionNames = new Set([...queryParams.map((p) => p.name), ...Object.keys(bodyProps)])
@@ -709,6 +709,129 @@ function compactSchema(
 
 function isSchemaObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Request-body fields and the names every valid body must include. */
+type BodyFields = {
+  properties: Record<string, Record<string, unknown>>
+  required: string[]
+}
+
+/** Flattens a request-body schema into option fields, merging `allOf` members and `anyOf`/`oneOf` object variants. */
+function bodyFields(
+  schema: unknown,
+  walk: { path: Set<object>; done: Map<object, BodyFields>; cuts: number } = {
+    path: new Set(),
+    done: new Map(),
+    cuts: 0,
+  },
+): BodyFields {
+  if (!isSchemaObject(schema)) return { properties: {}, required: [] }
+  // A schema that references itself adds nothing beyond what its outer occurrence collects.
+  if (walk.path.has(schema)) {
+    walk.cuts++
+    return { properties: {}, required: [] }
+  }
+  // Shared subschemas flatten once, unless a cycle cut their result short.
+  const cached = walk.done.get(schema)
+  if (cached) return cached
+  const cuts = walk.cuts
+  walk.path.add(schema)
+  const members = [
+    { properties: objectProperties(schema), required: requiredProperties(schema) },
+    ...(Array.isArray(schema.allOf)
+      ? schema.allOf.map((member: unknown) => bodyFields(member, walk))
+      : []),
+  ]
+  for (const key of ['anyOf', 'oneOf']) {
+    if (!Array.isArray(schema[key])) continue
+    const variants = schema[key]
+      .filter(isObjectVariant)
+      .map((variant: unknown) => withoutDefaults(bodyFields(variant, walk)))
+    if (variants.length === 0) continue
+    // Any one variant may be sent, so a field stays required only when every variant requires it.
+    members.push({
+      properties: mergeProperties(variants),
+      required: variants[0]!.required.filter((name) =>
+        variants.every((variant) => variant.required.includes(name)),
+      ),
+    })
+  }
+  walk.path.delete(schema)
+  // Every member applies at once, so fields accumulate and any member's requirement holds.
+  const fields = {
+    properties: mergeProperties(members),
+    required: [...new Set(members.flatMap((member) => member.required))],
+  }
+  if (walk.cuts === cuts) walk.done.set(schema, fields)
+  return fields
+}
+
+/** Drops field defaults from a union variant, which apply only when that variant is sent. */
+function withoutDefaults({ properties, required }: BodyFields): BodyFields {
+  return {
+    properties: Object.fromEntries(
+      Object.entries(properties).map(([name, field]) => {
+        if (!isSchemaObject(field) || !Object.hasOwn(field, 'default')) return [name, field]
+        const { default: _, ...rest } = field
+        return [name, rest]
+      }),
+    ),
+    required,
+  }
+}
+
+/** Whether a union variant can be an object; others (e.g. a JSON-RPC batch array) carry no fields. */
+function isObjectVariant(schema: unknown) {
+  if (!isSchemaObject(schema)) return false
+  const { type } = schema
+  return type === undefined || type === 'object' || (Array.isArray(type) && type.includes('object'))
+}
+
+/**
+ * Merges same-named fields in first-seen order. A field whose schemas differ keeps only the `type`
+ * they share, so argv still coerces, and otherwise accepts any value. The server validates it
+ * against the composed schema.
+ */
+function mergeProperties(fields: BodyFields[]) {
+  const properties: BodyFields['properties'] = {}
+  for (const name of new Set(fields.flatMap((field) => Object.keys(field.properties)))) {
+    const schemas = fields.flatMap((field) =>
+      Object.hasOwn(field.properties, name) ? [field.properties[name]!] : [],
+    )
+    const [first] = schemas
+    const types = schemas.map(schemaType)
+    const [type] = types
+    properties[name] = (() => {
+      // Every member agrees on the schema.
+      if (schemas.every((schema) => sameSchema(schema, first))) return first!
+      // The schemas differ but share a type, which argv coercion needs.
+      if (type !== undefined && types.every((other) => sameSchema(other, type))) return { type }
+      // Nothing in common: any value passes through.
+      return {}
+    })()
+  }
+  return properties
+}
+
+/** A schema's `type`, or the JSON type of its `const` value when it declares none. */
+function schemaType(schema: unknown) {
+  if (!isSchemaObject(schema)) return undefined
+  if (schema.type !== undefined) return schema.type
+  const { const: value } = schema
+  if (typeof value === 'boolean' || typeof value === 'string' || typeof value === 'number')
+    return typeof value
+  return undefined
+}
+
+/** Whether two schemas serialize the same. Cyclic schemas compare by identity. */
+function sameSchema(a: unknown, b: unknown) {
+  if (a === b) return true
+  try {
+    return JSON.stringify(a) === JSON.stringify(b)
+  } catch {
+    return false
+  }
 }
 
 function headerOptions(parameters: Parameter[]): HeaderParameter[] {

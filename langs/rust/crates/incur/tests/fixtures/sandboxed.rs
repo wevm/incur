@@ -15,7 +15,7 @@ use incur::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::services::{fake_mcp, mini_spec, network, pet_spec, upstream};
+use super::services::{composed_spec, fake_mcp, mini_spec, network, pet_spec, upstream};
 
 /// Returns a JSON value.
 #[expect(clippy::unnecessary_wraps, reason = "Handlers return results.")]
@@ -754,6 +754,12 @@ pub(crate) fn oa() -> Cli {
                         .include(|op| op.path == "/search"),
                 )
                 .mcp(false),
+        )
+        .fetch_command(
+            "composed",
+            FetchCommand::new(upstream_fetch())
+                .description("Composed request bodies")
+                .openapi(composed_spec()),
         )
         .fetch_command(
             "url",

@@ -12,6 +12,7 @@ use crate::command::{self, Command, Outcome};
 use crate::convert::Zod;
 use crate::errors::Error;
 use crate::fetch::{self, Fetch, Handler};
+use crate::js;
 use crate::mcp::Tool;
 use crate::schema::{self, Field, Type};
 use crate::url::{self, Url};
@@ -456,27 +457,10 @@ fn generate(
                 schema: parameter.get("schema").cloned(),
             });
         }
-        let body_schema = op
+        let (body_props, body_required) = op
             .operation
             .pointer("/requestBody/content/application~1json/schema")
-            .cloned();
-        let body_props = body_schema
-            .as_ref()
-            .and_then(|s| s.get("properties"))
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let body_required = body_schema
-            .as_ref()
-            .and_then(|s| s.get("required"))
-            .and_then(Value::as_array)
-            .map(|names| {
-                names
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
+            .map(body_fields)
             .unwrap_or_default();
         let mut used = query_params
             .iter()
@@ -589,6 +573,123 @@ fn generate(
 }
 
 /// Reads a string field.
+/// Flattens a request-body schema into option fields and the names every valid body must
+/// include, merging `allOf` members and `anyOf`/`oneOf` object variants.
+fn body_fields(schema: &Value) -> (Map<String, Value>, Vec<String>) {
+    let Some(map) = schema.as_object() else {
+        return Default::default();
+    };
+    let own = map
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let required = map
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut members = vec![(own, required)];
+    if let Some(all) = map.get("allOf").and_then(Value::as_array) {
+        members.extend(all.iter().map(body_fields));
+    }
+    for key in ["anyOf", "oneOf"] {
+        let Some(list) = map.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        let variants = list
+            .iter()
+            .filter(|v| object_variant(v))
+            .map(|v| without_defaults(body_fields(v)))
+            .collect::<Vec<_>>();
+        let Some((_, first)) = variants.first() else {
+            continue;
+        };
+        // Any one variant may be sent, so a field stays required only when every variant requires it.
+        let required = first
+            .iter()
+            .filter(|name| variants.iter().all(|(_, r)| r.contains(name)))
+            .cloned()
+            .collect();
+        members.push((merge_properties(&variants), required));
+    }
+    // Every member applies at once, so fields accumulate and any member's requirement holds.
+    let mut required = Vec::new();
+    for name in members.iter().flat_map(|(_, r)| r) {
+        if !required.contains(name) {
+            required.push(name.clone());
+        }
+    }
+    (merge_properties(&members), required)
+}
+
+/// Drops field defaults from a union variant, which apply only when that variant is sent.
+fn without_defaults(
+    (mut properties, required): (Map<String, Value>, Vec<String>),
+) -> (Map<String, Value>, Vec<String>) {
+    for field in properties.values_mut().filter_map(Value::as_object_mut) {
+        field.retain(|key, _| key != "default");
+    }
+    (properties, required)
+}
+
+/// Whether a union variant can be an object; others (e.g. a JSON-RPC batch array) carry no fields.
+fn object_variant(schema: &Value) -> bool {
+    schema.as_object().is_some_and(|map| match map.get("type") {
+        None => true,
+        Some(Value::Array(types)) => types.iter().any(|t| t == "object"),
+        Some(t) => t == "object",
+    })
+}
+
+/// Merges same-named fields in first-seen order. A field whose schemas differ keeps only the `type`
+/// they share, so argv still coerces, and otherwise accepts any value. The server validates it
+/// against the composed schema.
+fn merge_properties(fields: &[(Map<String, Value>, Vec<String>)]) -> Map<String, Value> {
+    let mut properties = Map::new();
+    for (name, first) in fields.iter().flat_map(|(p, _)| p) {
+        if properties.contains_key(name) {
+            continue;
+        }
+        let schemas = fields
+            .iter()
+            .filter_map(|(p, _)| p.get(name))
+            .collect::<Vec<_>>();
+        let same = |key: &dyn Fn(&Value) -> Option<String>| {
+            let first = key(first);
+            first.is_some() && schemas.iter().all(|schema| key(schema) == first)
+        };
+        let merged = if same(&|schema| Some(js::stringify(schema))) {
+            first.clone()
+        } else if same(&|schema| schema_type(schema).map(|t| js::stringify(&t))) {
+            json!({ "type": schema_type(first) })
+        } else {
+            json!({})
+        };
+        properties.insert(name.clone(), merged);
+    }
+    properties
+}
+
+/// A schema's `type`, or the JSON type of its `const` value when it declares none.
+fn schema_type(schema: &Value) -> Option<Value> {
+    if let Some(ty) = schema.get("type") {
+        return Some(ty.clone());
+    }
+    match schema.get("const")? {
+        Value::Bool(_) => Some("boolean".into()),
+        Value::String(_) => Some("string".into()),
+        Value::Number(_) => Some("number".into()),
+        _ => None,
+    }
+}
+
 fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }

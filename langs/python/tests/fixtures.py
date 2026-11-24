@@ -772,6 +772,209 @@ MINI_SPEC: Data = {
     },
 }
 
+#: Request bodies composed with `oneOf`, `anyOf`, and `allOf`, flattened into options.
+COMPOSED_SPEC: Data = {
+    "openapi": "3.1.0",
+    "info": {"title": "Composed", "version": "1.0.0"},
+    "components": {
+        "securitySchemes": {},
+        "schemas": {
+            "Ref": {"type": "object", "properties": {"ref": {"type": "string"}}},
+            "Node": {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "allOf": [{"$ref": "#/components/schemas/Node"}],
+            },
+            "Left": {
+                "properties": {"left": {"type": "string"}},
+                "allOf": [{"$ref": "#/components/schemas/Right"}],
+            },
+            "Right": {
+                "properties": {"right": {"type": "string"}},
+                "allOf": [{"$ref": "#/components/schemas/Left"}],
+            },
+        },
+    },
+    "paths": {
+        "/events": {
+            "post": {
+                "operationId": "createEvent",
+                "summary": "Create an event",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "allOf": [
+                                            {"$ref": "#/components/schemas/Ref"},
+                                            {
+                                                "properties": {
+                                                    "kind": {"const": "push"},
+                                                    "at": {"type": "string"},
+                                                    "version": {"const": 1},
+                                                    "meta": {"const": None},
+                                                },
+                                                "required": ["kind", "ref"],
+                                            },
+                                        ]
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": {"const": "tag"},
+                                            "name": {"type": "string"},
+                                            "at": {"type": "integer"},
+                                            "version": {"const": 2},
+                                            "meta": {"const": "x"},
+                                        },
+                                        "required": ["kind", "name"],
+                                    },
+                                    {"type": "string"},
+                                    True,
+                                ]
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/items": {
+            "post": {
+                "operationId": "createItem",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string", "description": "Item id"},
+                                    "qty": {"type": "integer"},
+                                },
+                                "allOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "qty": {"type": "integer", "minimum": 1},
+                                        },
+                                        "required": ["id"],
+                                    },
+                                    {"type": "object", "properties": {"note": {"type": "string"}}},
+                                    True,
+                                ],
+                                "anyOf": [
+                                    {
+                                        "type": ["object", "None"],
+                                        "properties": {"count": {"type": "integer"}},
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {"count": {"type": "integer"}},
+                                    },
+                                ],
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/policy": {
+            "put": {
+                "operationId": "setPolicy",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "anyOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {"enabled": {"const": False}},
+                                        "required": ["enabled"],
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "enabled": {"const": True},
+                                            "limit": {"type": "integer", "default": 10},
+                                        },
+                                        "required": ["enabled", "limit"],
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/rpc": {
+            "post": {
+                "operationId": "rpc",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "anyOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "method": {"type": "string"},
+                                            "params": {"type": "array"},
+                                        },
+                                        "required": ["method"],
+                                    },
+                                    {"type": "array", "items": {"type": "object"}},
+                                ]
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/nodes": {
+            "post": {
+                "operationId": "createNode",
+                "requestBody": {
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Node"}}
+                    }
+                },
+            }
+        },
+        "/pair": {
+            "post": {
+                "operationId": "createPair",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "allOf": [
+                                    {"$ref": "#/components/schemas/Left"},
+                                    {"$ref": "#/components/schemas/Right"},
+                                    {"$ref": "#/components/schemas/Ref"},
+                                    {"$ref": "#/components/schemas/Ref"},
+                                ]
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/raw": {
+            "post": {
+                "operationId": "raw",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {"oneOf": [{"type": "array"}, {"type": "string"}]}
+                        }
+                    }
+                },
+            }
+        },
+    },
+}
+
 PET_ID: Data = {
     "name": "petId",
     "in": "path",
@@ -1420,6 +1623,7 @@ def oa() -> incur.Cli:
         openapi_config=incur.OpenapiConfig(compact=True, include=lambda o: o.path == "/search"),
         mcp=False,
     )
+    cli.gateway("composed", upstream, description="Composed request bodies", openapi=COMPOSED_SPEC)
     cli.gateway(
         "url", upstream, description="Spec from a URL", openapi="http://hosted.test/openapi.json"
     )
