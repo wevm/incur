@@ -3324,6 +3324,7 @@ async function runMcpDoctor(
     vars: options.vars,
     version: options.version,
     ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+    ...options.features,
     ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
     tools: { ...options.mcp?.tools, discovery: 'direct' },
   }).catch((error) => {
