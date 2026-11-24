@@ -51,10 +51,15 @@ fn exists(io: std.Io, path: []const u8) ServeError!bool {
     return try command.optional(Dir.cwd().statFile(io, path, .{})) != null;
 }
 
-/// Returns the skills metadata file of a CLI.
-fn metaPath(a: Allocator, process: *const Process, name: []const u8) ServeError![]const u8 {
+/// Returns the skills metadata file of a CLI's global installs, or of its installs in a project
+/// directory.
+fn metaPath(a: Allocator, process: *const Process, name: []const u8, project: ?[]const u8) ServeError![]const u8 {
     const root = env(process, "XDG_DATA_HOME") orelse try std.fs.path.join(a, &.{ home(process), ".local", "share" });
-    return std.fs.path.join(a, &.{ root, "incur", try std.fmt.allocPrint(a, "{s}.json", .{name}) });
+    const file = try std.fmt.allocPrint(a, "{s}.json", .{name});
+    const dir = project orelse return std.fs.path.join(a, &.{ root, "incur", file });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(try std.fs.path.resolve(a, &.{ try currentPath(a, process.io), dir }), &digest, .{});
+    return std.fs.path.join(a, &.{ root, "incur", "projects", std.fmt.bytesToHex(digest, .lower)[0..16], file });
 }
 
 /// Returns the string items of an array property, or an empty list.
@@ -68,10 +73,11 @@ fn stringItems(a: Allocator, value: ?Value) ServeError![]const []const u8 {
 
 /// Returns the names of previously synced skills that are still installed: the recorded paths
 /// that hold a `SKILL.md`, or for older metadata without paths, the recorded skills found under
-/// `~/.agents/skills` or `<cwd>/.agents/skills`.
-fn installedSkills(a: Allocator, process: *const Process, name: []const u8) ServeError![]const []const u8 {
+/// `~/.agents/skills` or `<cwd>/.agents/skills`. Reads the metadata of global installs, or with
+/// `global` false, of installs in the project at `cwd`.
+fn installedSkills(a: Allocator, process: *const Process, name: []const u8, cwd: []const u8, global: bool) ServeError![]const []const u8 {
     const io = process.io;
-    const meta = try update.readJson(a, io, try metaPath(a, process, name)) orelse return &.{};
+    const meta = try update.readJson(a, io, try metaPath(a, process, name, if (global) null else cwd)) orelse return &.{};
     const skills = try stringItems(a, meta.get("skills"));
     if (skills.len == 0) return &.{};
     var out: std.ArrayList([]const u8) = .empty;
@@ -80,7 +86,7 @@ fn installedSkills(a: Allocator, process: *const Process, name: []const u8) Serv
         for (paths) |path| if (try exists(io, try std.fs.path.join(a, &.{ path, "SKILL.md" }))) try out.append(a, std.fs.path.basename(path));
         return out.items;
     }
-    const bases = [_][]const u8{ try std.fs.path.join(a, &.{ home(process), ".agents", "skills" }), try std.fs.path.join(a, &.{ try currentPath(a, io), ".agents", "skills" }) };
+    const bases = [_][]const u8{ try std.fs.path.join(a, &.{ home(process), ".agents", "skills" }), try std.fs.path.join(a, &.{ cwd, ".agents", "skills" }) };
     for (skills) |s| for (bases) |base| {
         if (!try exists(io, try std.fs.path.join(a, &.{ base, s, "SKILL.md" }))) continue;
         try out.append(a, s);
@@ -173,13 +179,16 @@ fn byName(comptime T: type) fn (void, T, T) bool {
 pub fn list(a: Allocator, cli: *cli_.Cli, process: *const Process) ServeError![]const Listed {
     const sync = cli.options.sync.?;
     const root = sync.cwd orelse try packageRoot(a, process);
-    const installed = try installedSkills(a, process, cli.name);
+    const cwd = try currentPath(a, process.io);
+    var installed: std.ArrayList([]const u8) = .empty;
+    try installed.appendSlice(a, try installedSkills(a, process, cli.name, cwd, true));
+    try installed.appendSlice(a, try installedSkills(a, process, cli.name, cwd, false));
     var out: std.ArrayList(Listed) = .empty;
-    for (try files(a, cli, sync.depth)) |file| try out.append(a, .{ .name = file.name, .description = file.description, .installed = contains(installed, file.name) });
+    for (try files(a, cli, sync.depth)) |file| try out.append(a, .{ .name = file.name, .description = file.description, .installed = contains(installed.items, file.name) });
     for (try included(a, process, cli.name, sync.include, root)) |inc| {
         for (out.items) |item| {
             if (std.mem.eql(u8, item.name, inc.name)) break;
-        } else try out.append(a, .{ .name = inc.name, .description = inc.description, .installed = contains(installed, inc.name) });
+        } else try out.append(a, .{ .name = inc.name, .description = inc.description, .installed = contains(installed.items, inc.name) });
     }
     std.mem.sort(Listed, out.items, {}, byName(Listed));
     return out.items;
@@ -238,7 +247,8 @@ pub fn add(a: Allocator, cli: *cli_.Cli, process: *const Process, depth: f64, gl
     const installed = try install(a, process, tmp, global, cwd);
     var names: std.ArrayList([]const u8) = .empty;
     for (installed.paths) |path| if (!contains(names.items, std.fs.path.basename(path))) try names.append(a, std.fs.path.basename(path));
-    const meta_path = try metaPath(a, process, cli.name);
+    // Project installs keep their own metadata, so projects with same-named CLIs stay apart.
+    const meta_path = try metaPath(a, process, cli.name, if (global) null else cwd);
     if (try update.readJson(a, io, meta_path)) |previous| for (try stringItems(a, previous.get("skills"))) |old| {
         if (!contains(names.items, old)) try remove(a, process, old, global, cwd);
     };
@@ -680,10 +690,14 @@ fn identifiers(text: []const u8) bool {
 /// Returns the stale-skills suggestion when installed skills were generated from different
 /// commands, or null.
 pub fn staleNotice(a: Allocator, cli: *cli_.Cli, process: *const Process, display_name: []const u8) ServeError!?errors.FormattedCtaBlock {
-    const meta = try update.readJson(a, process.io, try metaPath(a, process, cli.name)) orelse return null;
+    const cwd = try currentPath(a, process.io);
+    // Skills installed in this project take precedence over global ones.
+    const global = (try installedSkills(a, process, cli.name, cwd, false)).len == 0;
+    const meta = try update.readJson(a, process.io, try metaPath(a, process, cli.name, if (global) null else cwd)) orelse return null;
     const stored = meta.get("hash") orelse return null;
     if (stored != .string or stored.string.len == 0) return null;
-    if ((try installedSkills(a, process, cli.name)).len == 0) return null;
+    if ((try installedSkills(a, process, cli.name, cwd, global)).len == 0) return null;
+    const flag = if (global) "" else " --no-global";
     if (std.mem.eql(u8, try skill.hash(a, (try cli_.skillInfos(a, cli)).commands), stored.string)) return null;
     const package = cli.options.package;
     const launched = env(process, "npm_config_user_agent") != null or env(process, "npm_execpath") != null;
@@ -692,11 +706,11 @@ pub fn staleNotice(a: Allocator, cli: *cli_.Cli, process: *const Process, displa
             const specifier = if (package) |p| switch (try packageSpecifier(a, p, cli.options.version)) {
                 .ok => |s| s,
                 // An invalid package falls back to the display name.
-                .err => break :cmd try std.fmt.allocPrint(a, "{s} skills add", .{display_name}),
+                .err => break :cmd try std.fmt.allocPrint(a, "{s} skills add{s}", .{ display_name, flag }),
             } else cli.name;
-            break :cmd try std.fmt.allocPrint(a, "{s} {s} skills add", .{ try pm.runner(a, process), specifier });
+            break :cmd try std.fmt.allocPrint(a, "{s} {s} skills add{s}", .{ try pm.runner(a, process), specifier, flag });
         }
-        break :cmd try std.fmt.allocPrint(a, "{s} skills add", .{display_name});
+        break :cmd try std.fmt.allocPrint(a, "{s} skills add{s}", .{ display_name, flag });
     };
     return .{
         .description = "Skills are out of date:",

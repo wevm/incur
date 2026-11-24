@@ -1342,8 +1342,10 @@ class _Run:
             ):
                 return None
         env = self.env_map
-        stored = read_hash(cli.name, env)
-        if stored is None or not has_installed_skills(cli.name, env):
+        # Skills installed in this project take precedence over global ones.
+        is_global = not has_installed_skills(cli.name, env, is_global=False)
+        stored = read_hash(cli.name, env, None if is_global else os.getcwd())
+        if stored is None or not has_installed_skills(cli.name, env, is_global):
             return None
         # The stored hash covers every command, deferred groups included.
         await cli.load()
@@ -1358,6 +1360,8 @@ class _Run:
             command = f"{_pm.runner(env)} {specifier} skills add"
         else:
             command = f"{self.display_name} skills add"
+        if not is_global:
+            command += " --no-global"
         return FormattedCtaBlock(
             [FormattedCta(command, "sync outdated skills")], "Skills are out of date:"
         )

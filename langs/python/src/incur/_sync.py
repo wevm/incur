@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime
 import glob
+import hashlib
 import os
 import re
 import shutil
@@ -249,23 +250,27 @@ def _package_root() -> str:
     return os.getcwd()
 
 
-def _meta_path(name: str, env: Mapping[str, str]) -> str:
+def _meta_path(name: str, env: Mapping[str, str], project: str | None) -> str:
+    """The metadata file of a CLI's global installs, or of its installs in a project directory."""
     data = env.get("XDG_DATA_HOME") or os.path.join(_home(env), ".local", "share")
-    return os.path.join(data, "incur", f"{name}.json")
+    if project is None:
+        return os.path.join(data, "incur", f"{name}.json")
+    key = hashlib.sha256(os.path.abspath(project).encode()).hexdigest()[:16]
+    return os.path.join(data, "incur", "projects", key, f"{name}.json")
 
 
-def _read_meta(name: str, env: Mapping[str, str]) -> dict[str, Json] | None:
+def _read_meta(name: str, env: Mapping[str, str], project: str | None) -> dict[str, Json] | None:
     try:
-        with open(_meta_path(name, env), encoding="utf-8") as file:
+        with open(_meta_path(name, env, project), encoding="utf-8") as file:
             meta = parse_json(file.read())
     except (OSError, ValueError):
         return None
     return meta if isinstance(meta, dict) else None
 
 
-def read_hash(name: str, env: Mapping[str, str]) -> str | None:
-    """The command hash stored by the last sync, or `None`."""
-    meta = _read_meta(name, env)
+def read_hash(name: str, env: Mapping[str, str], project: str | None = None) -> str | None:
+    """The command hash stored by the last global sync, or the last sync in `project`."""
+    meta = _read_meta(name, env, project)
     value = meta.get("hash") if meta else None
     return value if isinstance(value, str) and value else None
 
@@ -274,9 +279,9 @@ def _strings(value: Json | None) -> list[str]:
     return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
 
 
-def _installed(name: str, env: Mapping[str, str]) -> set[str]:
-    """Names of previously synced skills that are still installed."""
-    meta = _read_meta(name, env)
+def _installed(name: str, env: Mapping[str, str], is_global: bool = True) -> set[str]:
+    """Names of previously synced skills still installed, globally or in the project."""
+    meta = _read_meta(name, env, None if is_global else os.getcwd())
     skills = _strings(meta.get("skills")) if meta else []
     if not meta or not skills:
         return set()
@@ -290,9 +295,9 @@ def _installed(name: str, env: Mapping[str, str]) -> set[str]:
     return {s for s in skills if any(os.path.exists(os.path.join(b, s, "SKILL.md")) for b in bases)}
 
 
-def has_installed_skills(name: str, env: Mapping[str, str]) -> bool:
-    """Whether any previously synced skill is still installed."""
-    return bool(_installed(name, env))
+def has_installed_skills(name: str, env: Mapping[str, str], is_global: bool = True) -> bool:
+    """Whether any previously synced skill is still installed, globally or in the project."""
+    return bool(_installed(name, env, is_global))
 
 
 def _included(pattern: str, cwd: str) -> list[str]:
@@ -318,7 +323,7 @@ async def list_skills(
 ) -> list[Skill]:
     """Lists generated and included skills with their install status."""
     root = options.cwd or _package_root()
-    installed = _installed(name, options.env)
+    installed = _installed(name, options.env) | _installed(name, options.env, is_global=False)
     skills = [
         Skill(skill, description, skill in installed)
         for _, skill, description in _generated(name, infos, groups, options)
@@ -379,7 +384,9 @@ async def sync(
                         skills.append(Skill(skill, description))
         result = _install(tmp, is_global, cwd, env)
         current = [os.path.basename(p) for p in result.paths]
-        previous = _read_meta(name, env)
+        # Project installs keep their own metadata, so projects with same-named CLIs stay apart.
+        project = None if is_global else cwd
+        previous = _read_meta(name, env, project)
         for old in _strings(previous.get("skills")) if previous else []:
             if old not in current:
                 _uninstall(old, is_global, cwd, env)
@@ -387,6 +394,7 @@ async def sync(
         _write_meta(
             name,
             env,
+            project,
             {
                 "hash": _skill.hash_commands(infos),
                 "skills": list(dict.fromkeys(current)),
@@ -402,8 +410,10 @@ async def sync(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _write_meta(name: str, env: Mapping[str, str], meta: dict[str, Json]) -> None:
-    path = _meta_path(name, env)
+def _write_meta(
+    name: str, env: Mapping[str, str], project: str | None, meta: dict[str, Json]
+) -> None:
+    path = _meta_path(name, env, project)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as file:
         file.write(_js.stringify(meta) + "\n")

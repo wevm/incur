@@ -44,6 +44,8 @@ const Sandbox = struct {
     home: []const u8,
     bin: []const u8,
     tmp: []const u8,
+    /// The hash of the sandbox path that names its project skills metadata directory.
+    project: []const u8,
 };
 
 /// The stub runner script, as `run.ts` writes it.
@@ -158,11 +160,15 @@ fn createSandbox(a: Allocator, io: std.Io) !Sandbox {
     cwd.deleteTree(io, root) catch {};
     try cwd.createDirPath(io, root);
     const real = try cwd.realPathFileAlloc(io, root, a);
+    const home = try std.fs.path.join(a, &.{ real, "home" });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(home, &digest, .{});
     const sandbox: Sandbox = .{
         .root = real,
-        .home = try std.fs.path.join(a, &.{ real, "home" }),
+        .home = home,
         .bin = try std.fs.path.join(a, &.{ real, "bin" }),
         .tmp = try std.fs.path.join(a, &.{ real, "tmp" }),
+        .project = try a.dupe(u8, std.fmt.bytesToHex(digest, .lower)[0..16]),
     };
     try cwd.createDirPath(io, sandbox.bin);
     try cwd.createDirPath(io, sandbox.tmp);
@@ -180,7 +186,7 @@ fn serveSandboxed(a: Allocator, io: std.Io, sandbox: *const Sandbox, case: JsonV
     try cwd.createDirPath(io, sandbox.home);
     const seeded = case.object.get("sandbox").?.object;
     for (seeded.keys(), seeded.values()) |name, value| {
-        const target = try std.fs.path.join(a, &.{ sandbox.home, name });
+        const target = try std.fs.path.join(a, &.{ sandbox.home, try std.mem.replaceOwned(u8, a, name, "<project>", sandbox.project) });
         try cwd.createDirPath(io, std.fs.path.dirname(target).?);
         switch (value) {
             .null => try cwd.createDirPath(io, target),
@@ -269,10 +275,11 @@ fn send(a: Allocator, cli: *incur.Cli, process: *const incur.Process, requests: 
 const Entry = struct { path: []const u8, line: []const u8 };
 
 /// Lists the sandbox tree sorted by path, one `path<TAB>entry` line each, with normalized
-/// contents and sorted skills metadata.
+/// contents and sorted skills metadata. The sandbox path hash in paths becomes `<project>`.
 fn tree(a: Allocator, io: std.Io, sandbox: *const Sandbox) ![]const u8 {
     var entries: std.ArrayList(Entry) = .empty;
     try visit(a, io, sandbox, "", &entries);
+    for (entries.items) |*e| e.path = try std.mem.replaceOwned(u8, a, e.path, sandbox.project, "<project>");
     std.mem.sort(Entry, entries.items, {}, struct {
         fn lessThan(_: void, x: Entry, y: Entry) bool {
             return std.mem.lessThan(u8, x.path, y.path);

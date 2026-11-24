@@ -36,7 +36,8 @@ These cases cover `--mcp`, `cli.fetch`, fetch-backed, OpenAPI, and MCP-source co
 - **Layout.** One root directory per run holds `home/` (the sandbox), `bin/` (stub runners), and
   `tmp/`. Before each case the sandbox is emptied, then seeded from `sandbox`: each key is a
   `/`-separated path relative to the sandbox, and each value is the file contents (a string), a
-  directory (`null`), or a symlink (`{"symlink": "<target>"}`).
+  directory (`null`), or a symlink (`{"symlink": "<target>"}`). `<project>` in a path stands for
+  the sandbox path hash described under Normalization.
 - **Environment.** The process environment is replaced by `HOME=<sandbox>`, `PATH=<root>/bin`,
   `TMPDIR=<root>/tmp`, and then the case's `env`. `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
   `XDG_CACHE_HOME`, `CLAUDE_CONFIG_DIR`, and `CODEX_HOME` are unset unless `env` sets them, so
@@ -72,7 +73,9 @@ These cases cover `--mcp`, `cli.fetch`, fetch-backed, OpenAPI, and MCP-source co
 - **`files`.** Every entry under the sandbox after the case, sorted by path, in the seed format.
 - **Normalization.** In stdout, stderr, file contents, and symlink targets, the real sandbox and
   root paths become `<sandbox>` and `<root>`, timestamps such as `2026-01-02T03:04:05.678Z`
-  become `<time>`, and `"checkedAt":<digits>` becomes `"checkedAt":0`. A skills metadata file
+  become `<time>`, and `"checkedAt":<digits>` becomes `"checkedAt":0`. In `files` paths, the
+  first 16 hex digits of the SHA-256 of the sandbox path, which names the directory of project
+  skills metadata, become `<project>`. A skills metadata file
   (a JSON object with a string `hash` and a `skills` array) has `skills` and `paths` sorted and
   is rewritten as compact JSON with a trailing newline, because their order follows directory
   listing order.

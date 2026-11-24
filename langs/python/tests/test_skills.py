@@ -347,11 +347,8 @@ Line two. Run `kit ping --help` for usage details.
     gone.mkdir()
     monkeypatch.chdir(gone)
     gone.rmdir()
-    assert serve(kit(tmp_path, "a"), home, "skills", "list")[0] == 0
-    # Without an entry point, the package root falls back to the missing working directory.
-    monkeypatch.setattr(sys, "argv", [""])
-    unrooted = incur.Cli("kit", update=False)
-    assert serve(unrooted, home, "skills", "list") == snapshot(
+    # Project skills metadata is keyed by the working directory, so listing fails.
+    assert serve(kit(tmp_path, "a"), home, "skills", "list") == snapshot(
         (
             1,
             """\

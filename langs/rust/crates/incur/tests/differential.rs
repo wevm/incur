@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use incur::Io;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use sha2::Digest as _;
 
 #[derive(Deserialize)]
 struct Case {
@@ -96,6 +97,8 @@ struct Sandbox {
     root: PathBuf,
     /// The sandbox: `HOME` and working directory.
     home: PathBuf,
+    /// The hash of the sandbox path that names its project skills metadata directory.
+    project: String,
 }
 
 /// Each stub appends its name and arguments to `$HOME/stub.log`, then prints `STUB_STDERR` and
@@ -126,7 +129,16 @@ impl Sandbox {
             std::fs::set_permissions(&path, permissions).unwrap();
         }
         let home = root.join("home");
-        Self { root, home }
+        let project = format!(
+            "{:x}",
+            sha2::Sha256::digest(home.to_str().unwrap().as_bytes())
+        )[..16]
+            .to_owned();
+        Self {
+            root,
+            home,
+            project,
+        }
     }
 
     /// Replaces `<sandbox>` and `<root>` placeholders with real paths.
@@ -150,7 +162,7 @@ impl Sandbox {
         }
         std::fs::create_dir_all(&self.home).unwrap();
         for (name, value) in entries {
-            let target = self.home.join(name);
+            let target = self.home.join(name.replace("<project>", &self.project));
             std::fs::create_dir_all(target.parent().unwrap()).unwrap();
             match value {
                 Value::Null => std::fs::create_dir_all(&target).unwrap(),
@@ -165,7 +177,8 @@ impl Sandbox {
         }
     }
 
-    /// Lists every entry under the sandbox, sorted by path, with normalized contents.
+    /// Lists every entry under the sandbox, sorted by path, with normalized contents. The sandbox
+    /// path hash in entry paths becomes `<project>`.
     fn tree(&self) -> Map<String, Value> {
         fn visit(sandbox: &Sandbox, relative: &str, out: &mut Vec<(String, Value)>) {
             for entry in std::fs::read_dir(sandbox.home.join(relative)).unwrap() {
@@ -196,6 +209,9 @@ impl Sandbox {
         }
         let mut entries = Vec::new();
         visit(self, "", &mut entries);
+        for entry in &mut entries {
+            entry.0 = entry.0.replace(&self.project, "<project>");
+        }
         entries.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
         entries.into_iter().collect()
     }
