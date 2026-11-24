@@ -505,8 +505,12 @@ fn install(source: &Path, global: bool, cwd: &Path, paths: &Paths) -> (Vec<PathB
             let parent = link.parent().unwrap_or(&link).to_owned();
             let _ = std::fs::create_dir_all(&parent);
             let target = relative(&resolve_parent(&parent), &resolve_parent(&canonical));
+            #[cfg(unix)]
+            let symlinked = std::os::unix::fs::symlink(&target, &link).is_ok();
+            #[cfg(windows)]
+            let symlinked = std::os::windows::fs::symlink_dir(&target, &link).is_ok();
             // Copying is the fallback where links fail.
-            let mode = if std::os::unix::fs::symlink(&target, &link).is_ok() {
+            let mode = if symlinked {
                 Some("symlink")
             } else {
                 copy_dir(&canonical, &link).is_ok().then_some("copy")

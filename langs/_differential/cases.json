@@ -2355,6 +2355,7 @@
 {"cli": "kit", "argv": ["status"], "env": {"XDG_DATA_HOME": "<sandbox>/data"}, "sandbox": {"cli": "", "package.json": "{}", "data/incur/kit.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kit-status\",\"kit-old\"],\"paths\":[\"<sandbox>/.agents/skills/kit-status\",\"<sandbox>/.agents/skills/kit-old\"],\"at\":\"2020-01-01T00:00:00.000Z\"}\n", ".agents/skills/kit-status/SKILL.md": "old\n"}},
 {"cli": "kit", "argv": ["skills", "add", "--depth", "0"], "env": {"XDG_DATA_HOME": "<sandbox>/data"}, "sandbox": {"cli": "", "package.json": "{}"}},
 {"cli": "kit", "argv": ["mcp", "add"], "sandbox": {}},
+{"cli": "kit", "argv": ["mcp", "add"], "env": {"PATH": "/nonexistent"}, "sandbox": {}},
 {"cli": "kit", "argv": ["mcp", "add"], "env": {"STUB_STDOUT": "│ ✓ Claude Code: ~/.claude.json │\n┃ ✔ Cursor: ~/.cursor/mcp.json ┃\n| ✓ VS Code |\nother line\n"}, "sandbox": {}},
 {"cli": "kit", "argv": ["mcp", "add"], "env": {"STUB_STDOUT": "│ ✓ Claude Code: ~/.claude.json │\n┃ ✔ Cursor: ~/.cursor/mcp.json ┃\n| ✓ VS Code |\nother line\n"}, "tty": true, "sandbox": {}},
 {"cli": "kit", "argv": ["mcp", "add", "--json"], "env": {"STUB_STDOUT": "│ ✓ Claude Code: ~/.claude.json │\n┃ ✔ Cursor: ~/.cursor/mcp.json ┃\n| ✓ VS Code |\nother line\n"}, "sandbox": {}},

@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { detectRunner } from './internal/pm.js'
+import { detectRunner, exec } from './internal/pm.js'
 
 const exactVersionPattern =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/
@@ -29,7 +28,7 @@ export async function register(
     for (const agent of targetAgents.filter((a) => a !== 'amp')) args.push('-a', agent)
 
     const [cmd, ...prefix] = runner.split(' ')
-    const { stdout } = await exec(cmd!, [...prefix, 'add-mcp', ...args])
+    const stdout = await exec(cmd!, [...prefix, 'add-mcp', ...args])
 
     // Extract agent names from add-mcp output (lines like "│ ✓ Claude Code: ~/.claude.json │")
     agents.push(
@@ -196,16 +195,4 @@ function splitCommand(input: string): string[] {
   }
   if (current) tokens.push(current)
   return tokens
-}
-
-/** Promisified execFile with stderr in error message. */
-function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, (error, stdout, stderr) => {
-      if (error) {
-        const msg = stderr?.trim() || stdout?.trim() || error.message
-        reject(new Error(msg))
-      } else resolve({ stdout, stderr })
-    })
-  })
 }

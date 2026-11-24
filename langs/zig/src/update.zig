@@ -7,6 +7,7 @@
 //! program again, detached, with `--incur-update-check`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const js = @import("js.zig");
 const json = @import("json.zig");
 const http = @import("http.zig");
@@ -241,7 +242,7 @@ fn scheduleRefresh(a: Allocator, process: *const Process, file: []const u8, cach
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-        .pgid = 0,
+        .pgid = if (builtin.os.tag == .windows) null else 0,
     }));
 }
 

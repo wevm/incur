@@ -1,6 +1,7 @@
 //! Package managers: which one launched the CLI, its runner, and running its commands.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const js = @import("js.zig");
 const command = @import("command.zig");
 const cli_ = @import("cli.zig");
@@ -66,8 +67,14 @@ pub const Exec = union(enum) { ok: []const u8, err: []const u8 };
 /// Runs a command found on the `PATH` of the process environment and waits for it. A failure
 /// reports its trimmed standard error, its trimmed standard output, or a `Command failed`
 /// message, as Node's `execFile` errors do.
+///
+/// On Windows, npm, npx, pnpm, and pnpx are `.cmd` scripts. `std.process` runs a script through
+/// `cmd.exe` with batch-safe quoting.
 pub fn exec(a: Allocator, process: *const Process, argv: []const []const u8) ServeError!Exec {
     const path = try which(a, process, argv[0]) orelse return .{ .err = try std.fmt.allocPrint(a, "spawn {s} ENOENT", .{argv[0]}) };
+    // `cmd.exe` ends the command line at a line break, which would drop the arguments after it.
+    if (builtin.os.tag == .windows and (std.ascii.endsWithIgnoreCase(path, ".bat") or std.ascii.endsWithIgnoreCase(path, ".cmd")))
+        for (argv[1..]) |arg| if (std.mem.findAny(u8, arg, "\r\n") != null) return .{ .err = try std.fmt.allocPrint(a, "spawn {s} EINVAL", .{argv[0]}) };
     var resolved = try a.dupe([]const u8, argv);
     resolved[0] = path;
     const result = std.process.run(a, process.io, .{ .argv = resolved, .environ_map = process.env }) catch |err|
@@ -80,8 +87,23 @@ pub fn exec(a: Allocator, process: *const Process, argv: []const []const u8) Ser
     return .{ .err = try std.fmt.allocPrint(a, "Command failed: {s}", .{try std.mem.join(a, " ", argv)}) };
 }
 
-/// Finds an executable on the `PATH` of the process environment.
+/// Finds an executable on the `PATH` of the process environment. On Windows, it tries each
+/// `PATHEXT` extension, as `cmd.exe` does, without searching the working directory.
 fn which(a: Allocator, process: *const Process, name: []const u8) ServeError!?[]const u8 {
+    if (builtin.os.tag == .windows) {
+        const extensions = process.env.get("PATHEXT") orelse ".COM;.EXE;.BAT;.CMD";
+        var dirs = std.mem.tokenizeScalar(u8, process.env.get("PATH") orelse "", ';');
+        while (dirs.next()) |dir| {
+            var it = std.mem.tokenizeScalar(u8, extensions, ';');
+            while (it.next()) |extension| {
+                const file = try std.fmt.allocPrint(a, "{s}{s}", .{ name, extension });
+                const candidate = try std.fs.path.join(a, &.{ try std.mem.replaceOwned(u8, a, dir, "\"", ""), file });
+                const stat = try command.optional(std.Io.Dir.cwd().statFile(process.io, candidate, .{})) orelse continue;
+                if (stat.kind == .file) return candidate;
+            }
+        }
+        return null;
+    }
     if (std.mem.findScalar(u8, name, '/') != null) return name;
     var dirs = std.mem.tokenizeScalar(u8, process.env.get("PATH") orelse "", ':');
     while (dirs.next()) |dir| {

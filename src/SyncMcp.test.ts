@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { detectPackageSpecifier, isPackageName, register } from './SyncMcp.js'
 
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
+  execFile: vi.fn((_cmd: string, _args: string[], _options: object, cb: Function) => {
     cb(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
   }),
 }))

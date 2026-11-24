@@ -184,7 +184,7 @@ def _provider(name: str, options: Options, env: Mapping[str, str]) -> _Provider 
         argv = invocation
 
         async def run_package() -> None:
-            await _exec(argv, env)
+            await _pm.exec(argv, env)
 
         install = run_package
 
@@ -352,22 +352,3 @@ async def install(name: str, options: Options, env: Mapping[str, str]) -> dict[s
         out["deferred"] = True
     out["name"] = provider.name
     return out
-
-
-async def _exec(command: list[str], env: Mapping[str, str]) -> None:
-    """Runs a package-manager command, failing with its useful error output."""
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            env=dict(env),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except OSError as error:
-        raise RuntimeError(f"spawn {command[0]} ENOENT") from error
-    stdout, stderr = await process.communicate()
-    if process.returncode == 0:
-        return
-    message = stderr.decode().strip() or stdout.decode().strip()
-    raise RuntimeError(message or f"Command failed: {' '.join(command)}")

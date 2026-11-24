@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
-import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -142,23 +140,6 @@ def _register_amp(name: str, command: str, env: Mapping[str, str]) -> bool:
     return True
 
 
-async def _exec(command: list[str], env: Mapping[str, str]) -> str:
-    """Runs a command, failing with its useful error output. Returns its stdout."""
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        env=dict(env),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    out, err = await process.communicate()
-    stdout = out.decode()
-    if process.returncode != 0:
-        message = err.decode().strip() or stdout.strip()
-        raise RuntimeError(message or f"Command failed: {' '.join(command)}")
-    return stdout
-
-
 async def register(name: str, options: Options) -> Result:
     """Registers an MCP server with `add-mcp` and, directly, with Amp."""
     env = options.env
@@ -175,7 +156,7 @@ async def register(name: str, options: Options) -> Result:
         for agent in targets:
             if agent != "amp":
                 args += ["-a", agent]
-        stdout = await _exec([runner, "add-mcp", *args], env)
+        stdout = await _pm.exec([runner, "add-mcp", *args], env)
         for line in stdout.split("\n"):
             if "\u2713" in line or "\u2714" in line:
                 label = re.sub(r"[│┃|]", "", line)
