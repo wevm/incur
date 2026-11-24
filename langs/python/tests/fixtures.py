@@ -1098,6 +1098,16 @@ PET_SPEC: Data = {
                         "schema": {"type": "string", "format": "date-time"},
                     },
                     {"name": "score", "in": "query", "schema": {"type": ["number", "null"]}},
+                    {
+                        "name": "tag",
+                        "in": "query",
+                        "schema": {"type": ["string", "array"], "items": {"type": "string"}},
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": {"type": ["boolean", "integer", "string"]},
+                    },
                 ],
             }
         },
@@ -1662,11 +1672,30 @@ FAKE_TOOLS: list[object] = [
                 "on": {"type": "boolean"},
                 "ratio": {"type": ["number", "null"]},
                 "tags": {"type": ["array", "null"], "items": {"type": "string"}},
+                "ref": {
+                    "type": ["string", "array"],
+                    "items": {"type": "string"},
+                    "maxLength": 3,
+                    "description": "Ref",
+                },
+                "size": {"type": ["string", "integer"]},
+                "mode": {"type": ["string", "integer"], "default": "auto"},
+                "strict": {"type": ["string", "boolean"]},
+                "shape": {"type": ["object", "array", "null"]},
             },
             "required": ["count"],
         },
         "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}},
         "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "mixed",
+        "description": "Required multi-type input",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"key": {"type": ["string", "array"], "items": {"type": "string"}}},
+            "required": ["key"],
+        },
     },
     {"name": "headers", "description": "Echo MCP headers"},
     {"name": "texts", "description": "Two text items", "outputSchema": {"type": "string"}},
@@ -1736,6 +1765,8 @@ async def fake_mcp(request: incur.Request) -> incur.Response:
                 }
             )
         )
+    if name == "mixed":
+        return text(compact(args))
     if name == "texts":
         return text("first", "second")
     if name == "words":

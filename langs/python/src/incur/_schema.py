@@ -117,7 +117,7 @@ class Type:
             return "|".join(ty.values)
         if ty.kind == "integer":
             return "number"
-        if ty.kind in ("object", "record", "unknown"):
+        if ty.kind in ("intersection", "literal", "null", "object", "record", "union", "unknown"):
             return "value"
         return ty.kind
 
@@ -286,6 +286,10 @@ def parse(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -
     if isinstance(value, _Absent):
         if ty.default is not None:
             return ty.default
+        if ty.optional and any(v.default is not None for v in ty.variants if ty.kind == "union"):
+            # `.optional()` still runs a union with a defaulted option, whose `optin` is optional,
+            # and drops its issues.
+            return _parse_union(ty, value, path, [])
         if ty.optional or ty.kind == "unknown":
             return _ABSENT
         if ty.coerce:
@@ -294,6 +298,8 @@ def parse(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -
             return _parse_present(ty, math.nan if number else False, path, issues)
     if ty.kind in ("enum", "literal"):
         return _parse_choice(ty, value, path, issues)
+    if ty.kind == "union":
+        return _parse_union(ty, value, path, issues)
     if isinstance(value, _Absent):
         _invalid_type(ty, "undefined", None, path, issues)
         return _ABSENT
@@ -328,10 +334,6 @@ def _parse_present(ty: Type, value: Json, path: list[str | int], issues: list[Is
     kind = ty.kind
     if ty.coerce:
         value = _js_number(value) if kind in ("integer", "number") else _js_truthy(value)
-    if kind in ("enum", "literal"):
-        return _parse_choice(ty, value, path, issues)
-    if kind == "union":
-        return _parse_union(ty, value, path, issues)
     if kind == "intersection":
         return _parse_intersection(ty, value, path, issues)
     if kind == "unknown" or (kind == "boolean" and isinstance(value, bool)):
@@ -444,13 +446,17 @@ def _js_truthy(value: Json) -> bool:
     return value not in (None, False, 0, "")
 
 
-def _parse_union(ty: Type, value: Json, path: list[str | int], issues: list[Issue]) -> Parsed:
-    """Returns the value parsed by the first matching option, as `z.union` does."""
+def _parse_union(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -> Parsed:
+    """Returns the value parsed by the first matching option, as `z.union` does.
+
+    When no option of a non-exclusive union matches, the one option that failed only checks
+    reports its issues.
+    """
     errors: list[list[Issue]] = []
     matches: list[Parsed] = []
     for variant in ty.variants:
         attempt: list[Issue] = []
-        parsed = _parse_present(variant, value, [], attempt)
+        parsed = parse(variant, value, [], attempt)
         if not attempt and not ty.exclusive:
             return parsed
         if attempt:
@@ -459,12 +465,23 @@ def _parse_union(ty: Type, value: Json, path: list[str | int], issues: list[Issu
             matches.append(parsed)
     if len(matches) == 1:
         return matches[0]
+    continuing = [attempt for attempt in errors if not _aborted(attempt)]
     if matches:
         # More than one option of `z.xor` matched.
         issues.append(Issue("invalid_union", "Invalid input", list(path), inclusive=False))
+    elif len(continuing) == 1 and not ty.exclusive:
+        issues.extend(replace(i, path=[*path, *i.path]) for i in continuing[0])
     else:
         issues.append(Issue("invalid_union", "Invalid input", list(path), errors=errors))
     return _ABSENT
+
+
+def _aborted(issues: list[Issue]) -> bool:
+    """Whether issues stop Zod from trying later checks.
+
+    Type and value mismatches do, while failed bounds and formats let parsing continue.
+    """
+    return any(i.code not in ("too_big", "too_small", "invalid_format") for i in issues)
 
 
 def _parse_intersection(
@@ -476,7 +493,7 @@ def _parse_intersection(
         ValueError: When both sides succeed with values that cannot merge, as Zod throws.
     """
     count = len(issues)
-    left, right = (_parse_present(side, value, path, issues) for side in ty.variants)
+    left, right = (parse(side, value, path, issues) for side in ty.variants)
     if len(issues) > count or isinstance(left, _Absent) or isinstance(right, _Absent):
         return _ABSENT
     merged, at = _merge(left, right)
