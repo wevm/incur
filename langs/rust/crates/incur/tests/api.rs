@@ -1291,7 +1291,7 @@ fn reports_skill_sync_edge_cases() {
         ),
         (
             0,
-            "Syncing...\r\u{1b}[K  ✓ edge-status  A command. Run `edge status --help` for usage details.\n\n1 skill synced\n\nRun `edge --help` to see the full command reference.\n{\n  \"skills\": [\n    \"<sandbox>/.agents/skills/edge-status\"\n  ]\n}\n",
+            "{\n  \"skills\": [\n    \"<sandbox>/.agents/skills/edge-status\"\n  ]\n}\n",
         ),
     ]
     "#);

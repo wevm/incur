@@ -1735,7 +1735,9 @@ class _Run:
             if eq is not None:
                 options.depth = _js.to_number(eq.split("=")[1])
         options.global_ = False if "--no-global" in rest else None
-        self.write("Syncing...")
+        # Progress and the summary are for people; an explicit format prints only the result.
+        if not flags.format_explicit:
+            self.write("Syncing...")
         try:
             infos, groups = self.skill_infos()
             result = await sync_skills(cli.name, infos, groups, options)
@@ -1744,7 +1746,6 @@ class _Run:
             self.writeln(format_value(failure, fmt))
             self.exit = 1
             return
-        self.write("\r\x1b[K")
         width = max((_js.utf16_len(s.name) for s in result.skills), default=0)
         lines: list[str] = []
         for s in result.skills:
@@ -1760,7 +1761,9 @@ class _Run:
             lines += ["", f"Your agent can now use {cli.name}. Try asking:"]
             lines += [f'  "{s}"' for s in sync.suggestions]
         lines += ["", f"Run `{cli.name} --help` to see the full command reference."]
-        self.writeln("\n".join(lines))
+        if not flags.format_explicit:
+            self.write("\r\x1b[K")
+            self.writeln("\n".join(lines))
         if flags.full_output or flags.format_explicit:
             out: dict[str, Json] = {"skills": list(result.paths)}
             if sync.body:

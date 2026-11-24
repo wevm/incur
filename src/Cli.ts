@@ -1262,7 +1262,8 @@ async function serveImpl(
           : (sync?.depth ?? 1)
     const global = rest.includes('--no-global') ? false : undefined
     try {
-      stdout('Syncing...')
+      // Progress and the summary are for people; an explicit format prints only the result.
+      if (!formatExplicit) stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
         command: sync?.command,
         depth,
@@ -1272,7 +1273,6 @@ async function serveImpl(
         root: sync?.cwd,
         rootCommand: options.rootCommand,
       })
-      stdout('\r\x1b[K')
       const lines: string[] = []
       const skillLabel = (s: (typeof result.skills)[number]) => s.name
       const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
@@ -1299,7 +1299,10 @@ async function serveImpl(
       }
       lines.push('')
       lines.push(`Run \`${name} --help\` to see the full command reference.`)
-      writeln(lines.join('\n'))
+      if (!formatExplicit) {
+        stdout('\r\x1b[K')
+        writeln(lines.join('\n'))
+      }
       if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
         if (body) output.body = body
