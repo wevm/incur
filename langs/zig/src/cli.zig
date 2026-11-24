@@ -2377,6 +2377,8 @@ pub const Exec = struct {
     globals: Value,
     /// The HTTP request, for commands served over HTTP.
     request: ?*const http.Request = null,
+    /// Elicitation for a 2026-07-28 MCP tool call.
+    elicitation: ?*@import("elicit.zig").Elicitation = null,
     /// Consumes streams.
     sink: Sink,
 
@@ -2492,6 +2494,7 @@ const Step = struct {
             .version = c.version,
             .request = c.request,
             .failure = c.failure,
+            .elicitation = e.elicitation,
             .process = e.process,
         };
         const outcome = h.call(&invocation) catch |err| return step.fail(try c.failure.take(err));

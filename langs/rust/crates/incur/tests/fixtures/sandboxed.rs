@@ -602,6 +602,157 @@ pub(crate) fn kb() -> Cli {
         )
 }
 
+#[derive(Deserialize, Schema, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Role {
+    Dev,
+    Ops,
+}
+
+fn dev_role() -> Role {
+    Role::Dev
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct Profile {
+    /// Your name
+    name: String,
+    #[incur(min = 0)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    age: Option<i64>,
+    #[serde(default = "dev_role")]
+    role: Role,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subscribe: Option<bool>,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct NameInput {
+    name: String,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct ColorInput {
+    color: String,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct NoteInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct TitledName {
+    name: String,
+    #[serde(default = "doctor")]
+    title: String,
+}
+
+fn doctor() -> String {
+    "Dr".into()
+}
+
+#[derive(Schema)]
+#[expect(dead_code, reason = "Only the schema is used.")]
+struct NameOutput {
+    name: String,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct GoInput {
+    go: bool,
+}
+
+/// Exercises MCP elicitation through `input_required`.
+pub(crate) fn ask() -> Cli {
+    client(Cli::new("ask"))
+        .description("MCP elicitation")
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .mcp(Mcp::new().discovery(Discovery::Direct))
+        .command(
+            "profile",
+            Command::new()
+                .description("Ask for a profile")
+                .run(|c: Context| {
+                    let answer = c.elicit.form::<Profile>("Who are you?")?;
+                    let Some(content) = answer.content else {
+                        return data(json!({ "action": answer.action }));
+                    };
+                    let mut out = json!({ "greeting": format!("Hi {}", content.name) });
+                    if let (Value::Object(out), Ok(Value::Object(fields))) =
+                        (&mut out, serde_json::to_value(&content))
+                    {
+                        out.extend(fields);
+                    }
+                    data(out)
+                }),
+        )
+        .command(
+            "pair",
+            Command::new().description("Ask twice").run(|c: Context| {
+                let first = c.elicit.form::<NameInput>("Name?")?;
+                let second = c.elicit.form::<ColorInput>("Color?")?;
+                data(json!({ "first": first, "second": second }))
+            }),
+        )
+        .command(
+            "link",
+            Command::new()
+                .description("Send the user to a URL")
+                .run(|c: Context| {
+                    c.elicit
+                        .url("Connect your account", "https://example.com/connect")
+                }),
+        )
+        .command(
+            "fallback",
+            Command::new()
+                .description("Ask by URL when the form fails")
+                .run(|c: Context| match c.elicit.form::<NameInput>("Name?") {
+                    Ok(answer) => data(json!(answer)),
+                    Err(_) => data(json!(
+                        c.elicit
+                            .url("Use the website", "https://example.com/name")?
+                    )),
+                }),
+        )
+        .command(
+            "note",
+            Command::new()
+                .description("Ask for optional input")
+                .run(|c: Context| data(json!(c.elicit.form::<NoteInput>("Any notes?")?))),
+        )
+        .command(
+            "typed",
+            Command::new()
+                .description("Ask with an output schema")
+                .output::<NameOutput>()
+                .run(|c: Context| {
+                    let answer = c.elicit.form::<TitledName>("Name?")?;
+                    let name = match answer.content {
+                        Some(given) => json!(format!("{} {}", given.title, given.name)),
+                        None => json!(answer.action),
+                    };
+                    data(json!({ "name": name }))
+                }),
+        )
+        .command(
+            "watch",
+            Command::new()
+                .description("Ask while streaming")
+                .run(|c: Context| {
+                    let answer = c
+                        .elicit
+                        .form::<GoInput>("Continue?")
+                        .map(|answer| json!({ "step": "answer", "answer": answer }));
+                    incur::stream(stream::iter([Ok(json!({ "step": "start" })), answer]))
+                }),
+        )
+}
+
 /// A resource template incur cannot match.
 pub(crate) fn kbbad() -> Cli {
     client(Cli::new("kbbad"))

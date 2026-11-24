@@ -6,6 +6,7 @@ mod command;
 pub mod completions;
 mod convert;
 mod derive;
+mod elicit;
 mod errors;
 mod execute;
 mod features;
@@ -37,6 +38,7 @@ pub use command::{
     Outcome, OutputPolicy, Result, Vars, marker, ok, stream,
 };
 pub use derive::Parser;
+pub use elicit::{Action, Elicit, Elicited};
 pub use errors::{Cta, CtaBlock, Error, FieldError};
 pub use fetch::{Fetch, FetchCommand};
 pub use formatter::Format;

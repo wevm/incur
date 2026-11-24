@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::elicit::Elicit;
 use crate::errors::{CtaBlock, Error};
 use crate::formatter::Format;
 use crate::help::{Example, Usage};
@@ -87,6 +88,8 @@ pub struct Context<A = (), O = (), E = ()> {
     pub args: A,
     /// The binary name the user invoked.
     pub display_name: String,
+    /// Asks the MCP client's user for input while the command runs as a 2026-07-28 tool.
+    pub elicit: Elicit,
     /// Environment variables declared by the command.
     pub env: E,
     /// The resolved output format.
@@ -389,6 +392,8 @@ pub(crate) struct Invocation {
     pub(crate) args: Value,
     /// Display name.
     pub(crate) display_name: String,
+    /// Elicitation for an MCP tool call.
+    pub(crate) elicit: Elicit,
     /// Parsed command environment.
     pub(crate) env: Value,
     /// Output format.
@@ -416,6 +421,7 @@ impl Invocation {
             agent: self.agent,
             args,
             display_name: self.display_name,
+            elicit: self.elicit,
             env,
             format: self.format,
             format_explicit: self.format_explicit,

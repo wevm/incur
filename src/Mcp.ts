@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/server'
+import type { InputRequiredResult, McpServer } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
@@ -482,13 +482,46 @@ export type Defaults = {
   options?: ((path: string[]) => unknown) | undefined
 }
 
-/** @internal Executes a tool call and returns a CallToolResult. */
+/** @internal Executes a tool call and returns a CallToolResult, or an `input_required` result when the command elicits input. */
 export async function callTool(
   tool: ToolEntry,
   params: Record<string, unknown>,
+  options: callTool.Options = {},
+) {
+  // Only 2026-07-28 requests carry the envelope; 2025 sessions cannot answer `input_required`.
+  const mcpReq = options.extra?.mcpReq
+  const elicitation = Command.elicitation(
+    mcpReq?.envelope
+      ? {
+          capabilities: mcpReq.envelope['io.modelcontextprotocol/clientCapabilities'],
+          inputResponses: mcpReq.inputResponses,
+          requestState: mcpReq.requestState?.(),
+        }
+      : undefined,
+  )
+  const result = await runTool(tool, params, { ...options, elicit: elicitation.elicit })
+  return (elicitation.pending() as InputRequiredResult | undefined) ?? result
+}
+
+export declare namespace callTool {
+  /** Options for {@link callTool}. */
+  type Options = Omit<NonNullable<Parameters<typeof runTool>[2]>, 'elicit'>
+  /** A CallToolResult, without `input_required`. */
+  type Result = Awaited<ReturnType<typeof runTool>>
+}
+
+async function runTool(
+  tool: ToolEntry,
+  params: Record<string, unknown>,
   options: {
+    elicit?: Command.execute.Options['elicit']
     extra?: {
-      mcpReq?: { _meta?: { progressToken?: string | number } }
+      mcpReq?: {
+        _meta?: { progressToken?: string | number }
+        envelope?: Record<string, unknown> | undefined
+        inputResponses?: Record<string, unknown> | undefined
+        requestState?: (() => unknown) | undefined
+      }
     }
     /** The inbound HTTP request when invoked via HTTP MCP. */
     request?: Request | undefined
@@ -551,6 +584,7 @@ export async function callTool(
     name: options.name ?? tool.name,
     parseMode: 'flat',
     path: tool.name,
+    elicit: options.elicit,
     request: options.request,
     vars: options.vars,
     version: options.version,
@@ -672,6 +706,46 @@ export type CacheHint = {
 }
 
 /** An icon clients may show for a tool. */
+/** Asks the user of a 2026-07-28 MCP client for input while a command runs as a tool. Outside MCP, and when the client does not support the mode, it fails with `ELICITATION_UNSUPPORTED`. */
+export type Elicit = {
+  /**
+   * Asks for structured, non-sensitive input with a flat object of primitive fields. The tool call
+   * answers `input_required`, and when the client retries it with the answer, the command reruns
+   * and this call returns it. Code before the call runs again on each retry.
+   */
+  <const schema extends z.ZodObject<any>>(options: {
+    /** Why the input is needed. */
+    message: string
+    /** The fields to ask for. Accepted content is parsed with it. */
+    schema: schema
+  }): Promise<Elicited<z.output<schema>>>
+  /** Sends the user to a URL for input that must not pass through the client, such as credentials or payment. `accept` means the user agreed to open it, not that the interaction finished. */
+  url(options: {
+    /** Why the interaction is needed. */
+    message: string
+    /** The URL to open. */
+    url: string
+  }): Promise<{ action: Elicited.Action }>
+}
+
+/** The user's answer to a form elicitation. */
+export type Elicited<content> =
+  | {
+      /** The user submitted the form. */
+      action: 'accept'
+      /** The submitted fields. */
+      content: content
+    }
+  | {
+      /** The user declined, or dismissed the request. */
+      action: 'decline' | 'cancel'
+    }
+
+export declare namespace Elicited {
+  /** How the user answered: submitted, declined, or dismissed. */
+  type Action = 'accept' | 'decline' | 'cancel'
+}
+
 export type Icon = {
   /** The icon URL, such as an `https:` or `data:` URI. */
   src: string

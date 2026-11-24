@@ -1321,6 +1321,119 @@ fn empty(a: Allocator, uri: []const u8, v: Value) Allocator.Error!Value {
 }
 
 /// A resource template incur cannot match.
+const Role = enum { dev, ops };
+
+const Profile = struct {
+    name: []const u8,
+    age: ?i64 = null,
+    role: Role = .dev,
+    subscribe: ?bool = null,
+
+    pub const incur = .{
+        .omit_null = true,
+        .fields = .{ .name = .{ .description = "Your name" }, .age = .{ .min = 0 } },
+    };
+};
+
+const NameInput = struct { name: []const u8 };
+const ColorInput = struct { color: []const u8 };
+const GoInput = struct { go: bool };
+const NoteInput = struct {
+    note: ?[]const u8 = null,
+
+    pub const incur = .{ .omit_null = true };
+};
+
+/// Renders an answer as the TypeScript fixture returns it.
+fn answerValue(a: Allocator, answer: anytype) Allocator.Error!Value {
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "action", .{ .string = @tagName(answer.action) });
+    if (@TypeOf(answer.content) != ?void) if (answer.content) |content| try out.put(a, "content", try incur.encode(a, content));
+    return out.finish();
+}
+
+fn askProfile(c: *Context(.{})) !Outcome {
+    const a = c.allocator;
+    const answer = try c.elicit(Profile, "Who are you?");
+    const content = answer.content orelse return c.ok(try answerValue(a, answer));
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "greeting", .{ .string = try std.fmt.allocPrint(a, "Hi {s}", .{content.name}) });
+    for ((try incur.encode(a, content)).object) |entry| try out.put(a, entry.key, entry.value);
+    return c.ok(out.finish());
+}
+
+fn askPair(c: *Context(.{})) !Outcome {
+    const a = c.allocator;
+    const first = try c.elicit(NameInput, "Name?");
+    const second = try c.elicit(ColorInput, "Color?");
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "first", try answerValue(a, first));
+    try out.put(a, "second", try answerValue(a, second));
+    return c.ok(out.finish());
+}
+
+fn askLink(c: *Context(.{})) !Outcome {
+    return c.ok(try answerValue(c.allocator, try c.elicitUrl("Connect your account", "https://example.com/connect")));
+}
+
+fn askFallback(c: *Context(.{})) !Outcome {
+    const a = c.allocator;
+    if (c.elicit(NameInput, "Name?")) |answer| return c.ok(try answerValue(a, answer)) else |err| {
+        _ = try c.failure.take(err);
+        return c.ok(try answerValue(a, try c.elicitUrl("Use the website", "https://example.com/name")));
+    }
+}
+
+const TitledName = struct { name: []const u8, title: []const u8 = "Dr" };
+
+const NameOutput = struct { name: []const u8 };
+
+fn askTyped(c: *Context(.{})) !Outcome {
+    const a = c.allocator;
+    const answer = try c.elicit(TitledName, "Name?");
+    const name = if (answer.content) |given| try std.fmt.allocPrint(a, "{s} {s}", .{ given.title, given.name }) else @tagName(answer.action);
+    var out: incur.ObjectBuilder = .{};
+    try out.put(a, "name", .{ .string = name });
+    return c.ok(out.finish());
+}
+
+fn askNote(c: *Context(.{})) !Outcome {
+    return c.ok(try answerValue(c.allocator, try c.elicit(NoteInput, "Any notes?")));
+}
+
+fn askWatch(c: *Context(.{})) !Outcome {
+    const a = c.allocator;
+    var start: incur.ObjectBuilder = .{};
+    try start.put(a, "step", .{ .string = "start" });
+    const second: incur.Chunk = if (c.elicit(GoInput, "Continue?")) |answer| chunk: {
+        var out: incur.ObjectBuilder = .{};
+        try out.put(a, "step", .{ .string = "answer" });
+        try out.put(a, "answer", try answerValue(a, answer));
+        break :chunk .{ .data = out.finish() };
+    } else |err| .{ .failure = try c.failure.take(err) };
+    return c.streamSlice(try a.dupe(incur.Chunk, &.{ .{ .data = start.finish() }, second }));
+}
+
+/// Exercises MCP elicitation through `input_required`.
+fn ask(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "ask", .{
+        .description = "MCP elicitation",
+        .version = "1.0.0",
+        .update = null,
+        .sync = null,
+        .mcp = .{ .tools = .{ .discovery = .direct } },
+    });
+    errdefer cli.destroy();
+    try cli.command("profile", .{ .description = "Ask for a profile", .run = incur.handler(askProfile) });
+    try cli.command("pair", .{ .description = "Ask twice", .run = incur.handler(askPair) });
+    try cli.command("link", .{ .description = "Send the user to a URL", .run = incur.handler(askLink) });
+    try cli.command("fallback", .{ .description = "Ask by URL when the form fails", .run = incur.handler(askFallback) });
+    try cli.command("note", .{ .description = "Ask for optional input", .run = incur.handler(askNote) });
+    try cli.command("typed", .{ .description = "Ask with an output schema", .output = incur.schema(NameOutput), .run = incur.handler(askTyped) });
+    try cli.command("watch", .{ .description = "Ask while streaming", .run = incur.handler(askWatch) });
+    return cli;
+}
+
 fn kbbad(gpa: Allocator) !*incur.Cli {
     const cli = try incur.Cli.create(gpa, "kbbad", .{ .version = "1.0.0", .update = null, .sync = null });
     errdefer cli.destroy();
@@ -1864,7 +1977,7 @@ pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
         .{ "updbad", updbad },         .{ "shadow", shadow },     .{ "kitcwd", kitcwd },       .{ "kitrun", kitrun },
         .{ "shadowall", shadowall },   .{ "params", paramsCli },  .{ "hdrarray", hdrarray },   .{ "hdrdupe", hdrdupe },
         .{ "hdrempty", hdrempty },     .{ "hdrkey", hdrkey },     .{ "hdrnumber", hdrnumber }, .{ "hdrtoken", hdrtoken },
-        .{ "hdrnewline", hdrnewline }, .{ "kb", kb },             .{ "kbbad", kbbad },
+        .{ "hdrnewline", hdrnewline }, .{ "kb", kb },             .{ "kbbad", kbbad },         .{ "ask", ask },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

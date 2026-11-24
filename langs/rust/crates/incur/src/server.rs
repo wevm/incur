@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::body::{self, Body};
 use crate::cli::{Cli, Entry, Resolved, Scope, resolve, skill_commands, suggest};
 use crate::command::{Command, Middleware, MiddlewareContext};
+use crate::elicit::Elicit;
 use crate::errors::{Error, FormattedCtaBlock};
 use crate::execute::{self, Executed};
 use crate::fetch;
@@ -426,7 +427,14 @@ impl Cli {
                         execute::parse_env(command.env.as_ref(), &process_env)?,
                     ))
                 });
-                execute::execute(chain, context, command.handler.clone(), input).await
+                execute::execute(
+                    chain,
+                    context,
+                    command.handler.clone(),
+                    input,
+                    Elicit::default(),
+                )
+                .await
             }
         };
         let meta = |start: Instant, cta: Option<&FormattedCtaBlock>| {

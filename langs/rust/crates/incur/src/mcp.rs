@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::cli::Entry;
 use crate::command::{Command, Middleware, MiddlewareContext, Vars};
+use crate::elicit::Elicit;
 use crate::errors::{Error, FormattedCtaBlock};
 use crate::execute::{self, Executed};
 use crate::formatter::Format;
@@ -958,7 +959,8 @@ impl Server<'_> {
             }
             result(id, Value::Object(out))
         } else {
-            self.handle(id, method, params, request, notify).await
+            self.respond(id, method, params, request, notify, true)
+                .await
         };
         if let Some(Value::Object(out)) = response.get_mut("result") {
             *out = modern::encode(
@@ -980,6 +982,31 @@ impl Server<'_> {
         request: Option<Arc<http::request::Parts>>,
         notify: &mut (dyn FnMut(Value) + Send),
     ) -> Value {
+        self.respond(id, method, params, request, notify, false)
+            .await
+    }
+
+    /// Answers a request. Only 2026-07-28 requests carry client capabilities, so only tool calls
+    /// with an `envelope` can answer `input_required`.
+    async fn respond(
+        &self,
+        id: &Value,
+        method: &str,
+        params: &Map<String, Value>,
+        request: Option<Arc<http::request::Parts>>,
+        notify: &mut (dyn FnMut(Value) + Send),
+        envelope: bool,
+    ) -> Value {
+        // As the SDK, methods that may answer `input_required` reject a non-string echoed state.
+        if matches!(method, "tools/call" | "prompts/get" | "resources/read")
+            && params
+                .get("requestState")
+                .is_some_and(|state| !state.is_null() && !state.is_string())
+        {
+            let mut out = error(id, -32602, "Invalid or expired requestState");
+            out["error"]["data"] = json!({ "reason": "invalid_request_state" });
+            return out;
+        }
         match method {
             "initialize" => {
                 let requested = params.get("protocolVersion").and_then(Value::as_str);
@@ -1008,13 +1035,22 @@ impl Server<'_> {
                     .and_then(|meta| meta.get("progressToken"))
                     .filter(|t| t.is_string() || t.is_number())
                     .cloned();
+                let elicit = if envelope {
+                    let capabilities = params
+                        .get("_meta")
+                        .and_then(|meta| meta.get(modern::CAPABILITIES_KEY));
+                    Elicit::mcp(capabilities, params)
+                } else {
+                    Elicit::default()
+                };
                 let call = Call {
+                    elicit: elicit.clone(),
                     notify,
                     request,
                     token,
                 };
                 match self.call(name, &arguments, call).await {
-                    Some(value) => result(id, value),
+                    Some(value) => result(id, elicit.pending().unwrap_or(value)),
                     None => error(id, -32602, &format!("Tool {name} not found")),
                 }
             }
@@ -1323,7 +1359,14 @@ impl Server<'_> {
                         .and_then(|parsed: Parsed| {
                             Ok((parsed, execute::parse_env(command.env.as_ref(), env)?))
                         });
-                execute::execute(chain, middleware, command.handler.clone(), parsed).await
+                execute::execute(
+                    chain,
+                    middleware,
+                    command.handler.clone(),
+                    parsed,
+                    call.elicit,
+                )
+                .await
             }
         };
         match executed {
@@ -1442,6 +1485,8 @@ fn error_fields(error: &Error) -> Option<Value> {
 
 /// What a tool call reports through.
 struct Call<'a> {
+    /// Elicitation for the call.
+    elicit: Elicit,
     /// Sends notifications.
     notify: &'a mut (dyn FnMut(Value) + Send),
     /// The HTTP request.

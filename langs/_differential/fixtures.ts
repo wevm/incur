@@ -1282,6 +1282,79 @@ function badHeaders(name: string, headers: Record<string, string>) {
   })
 }
 
+/** Exercises MCP elicitation through `input_required`. */
+const ask = Cli.create('ask', {
+  description: 'MCP elicitation',
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { tools: { discovery: 'direct' } },
+})
+  .command('profile', {
+    description: 'Ask for a profile',
+    run: async (c) => {
+      const answer = await c.elicit({
+        message: 'Who are you?',
+        schema: z.object({
+          name: z.string().describe('Your name'),
+          age: z.number().int().min(0).optional(),
+          role: z.enum(['dev', 'ops']).default('dev'),
+          subscribe: z.boolean().optional(),
+        }),
+      })
+      if (answer.action !== 'accept') return { action: answer.action }
+      return { greeting: `Hi ${answer.content.name}`, ...answer.content }
+    },
+  })
+  .command('pair', {
+    description: 'Ask twice',
+    run: async (c) => {
+      const first = await c.elicit({ message: 'Name?', schema: z.object({ name: z.string() }) })
+      const second = await c.elicit({ message: 'Color?', schema: z.object({ color: z.string() }) })
+      return { first, second }
+    },
+  })
+  .command('link', {
+    description: 'Send the user to a URL',
+    run: async (c) =>
+      c.elicit.url({ message: 'Connect your account', url: 'https://example.com/connect' }),
+  })
+  .command('fallback', {
+    description: 'Ask by URL when the form fails',
+    run: async (c) => {
+      try {
+        return await c.elicit({ message: 'Name?', schema: z.object({ name: z.string() }) })
+      } catch {
+        return c.elicit.url({ message: 'Use the website', url: 'https://example.com/name' })
+      }
+    },
+  })
+  .command('note', {
+    description: 'Ask for optional input',
+    run: (c) =>
+      c.elicit({ message: 'Any notes?', schema: z.object({ note: z.string().optional() }) }),
+  })
+  .command('typed', {
+    description: 'Ask with an output schema',
+    output: z.object({ name: z.string() }),
+    run: async (c) => {
+      const answer = await c.elicit({
+        message: 'Name?',
+        schema: z.object({ name: z.string(), title: z.string().default('Dr') }),
+      })
+      if (answer.action !== 'accept') return { name: answer.action }
+      return { name: `${answer.content.title} ${answer.content.name}` }
+    },
+  })
+  .command('watch', {
+    description: 'Ask while streaming',
+    async *run(c) {
+      yield { step: 'start' }
+      const answer = await c.elicit({ message: 'Continue?', schema: z.object({ go: z.boolean() }) })
+      yield { step: 'answer', answer }
+    },
+  })
+
 const hdrkey = badHeaders('hdrkey', { a: 'A', missing: 'Missing' })
 const hdrtoken = badHeaders('hdrtoken', { a: 'Bad Header' })
 const hdrempty = badHeaders('hdrempty', { a: '' })
@@ -1786,6 +1859,7 @@ const updbad = Cli.create('updbad', { sync: false, update: { package: 'Bad Name!
 
 export const clis = {
   app,
+  ask,
   bare,
   catalog,
   cfg,

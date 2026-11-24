@@ -15,6 +15,7 @@ const http = @import("http.zig");
 const parser = @import("parser.zig");
 const cli_ = @import("cli.zig");
 const modern = @import("modern.zig");
+const Elicitation = @import("elicit.zig").Elicitation;
 const features = @import("features.zig");
 
 const Allocator = std.mem.Allocator;
@@ -379,6 +380,10 @@ const Server = struct {
     /// The global options schema, with the server's globals as defaults.
     globals: ?*const Type,
     features: features.Features,
+    /// Whether the request being answered is a 2026-07-28 one, whose tool calls can elicit.
+    modern: bool = false,
+    /// Elicitation for the tool call being answered.
+    elicitation: ?*Elicitation = null,
 
     fn init(a: Allocator, cli: *Cli, process: *const Process, direct: bool, defaults: Defaults) Allocator.Error!union(enum) { ok: Server, err: Error } {
         const settings = cli.options.mcp orelse cli_.Mcp{};
@@ -412,6 +417,13 @@ const Server = struct {
         const id = message.get("id").?;
         const method = message.get("method").?.string;
         const params = message.get("params") orelse Value{ .object = &.{} };
+        // As the SDK, methods that may answer `input_required` reject a non-string echoed state.
+        const resumable = std.mem.eql(u8, method, "tools/call") or std.mem.eql(u8, method, "prompts/get") or std.mem.eql(u8, method, "resources/read");
+        if (resumable) if (params.get("requestState")) |state| if (state != .null and state != .string) {
+            var data: json.ObjectBuilder = .{};
+            try data.put(a, "reason", .{ .string = "invalid_request_state" });
+            return try rpcErrorData(a, id, -32602, "Invalid or expired requestState", data.finish());
+        };
         const result: Value = if (std.mem.eql(u8, method, "initialize"))
             try s.initialize(params)
         else if (std.mem.eql(u8, method, "ping"))
@@ -420,8 +432,18 @@ const Server = struct {
             try s.list()
         else if (std.mem.eql(u8, method, "tools/call")) result: {
             const name = if (params.get("name")) |n| (if (n == .string) n.string else "") else "";
-            break :result try s.call(name, params) orelse
+            // Only 2026-07-28 requests carry client capabilities; 2025 sessions cannot answer
+            // `input_required`.
+            var elicitation: ?Elicitation = null;
+            if (s.modern) {
+                const meta = params.get("_meta");
+                elicitation = try Elicitation.init(a, if (meta) |m| m.get(modern.capabilities_key) else null, params);
+            }
+            s.elicitation = if (elicitation) |*e| e else null;
+            defer s.elicitation = null;
+            const value = try s.call(name, params) orelse
                 return try rpcError(a, id, -32602, try std.fmt.allocPrint(a, "Tool {s} not found", .{name}));
+            break :result if (elicitation) |e| e.pending orelse value else value;
         } else if (s.features.handles(method)) switch (try s.features.answer(a, method, params)) {
             .ok => |r| r,
             .err => |r| return try r.response(a, id),
@@ -469,7 +491,11 @@ const Server = struct {
             try out.put(a, "jsonrpc", .{ .string = "2.0" });
             try out.put(a, "id", id);
             break :response out.finish();
-        } else (try s.handle(message)).?;
+        } else handled: {
+            s.modern = true;
+            defer s.modern = false;
+            break :handled (try s.handle(message)).?;
+        };
         const result = response.get("result") orelse return response;
         var out: json.ObjectBuilder = .{};
         for (response.object) |entry| try out.put(a, entry.key, entry.value);
@@ -748,6 +774,7 @@ const Server = struct {
             .format_explicit = true,
             .globals = globals,
             .request = s.request,
+            .elicitation = s.elicitation,
             .sink = .{ .context = &collector, .consume = Collector.consume },
         };
         const result = try exec.run(tool.command, tool.middleware, tool.name, .{ .flat = input });
@@ -946,9 +973,14 @@ fn toolError(a: Allocator, message: []const u8) Allocator.Error!Value {
 
 /// Returns a JSON-RPC error response.
 fn rpcError(a: Allocator, id: ?Value, code: i64, message: []const u8) Allocator.Error!Value {
+    return rpcErrorData(a, id, code, message, null);
+}
+
+fn rpcErrorData(a: Allocator, id: ?Value, code: i64, message: []const u8, data: ?Value) Allocator.Error!Value {
     var e: json.ObjectBuilder = .{};
     try e.put(a, "code", .{ .integer = code });
     try e.put(a, "message", .{ .string = message });
+    if (data) |d| try e.put(a, "data", d);
     var out: json.ObjectBuilder = .{};
     try out.put(a, "jsonrpc", .{ .string = "2.0" });
     try out.put(a, "id", id orelse .null);

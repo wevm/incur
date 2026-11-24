@@ -8,6 +8,7 @@ const derive = @import("derive.zig");
 const help = @import("help.zig");
 const formatter = @import("formatter.zig");
 const http = @import("http.zig");
+const elicit_ = @import("elicit.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -130,6 +131,30 @@ pub fn Context(comptime input: Input) type {
         request: ?*const http.Request,
         /// The failure slot `fail` writes.
         failure: *Failure,
+        /// Elicitation for a 2026-07-28 MCP tool call, or null elsewhere.
+        elicitation: ?*elicit_.Elicitation = null,
+
+        /// Asks the MCP client's user for form input described by `T`, a flat struct of
+        /// primitive fields, while the command runs as a 2026-07-28 tool. The call answers
+        /// `input_required`, and when the client retries it with the answer, the command reruns
+        /// and this returns it. Code before the call runs again on each retry. Fails with
+        /// `ELICITATION_UNSUPPORTED` outside MCP and when the client does not support forms.
+        pub fn elicit(c: *Self, comptime T: type, message: []const u8) (Failed || Allocator.Error)!elicit_.Elicited(T) {
+            return switch (try elicit_.Elicitation.form(c.elicitation, c.allocator, T, message)) {
+                .ok => |answer| answer,
+                .err => |e| c.fail(e),
+            };
+        }
+
+        /// Sends the MCP client's user to a URL for input that must not pass through the client,
+        /// such as credentials or payment. `accept` means the user agreed to open it, not that
+        /// the interaction finished.
+        pub fn elicitUrl(c: *Self, message: []const u8, url: []const u8) (Failed || Allocator.Error)!elicit_.Elicited(void) {
+            return switch (try elicit_.Elicitation.url(c.elicitation, c.allocator, message, url)) {
+                .ok => |answer| answer,
+                .err => |e| c.fail(e),
+            };
+        }
 
         /// Returns data as a successful outcome. Accepts anything `incur.encode` converts.
         pub fn ok(c: *Self, data: anytype) Allocator.Error!Outcome {
@@ -271,6 +296,8 @@ pub const Invocation = struct {
     request: ?*const http.Request = null,
     /// The failure slot.
     failure: *Failure,
+    /// Elicitation for a 2026-07-28 MCP tool call, or null elsewhere.
+    elicitation: ?*elicit_.Elicitation = null,
     /// The process, which handlers generated from OpenAPI documents and MCP servers send
     /// requests through.
     process: ?*const @import("cli.zig").Process = null,
@@ -337,6 +364,7 @@ pub fn contextOf(comptime Ctx: type, i: *const Invocation, args: Ctx.declared.ar
         .version = i.version,
         .request = i.request,
         .failure = i.failure,
+        .elicitation = i.elicitation,
     };
 }
 

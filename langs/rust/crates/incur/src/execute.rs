@@ -11,6 +11,7 @@ use crate::command::{
     BoxFuture, Chunks, Handler, Inner, Invocation, Middleware, MiddlewareContext, Next, Outcome,
     Terminal,
 };
+use crate::elicit::Elicit;
 use crate::errors::{CtaBlock, Error};
 use crate::parser::{self, Parsed};
 use crate::schema::Type;
@@ -103,10 +104,11 @@ pub(crate) async fn execute(
     context: MiddlewareContext,
     handler: Option<Handler>,
     input: Input,
+    elicit: Elicit,
 ) -> Executed {
     let (outcome_tx, mut outcome_rx) = oneshot::channel();
     let (stream_tx, mut stream_rx) = oneshot::channel();
-    let terminal = terminal(handler, input, outcome_tx, stream_tx);
+    let terminal = terminal(handler, input, elicit, outcome_tx, stream_tx);
 
     // Run the chain until it finishes or hands over a stream. The chain then waits until the
     // stream is consumed, so middleware code after `next.run(c)` runs after the stream ends.
@@ -149,6 +151,7 @@ pub(crate) async fn execute(
 fn terminal(
     handler: Option<Handler>,
     input: Input,
+    elicit: Elicit,
     outcome_tx: oneshot::Sender<Inner>,
     stream_tx: oneshot::Sender<Handover>,
 ) -> Terminal {
@@ -165,6 +168,7 @@ fn terminal(
                         agent: c.agent,
                         args: parsed.args,
                         display_name: c.display_name,
+                        elicit,
                         env,
                         format: c.format,
                         format_explicit: c.format_explicit,

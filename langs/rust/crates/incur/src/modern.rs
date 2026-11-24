@@ -11,7 +11,7 @@ use crate::mcp::{CacheHint, CacheScope};
 pub(crate) const VERSION: &str = "2026-07-28";
 const VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
 const INFO_KEY: &str = "io.modelcontextprotocol/clientInfo";
-const CAPABILITIES_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
+pub(crate) const CAPABILITIES_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
 const LOG_KEY: &str = "io.modelcontextprotocol/logLevel";
 const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
 const RESERVED: [&str; 4] = [VERSION_KEY, INFO_KEY, CAPABILITIES_KEY, LOG_KEY];
@@ -239,7 +239,9 @@ pub(crate) fn encode(
     info: Value,
     cache: Option<&CacheHint>,
 ) -> Map<String, Value> {
-    out.insert("resultType".into(), "complete".into());
+    if out.get("resultType").and_then(Value::as_str) != Some("input_required") {
+        out.insert("resultType".into(), "complete".into());
+    }
     let cacheable = [
         "tools/list",
         "prompts/list",

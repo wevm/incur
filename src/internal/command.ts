@@ -4,6 +4,7 @@ import type { FieldError } from '../Errors.js'
 import { IncurError, ValidationError } from '../Errors.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from '../middleware.js'
 import * as Parser from '../Parser.js'
+import { toJsonSchema } from '../Schema.js'
 
 /** @internal Sentinel symbol for `ok()` and `error()` return values. */
 const sentinel = Symbol.for('incur.sentinel')
@@ -57,6 +58,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
     vars: varsSchema,
     middlewares = [],
     request,
+    elicit = elicitation().elicit,
   } = options
   const displayName = options.displayName ?? name
   const parseMode = options.parseMode ?? 'argv'
@@ -112,6 +114,7 @@ export async function execute(command: any, options: execute.Options): Promise<e
       agent,
       args,
       displayName,
+      elicit,
       env: commandEnv,
       error: errorFn,
       format,
@@ -258,6 +261,125 @@ export function fromError(error: unknown): execute.Failure {
   })
 }
 
+/** @internal An `elicitation/create` request a tool call answers with `input_required`. */
+export type InputRequired = {
+  resultType: 'input_required'
+  inputRequests: Record<string, { method: 'elicitation/create'; params: Record<string, unknown> }>
+  requestState?: string | undefined
+}
+
+/**
+ * @internal Creates `c.elicit` for one run. Without `input`, as on the CLI, every call fails with
+ * `ELICITATION_UNSUPPORTED`.
+ *
+ * MCP tool calls are stateless: a call that needs input stops the command and answers
+ * `input_required`, and the client retries the call with the answer. The command reruns, and its
+ * `n`th `c.elicit` call reads the answer keyed `elicit-n`. Earlier answers ride in `requestState`,
+ * since a retry carries only the answers to the latest request.
+ */
+export function elicitation(input?: elicitation.Input) {
+  const capabilities = input?.capabilities as Record<string, unknown> | undefined
+  const declared = isRecord(capabilities?.elicitation) ? capabilities.elicitation : undefined
+  const supports = (mode: 'form' | 'url') =>
+    declared !== undefined &&
+    (mode in declared || (mode === 'form' && !('url' in declared) && !('form' in declared)))
+  const responses: Record<string, unknown> = {
+    ...stateResponses(input?.requestState),
+    ...input?.inputResponses,
+  }
+  let index = 0
+  let pending: InputRequired | undefined
+
+  const ask = <value>(
+    mode: 'form' | 'url',
+    params: Record<string, unknown>,
+    read: (response: Record<string, unknown>) => value | undefined,
+  ): Promise<value> => {
+    const key = `elicit-${index++}`
+    if (!supports(mode))
+      throw new IncurError({
+        code: 'ELICITATION_UNSUPPORTED',
+        message: `Elicitation requires an MCP client that supports ${mode} elicitation.`,
+      })
+    const response = responses[key]
+    const action = isRecord(response) ? response.action : undefined
+    const value =
+      action === 'accept' || action === 'decline' || action === 'cancel'
+        ? read(response as Record<string, unknown>)
+        : undefined
+    if (value !== undefined) return Promise.resolve(value)
+    if (!pending) {
+      const answered: Record<string, unknown> = {}
+      for (let i = 0; i < index - 1; i++)
+        if (`elicit-${i}` in responses) answered[`elicit-${i}`] = responses[`elicit-${i}`]
+      pending = {
+        resultType: 'input_required',
+        inputRequests: { [key]: { method: 'elicitation/create', params: { mode, ...params } } },
+        ...(Object.keys(answered).length > 0
+          ? { requestState: JSON.stringify(answered) }
+          : undefined),
+      }
+    }
+    throw new IncurError({ code: 'INPUT_REQUIRED', message: 'Waiting for the user to respond.' })
+  }
+
+  const elicit = (options: { message: string; schema: z.ZodObject<any> }) => {
+    const { message, schema } = options
+    const properties: Record<string, unknown> = {}
+    // Clients answer with what the schema accepts, which parsing then turns into its output.
+    const json = toJsonSchema(schema, { io: 'input' })
+    Object.assign(properties, json.properties ?? {})
+    const required = (json.required as string[] | undefined) ?? []
+    const requestedSchema = {
+      type: 'object',
+      properties,
+      ...(required.length > 0 ? { required } : undefined),
+    }
+    return ask('form', { message, requestedSchema }, (response) => {
+      if (response.action !== 'accept') return { action: response.action }
+      if (!isRecord(response.content)) return undefined
+      try {
+        return { action: 'accept', content: Parser.zodParse(schema, response.content) }
+      } catch {
+        return undefined
+      }
+    })
+  }
+  elicit.url = (options: { message: string; url: string }) =>
+    ask('url', { message: options.message, url: options.url }, (response) => ({
+      action: response.action,
+    }))
+
+  return { elicit, pending: () => pending }
+}
+
+export declare namespace elicitation {
+  /** What a 2026-07-28 MCP request carries for elicitation. */
+  type Input = {
+    /** The request's `io.modelcontextprotocol/clientCapabilities`. */
+    capabilities?: unknown
+    /** Answers to the previous `input_required`, keyed by input request. */
+    inputResponses?: Record<string, unknown> | undefined
+    /** The `requestState` echoed from the previous `input_required`. */
+    requestState?: unknown
+  }
+}
+
+/** Reads the answers an earlier `input_required` carried in `requestState`. Anything else carries none. */
+function stateResponses(state: unknown): Record<string, unknown> {
+  if (typeof state !== 'string') return {}
+  try {
+    const parsed = JSON.parse(state)
+    return isRecord(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 /** @internal Splits flat params into args vs options using schema shapes. */
 function splitParams(
   params: Record<string, unknown>,
@@ -310,6 +432,8 @@ export declare namespace execute {
     path: string
     /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
     request?: Request | undefined
+    /** `c.elicit` for an MCP tool call. Defaults to one that fails with `ELICITATION_UNSUPPORTED`. */
+    elicit?: ReturnType<typeof elicitation>['elicit'] | undefined
     /** Vars schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */

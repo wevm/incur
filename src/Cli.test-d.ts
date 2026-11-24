@@ -637,3 +637,20 @@ test('prompt get() and complete infer from the args schema', () => {
       },
     })
 })
+
+test('c.elicit content infers from the schema', () => {
+  Cli.create('test').command('ask', {
+    async run(c) {
+      const answer = await c.elicit({
+        message: 'Who?',
+        schema: z.object({ name: z.string(), role: z.enum(['dev', 'ops']).default('dev') }),
+      })
+      if (answer.action === 'accept')
+        expectTypeOf(answer.content).toEqualTypeOf<{ name: string; role: 'dev' | 'ops' }>()
+      else expectTypeOf(answer.action).toEqualTypeOf<'decline' | 'cancel'>()
+      const opened = await c.elicit.url({ message: 'Sign in', url: 'https://example.com' })
+      expectTypeOf(opened).toEqualTypeOf<{ action: 'accept' | 'decline' | 'cancel' }>()
+      return {}
+    },
+  })
+})

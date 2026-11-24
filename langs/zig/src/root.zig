@@ -55,6 +55,10 @@ pub const Run = declare.Run;
 pub const Command = command.Command;
 /// The context a command handler receives.
 pub const Context = command.Context;
+/// The user's answer to an elicitation.
+pub const Elicited = @import("elicit.zig").Elicited;
+/// How the user answered an elicitation.
+pub const ElicitAction = @import("elicit.zig").Action;
 /// The input types a handler declares.
 pub const Input = command.Input;
 /// A command result.

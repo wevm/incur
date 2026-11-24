@@ -4338,6 +4338,8 @@ type CommandDefinition<
     args: InferOutput<args>
     /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
     displayName: string
+    /** Asks the MCP client's user for input while the command runs as a 2026-07-28 tool. */
+    elicit: Mcp.Elicit
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */

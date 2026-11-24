@@ -160,7 +160,8 @@ def encode(
 ) -> dict[str, Json]:
     """Stamps `resultType`, cache hints, and the server identity on a modern result."""
     out = dict(result)
-    out["resultType"] = "complete"
+    if out.get("resultType") != "input_required":
+        out["resultType"] = "complete"
     if method in _CACHEABLE:
         # The server's hints cover lists and discovery; reads keep the defaults.
         hint = cache if method != "resources/read" else None

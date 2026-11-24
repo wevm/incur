@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
+from ._elicit import Elicit
 from ._errors import CtaBlock, Error, unknown
 from ._formatter import Format
 from ._help import Example, Usage
@@ -74,6 +75,8 @@ class Context(Generic[A, O, E, V, G]):
     """The CLI version."""
     request: Request | None = None
     """The HTTP request, when the command runs over HTTP or HTTP MCP."""
+    elicit: Elicit = field(default_factory=Elicit)
+    """Asks the MCP client's user for input while the command runs as a 2026-07-28 tool."""
 
     def __class_getitem__(cls, params: object) -> Any:
         """Fills omitted input parameters with `None`, and omitted state parameters with `Any`."""
@@ -292,6 +295,7 @@ async def execute(
     chain: list[Middleware],
     parse: Parse,
     sink: Sink,
+    elicit: Elicit | None = None,
 ) -> Success | Error | None:
     """Runs the middleware chain around a command, as every transport does.
 
@@ -307,7 +311,7 @@ async def execute(
         except Error as error:
             result = error
             return
-        result = await _invoke(command, context, args, options, env, sink)
+        result = await _invoke(command, context, args, options, env, sink, elicit or Elicit())
 
     failure = await run_chain(chain, context, last)
     return result if failure is None else failure
@@ -320,6 +324,7 @@ async def _invoke(
     options: dict[str, Json],
     env: dict[str, Json],
     sink: Sink,
+    elicit: Elicit,
 ) -> Success | Error | None:
     """Runs a handler, awaiting coroutines and passing streams to `sink`."""
     handler = command.handler
@@ -339,6 +344,7 @@ async def _invoke(
             var=c.var,
             version=c.version,
             request=c.request,
+            elicit=elicit,
         )
         result = handler(context)
         if inspect.isawaitable(result):
