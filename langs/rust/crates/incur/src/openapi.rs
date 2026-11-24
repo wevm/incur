@@ -510,11 +510,16 @@ fn generate(
             ));
         }
         for (key, property) in &body_props {
-            let mut zod = Zod::from_json(property);
-            if !body_required.contains(key) {
-                zod = zod.optional();
-            }
-            options.push(Field::new(key.clone(), zod.into_type()));
+            let zod = Zod::from_json(property);
+            let ty = if body_required.contains(key) {
+                zod.into_type()
+            } else {
+                // `.optional()` returns a new instance, which reports no description.
+                let mut ty = zod.optional().into_type();
+                ty.description = None;
+                ty
+            };
+            options.push(Field::new(key.clone(), ty));
         }
         for header in &headers {
             let mut zod = header.schema.as_ref().map_or_else(
@@ -641,16 +646,18 @@ fn without_defaults(
 
 /// Whether a union variant can be an object; others (e.g. a JSON-RPC batch array) carry no fields.
 fn object_variant(schema: &Value) -> bool {
-    schema.as_object().is_some_and(|map| match map.get("type") {
-        None => true,
-        Some(Value::Array(types)) => types.iter().any(|t| t == "object"),
-        Some(t) => t == "object",
-    })
+    // `true` accepts any body, so it adds no fields and makes none required.
+    *schema == Value::Bool(true)
+        || schema.as_object().is_some_and(|map| match map.get("type") {
+            None => true,
+            Some(Value::Array(types)) => types.iter().any(|t| t == "object"),
+            Some(t) => t == "object",
+        })
 }
 
 /// Merges same-named fields in first-seen order. A field whose schemas differ keeps only the `type`
-/// they share, so argv still coerces, and otherwise accepts any value. The server validates it
-/// against the composed schema.
+/// they share, along with a default its members agree on, so argv still coerces; otherwise it
+/// accepts any value. The server validates it against the composed schema.
 fn merge_properties(fields: &[(Map<String, Value>, Vec<String>)]) -> Map<String, Value> {
     let mut properties = Map::new();
     for (name, first) in fields.iter().flat_map(|(p, _)| p) {
@@ -665,10 +672,27 @@ fn merge_properties(fields: &[(Map<String, Value>, Vec<String>)]) -> Map<String,
             let first = key(first);
             first.is_some() && schemas.iter().all(|schema| key(schema) == first)
         };
+        // Union variants drop their defaults, so a default here comes from a member that always
+        // applies.
+        let defaults = schemas
+            .iter()
+            .filter_map(|schema| schema.get("default"))
+            .collect::<Vec<_>>();
+        let mut kept = Map::new();
+        if let Some(value) = defaults.first()
+            && defaults
+                .iter()
+                .all(|other| js::stringify(other) == js::stringify(value))
+        {
+            kept.insert("default".into(), (*value).clone());
+        }
         let merged = if same(&|schema| Some(js::stringify(schema))) {
             first.clone()
         } else if same(&|schema| schema_type(schema).map(|t| js::stringify(&t))) {
-            json!({ "type": schema_type(first) })
+            let mut typed = Map::new();
+            typed.insert("type".into(), schema_type(first).unwrap_or_default());
+            typed.extend(kept);
+            Value::Object(typed)
         } else {
             json!({})
         };

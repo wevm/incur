@@ -209,7 +209,8 @@ pub(crate) fn composed_spec() -> Value {
                     "type": "object",
                     "properties": {
                         "ref": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "Git ref"
                         }
                     }
                 },
@@ -512,6 +513,117 @@ pub(crate) fn composed_spec() -> Value {
                     }
                 }
             },
+            "/notes": {
+                "post": {
+                    "operationId": "createNote",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": {
+                                            "type": "string",
+                                            "description": "Note text"
+                                        },
+                                        "tag": {
+                                            "type": "string",
+                                            "description": "Tag"
+                                        }
+                                    },
+                                    "required": [
+                                        "text"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/flex": {
+                "patch": {
+                    "operationId": "updateFlex",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "note": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "kind": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "required": [
+                                                "kind"
+                                            ]
+                                        },
+                                        true
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/stock": {
+                "put": {
+                    "operationId": "setStock",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "qty": {
+                                            "type": "integer",
+                                            "default": 5
+                                        },
+                                        "level": {
+                                            "type": "string",
+                                            "default": "low"
+                                        },
+                                        "mode": {
+                                            "enum": [
+                                                "auto",
+                                                "manual"
+                                            ],
+                                            "default": "auto"
+                                        }
+                                    },
+                                    "required": [
+                                        "qty"
+                                    ],
+                                    "allOf": [
+                                        {
+                                            "properties": {
+                                                "qty": {
+                                                    "type": "integer",
+                                                    "minimum": 1
+                                                },
+                                                "level": {
+                                                    "type": "string",
+                                                    "default": "high"
+                                                },
+                                                "mode": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "/raw": {
                 "post": {
                     "operationId": "raw",
@@ -525,7 +637,8 @@ pub(crate) fn composed_spec() -> Value {
                                         },
                                         {
                                             "type": "string"
-                                        }
+                                        },
+                                        false
                                     ]
                                 }
                             }

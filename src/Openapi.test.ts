@@ -661,6 +661,51 @@ describe('generateCommands', () => {
       "
     `)
   })
+
+  test('keeps unconditional defaults and treats `true` variants as unconstrained', async () => {
+    const spec = {
+      openapi: '3.1.0',
+      info: { title: 'Edge API', version: '1.0.0' },
+      paths: {
+        '/stock': {
+          put: {
+            operationId: 'setStock',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { qty: { type: 'integer', default: 5 }, note: { type: 'string' } },
+                    required: ['qty'],
+                    allOf: [{ properties: { qty: { type: 'integer', minimum: 1 } } }],
+                    anyOf: [
+                      {
+                        type: 'object',
+                        properties: { kind: { type: 'string' } },
+                        required: ['kind'],
+                      },
+                      true,
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as const
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: async (request) => Response.json(await request.json()),
+      openapi: spec,
+    })
+    // `qty` keeps its default through the `allOf` refinement; `kind` is optional because of `true`.
+    const { output } = await serve(cli, ['api', 'setStock', '--note', 'hi'])
+    expect(output).toMatchInlineSnapshot(`
+      "qty: 5
+      note: hi
+      "
+    `)
+  })
 })
 
 describe('cli integration', () => {
