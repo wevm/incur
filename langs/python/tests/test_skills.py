@@ -129,7 +129,9 @@ def stub(tmp_path: Path, output: str) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     npx = bin_dir / "npx"
-    npx.write_text(f'#!/bin/sh\necho "$@" >> "{tmp_path}/calls"\nprintf "{output}"\n')
+    npx.write_text(
+        f'#!/bin/sh\necho "$@" >> "{tmp_path}/calls"\nprintf "{output}"\n', encoding="utf-8"
+    )
     npx.chmod(0o755)
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
@@ -142,6 +144,7 @@ def mcp_add(cli: incur.Cli, env: dict[str, str], *argv: str) -> tuple[int, str]:
     return code, stdout.getvalue()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="its npx stub is a POSIX shell script")
 def test_mcp_add_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env = stub(tmp_path, "│ ✓ Cursor: added\\n✓ \\n")
     cli = incur.Cli("kit", update=False)
