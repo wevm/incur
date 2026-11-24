@@ -381,6 +381,7 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         ),
         ("--format <toon|json|yaml|md|jsonl>".into(), "Output format"),
         ("--help".into(), "Show help"),
+        ("--json".into(), "Shorthand for --format json"),
         ("--llms, --llms-full".into(), "Print LLM-readable manifest"),
         ("--schema".into(), "Show JSON Schema for command"),
         (
