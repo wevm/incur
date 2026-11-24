@@ -1695,10 +1695,11 @@ async function serveImpl(
     const end = tokenLimit != null ? offset + tokenLimit : total
     if (offset === 0 && end >= total) return { text: s, truncated: false }
     const sliced = sliceByTokens(s, offset, end)
+    const start = Math.min(offset, total)
     const actualEnd = Math.min(end, total)
     const nextOffset = actualEnd < total ? actualEnd : undefined
     return {
-      text: `${sliced}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
+      text: `${sliced}\n[truncated: showing tokens ${start}–${actualEnd} of ${total}]`,
       truncated: true,
       nextOffset,
     }
@@ -2877,13 +2878,13 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+      if (!Number.isFinite(n) || n < 0 || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
       tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+      if (!Number.isFinite(n) || n < 0 || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
       tokenOffset = n
       i++

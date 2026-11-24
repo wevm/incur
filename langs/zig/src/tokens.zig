@@ -103,12 +103,8 @@ pub fn estimate(a: Allocator, text: []const u8) Allocator.Error!usize {
     return total;
 }
 
-/// Returns the text between token positions `start` and `end`. Negative positions count from
-/// the end, as in `Array.prototype.slice`.
-pub fn slice(a: Allocator, text: []const u8, start_pos: f64, end_pos: f64) Allocator.Error![]const u8 {
-    const total: f64 = if (start_pos < 0 or end_pos < 0) @floatFromInt(try estimate(a, text)) else 0;
-    const start = if (start_pos < 0) @max(total + start_pos, 0) else start_pos;
-    const end = if (end_pos < 0) @max(total + end_pos, 0) else end_pos;
+/// Returns the text between the nonnegative token positions `start` and `end`.
+pub fn slice(a: Allocator, text: []const u8, start: f64, end: f64) Allocator.Error![]const u8 {
     if (start >= end) return "";
     var out: std.ArrayList(u8) = .empty;
     var position: f64 = 0;
