@@ -24,7 +24,9 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
   ])
   // Instances are created on the first message, so surface tool registration errors now.
   collectTools(commands, [], [], options.tools, options.globals, options.defaults?.options)
-  for (const template of options.resourceTemplates ?? []) templatePattern(template.uriTemplate)
+  // `cli.resource()`, `cli.resourceTemplate()`, and `cli.prompt()` pass their typed definitions here.
+  const { prompts, resources, resourceTemplates } = options as Features
+  for (const template of resourceTemplates ?? []) templatePattern(template.uriTemplate)
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   serveStdio(
@@ -36,9 +38,9 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
         cache: options.cache,
         instructions: options.instructions,
         middlewares: options.middlewares as MiddlewareHandler[] | undefined,
-        prompts: options.prompts,
-        resources: options.resources,
-        resourceTemplates: options.resourceTemplates,
+        prompts,
+        resources,
+        resourceTemplates,
         title: options.title,
         tools: options.tools,
         vars: options.vars,
@@ -201,7 +203,7 @@ export type Prompt<args extends z.ZodObject<any> | undefined = z.ZodObject<any> 
   ) => string | PromptMessage[] | Promise<string | PromptMessage[]>
 }
 
-/** Resources, resource templates, and prompts served next to tools. */
+/** @internal Resources, resource templates, and prompts served next to tools, registered with `cli.resource()`, `cli.resourceTemplate()`, and `cli.prompt()`, which type each prompt from its own schema. */
 export type Features = {
   /** Prompts. */
   prompts?: Prompt<any>[] | undefined
@@ -444,7 +446,7 @@ export declare namespace createServer {
 
 export declare namespace serve {
   /** Options for the MCP server. */
-  type Options<globals extends z.ZodObject<any> | undefined = undefined> = Features & {
+  type Options<globals extends z.ZodObject<any> | undefined = undefined> = {
     /** Values for tool calls that do not pass their own, such as the globals and config file of `my-cli --mcp`. They become the defaults of the tool input schemas. */
     defaults?: Defaults | undefined
     /** CLI-level env schema. */

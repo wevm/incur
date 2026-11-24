@@ -589,6 +589,9 @@ pub(crate) fn kb() -> Cli {
             "packages",
             |_, v| json!(format!("{} {} {}", v["name"], v["version"], v["os"])),
         ))
+        .resource_template(ResourceTemplate::new("kv://{a}{b}", "pairs", |_, v| {
+            json!(format!("{}|{}", v["a"], v["b"]))
+        }))
         .prompt(review)
         .prompt(hello)
         .command(

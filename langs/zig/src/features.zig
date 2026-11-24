@@ -134,6 +134,8 @@ const Pattern = struct {
         while (longest < uri.len and uri[longest] != '/' and uri[longest] != ',') longest += 1;
         var len = longest;
         while (len > 0) : (len -= 1) {
+            // Split only between UTF-8 characters, as the reference splits between JavaScript characters.
+            if (len < uri.len and uri[len] & 0xC0 == 0x80) continue;
             const after = uri[len..];
             const literal = p.literals[index + 1];
             if (!std.mem.startsWith(u8, after, literal)) continue;

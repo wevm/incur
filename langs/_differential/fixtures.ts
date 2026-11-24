@@ -1235,6 +1235,7 @@ const kb = Cli.create('kb', {
     uriTemplate: 'pkg://{name}-{version}-{os}.zip',
     read: (_uri, v) => `${v.name} ${v.version} ${v.os}`,
   })
+  .resourceTemplate('pairs', { uriTemplate: 'kv://{a}{b}', read: (_uri, v) => `${v.a}|${v.b}` })
   .prompt('review', {
     title: 'Review code',
     description: 'Review a snippet',

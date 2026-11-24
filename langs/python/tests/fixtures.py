@@ -1604,6 +1604,10 @@ def kb() -> incur.Cli:
     def packages(_: str, v: dict[str, str]) -> str:
         return f"{v['name']} {v['version']} {v['os']}"
 
+    @cli.resource_template("pairs", uri_template="kv://{a}{b}")
+    def pairs(_: str, v: dict[str, str]) -> str:
+        return f"{v['a']}|{v['b']}"
+
     @cli.prompt(
         "review",
         title="Review code",
