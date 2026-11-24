@@ -34,6 +34,7 @@
 ## Features
 
 - [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) so agents find your CLI automatically
+- [**Multi-language**](#multi-language): Rust, Python, and Zig ports with the same output, help, and agent integrations
 - [**Session savings**](#session-savings): up to **3× fewer tokens** per session vs. MCP or skill alternatives
 - [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
 - [**TOON output**](#toon-output): token-efficient default format that agents parse easily, with JSON, YAML, Markdown, and JSONL alternatives
@@ -45,7 +46,6 @@
 - [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `Cli.command()`, `.command()`, `.fs()`, and `.serve()`
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
-- [**Multi-language**](#multi-language): Rust, Python, and Zig ports with the same output, help, and agent integrations
 
 ## Agent Prompt
 
@@ -1289,7 +1289,8 @@ See the [Python README](langs/python/README.md) for more.
 Requires Zig 0.17.1.
 
 ```sh
-zig fetch --save https://github.com/wevm/incur/releases/download/incur@0.10.0/incur-zig-0.10.0.tar.gz
+v=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/wevm/incur/releases/latest | sed 's|.*/incur@||')
+zig fetch --save "https://github.com/wevm/incur/releases/download/incur@$v/incur-zig-$v.tar.gz"
 ```
 
 ```zig

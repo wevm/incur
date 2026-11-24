@@ -26,7 +26,6 @@ const targets: [file: string, patterns: RegExp[]][] = [
   ['langs/python/pyproject.toml', [/\[project\][^[]*?\nversion = "([^"]+)"/]],
   ['langs/python/uv.lock', [/\nname = "incur-cli"\nversion = "([^"]+)"/]],
   ['langs/zig/build.zig.zon', [/\n {4}\.version = "([^"]+)"/]],
-  ['README.md', [/download\/incur@([^/]+)\//, /incur-zig-([^/]+)\.tar\.gz/]],
   ['langs/zig/README.md', [/download\/incur@([^/]+)\//, /incur-zig-([^/]+)\.tar\.gz/]],
 ]
 
