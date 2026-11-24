@@ -123,6 +123,17 @@ describe('parse', () => {
     expect(result.options).toEqual({ limit: 10 })
   })
 
+  test('coerces string to number for zod number formats', () => {
+    const result = Parser.parse(['--limit=10', '--offset', '2', '--ratio', '0.5'], {
+      options: z.object({
+        limit: z.int(),
+        offset: z.uint32().optional(),
+        ratio: z.float64().default(1),
+      }),
+    })
+    expect(result.options).toEqual({ limit: 10, offset: 2, ratio: 0.5 })
+  })
+
   test('coerces string to boolean', () => {
     const result = Parser.parse(['--dry', 'true'], {
       options: z.object({ dry: z.boolean() }),
@@ -673,6 +684,17 @@ describe('parseGlobals', () => {
         parsed: { network: 'x', yes: true },
         rest: ['deploy', '-d', '--network=y'],
       })
+    })
+  })
+})
+
+describe('parseEnv', () => {
+  test('coerces string to number for zod number formats', () => {
+    const schema = z.object({ PORT: z.int(), RATIO: z.float64().optional(), LIMIT: z.number() })
+    expect(Parser.parseEnv(schema, { PORT: '8080', RATIO: '0.5', LIMIT: '3' })).toEqual({
+      PORT: 8080,
+      RATIO: 0.5,
+      LIMIT: 3,
     })
   })
 })

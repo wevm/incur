@@ -78,7 +78,7 @@ const ListArgs = struct {
 const DeployEnv = struct {
     deploy_token: []const u8,
     deploy_region: []const u8 = "us",
-    deploy_retries: ?f64 = null,
+    deploy_retries: ?i64 = null,
     deploy_dry: ?bool = null,
 
     pub const incur = .{

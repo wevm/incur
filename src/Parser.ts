@@ -314,7 +314,8 @@ export function parseEnv<const env extends z.ZodObject<any>>(
 function coerceEnv(value: string, field: z.ZodType): unknown {
   const inner = unwrap(field)
   const typeName = inner.constructor.name
-  if (typeName === 'ZodNumber') return Number(value)
+  // Number formats such as `z.int()` are `ZodNumberFormat` instances with the same `def.type`.
+  if (inner.def.type === 'number') return Number(value)
   if (typeName === 'ZodBoolean') return value === 'true' || value === '1'
   return value
 }
@@ -326,7 +327,7 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   const inner = unwrap(field)
   const typeName = inner.constructor.name
 
-  if (typeName === 'ZodNumber' && typeof value === 'string') {
+  if (inner.def.type === 'number' && typeof value === 'string') {
     return Number(value)
   }
   if (typeName === 'ZodBoolean' && typeof value === 'string') {
