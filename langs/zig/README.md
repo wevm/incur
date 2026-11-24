@@ -312,6 +312,15 @@ my-cli users --token-count                     # count output tokens
 my-cli users --token-limit 20 --token-offset 20  # page through long output
 ```
 
+## Examples
+
+[`examples/npm.zig`](examples/npm.zig) ports the TypeScript [npm example](https://github.com/wevm/incur/blob/main/examples/npm/cli.ts) and matches its output:
+
+```sh
+zig build npm -- install express -D
+zig build npm -- --llms
+```
+
 ## Differences from TypeScript
 
 - Integers in data keep their exact value; TypeScript rounds integers beyond 2^53.

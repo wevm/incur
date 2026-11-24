@@ -67,7 +67,7 @@ cli.command('info', {
 cli.command('init', {
   description: 'Create a package.json file',
   options: z.object({
-    yes: z.boolean().describe('Skip prompts and use defaults'),
+    yes: z.boolean().optional().describe('Skip prompts and use defaults'),
     scope: z.string().optional().describe('Package scope'),
   }),
   alias: { yes: 'y' },
@@ -89,7 +89,7 @@ cli.command('publish', {
   options: z.object({
     tag: z.string().default('latest').describe('Distribution tag'),
     access: z.enum(['public', 'restricted']).default('public').describe('Package access level'),
-    dryRun: z.boolean().describe('Report what would be published'),
+    dryRun: z.boolean().optional().describe('Report what would be published'),
     otp: z.string().optional().describe('One-time password for 2FA'),
   }),
   output: z.object({
@@ -131,7 +131,7 @@ cli.command('uninstall', {
     package: z.string().describe('Package name to remove'),
   }),
   options: z.object({
-    global: z.boolean().describe('Remove global package'),
+    global: z.boolean().optional().describe('Remove global package'),
   }),
   alias: { global: 'g' },
   output: z.object({
@@ -147,8 +147,8 @@ cli.command('uninstall', {
 cli.command('outdated', {
   description: 'Check for outdated packages',
   options: z.object({
-    global: z.boolean().describe('Check global packages'),
-    long: z.boolean().describe('Show extended information'),
+    global: z.boolean().optional().describe('Check global packages'),
+    long: z.boolean().optional().describe('Show extended information'),
   }),
   alias: { global: 'g', long: 'l' },
   output: z.object({
