@@ -674,7 +674,7 @@ def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True
             i += 1
         elif token in ("--token-limit", "--token-offset") and nxt is not None:
             value = _js.to_number(nxt)
-            if not math.isfinite(value) or not _js.trim(nxt):
+            if not math.isfinite(value) or value < 0 or not _js.trim(nxt):
                 raise unknown(f'Invalid value for {token}: "{nxt}"')
             if token == "--token-limit":
                 flags.token_limit = value
@@ -774,6 +774,11 @@ def _find_builtin(token: str) -> str | None:
     return {"completions": "completions", "mcp": "mcp", "skills": "skills", "skill": "skills"}.get(
         token
     )
+
+
+def _find_unshadowed_builtin(commands: dict[str, Entry], token: str) -> str | None:
+    """Resolves a token to a built-in command name unless a command or alias shadows it."""
+    return None if token in commands else _find_builtin(token)
 
 
 def _string_type(description: str) -> Type:
@@ -936,12 +941,12 @@ class _Run:
             return
 
         def builtin_index(builtin: str) -> int | None:
-            if filtered and _find_builtin(filtered[0]) == builtin:
+            if filtered and _find_unshadowed_builtin(cli.commands, filtered[0]) == builtin:
                 return 0
             if (
                 len(filtered) > 1
                 and filtered[0] == cli.name
-                and _find_builtin(filtered[1]) == builtin
+                and _find_unshadowed_builtin(cli.commands, filtered[1]) == builtin
             ):
                 return 1
             return None
@@ -1126,7 +1131,9 @@ class _Run:
         for index in (0, 1):
             if index == 1 and (not filtered or filtered[0] != cli.name):
                 break
-            if len(filtered) > index and _find_builtin(filtered[index]) in ("skills", "mcp"):
+            if len(filtered) > index and _find_unshadowed_builtin(
+                cli.commands, filtered[index]
+            ) in ("skills", "mcp"):
                 return None
         env = self.env_map
         stored = read_hash(cli.name, env)
@@ -1662,7 +1669,7 @@ class _Run:
                         _completions.Candidate(name, description, name != "completions")
                     )
         elif non_flags is not None and len(non_flags) == 2:
-            builtin = _find_builtin(non_flags[1])
+            builtin = _find_unshadowed_builtin(cli.commands, non_flags[1])
             if builtin is not None and builtin != "completions" and builtin in self.builtin_names():
                 for sub in _BUILTIN_SUBCOMMANDS:
                     if sub[0] != builtin:
@@ -1732,10 +1739,11 @@ class _Run:
         if offset == 0 and end >= total:
             return text, False, None
         sliced = _tokens.slice_tokens(text, offset, end)
+        start = min(offset, total)
         actual_end = min(end, total)
         nxt = actual_end if actual_end < total else None
         note = (
-            f"[truncated: showing tokens {_js.number_to_string(offset)}\u2013"
+            f"[truncated: showing tokens {_js.number_to_string(start)}\u2013"
             f"{_js.number_to_string(actual_end)} of {_js.number_to_string(total)}]"
         )
         return f"{sliced}\n{note}", True, nxt

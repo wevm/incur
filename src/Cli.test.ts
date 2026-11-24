@@ -1980,6 +1980,7 @@ describe('subcommands', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -2799,6 +2800,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for command
@@ -2838,6 +2840,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for command
@@ -2996,6 +2999,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3030,6 +3034,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3137,6 +3142,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for command
@@ -3170,6 +3176,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3287,6 +3294,7 @@ describe('env', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3325,6 +3333,7 @@ describe('env', () => {
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
           --help                              Show help
+          --json                              Shorthand for --format json
           --llms, --llms-full                 Print LLM-readable manifest
           --schema                            Show JSON Schema for command
           --token-count                       Print token count of output (instead of output)
@@ -3451,6 +3460,27 @@ describe('built-in commands', () => {
     const { output } = await serve(cli, ['completions', '--help'])
     expect(output).toContain('test completions')
     expect(output).toContain('Generate shell completion script')
+  })
+
+  test('registered commands and aliases shadow built-ins of the same name', async () => {
+    const cli = Cli.create('test')
+      .command('mcp', { run: () => ({ user: true }) })
+      .command('skill', { args: z.object({ id: z.string() }), run: (c) => ({ id: c.args.id }) })
+      .command('shell', { aliases: ['completions'], run: () => ({ shell: true }) })
+    expect((await serve(cli, ['mcp'])).output).toMatchInlineSnapshot(`
+      "user: true
+      "
+    `)
+    expect((await serve(cli, ['skill', 'abc'])).output).toMatchInlineSnapshot(`
+      "id: abc
+      "
+    `)
+    expect((await serve(cli, ['completions'])).output).toMatchInlineSnapshot(`
+      "shell: true
+      "
+    `)
+    // Names nothing shadows still reach the built-in
+    expect((await serve(cli, ['skills'])).output).toContain('test skills')
   })
 
   test('bare mcp shows help with subcommands', async () => {
@@ -7839,6 +7869,22 @@ test('--token-offset with non-numeric value errors', async () => {
   const { exitCode, output } = await serve(cli, ['hello', '--token-offset', 'foo', '--json'])
   expect(exitCode).toBe(1)
   expect(output).not.toContain('NaN')
+})
+
+test.each(['--token-limit', '--token-offset'])('%s with a negative value errors', async (flag) => {
+  let ran = false
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => {
+      ran = true
+      return c.ok({ message: 'hello world' })
+    },
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', flag, '-3'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain(`Invalid value for ${flag}`)
+  expect(output).toContain('-3')
+  expect(ran).toBe(false)
 })
 
 describe('command aliases', () => {

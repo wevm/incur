@@ -768,7 +768,7 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
             i += 1;
         } else if ((eql(token, "--token-limit") or eql(token, "--token-offset")) and next != null) {
             const value = js.toNumber(next.?);
-            if (!std.math.isFinite(value) or js.trim(next.?).len == 0)
+            if (!std.math.isFinite(value) or value < 0 or js.trim(next.?).len == 0)
                 return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid value for {s}: \"{s}\"", .{ token, next.? }) } };
             if (eql(token, "--token-limit")) flags.token_limit = value else flags.token_offset = value;
             i += 1;
@@ -975,6 +975,13 @@ fn findBuiltin(token: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, token, "mcp")) return "mcp";
     if (std.mem.eql(u8, token, "skills") or std.mem.eql(u8, token, "skill")) return "skills";
     return null;
+}
+
+/// Resolves a token to a built-in command name, unless a registered command or alias of the same
+/// name shadows it.
+fn findUnshadowedBuiltin(commands: Commands, token: []const u8) ?[]const u8 {
+    if (lookup(commands, token) != null) return null;
+    return findBuiltin(token);
 }
 
 /// Output settings resolved for a command.
@@ -1707,7 +1714,7 @@ const Run = struct {
                     if (std.mem.startsWith(u8, name, current) and !listed(candidates.items, name))
                         try candidates.append(a, .{ .description = description, .no_space = !std.mem.eql(u8, name, "completions"), .value = name });
                 }
-            } else if (non_flags.items.len == 2) if (findBuiltin(non_flags.items[1])) |b_name| {
+            } else if (non_flags.items.len == 2) if (findUnshadowedBuiltin(cli.commands.items, non_flags.items[1])) |b_name| {
                 if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills"))) {
                     for (builtin_subcommands) |s| if (std.mem.eql(u8, s.builtin, b_name)) {
                         for (try std.mem.concat(a, []const u8, &.{ &.{s.name}, s.aliases })) |value| {
@@ -1758,7 +1765,7 @@ const Run = struct {
         return .{
             try std.fmt.allocPrint(a, "{s}\n[truncated: showing tokens {s}\u{2013}{s} of {s}]", .{
                 sliced,
-                try js.numberToString(a, offset),
+                try js.numberToString(a, @min(offset, total)),
                 try js.numberToString(a, actual_end),
                 try js.numberToString(a, total),
             }),
@@ -2383,10 +2390,12 @@ fn listed(candidates: []const completions.Candidate, value: []const u8) bool {
     return false;
 }
 
-/// Returns the index of a built-in in the filtered tokens: first, or after the CLI name.
+/// Returns the index of a built-in in the filtered tokens: first, or after the CLI name. A
+/// registered command or alias of the same name shadows the built-in.
 fn builtinIndex(cli: *const Cli, filtered: []const []const u8, b: []const u8) ?usize {
-    if (filtered.len > 0) if (findBuiltin(filtered[0])) |found| if (std.mem.eql(u8, found, b)) return 0;
-    if (filtered.len > 1 and std.mem.eql(u8, filtered[0], cli.name)) if (findBuiltin(filtered[1])) |found| if (std.mem.eql(u8, found, b)) return 1;
+    const commands = cli.commands.items;
+    if (filtered.len > 0) if (findUnshadowedBuiltin(commands, filtered[0])) |found| if (std.mem.eql(u8, found, b)) return 0;
+    if (filtered.len > 1 and std.mem.eql(u8, filtered[0], cli.name)) if (findUnshadowedBuiltin(commands, filtered[1])) |found| if (std.mem.eql(u8, found, b)) return 1;
     return null;
 }
 

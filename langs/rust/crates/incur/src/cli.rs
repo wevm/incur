@@ -1197,7 +1197,10 @@ fn extract_flags(
             "--token-limit" | "--token-offset" if next.is_some() => {
                 let raw = next.map_or("", String::as_str);
                 let value = js::to_number(raw);
-                if !value.is_finite() || raw.trim_matches(js::is_whitespace).is_empty() {
+                if !value.is_finite()
+                    || value < 0.0
+                    || raw.trim_matches(js::is_whitespace).is_empty()
+                {
                     return Err(Error::new(
                         "UNKNOWN",
                         format!("Invalid value for {token}: \"{raw}\""),
@@ -1478,6 +1481,19 @@ fn find_builtin(token: &str) -> Option<&'static str> {
     }
 }
 
+/// Resolves a token to a built-in command name, unless a registered command or alias of the same
+/// name shadows it.
+fn find_unshadowed_builtin(
+    commands: &IndexMap<String, Entry>,
+    token: &str,
+) -> Option<&'static str> {
+    if commands.contains_key(token) {
+        None
+    } else {
+        find_builtin(token)
+    }
+}
+
 /// The per-invocation serve state.
 struct Run<'a, 'b> {
     /// The CLI.
@@ -1679,12 +1695,14 @@ impl Run<'_, '_> {
             return;
         }
 
+        let commands = self.commands.clone();
         let builtin_index = |builtin: &str| {
-            if filtered.first().and_then(|t| find_builtin(t)) == Some(builtin) {
+            let matches = |token: Option<&String>| {
+                token.and_then(|t| find_unshadowed_builtin(&commands, t)) == Some(builtin)
+            };
+            if matches(filtered.first()) {
                 Some(0)
-            } else if filtered.first() == Some(&cli.name)
-                && filtered.get(1).and_then(|t| find_builtin(t)) == Some(builtin)
-            {
+            } else if filtered.first() == Some(&cli.name) && matches(filtered.get(1)) {
                 Some(1)
             } else {
                 None
@@ -2790,10 +2808,13 @@ impl Run<'_, '_> {
     /// Returns the notice that installed skills are out of date, when they are.
     async fn skills_notice(&mut self, filtered: &[String]) -> Option<FormattedCtaBlock> {
         let cli = self.cli;
+        let commands = &self.commands;
+        let matches = |token: Option<&String>, name: &str| {
+            token.and_then(|t| find_unshadowed_builtin(commands, t)) == Some(name)
+        };
         let builtin = |name: &str| {
-            filtered.first().and_then(|t| find_builtin(t)) == Some(name)
-                || (filtered.first() == Some(&cli.name)
-                    && filtered.get(1).and_then(|t| find_builtin(t)) == Some(name))
+            matches(filtered.first(), name)
+                || (filtered.first() == Some(&cli.name) && matches(filtered.get(1), name))
         };
         if builtin("skills") || builtin("mcp") {
             return None;
@@ -2901,8 +2922,8 @@ impl Run<'_, '_> {
                 }
             }
             Some([_, parent]) => {
-                if let Some(builtin) =
-                    find_builtin(parent).filter(|b| *b != "completions" && cli.builtin_enabled(b))
+                if let Some(builtin) = find_unshadowed_builtin(&commands, parent)
+                    .filter(|b| *b != "completions" && cli.builtin_enabled(b))
                 {
                     for sub in BUILTIN_SUBCOMMANDS.iter().filter(|s| s.0 == builtin) {
                         for value in std::iter::once(sub.1).chain(sub.3.iter().copied()) {
@@ -3006,12 +3027,13 @@ impl Run<'_, '_> {
             return (text.to_owned(), false, None);
         }
         let sliced = tokens::slice(text, offset, end);
+        let start = offset.min(total);
         let actual_end = end.min(total);
         let next = (actual_end < total).then_some(actual_end);
         (
             format!(
                 "{sliced}\n[truncated: showing tokens {}\u{2013}{} of {}]",
-                js::number_to_string(offset),
+                js::number_to_string(start),
                 js::number_to_string(actual_end),
                 js::number_to_string(total)
             ),

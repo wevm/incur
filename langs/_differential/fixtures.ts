@@ -169,7 +169,7 @@ const app = Cli.create('app', {
     env: z.object({
       DEPLOY_TOKEN: z.string().describe('Deploy token'),
       DEPLOY_REGION: z.string().default('us').describe('Region'),
-      DEPLOY_RETRIES: z.number().optional().describe('Retries'),
+      DEPLOY_RETRIES: z.int().optional().describe('Retries'),
       DEPLOY_DRY: z.boolean().optional().describe('Dry run'),
     }),
     options: z.object({
@@ -242,7 +242,7 @@ const app = Cli.create('app', {
     options: z.object({
       verbose: z.number().default(0).describe('Verbosity').meta({ count: true }),
       quiet: z.boolean().optional().describe('Quiet'),
-      level: z.number().int().optional().describe('Level'),
+      level: z.int().optional().describe('Level'),
     }),
     alias: { verbose: 'v', quiet: 'q' },
     run: (c) => ({
@@ -442,6 +442,27 @@ const rooted = Cli.create('rooted', {
       run: () => ({ leaf: true }),
     }),
   )
+
+const shadow = Cli.create('shadow', {
+  description: 'Commands named like built-ins',
+  update: false,
+})
+  .command(
+    Cli.create('mcp', { description: 'Manage servers' }).command('add', {
+      description: 'Add a server',
+      run: () => ({ added: true }),
+    }),
+  )
+  .command('skill', {
+    description: 'Show a skill',
+    args: z.object({ id: z.string().describe('Skill id') }),
+    run: (c) => ({ id: c.args.id }),
+  })
+  .command('shell', {
+    description: 'Show the shell',
+    aliases: ['completions'],
+    run: () => ({ shell: true }),
+  })
 
 /**
  * The fake network. Every outgoing `fetch` (hosted sources, OpenAPI URLs, the npm registry, MCP
@@ -1333,6 +1354,7 @@ export const clis = {
   raw,
   remote,
   rooted,
+  shadow,
   spaced,
   tools,
   upd,
