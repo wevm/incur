@@ -39,7 +39,7 @@
 Requires Zig 0.17.1.
 
 ```sh
-zig fetch --save https://github.com/wevm/incur/releases/download/incur@0.10.0/incur-zig-0.10.0.tar.gz
+zig fetch --save https://github.com/wevm/incur/releases/download/incur@0.11.0/incur-zig-0.11.0.tar.gz
 ```
 
 ```zig

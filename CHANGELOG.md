@@ -1,5 +1,56 @@
 # incur
 
+## 0.11.0
+
+### Minor Changes
+
+- 4990409: **Breaking:** Unexpected positional arguments now fail with `Unexpected argument: <value>` before the command runs, instead of being silently dropped. This covers commands without `args`, callable group roots, and HTTP path segments past a command's args (which now respond with an `UNKNOWN` error). A final array argument still collects the remaining positionals.
+
+  A `true` or `false` after a command's boolean flag (`--dry-run false`) is now the flag's value when no positional slot is left for it, instead of being ignored with the flag set to `true`. When the command still has a positional slot, the token fills it as before; `--flag=false` and `--no-flag` are unambiguous. Global boolean flags do not read a spaced value, so `--global-flag true` after a command now fails as an unexpected argument.
+
+  Added `--` to end command option parsing: every following token is positional, even when it looks like a flag. Built-in flags such as `--json` are still read anywhere in argv.
+
+- 9ef6992: Added MCP Apps: `cli.app()` serves an HTML view at a `ui://` URI, and a command's `mcp.app` links its tool to it so supporting hosts render its results there.
+- 061606a: Added MCP 2026-07-28 support to `--mcp` and `/mcp`: `server/discover`, per-request `_meta` protocol versions, and the standard request headers, served next to the 2025 `initialize` handshake. Upgraded `@modelcontextprotocol/server` to 2.4.0.
+- 86084eb: Added MCP elicitation: `c.elicit()` asks the MCP client's user for form input and `c.elicit.url()` sends them to a URL, through 2026-07-28 `input_required` results.
+
+  Added an `io` option to `Schema.toJsonSchema()` that describes what a schema accepts instead of what parsing returns.
+
+- 2ae2108: Added MCP resources, resource templates, prompts, and argument completion: `cli.resource()`, `cli.resourceTemplate()`, and `cli.prompt()`.
+- 17d3afb: Added MCP tool metadata: command `mcp.title`, `mcp.icons`, and `mcp.headers` (`x-mcp-header` declarations that 2026-07-28 HTTP clients mirror into validated `Mcp-Param-*` headers), and server `mcp.cache` hints for `tools/list` and `server/discover`.
+- 318ee0c: Fixed `--mcp` tool calls ignoring the global options passed to the server and the config file. Globals such as `my-cli --mcp --profile prod` and each command's config section (honoring `--config <path>` and `--no-config`) now apply to tool calls that do not pass their own values, and show as defaults in the tool input schemas. An invalid server global or config file stops the server at startup. Added the `defaults` option to `Mcp.serve`.
+- 4cb6655: Added declarative CLIs with `parse()` to the Python and Zig ports, matching the Rust `Parser` derive: declare commands as types and groups as unions, then call `parse()` for the typed command or serve a handler for incur-formatted output, `--mcp`, and HTTP.
+- a3613ef: `sync.command` now also applies to Markdown `--llms` and `--llms-full` output (title, command signatures, examples, and the footer) and to the skill files `cli.fetch` serves at `/.well-known/agent-skills/` and `/.well-known/skills/`.
+- f82f39f: Added `sync.command`, which sets the command that generated `SKILL.md` files show in place of the CLI name, such as `bunx @scope/my-cli` (like `mcp.command` for `mcp add`). The command appears in headings, examples, the `command` frontmatter, and "Run `… --help`" descriptions. `requires_bin` becomes its first word, for example `bunx`. Skill names and install directories still derive from the CLI name.
+
+### Patch Changes
+
+- b31208a: Fixed the Bash completion hook on Bash 3.2 (macOS `/bin/bash`): it registers without `-o nosort` when Bash rejects that option, and no longer leaves a `\001` marker on group candidates.
+- 33d311d: Fixed shell completion of options to include the built-in global flags that the command's help lists, such as `--format`, `--help`, and `--token-limit`.
+- 133e889: Fixed shell completion inside a built-in group such as `mcp` or `skills`: it suggests only the group's subcommands, not root commands.
+- 74340b4: Fixed registered commands and aliases named `completions`, `mcp`, `skills`, or `skill` being shadowed by the built-in of the same name: the registered command now runs. Root command positionals still yield to built-ins.
+- 7b8564e: Fixed `Filter.parse` looping forever on an unclosed `[` (e.g. `--filter-output 'a['`). It now throws a `ParseError`, and `--filter-output` reports it before the command runs.
+- 51e5996: Listed `--json` under Global Options in root and command help. Every command accepts it as a shorthand for `--format json`, but help did not mention it.
+- 1f76305: Fixed root help listing a built-in under `Integrations:` when a registered command or alias of the same name shadows it, and dropped the section when every built-in is hidden. Added `hideBuiltins` to `Help.formatRoot` and `Help.formatCommand` options.
+- 2356cb6: Fixed `mcp add` registering Amp: `--no-global` now writes `.amp/settings.json` in the working directory instead of the global settings, invalid Amp settings fail before any agent is configured instead of reporting success, an existing entry keeps its other fields such as `env` and `disabled`, and `--json` or `--format` prints only the result.
+- 98cf9a6: Fixed `mcp add` so a missing, blank, or option-shaped value for `--agent`, `--command`, or `-c` fails with `Missing value for flag` instead of being ignored or swallowing the next flag. These options now also accept `--flag=value`.
+- fa384d5: Matched the TypeScript reference in the Rust, Python, and Zig ports for OpenAPI and MCP-source options whose JSON Schema `type` lists several non-null types, such as `['string', 'array']`. Rust now validates the option as a union instead of reading it as its first non-null type, and coerces it to a number or boolean when any listed type is one. Python's help now shows `<value>` instead of `<union>`. Python and Zig now report a missing required option of this kind as an `invalid_union`, and Python reports the issues of the one listed type that failed only bounds or format checks, as Zod does.
+
+  A type list with a `default`, such as `{ type: ['string', 'integer'], default: 'auto' }`, now stays uncoerced in Rust and Python, as `coerceIfNeeded` skips defaulted members. When an optional option of this kind is omitted, every port now applies its default.
+
+- ae8da74: Rendered Markdown arrays that nest objects or arrays outside tables as compact JSON instead of `[object Object]`. Arrays of scalars still render comma-separated.
+- da075aa: Rendered nested objects and arrays in Markdown table cells as compact JSON, with pipes escaped, instead of `[object Object]`.
+- 925464d: Treated `T | null` union options, such as `z.fromJSONSchema` makes of OpenAPI 3.1 and MCP `type: ['array', 'null']`, as their inner type when parsing argv and environment variables and in help. Repeated flags of a nullable array option now collect into an array instead of failing validation.
+- fd83167: Fixed two cases in OpenAPI-generated body options. A `true` alternative in `anyOf`/`oneOf` now leaves the other variants' fields optional, and a defaulted field that an `allOf` member refines keeps its default.
+- 2937c32: Fixed OpenAPI-generated commands dropping request bodies composed with `anyOf`, `oneOf`, or `allOf`. Their object fields now become options. A field is required only when every union variant requires it, and a field whose schema differs between members accepts any value for the server to validate.
+- 0a128c5: Fixed `skills add` with `--json` or `--format` printing progress and the human summary before the result. It now prints only the formatted result, as `mcp add` does.
+- d03ee25: Fixed `sync.cwd` doing two jobs. It now only sets where `include` globs resolve, and `skills add` and `skills list` both default it to the CLI's package root. `skills add --no-global` always installs into the working directory, so `cwd: import.meta.dirname` no longer puts project skills inside the CLI's own package. `SyncSkills.sync()` and `SyncSkills.list()` take a new `root` option for the glob directory; their `cwd` option keeps working as before.
+- 7daae4a: Fixed same-named CLIs in different projects overwriting each other's skills metadata, which caused false "Skills are out of date" notices. `skills add --no-global` now records its metadata per project, in `<XDG_DATA_HOME>/incur/projects/<hash of the project directory>/<name>.json`. Global installs keep using `<XDG_DATA_HOME>/incur/<name>.json`. The staleness check prefers skills installed in the current project and suggests `skills add --no-global` when those are out of date. `skills list` reports skills installed globally or in the project. `SyncSkills.readHash()` and `SyncSkills.hasInstalledSkills()` take `global: false` to read a project's metadata.
+- 6958e59: Fixed `--token-limit` and `--token-offset` windows: negative values are now rejected with an error before the command runs, and an offset past the end of the output no longer prints a reversed range in the truncation footer (e.g. `showing tokens 100000–13 of 13` is now `13–13 of 13`).
+- 0d3dc99: Fixed required `vars` throwing a `ZodError` before middleware could set them. Each run now starts with only the defaults of the `vars` schema, for commands and fetch gateways alike.
+- 48f2c32: Fixed `mcp add` and `--update` failing on Windows with `spawn npx ENOENT` or `spawn npm ENOENT`. Package-manager commands installed as `.cmd` scripts (`npm`, `npx`, `pnpm`, `pnpx`) now run through `cmd.exe` with each argument quoted so it reaches the script intact.
+- 4ce13db: Coerced option and environment variable strings to numbers for Zod number formats such as `z.int()`, `z.uint32()`, and `z.float64()`, as for `z.number()`.
+
 ## 0.10.0
 
 ### Minor Changes
