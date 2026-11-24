@@ -1044,6 +1044,7 @@ class _Run:
         base = HelpOptions(
             config_flag=self.config_flag(),
             globals=self.cli.globals,
+            hide_builtins=[name for name, _ in _BUILTINS if name in self.cli.commands],
             hide_mcp=self.cli.parse_only,
             hide_skills=not self.cli.sync,
             hide_update=self.cli.update is None,

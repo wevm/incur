@@ -667,6 +667,24 @@ def shadow() -> incur.Cli:
     return cli
 
 
+def shadowall() -> incur.Cli:
+    cli = incur.Cli("shadowall", description="Every built-in shadowed", update=False, sync=False)
+
+    @cli.root()
+    def root(c: Context) -> Data:
+        return {"root": True}
+
+    @cli.command("mcp", description="User mcp")
+    def mcp(c: Context) -> Data:
+        return {"mcp": True}
+
+    @cli.command("completions", description="User completions")
+    def completions(c: Context) -> Data:
+        return {"completions": True}
+
+    return cli
+
+
 def network(request: incur.Request) -> incur.Response | Awaitable[incur.Response]:
     """The fake network: `hosted.test` reaches `upstream`, `registry.test` is a fake npm
     registry, and any other host fails like an unreachable server."""
@@ -1763,6 +1781,7 @@ def cli(name: str) -> incur.Cli:
         "remote": remote,
         "rooted": rooted,
         "shadow": shadow,
+        "shadowall": shadowall,
         "spaced": lambda: kit_cli("kit tool"),
         "tools": tools,
         "upd": upd,

@@ -54,6 +54,7 @@ class Options:
     env_source: Callable[[str], str | None] | None = None
     examples: list[Example] | None = None
     globals: Type | None = None
+    hide_builtins: list[str] = field(default_factory=list[str])
     hide_global_options: bool = False
     hide_mcp: bool = False
     hide_skills: bool = False
@@ -217,9 +218,13 @@ def _global_lines(lines: list[str], options: Options) -> None:
     """Writes the integrations and global options sections."""
     if options.root:
         hidden = {"mcp": options.hide_mcp, "skills": options.hide_skills}
-        builtins = [b for b in _INTEGRATIONS if not hidden.get(b[0])]
+        builtins = [
+            b for b in _INTEGRATIONS if not hidden.get(b[0]) and b[0] not in options.hide_builtins
+        ]
         width = _width([n for n, _ in builtins])
-        lines += ["", "Integrations:"]
+        # Skip the section when every built-in is hidden
+        if builtins:
+            lines += ["", "Integrations:"]
         for name, description in builtins:
             lines.append(f"  {_pad(name, width)}  {description}")
 

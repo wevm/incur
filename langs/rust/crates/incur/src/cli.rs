@@ -748,6 +748,7 @@ impl Cli {
             io,
             notice: None,
             root: root.as_ref(),
+            shadowed: Vec::new(),
             start: Instant::now(),
         };
         run.serve(argv).await;
@@ -1510,6 +1511,8 @@ struct Run<'a, 'b> {
     notice: Option<FormattedCtaBlock>,
     /// The root command.
     root: Option<&'a Command>,
+    /// Built-ins a registered command or alias shadows, which root help leaves out.
+    shadowed: Vec<&'static str>,
     /// When the invocation started.
     start: Instant,
 }
@@ -1554,6 +1557,7 @@ impl Run<'_, '_> {
         help::Options {
             config_flag: self.config_flag(),
             globals: self.cli.globals.as_ref(),
+            hide_builtins: &self.shadowed,
             hide_mcp: self.cli.parse_only,
             hide_skills: !self.cli.sync.enabled,
             hide_update: !self.cli.update.enabled,
@@ -1646,7 +1650,14 @@ impl Run<'_, '_> {
             first.map_or(Scope::None, |first| Scope::Only(first.clone()))
         };
         match cli.tree(&scope).await {
-            Ok(tree) => self.commands = Arc::new(tree),
+            Ok(tree) => {
+                self.shadowed = BUILTINS
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .filter(|name| tree.contains_key(*name))
+                    .collect();
+                self.commands = Arc::new(tree);
+            }
             Err(error) => {
                 self.early_error(&error, human, flags.format);
                 return;

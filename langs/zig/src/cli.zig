@@ -1101,10 +1101,14 @@ const Run = struct {
     }
 
     /// Base help options shared by most help output.
-    fn helpOptions(run: *Run) help.Options {
+    fn helpOptions(run: *Run) Allocator.Error!help.Options {
+        // Built-ins a registered command or alias shadows are unreachable, so root help leaves them out.
+        var shadowed: std.ArrayList([]const u8) = .empty;
+        for (builtins) |entry| if (lookup(run.cli.commands.items, entry[0]) != null) try shadowed.append(run.a, entry[0]);
         return .{
             .config_flag = run.configFlag(),
             .globals = run.cli.options.globals,
+            .hide_builtins = shadowed.items,
             .hide_mcp = run.cli.parse_only,
             .hide_skills = run.cli.options.sync == null,
             .hide_update = run.cli.options.update == null,
@@ -1212,7 +1216,7 @@ const Run = struct {
                 }
             } else if (cli.options.fetch == null) {
                 try run.banner(human, flags.help);
-                var options = run.helpOptions();
+                var options = try run.helpOptions();
                 options.aliases = cli.options.aliases;
                 options.commands = try helpEntries(a, cli.commands.items);
                 options.description = cli.options.description;
@@ -1244,7 +1248,7 @@ const Run = struct {
 
         if (resolved == .help) {
             const h = resolved.help;
-            var options = run.helpOptions();
+            var options = try run.helpOptions();
             options.commands = try helpEntries(a, h.commands);
             options.description = h.description;
             options.hide_skills = false;
@@ -1335,7 +1339,7 @@ const Run = struct {
 
     /// Help options for a command.
     fn commandHelp(run: *Run, c: *const Command, aliases: []const []const u8, version: ?[]const u8, commands: []const help.Entry, root: bool) Allocator.Error!help.Options {
-        var options = run.helpOptions();
+        var options = try run.helpOptions();
         options.aliases = aliases;
         options.args = c.args();
         options.commands = if (commands.len > 0) commands else null;
@@ -1357,7 +1361,7 @@ const Run = struct {
         const cli = run.cli;
         const text = switch (resolved) {
             .help => |h| text: {
-                var options = run.helpOptions();
+                var options = try run.helpOptions();
                 options.commands = try helpEntries(a, h.commands);
                 options.description = h.description;
                 break :text try help.formatRoot(a, try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, h.path }), options);
@@ -1366,7 +1370,7 @@ const Run = struct {
                 const entries = try helpEntries(a, cli.commands.items);
                 if (run.root) |*root| if (entries.len > 0)
                     break :text try help.formatCommand(a, cli.name, try run.commandHelp(root, cli.options.aliases, cli.options.version, entries, true));
-                var options = run.helpOptions();
+                var options = try run.helpOptions();
                 options.aliases = cli.options.aliases;
                 options.commands = entries;
                 options.description = cli.options.description;
@@ -1393,7 +1397,7 @@ const Run = struct {
                 const is_root = std.mem.eql(u8, g.path, cli.name);
                 // A root fetch on a CLI with commands shows the CLI's help.
                 if (is_root and cli.commands.items.len > 0) {
-                    var options = run.helpOptions();
+                    var options = try run.helpOptions();
                     options.globals = null;
                     options.aliases = cli.options.aliases;
                     options.commands = try helpEntries(a, cli.commands.items);
@@ -1415,7 +1419,7 @@ const Run = struct {
         const cli = run.cli;
         switch (resolved) {
             .help => |h| {
-                var options = run.helpOptions();
+                var options = try run.helpOptions();
                 options.commands = try helpEntries(a, h.commands);
                 options.description = h.description;
                 options.hide_skills = false;
@@ -1802,7 +1806,7 @@ const Run = struct {
             };
             // Add the built-in global flags that help lists for the active command
             if (std.mem.startsWith(u8, current, "-")) {
-                var options = run.helpOptions();
+                var options = try run.helpOptions();
                 options.root = non_flags.items.len <= 1;
                 for (try help.globalFlags(a, options)) |f| {
                     var flag_names = std.mem.splitSequence(u8, f[0], ", ");

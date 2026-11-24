@@ -816,6 +816,26 @@ fn shadow(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
+fn shadowallRoot(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .root = true });
+}
+
+fn shadowallMcp(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .mcp = true });
+}
+
+fn shadowallCompletions(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .completions = true });
+}
+
+fn shadowall(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "shadowall", .{ .update = null, .sync = null, .description = "Every built-in shadowed", .root = .{ .run = incur.handler(shadowallRoot) } });
+    errdefer cli.destroy();
+    try cli.command("mcp", .{ .description = "User mcp", .run = incur.handler(shadowallMcp) });
+    try cli.command("completions", .{ .description = "User completions", .run = incur.handler(shadowallCompletions) });
+    return cli;
+}
+
 const ToolsEnv = struct {
     tools_region: []const u8 = "eu",
 
@@ -1546,14 +1566,15 @@ fn updbad(gpa: Allocator) !*incur.Cli {
 /// Returns the fixture CLI with the given key from `cases.json`.
 pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
     const fixtures = .{
-        .{ "app", app },         .{ "bare", bare },         .{ "catalog", catalog }, .{ "cfg", cfg },
-        .{ "dupe", dupe },       .{ "gateway", gateway },   .{ "globals", globals }, .{ "greet", greetCli },
-        .{ "plain", plain },     .{ "proxy", proxy },       .{ "raw", raw },         .{ "rooted", rooted },
-        .{ "tools", tools },     .{ "web", web },           .{ "oa", oa },           .{ "oaroot", oaroot },
-        .{ "remote", remote },   .{ "kit", kit },           .{ "kitpkg", kitpkg },   .{ "kitcmd", kitcmd },
-        .{ "kitbad", kitbad },   .{ "kitver", kitver },     .{ "spaced", spaced },   .{ "upd", upd },
-        .{ "updbeta", updbeta }, .{ "updcheck", updcheck }, .{ "updnone", updnone }, .{ "updpkg", updpkg },
-        .{ "updbad", updbad },   .{ "shadow", shadow },     .{ "kitcwd", kitcwd },   .{ "kitrun", kitrun },
+        .{ "app", app },             .{ "bare", bare },         .{ "catalog", catalog }, .{ "cfg", cfg },
+        .{ "dupe", dupe },           .{ "gateway", gateway },   .{ "globals", globals }, .{ "greet", greetCli },
+        .{ "plain", plain },         .{ "proxy", proxy },       .{ "raw", raw },         .{ "rooted", rooted },
+        .{ "tools", tools },         .{ "web", web },           .{ "oa", oa },           .{ "oaroot", oaroot },
+        .{ "remote", remote },       .{ "kit", kit },           .{ "kitpkg", kitpkg },   .{ "kitcmd", kitcmd },
+        .{ "kitbad", kitbad },       .{ "kitver", kitver },     .{ "spaced", spaced },   .{ "upd", upd },
+        .{ "updbeta", updbeta },     .{ "updcheck", updcheck }, .{ "updnone", updnone }, .{ "updpkg", updpkg },
+        .{ "updbad", updbad },       .{ "shadow", shadow },     .{ "kitcwd", kitcwd },   .{ "kitrun", kitrun },
+        .{ "shadowall", shadowall },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

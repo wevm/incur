@@ -64,6 +64,9 @@ pub struct Options<'a> {
     pub examples: Option<&'a [Example]>,
     /// Global options schema.
     pub globals: Option<&'a Type>,
+    /// Built-in commands to leave out of the integrations list, such as ones a registered command
+    /// shadows.
+    pub hide_builtins: &'a [&'a str],
     /// Hide the global options section.
     pub hide_global_options: bool,
     /// Hide the MCP integration and the `--mcp` flag.
@@ -348,10 +351,14 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
             .iter()
             .filter(|(name, _)| !options.hide_skills || *name != "skills")
             .filter(|(name, _)| !options.hide_mcp || *name != "mcp")
+            .filter(|(name, _)| !options.hide_builtins.contains(name))
             .collect::<Vec<_>>();
         let width = builtins.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
-        lines.push(String::new());
-        lines.push("Integrations:".into());
+        // Skip the section when every built-in is hidden
+        if !builtins.is_empty() {
+            lines.push(String::new());
+            lines.push("Integrations:".into());
+        }
         for (name, description) in builtins {
             lines.push(format!("  {}  {description}", pad(name, width)));
         }

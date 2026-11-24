@@ -968,6 +968,26 @@ fn shadow() -> Cli {
         )
 }
 
+fn shadowall() -> Cli {
+    Cli::new("shadowall")
+        .update(false)
+        .sync(false)
+        .description("Every built-in shadowed")
+        .root(Command::new().run(|_: Context| data(json!({ "root": true }))))
+        .command(
+            "mcp",
+            Command::new()
+                .description("User mcp")
+                .run(|_: Context| data(json!({ "mcp": true }))),
+        )
+        .command(
+            "completions",
+            Command::new()
+                .description("User completions")
+                .run(|_: Context| data(json!({ "completions": true }))),
+        )
+}
+
 /// Returns the fixture CLI with the given key from `cases.json`.
 pub(crate) fn cli(name: &str) -> Cli {
     match name {
@@ -978,6 +998,7 @@ pub(crate) fn cli(name: &str) -> Cli {
         "plain" => plain(),
         "rooted" => rooted(),
         "shadow" => shadow(),
+        "shadowall" => shadowall(),
         "bare" => sandboxed::bare(),
         "catalog" => sandboxed::catalog(),
         "dupe" => sandboxed::dupe(),

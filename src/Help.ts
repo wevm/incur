@@ -12,6 +12,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     configFlag,
     description,
     globals,
+    hideBuiltins,
     hideSkills = false,
     hideUpdate = false,
     version,
@@ -42,7 +43,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills, hideUpdate))
+  lines.push(...globalOptionsLines(root, configFlag, globals, hideBuiltins, hideSkills, hideUpdate))
 
   return lines.join('\n')
 }
@@ -59,6 +60,8 @@ export declare namespace formatRoot {
     description?: string | undefined
     /** Custom global options schema and alias map. */
     globals?: GlobalsDescriptor | undefined
+    /** Built-in commands to leave out of the integrations list, such as ones a registered command shadows. */
+    hideBuiltins?: string[] | undefined
     /** Hide the built-in skills integration. */
     hideSkills?: boolean | undefined
     /** Hide the built-in `--update` flag. */
@@ -96,6 +99,8 @@ export declare namespace formatCommand {
     hint?: string | undefined
     /** Hide global options section. */
     hideGlobalOptions?: boolean | undefined
+    /** Built-in commands to leave out of the integrations list, such as ones a registered command shadows. */
+    hideBuiltins?: string[] | undefined
     /** Hide the built-in skills integration. */
     hideSkills?: boolean | undefined
     /** Hide the built-in `--update` flag. */
@@ -126,6 +131,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     configFlag,
     description,
     globals,
+    hideBuiltins,
     hideSkills = false,
     hideUpdate = false,
     version,
@@ -233,7 +239,9 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   }
 
   if (!options.hideGlobalOptions)
-    lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills, hideUpdate))
+    lines.push(
+      ...globalOptionsLines(root, configFlag, globals, hideBuiltins, hideSkills, hideUpdate),
+    )
 
   // Environment Variables
   if (env) {
@@ -377,6 +385,7 @@ function globalOptionsLines(
   root = false,
   configFlag?: string,
   globals?: GlobalsDescriptor,
+  hideBuiltins: string[] = [],
   hideSkills = false,
   hideUpdate = false,
 ): string[] {
@@ -384,7 +393,7 @@ function globalOptionsLines(
 
   if (root) {
     const builtins = builtinCommands
-      .filter((b) => !hideSkills || b.name !== 'skills')
+      .filter((b) => !hideBuiltins.includes(b.name) && (!hideSkills || b.name !== 'skills'))
       .flatMap((b) => {
         if (!b.subcommands) return [{ name: b.name, desc: b.description }]
         if (b.subcommands.length === 1)
@@ -395,11 +404,13 @@ function globalOptionsLines(
         return [{ name: b.name, desc: `${b.description} (${names})` }]
       })
     const maxCmd = Math.max(...builtins.map((b) => b.name.length))
-    lines.push(
-      '',
-      'Integrations:',
-      ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
-    )
+    // Skip the section when every built-in is hidden
+    if (builtins.length > 0)
+      lines.push(
+        '',
+        'Integrations:',
+        ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
+      )
   }
 
   if (globals) {
