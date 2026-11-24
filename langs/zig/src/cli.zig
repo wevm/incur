@@ -1715,10 +1715,12 @@ const Run = struct {
                         try candidates.append(a, .{ .description = description, .no_space = !std.mem.eql(u8, name, "completions"), .value = name });
                 }
             } else if (non_flags.items.len == 2) if (findUnshadowedBuiltin(cli.commands.items, non_flags.items[1])) |b_name| {
-                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills"))) {
+                // A built-in group completes its own subcommands in place of root commands
+                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills")) and !std.mem.startsWith(u8, current, "-")) {
+                    candidates.clearRetainingCapacity();
                     for (builtin_subcommands) |s| if (std.mem.eql(u8, s.builtin, b_name)) {
                         for (try std.mem.concat(a, []const u8, &.{ &.{s.name}, s.aliases })) |value| {
-                            if (std.mem.startsWith(u8, value, current) and !listed(candidates.items, value))
+                            if (std.mem.startsWith(u8, value, current))
                                 try candidates.append(a, .{ .description = s.description, .value = value });
                         }
                     };

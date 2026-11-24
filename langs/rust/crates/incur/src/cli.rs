@@ -2922,14 +2922,14 @@ impl Run<'_, '_> {
                 }
             }
             Some([_, parent]) => {
-                if let Some(builtin) = find_unshadowed_builtin(&commands, parent)
-                    .filter(|b| *b != "completions" && cli.builtin_enabled(b))
-                {
+                // A built-in group completes its own subcommands in place of root commands
+                if let Some(builtin) = find_unshadowed_builtin(&commands, parent).filter(|b| {
+                    *b != "completions" && cli.builtin_enabled(b) && !current.starts_with('-')
+                }) {
+                    candidates.clear();
                     for sub in BUILTIN_SUBCOMMANDS.iter().filter(|s| s.0 == builtin) {
                         for value in std::iter::once(sub.1).chain(sub.3.iter().copied()) {
-                            if value.starts_with(current)
-                                && !candidates.iter().any(|c| c.value == value)
-                            {
+                            if value.starts_with(current) {
                                 candidates.push(completions::Candidate {
                                     description: Some(sub.2.into()),
                                     no_space: false,
