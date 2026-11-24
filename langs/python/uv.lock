@@ -156,7 +156,7 @@ wheels = [
 ]
 
 [[package]]
-name = "incur"
+name = "incur-cli"
 version = "0.9.0"
 source = { editable = "." }
 

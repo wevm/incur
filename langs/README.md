@@ -134,7 +134,7 @@ When changesets publishes `incur` to npm, `main.yml` runs `.github/workflows/rel
 which publishes the same version once Main's checks have passed:
 
 - Rust: `incur-macros`, then `incur`, to crates.io (trusted publishing, environment `crates-io`).
-- Python: `incur` to PyPI (trusted publishing, environment `pypi`).
+- Python: `incur-cli` (imported as `incur`) to PyPI (trusted publishing, environment `pypi`).
 - Zig: `incur-zig-<version>.tar.gz` of `langs/zig`, attached to the `incur@<version>` GitHub release.
 
 Run the workflow by hand (Actions → Release Language Ports → Run workflow on `main`) to release the
@@ -143,6 +143,6 @@ current version, for example after the one-time setup:
 - crates.io: publish the first versions of `incur-macros` and `incur` by hand
   (`cargo publish -p incur-macros && cargo publish -p incur`), then add `wevm/incur` with workflow
   `release-langs.yml` and environment `crates-io` as a trusted publisher on both crates.
-- PyPI: add a pending trusted publisher for project `incur` with workflow `release-langs.yml` and
+- PyPI: add a pending trusted publisher for project `incur-cli` with workflow `release-langs.yml` and
   environment `pypi`.
 - GitHub: create the `crates-io` and `pypi` environments (optionally with required reviewers).
