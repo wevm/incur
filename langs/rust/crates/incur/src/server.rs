@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::body::{self, Body};
 use crate::cli::{Cli, Entry, Resolved, Scope, resolve, skill_commands, suggest};
 use crate::command::{Command, Middleware, MiddlewareContext};
-use crate::errors::FormattedCtaBlock;
+use crate::errors::{Error, FormattedCtaBlock};
 use crate::execute::{self, Executed};
 use crate::fetch;
 use crate::formatter::Format;
@@ -586,9 +586,9 @@ impl Cli {
         if requests.is_empty() {
             return response(202, &[], Body::empty());
         }
-        let server = match self.mcp_server(tree, &process_env, false) {
+        let server = match self.mcp_server(tree, &process_env, false, &mcp::Defaults::default()) {
             Ok(server) => server,
-            Err(message) => return rpc_error(500, -32603, &message),
+            Err(error) => return rpc_error(500, -32603, &error.message),
         };
         let request = Arc::new(parts);
         let mut responses = Vec::new();
@@ -644,13 +644,19 @@ impl Cli {
         tree: &IndexMap<String, Entry>,
         env: &'a (dyn Fn(&str) -> Option<String> + Sync),
         direct: bool,
-    ) -> Result<mcp::Server<'a>, String> {
+        defaults: &mcp::Defaults<'_>,
+    ) -> Result<mcp::Server<'a>, Error> {
         let settings = &self.mcp;
+        // Default values become schema defaults, so a call's own arguments still win.
+        let globals = self
+            .globals
+            .as_ref()
+            .map(|globals| mcp::with_defaults(globals, &defaults.globals));
         Ok(mcp::Server {
             context: mcp::Context {
                 env,
                 env_schema: self.env.clone(),
-                globals: self.globals.clone(),
+                globals: globals.clone(),
                 middleware: self.middleware.clone(),
                 vars: self.vars.clone(),
                 version: self.version.clone(),
@@ -659,7 +665,7 @@ impl Cli {
             instructions: settings.instructions.clone(),
             name: settings.name.clone().unwrap_or_else(|| self.name.clone()),
             title: settings.title.clone(),
-            tools: mcp::collect(tree, self.globals.as_ref(), settings)?,
+            tools: mcp::collect(tree, globals.as_ref(), settings, defaults.options)?,
             version: self.version.clone().unwrap_or_else(|| "0.0.0".into()),
         })
     }

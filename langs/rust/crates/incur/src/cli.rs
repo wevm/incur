@@ -1672,7 +1672,7 @@ impl Run<'_, '_> {
         }
 
         if flags.mcp {
-            self.mcp_stdio().await;
+            self.mcp_stdio(&flags, human).await;
             return;
         }
 
@@ -2726,8 +2726,11 @@ impl Run<'_, '_> {
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
         let mut tools = Vec::new();
-        match self.cli.mcp_server(&self.commands, self.io.env, true) {
-            Err(message) => errors.push(json_error("MCP_SERVER_FAILED", &message)),
+        match self
+            .cli
+            .mcp_server(&self.commands, self.io.env, true, &mcp::Defaults::default())
+        {
+            Err(error) => errors.push(json_error("MCP_SERVER_FAILED", &error.message)),
             Ok(server) => {
                 for tool in server.list() {
                     let mut entry = Map::new();
@@ -2759,12 +2762,43 @@ impl Run<'_, '_> {
     }
 
     /// Serves MCP over standard input and output until input ends.
-    async fn mcp_stdio(&mut self) {
-        let server = match self.cli.mcp_server(&self.commands, self.io.env, false) {
+    async fn mcp_stdio(&mut self, flags: &Flags, human: bool) {
+        let cli = self.cli;
+        // Globals passed to the server apply to every call. Only those are validated: a required
+        // global may still come with each call.
+        let loaded = (|| -> Result<_, Error> {
+            let globals = match &cli.globals {
+                Some(schema) => {
+                    let options = GlobalsOptions {
+                        command: Some(None),
+                        validate: false,
+                    };
+                    let (raw, _) = parser::parse_globals(&flags.rest, schema, options)?;
+                    parser::parse_passed_globals(
+                        schema,
+                        raw.as_object().cloned().unwrap_or_default(),
+                    )?
+                }
+                None => Map::new(),
+            };
+            Ok((globals, self.load_config(flags)?))
+        })();
+        let section = |tree: &Value, path: &str| config_section(tree, &cli.name, path);
+        // An invalid global or config file stops the server before it serves.
+        let built = loaded.and_then(|(globals, tree)| {
+            let options = tree
+                .as_ref()
+                .map(|tree| move |path: &str| section(tree, path));
+            let defaults = mcp::Defaults {
+                globals,
+                options: options.as_ref().map(|f| f as _),
+            };
+            cli.mcp_server(&self.commands, self.io.env, false, &defaults)
+        });
+        let server = match built {
             Ok(server) => server,
-            Err(message) => {
-                let human = self.io.tty;
-                self.early_error(&Error::unknown(message), human, Format::Toon);
+            Err(error) => {
+                self.early_error(&error, human, flags.format);
                 return;
             }
         };
@@ -3220,6 +3254,14 @@ impl Run<'_, '_> {
         path: &str,
         flags: &Flags,
     ) -> Result<Option<Map<String, Value>>, Error> {
+        match self.load_config(flags)? {
+            Some(tree) => config_section(&tree, &self.cli.name, path),
+            None => Ok(None),
+        }
+    }
+
+    /// Loads the config tree, honoring `--config`, `--no-config`, and a custom loader.
+    fn load_config(&self, flags: &Flags) -> Result<Option<Value>, Error> {
         let Some(config) = &self.cli.config else {
             return Ok(None);
         };
@@ -3299,37 +3341,7 @@ impl Run<'_, '_> {
             }
             js::normalize(parsed)
         };
-        let segments: Vec<&str> = if path == self.cli.name {
-            Vec::new()
-        } else {
-            path.split(' ').collect()
-        };
-        let mut node = &parsed;
-        for segment in segments {
-            let Some(next) = node
-                .get("commands")
-                .filter(|c| c.is_object())
-                .and_then(|c| c.get(segment))
-            else {
-                return Ok(None);
-            };
-            node = next;
-        }
-        if !node.is_object() {
-            return Err(Error::new(
-                "UNKNOWN",
-                format!("Invalid config section for '{path}': expected an object"),
-            ));
-        }
-        match node.get("options") {
-            None => Ok(None),
-            Some(Value::Object(options)) if options.is_empty() => Ok(None),
-            Some(Value::Object(options)) => Ok(Some(options.clone())),
-            Some(_) => Err(Error::new(
-                "UNKNOWN",
-                format!("Invalid config 'options' for '{path}': expected an object"),
-            )),
-        }
+        Ok(Some(parsed))
     }
 
     /// Parses input, runs middleware and the handler, and writes the result.
@@ -3726,5 +3738,44 @@ fn tree<'a>(
             .collect(),
         description,
         leaf: root.and_then(|r| r.options.as_ref()),
+    }
+}
+
+/// Walks the config tree to the option defaults of a command path.
+fn config_section(
+    tree: &Value,
+    cli: &str,
+    path: &str,
+) -> Result<Option<Map<String, Value>>, Error> {
+    let segments: Vec<&str> = if path == cli {
+        Vec::new()
+    } else {
+        path.split(' ').collect()
+    };
+    let mut node = tree;
+    for segment in segments {
+        let Some(next) = node
+            .get("commands")
+            .filter(|c| c.is_object())
+            .and_then(|c| c.get(segment))
+        else {
+            return Ok(None);
+        };
+        node = next;
+    }
+    if !node.is_object() {
+        return Err(Error::new(
+            "UNKNOWN",
+            format!("Invalid config section for '{path}': expected an object"),
+        ));
+    }
+    match node.get("options") {
+        None => Ok(None),
+        Some(Value::Object(options)) if options.is_empty() => Ok(None),
+        Some(Value::Object(options)) => Ok(Some(options.clone())),
+        Some(_) => Err(Error::new(
+            "UNKNOWN",
+            format!("Invalid config 'options' for '{path}': expected an object"),
+        )),
     }
 }

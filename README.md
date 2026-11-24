@@ -1120,6 +1120,8 @@ Config files use a structured format with `options` and `commands` keys, mirrori
 
 Precedence is `argv > config > zod defaults`. Only command `options` are loaded — `args`, `env`, and built-in commands are unaffected.
 
+`--mcp` loads the config file once at startup, honoring `--config <path>` and `--no-config`, and applies each command's section to its tool calls: `tool arguments > config > zod defaults`. Global options passed to the server, as in `my-cli --mcp --profile prod`, apply to every tool call the same way. Both show as defaults in the tool input schemas, and an invalid value stops the server at startup.
+
 Use `incur gen` to auto-generate a `config.schema.json` to distribute with your CLI for consumer autocomplete.
 
 ### Filtering output

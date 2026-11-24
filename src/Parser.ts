@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import type { FieldError } from './Errors.js'
 import { ParseError, ValidationError } from './Errors.js'
@@ -218,6 +218,22 @@ function createOptionNames(
 function normalizeOptionName(raw: string, options: OptionNames): string | undefined {
   const name = options.kebabToCamel.get(raw) ?? raw
   return options.knownOptions.has(name) ? name : undefined
+}
+
+/** @internal Parses a config section on its own: normalizes its keys like `parse` and validates only the options it sets. */
+export function parseDefaults(
+  defaults: unknown,
+  schema: z.ZodObject<any> | undefined,
+): Record<string, unknown> {
+  const normalized = normalizeOptionDefaults(defaults, schema, createOptionNames(schema, undefined))
+  // Without a schema, any key is unknown, so nothing is left
+  if (!schema) return normalized
+  return zodParse(pick(schema, Object.keys(normalized)), normalized)
+}
+
+/** Returns an object schema with only the `keys` fields of `schema`. */
+function pick(schema: z.ZodObject<any>, keys: string[]) {
+  return z.object(Object.fromEntries(keys.map((key) => [key, schema.shape[key]])))
 }
 
 /** Normalizes config-backed defaults and validates config structure/key names. */
@@ -526,7 +542,8 @@ export function parseGlobals<const globals extends z.ZodObject<any>>(
   for (const [name, value] of Object.entries(rawOptions))
     rawOptions[name] = coerce(value, name, schema)
 
-  const parsed = zodParse(schema, rawOptions) as z.output<globals>
+  const target = options.validate === 'passed' ? pick(schema, Object.keys(rawOptions)) : schema
+  const parsed = zodParse(target, rawOptions) as z.output<globals>
   return { parsed, rest }
 }
 
@@ -546,8 +563,8 @@ export declare namespace parseGlobals {
           options?: z.ZodObject<any> | undefined
         }
       | undefined
-    /** Whether to validate parsed globals against the schema. */
-    validate?: boolean | undefined
+    /** Whether to validate parsed globals against the schema. `'passed'` validates only the globals in `argv`, so missing required globals are not an error. */
+    validate?: boolean | 'passed' | undefined
   }
 }
 

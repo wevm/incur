@@ -14,6 +14,7 @@ import time
 import typing
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -73,7 +74,7 @@ from ._help import Example, Usage, format_command, format_root, global_flags
 from ._help import Options as HelpOptions
 from ._http import FetchHandler, Request, RequestSource, Response, asgi, call
 from ._js import Json
-from ._mcp import HttpHandler, McpOptions, McpTool, serve_stdio
+from ._mcp import HttpHandler, McpOptions, McpTool, serve_stdio, with_defaults
 from ._mcp import Server as McpServer
 from ._model import SchemaError, build, caller_locals, to_json, type_of
 from ._openapi import OpenapiConfig, OpenapiSource
@@ -1137,7 +1138,7 @@ class _Run:
             return
 
         if flags.mcp:
-            await serve_stdio(cli, self.env_map, self.stdin, typing.cast("TextIO", self.stdout))
+            await self.mcp_stdio(flags, human)
             return
 
         skills_cta = await self.skills_notice(flags, filtered)
@@ -2071,6 +2072,11 @@ class _Run:
 
     async def config_defaults(self, path: str, flags: _Flags) -> dict[str, Json] | None:
         """Loads config-file defaults for a command path."""
+        tree = await self.load_config(flags)
+        return _config_section(tree, self.cli.name, path) if tree is not None else None
+
+    async def load_config(self, flags: _Flags) -> dict[str, Json] | None:
+        """Loads the config tree, honoring `--config`, `--no-config`, and a custom loader."""
         cli = self.cli
         config = cli.config
         if config is None or flags.config_disabled:
@@ -2122,20 +2128,27 @@ class _Run:
             parsed = _js.parse_json(raw)
             if not isinstance(parsed, dict):
                 raise unknown(f"Invalid config file: expected a top-level object in {target}")
-        node: Json = typing.cast("dict[str, Json]", parsed)
-        for segment in [] if path == cli.name else path.split(" "):
-            section = node.get("commands") if isinstance(node, dict) else None
-            if not isinstance(section, dict) or segment not in section:
-                return None
-            node = section[segment]
-        if not isinstance(node, dict):
-            raise unknown(f"Invalid config section for '{path}': expected an object")
-        options = node.get("options")
-        if options is None or options == {}:
-            return None
-        if not isinstance(options, dict):
-            raise unknown(f"Invalid config 'options' for '{path}': expected an object")
-        return dict(options)
+        return typing.cast("dict[str, Json]", parsed)
+
+    async def mcp_stdio(self, flags: _Flags, human: bool) -> None:
+        """Serves MCP over stdin and stdout with the globals and config file it started with."""
+        cli = self.cli
+        try:
+            spec = cli
+            if cli.globals is not None:
+                # Globals passed to the server apply to every call. Only those are validated: a
+                # required global may still come with each call.
+                raw = _parser.parse_globals(flags.rest, cli.globals, None, known=True)[0]
+                values = _parser.parse_passed_globals(cli.globals, raw)
+                spec = replace(cli, globals=with_defaults(cli.globals, values))
+            tree = await self.load_config(flags)
+            config = None if tree is None else partial(_config_section, tree, cli.name)
+            server = McpServer(spec, self.env_map, config=config)
+        except Error as error:
+            # An invalid global or config file stops the server before it serves.
+            self.early_error(error, human, flags.format)
+            return
+        await serve_stdio(server, self.stdin, typing.cast("TextIO", self.stdout))
 
     async def execute(self, resolved: Resolved, filtered: list[str], output: _Output) -> None:
         """Parses input, runs middleware and the handler, and writes the result."""
@@ -2380,3 +2393,21 @@ def _tree(
         nodes.append((name, node, isinstance(entry, Alias)))
     options = root.options if root is not None else None
     return _completions.Node(description, options, True, nodes)
+
+
+def _config_section(tree: dict[str, Json], cli: str, path: str) -> dict[str, Json] | None:
+    """Walks the config tree to the option defaults of a command path."""
+    node: Json = tree
+    for segment in [] if path == cli else path.split(" "):
+        section = node.get("commands") if isinstance(node, dict) else None
+        if not isinstance(section, dict) or segment not in section:
+            return None
+        node = section[segment]
+    if not isinstance(node, dict):
+        raise unknown(f"Invalid config section for '{path}': expected an object")
+    options = node.get("options")
+    if options is None or options == {}:
+        return None
+    if not isinstance(options, dict):
+        raise unknown(f"Invalid config 'options' for '{path}': expected an object")
+    return dict(options)

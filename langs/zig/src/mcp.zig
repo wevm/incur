@@ -85,13 +85,35 @@ pub const Tool = struct {
 /// The tools of a CLI, or why they cannot be served.
 pub const Tools = union(enum) {
     ok: []const Tool,
-    err: []const u8,
+    err: Error,
 };
 
-/// Collects the CLI's commands as tools, filtered and sorted by name.
-pub fn collect(a: Allocator, cli: *const Cli, filter: Filter) Allocator.Error!Tools {
+/// Values for tool calls that do not pass their own: the globals and config file of `--mcp`.
+/// They become the defaults of the tool input schemas.
+pub const Defaults = struct {
+    /// Parsed global option values.
+    globals: []const Value.Entry = &.{},
+    /// The config tree, whose command sections are validated when the tools are collected.
+    config: ?Value = null,
+};
+
+/// Returns an object schema with parsed values as the defaults of their fields.
+fn withDefaults(a: Allocator, ty: *const Type, values: []const Value.Entry) Allocator.Error!*const Type {
+    const fields = try a.dupe(schema.Field, ty.fields());
+    for (fields) |*f| for (values) |entry| if (std.mem.eql(u8, entry.key, f.name)) {
+        f.ty.default = entry.value;
+    };
+    const out = try a.create(Type);
+    out.* = ty.*;
+    out.kind = .{ .object = fields };
+    return out;
+}
+
+/// Collects the CLI's commands as tools, filtered and sorted by name. Each command's section of
+/// the config tree becomes its option defaults.
+pub fn collect(a: Allocator, cli: *const Cli, filter: Filter, config: ?Value) Allocator.Error!Tools {
     var all: std.ArrayList(Tool) = .empty;
-    try collectEntries(a, &all, cli.commands.items, &.{}, &.{});
+    if (try collectEntries(a, &all, cli, config, cli.commands.items, &.{}, &.{})) |e| return .{ .err = e };
     var tools: std.ArrayList(Tool) = .empty;
     for (all.items) |tool| {
         const excluded = for (filter.exclude) |pattern| {
@@ -105,7 +127,7 @@ pub fn collect(a: Allocator, cli: *const Cli, filter: Filter) Allocator.Error!To
     }
     for (tools.items, 0..) |tool, i| for (tools.items[0..i]) |seen| {
         if (std.mem.eql(u8, seen.name, tool.name))
-            return .{ .err = try std.fmt.allocPrint(a, "Duplicate MCP tool name: {s}", .{tool.name}) };
+            return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Duplicate MCP tool name: {s}", .{tool.name}) } };
     };
     std.mem.sort(Tool, tools.items, {}, struct {
         fn lessThan(_: void, x: Tool, y: Tool) bool {
@@ -115,31 +137,54 @@ pub fn collect(a: Allocator, cli: *const Cli, filter: Filter) Allocator.Error!To
     return .{ .ok = tools.items };
 }
 
-/// Adds the tools of a command list.
-fn collectEntries(a: Allocator, out: *std.ArrayList(Tool), commands: cli_.Commands, prefix: []const []const u8, middleware: []const Middleware) Allocator.Error!void {
+/// Adds the tools of a command list. Returns the first invalid config section.
+fn collectEntries(a: Allocator, out: *std.ArrayList(Tool), cli: *const Cli, config: ?Value, commands: cli_.Commands, prefix: []const []const u8, middleware: []const Middleware) Allocator.Error!?Error {
     for (commands) |n| {
         const path = try std.mem.concat(a, []const u8, &.{ prefix, &.{n.name} });
         switch (n.entry) {
             // Fetch-backed commands take raw requests, not tool arguments.
             .alias, .gateway => {},
-            .command => |c| if (c.mcp) |settings| try out.append(a, try toTool(a, c, settings, path, middleware)),
+            .command => |c| if (c.mcp) |settings| switch (try toTool(a, cli, config, c, settings, path, middleware)) {
+                .ok => |tool| try out.append(a, tool),
+                .err => |e| return e,
+            },
             .group => |g| if (g.options.mcp != null) {
                 const group_middleware = try std.mem.concat(a, Middleware, &.{ middleware, g.middleware.items });
-                if (g.options.root) |*root| if (root.mcp) |settings| try out.append(a, try toTool(a, root, settings, path, group_middleware));
-                try collectEntries(a, out, g.commands.items, path, group_middleware);
+                if (g.options.root) |*root| if (root.mcp) |settings| switch (try toTool(a, cli, config, root, settings, path, group_middleware)) {
+                    .ok => |tool| try out.append(a, tool),
+                    .err => |e| return e,
+                };
+                if (try collectEntries(a, out, cli, config, g.commands.items, path, group_middleware)) |e| return e;
             },
         }
     }
+    return null;
 }
 
-/// Builds a tool from a command.
-fn toTool(a: Allocator, c: *const Command, settings: command.Tool, path: []const []const u8, middleware: []const Middleware) Allocator.Error!Tool {
+/// Builds a tool from a command, with its config section as option defaults.
+fn toTool(a: Allocator, cli: *const Cli, config: ?Value, original: *const Command, settings: command.Tool, path: []const []const u8, middleware: []const Middleware) Allocator.Error!parser.Result(Tool) {
+    // Config values become option defaults, so a call's own arguments still win.
+    const c = if (config) |root| c: {
+        const section = switch (try cli_.configSection(a, root, cli.name, try std.mem.join(a, " ", path))) {
+            .ok => |section| section orelse break :c original,
+            .err => |e| return .{ .err = e },
+        };
+        const values = switch (try parser.parseDefaults(a, section, original.options())) {
+            .ok => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+        // Without options, any key fails above, so the section reaches only commands with options.
+        const copy = try a.create(Command);
+        copy.* = original.*;
+        copy.run.?.options = try withDefaults(a, original.options().?, values.object);
+        break :c copy;
+    } else original;
     const output: ?Value = if (c.output) |o| output: {
         const value = try schema.jsonSchema(a, o);
         const kind = value.get("type") orelse break :output null;
         break :output if (kind == .string and std.mem.eql(u8, kind.string, "object")) value else null;
     } else null;
-    return .{
+    return .{ .ok = .{
         .name = settings.name orelse try std.mem.join(a, "_", path),
         .description = settings.description orelse c.description,
         .command = c,
@@ -147,7 +192,7 @@ fn toTool(a: Allocator, c: *const Command, settings: command.Tool, path: []const
         .annotations = try settings.annotationsValue(a),
         .instructions = settings.instructions,
         .output = output,
-    };
+    } };
 }
 
 /// Whether a name matches a pattern where `*` matches any characters.
@@ -221,17 +266,22 @@ const Server = struct {
     tools: []const Tool,
     direct: bool,
     name: []const u8,
+    /// The global options schema, with the server's globals as defaults.
+    globals: ?*const Type,
 
-    fn init(a: Allocator, cli: *Cli, process: *const Process, direct: bool) Allocator.Error!union(enum) { ok: Server, err: []const u8 } {
+    fn init(a: Allocator, cli: *Cli, process: *const Process, direct: bool, defaults: Defaults) Allocator.Error!union(enum) { ok: Server, err: Error } {
         const settings = cli.options.mcp orelse cli_.Mcp{};
         var filter = settings.tools;
         if (direct) filter.discovery = .direct;
-        return switch (try collect(a, cli, filter)) {
-            .err => |message| .{ .err = message },
+        // Default values become schema defaults, so a call's own arguments still win.
+        const globals = if (cli.options.globals) |g| try withDefaults(a, g, defaults.globals) else null;
+        return switch (try collect(a, cli, filter, defaults.config)) {
+            .err => |e| .{ .err = e },
             .ok => |tools| .{ .ok = .{
                 .a = a,
                 .cli = cli,
                 .process = process,
+                .globals = globals,
                 .tools = tools,
                 .direct = filter.discovery == .direct,
                 .name = settings.name orelse cli.name,
@@ -323,7 +373,7 @@ const Server = struct {
     /// field replaces an earlier one with the same name in place.
     fn mergedType(s: *Server, tool: *const Tool) Allocator.Error!Type {
         var fields: std.ArrayList(schema.Field) = .empty;
-        for ([_]?*const Type{ tool.command.args(), tool.command.options(), s.cli.options.globals }) |ty| {
+        for ([_]?*const Type{ tool.command.args(), tool.command.options(), s.globals }) |ty| {
             const t = ty orelse continue;
             for (t.fields()) |f| {
                 for (fields.items) |*existing| {
@@ -359,7 +409,7 @@ const Server = struct {
         const a = s.a;
         var properties: json.ObjectBuilder = .{};
         var required: std.ArrayList(Value) = .empty;
-        for ([_]?*const Type{ tool.command.args(), tool.command.options(), s.cli.options.globals }) |ty| {
+        for ([_]?*const Type{ tool.command.args(), tool.command.options(), s.globals }) |ty| {
             const t = ty orelse continue;
             const generated = try schema.jsonSchema(a, t);
             if (generated.get("properties")) |p| for (p.object) |entry| try properties.put(a, entry.key, entry.value);
@@ -483,7 +533,7 @@ const Server = struct {
         const cli = s.cli;
         var globals: Value = .{ .object = &.{} };
         var input = params;
-        if (cli.options.globals) |globals_schema| {
+        if (s.globals) |globals_schema| {
             var raw: json.ObjectBuilder = .{};
             var rest: json.ObjectBuilder = .{};
             if (params == .object) for (params.object) |entry| {
@@ -725,11 +775,11 @@ fn writeLine(writer: *std.Io.Writer, text: []const u8) void {
 }
 
 /// Serves MCP over the process's stdin and stdout, one JSON-RPC message per line, until the
-/// input ends. Returns an error message when the tools cannot be served.
-pub fn serveStdio(a: Allocator, cli: *Cli, process: *const Process) ServeError!?[]const u8 {
-    var server = switch (try Server.init(a, cli, process, false)) {
+/// input ends. Returns the error when the tools cannot be served.
+pub fn serveStdio(a: Allocator, cli: *Cli, process: *const Process, defaults: Defaults) ServeError!?Error {
+    var server = switch (try Server.init(a, cli, process, false, defaults)) {
         .ok => |s| s,
-        .err => |message| return message,
+        .err => |e| return e,
     };
     server.notifications = process.stdout;
     const reader = process.stdin orelse return null;
@@ -755,11 +805,11 @@ pub fn doctor(a: Allocator, cli: *Cli, process: *const Process) Allocator.Error!
     var tools: std.ArrayList(Value) = .empty;
     var warnings: std.ArrayList(Value) = .empty;
     var failures: std.ArrayList(Value) = .empty;
-    switch (try Server.init(a, cli, process, true)) {
-        .err => |message| {
+    switch (try Server.init(a, cli, process, true, .{})) {
+        .err => |failure| {
             var e: json.ObjectBuilder = .{};
             try e.put(a, "code", .{ .string = "MCP_SERVER_FAILED" });
-            try e.put(a, "message", .{ .string = message });
+            try e.put(a, "message", .{ .string = failure.message });
             try failures.append(a, e.finish());
         },
         .ok => |server| for (server.tools) |tool| {
@@ -865,10 +915,10 @@ pub fn handleHttp(a: Allocator, cli: *Cli, process: *const Process, request: *co
         if (try validateVersion(a, request)) |e| return e;
     }
     if (!has_request) return .{ .status = 202 };
-    var server = switch (try Server.init(a, cli, process, false)) {
+    var server = switch (try Server.init(a, cli, process, false, .{})) {
         .ok => |s| s,
         // The handler cannot serve these tools; report it like a failed request.
-        .err => |text| return transportError(a, 500, -32603, text),
+        .err => |e| return transportError(a, 500, -32603, e.message),
     };
     server.request = request;
     var responses: std.ArrayList(Value) = .empty;

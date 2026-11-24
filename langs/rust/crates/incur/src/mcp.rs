@@ -313,18 +313,45 @@ pub(crate) struct ToolEntry {
     output_schema: Option<Value>,
 }
 
+/// Returns the config section of a command path, such as `project list`.
+pub(crate) type ConfigSection<'a> = &'a dyn Fn(&str) -> Result<Option<Map<String, Value>>, Error>;
+
+/// Values for tool calls that do not pass their own: the globals and config file of `--mcp`.
+/// They become the defaults of the tool input schemas.
+#[derive(Default)]
+pub(crate) struct Defaults<'a> {
+    /// Parsed global option values.
+    pub(crate) globals: Map<String, Value>,
+    /// The config sections of command paths, validated when the tools are collected.
+    pub(crate) options: Option<ConfigSection<'a>>,
+}
+
+/// Returns a schema with parsed values as the defaults of their fields.
+pub(crate) fn with_defaults(ty: &Type, values: &Map<String, Value>) -> Type {
+    let mut ty = ty.clone();
+    if let Kind::Object(fields) = &mut ty.kind {
+        for field in fields {
+            if let Some(value) = values.get(&field.name) {
+                field.ty.default = Some(value.clone());
+            }
+        }
+    }
+    ty
+}
+
 /// Collects the tools of a command tree, filtered and sorted by name.
 ///
 /// # Errors
 ///
-/// Returns a message naming the first duplicate tool name.
+/// Returns an error naming the first duplicate tool name or invalid config section.
 pub(crate) fn collect(
     commands: &IndexMap<String, Entry>,
     globals: Option<&Type>,
     settings: &Mcp,
-) -> Result<Vec<ToolEntry>, String> {
+    config: Option<ConfigSection<'_>>,
+) -> Result<Vec<ToolEntry>, Error> {
     let mut tools = Vec::new();
-    entries(commands, &[], &[], globals, &mut tools);
+    entries(commands, &[], &[], globals, config, &mut tools)?;
     let matches = |patterns: &[String], name: &str| patterns.iter().any(|p| glob(p, name));
     tools.retain(|tool| {
         !matches(&settings.exclude, &tool.name)
@@ -333,7 +360,10 @@ pub(crate) fn collect(
     let mut seen = indexmap::IndexSet::new();
     for tool in &tools {
         if !seen.insert(tool.name.clone()) {
-            return Err(format!("Duplicate MCP tool name: {}", tool.name));
+            return Err(Error::unknown(format!(
+                "Duplicate MCP tool name: {}",
+                tool.name
+            )));
         }
     }
     tools.sort_by(|a, b| js::locale_compare(&a.name, &b.name));
@@ -364,8 +394,9 @@ fn entries(
     prefix: &[String],
     middleware: &[Middleware],
     globals: Option<&Type>,
+    config: Option<ConfigSection<'_>>,
     out: &mut Vec<ToolEntry>,
-) {
+) -> Result<(), Error> {
     for (name, entry) in commands {
         let mut path = prefix.to_vec();
         path.push(name.clone());
@@ -373,11 +404,17 @@ fn entries(
             Entry::Alias(_) => {}
             Entry::Command(command) => {
                 if command.mcp.as_ref().is_none_or(|tool| tool.enabled) {
-                    out.push(tool(command, &path, middleware, globals));
+                    out.push(tool(command, &path, middleware, globals, config)?);
                 }
             }
             Entry::Fetch(fetch) => {
-                out.push(tool(&fetch.as_command(), &path, middleware, globals));
+                out.push(tool(
+                    &fetch.as_command(),
+                    &path,
+                    middleware,
+                    globals,
+                    config,
+                )?);
             }
             Entry::Group(group) => {
                 if !group.mcp {
@@ -390,12 +427,13 @@ fn entries(
                     .as_ref()
                     .filter(|root| root.mcp.as_ref().is_none_or(|tool| tool.enabled))
                 {
-                    out.push(tool(root, &path, &chain, globals));
+                    out.push(tool(root, &path, &chain, globals, config)?);
                 }
-                entries(&group.commands, &path, &chain, globals, out);
+                entries(&group.commands, &path, &chain, globals, config, out)?;
             }
         }
     }
+    Ok(())
 }
 
 /// Builds the tool of a command.
@@ -404,7 +442,21 @@ fn tool(
     path: &[String],
     middleware: &[Middleware],
     globals: Option<&Type>,
-) -> ToolEntry {
+    config: Option<ConfigSection<'_>>,
+) -> Result<ToolEntry, Error> {
+    // Config values become option defaults, so a call's own arguments still win.
+    let mut command = command.clone();
+    if let Some(section) = config
+        .map(|config| config(&path.join(" ")))
+        .transpose()?
+        .flatten()
+    {
+        let values = parser::parse_defaults(&section, command.options.as_ref())?;
+        command.options = command
+            .options
+            .map(|options| with_defaults(&options, &values));
+    }
+    let command = &command;
     let settings = command.mcp.as_ref();
     let output_schema = command
         .output
@@ -438,7 +490,7 @@ fn tool(
     if !required.is_empty() {
         input.insert("required".into(), required.into());
     }
-    ToolEntry {
+    Ok(ToolEntry {
         annotations: settings.and_then(|t| t.annotations.clone()),
         command: command.clone(),
         description: settings
@@ -452,7 +504,7 @@ fn tool(
             .and_then(|t| t.name.clone())
             .unwrap_or_else(|| path.join("_")),
         output_schema,
-    }
+    })
 }
 
 /// Converts a schema to the JSON Schema the MCP SDK emits for tool input: Zod's input mode,

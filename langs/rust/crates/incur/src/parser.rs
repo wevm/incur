@@ -312,6 +312,45 @@ pub fn parse(
     Ok(Parsed { args, options })
 }
 
+/// Parses a config section on its own: normalizes its keys as [`parse`] does and validates only
+/// the options it sets.
+pub(crate) fn parse_defaults(
+    defaults: &Map<String, Value>,
+    schema: Option<&Type>,
+) -> Result<Map<String, Value>, Error> {
+    let normalized = normalize_defaults(Some(defaults), &Names::new(schema))?;
+    // Without a schema, any key is unknown, so nothing is left to validate.
+    let empty = Type::object(Vec::new());
+    validate_passed(schema.unwrap_or(&empty), &normalized)
+}
+
+/// Coerces and validates the globals passed in argv against their fields only, so missing
+/// required globals are not an error.
+pub(crate) fn parse_passed_globals(
+    schema: &Type,
+    raw: Map<String, Value>,
+) -> Result<Map<String, Value>, Error> {
+    let names = Names::new(Some(schema));
+    let coerced = raw
+        .into_iter()
+        .map(|(name, value)| {
+            let ty = names.ty(&name);
+            (name, coerce(value, ty))
+        })
+        .collect();
+    validate_passed(schema, &coerced)
+}
+
+/// Validates values against only their fields of an object schema, in input order.
+fn validate_passed(schema: &Type, input: &Map<String, Value>) -> Result<Map<String, Value>, Error> {
+    let fields = input
+        .keys()
+        .filter_map(|key| schema.field(key).cloned())
+        .collect();
+    let parsed = validate(&Type::object(fields), input)?;
+    Ok(parsed.as_object().cloned().unwrap_or_default())
+}
+
 /// Normalizes config-file defaults and rejects unknown keys.
 fn normalize_defaults(
     defaults: Option<&Map<String, Value>>,

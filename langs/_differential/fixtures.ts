@@ -688,6 +688,7 @@ function toolCli(
     update: false,
     sync: false,
     mcp,
+    config: {},
     env: z.object({ TOOLS_REGION: z.string().default('eu').describe('Region') }),
     globals: z.object({
       profile: z.string().default('dev').describe('Profile'),

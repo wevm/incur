@@ -9,7 +9,7 @@ use incur::mcp::{Annotations, Discovery, Mcp, Tool};
 use incur::openapi::{Mode, Openapi, Versions};
 use incur::update::{CheckContext, InstallContext};
 use incur::{
-    Body, Cli, Command, Context, Cta, CtaBlock, Error, Fetch, FetchCommand, McpSource,
+    Body, Cli, Command, Config, Context, Cta, CtaBlock, Error, Fetch, FetchCommand, McpSource,
     OutputPolicy, Schema, SkillSync, Update,
 };
 use serde::{Deserialize, Serialize};
@@ -138,6 +138,7 @@ fn tool_cli(name: &str, mcp: Mcp) -> Cli {
         .update(false)
         .sync(false)
         .mcp(mcp)
+        .config(Config::default())
         .env::<ToolsEnv>()
         .globals::<ToolGlobals>()
         .var(Trace("none".into()))

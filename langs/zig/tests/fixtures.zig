@@ -1014,6 +1014,7 @@ fn toolCli(gpa: Allocator, name: []const u8, mcp: incur.Mcp) !*incur.Cli {
         .update = null,
         .sync = null,
         .mcp = mcp,
+        .config = .{},
         .env = incur.schema(ToolsEnv),
         .globals = incur.schema(ToolsGlobals),
         .vars = trace,

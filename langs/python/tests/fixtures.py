@@ -991,6 +991,7 @@ def tool_cli(name: str, mcp: incur.McpOptions) -> incur.Cli:
         update=False,
         sync=False,
         mcp=mcp,
+        config=incur.Config(),
         env=ToolsEnv,
         globals=ToolsGlobals,
         vars=Trace,

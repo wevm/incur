@@ -33,6 +33,7 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
   )
 
   registerTools(server, commands, {
+    defaults: options.defaults,
     env: options.env,
     fromJsonSchema,
     globals: options.globals,
@@ -86,6 +87,8 @@ function importStdioModule(): Promise<StdioImportResult> {
 export declare namespace serve {
   /** Options for the MCP server. */
   type Options<globals extends z.ZodObject<any> | undefined = undefined> = {
+    /** Values for tool calls that do not pass their own, such as the globals and config file of `my-cli --mcp`. They become the defaults of the tool input schemas. */
+    defaults?: Defaults | undefined
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
     /** CLI-level global options schema. Merged into every tool's input schema and passed to commands and middleware as `globals`. A global wins over a command option of the same name. */
@@ -107,6 +110,14 @@ export declare namespace serve {
     /** Filters which command tools are exposed to MCP clients. */
     tools?: ToolFilter | undefined
   }
+}
+
+/** Values for tool calls that do not pass their own. A call's arguments override them, and they override the schema defaults. */
+export type Defaults = {
+  /** Global option values, already parsed with the globals schema. */
+  globals?: Record<string, unknown> | undefined
+  /** Returns the config section of a command path, such as `['project', 'list']`: raw option values keyed by option name, with kebab-case accepted. They are validated when the tools are registered. */
+  options?: ((path: string[]) => unknown) | undefined
 }
 
 /** @internal Executes a tool call and returns a CallToolResult. */
@@ -317,18 +328,24 @@ export function registerTools(
   commands: Map<string, any>,
   options: registerTools.Options,
 ) {
-  const tools = collectTools(commands, [], [], options.tools, options.globals)
+  // Default values become schema defaults, so a call's own arguments still win in both discovery
+  // modes, including direct discovery where the MCP SDK parses the arguments first.
+  const globals = withDefaults(options.globals, options.defaults?.globals)
+  const resolved = { ...options, globals }
+  const tools = collectTools(commands, [], [], options.tools, globals, options.defaults?.options)
   if (tools.length === 0) return
   if ((options.tools?.discovery ?? 'progressive') === 'direct') {
-    for (const tool of tools) registerDirectTool(server, tool, options)
+    for (const tool of tools) registerDirectTool(server, tool, resolved)
     return
   }
-  registerDiscoveryTools(server, tools, options)
+  registerDiscoveryTools(server, tools, resolved)
 }
 
 export declare namespace registerTools {
   /** Options shared by stdio and HTTP MCP tool registration. */
   type Options = {
+    /** Values for tool calls that do not pass their own. */
+    defaults?: Defaults | undefined
     /** CLI-level env schema. */
     env?: z.ZodObject<any> | undefined
     /** Converts JSON Schema output definitions for the MCP SDK. */
@@ -567,9 +584,10 @@ export function collectTools(
   parentMiddlewares: MiddlewareHandler[] = [],
   filter?: ToolFilter | undefined,
   globals?: z.ZodObject<any> | undefined,
+  config?: Defaults['options'],
 ): ToolEntry[] {
   const tools = filterTools(
-    collectToolEntries(commands, prefix, parentMiddlewares, globals),
+    collectToolEntries(commands, prefix, parentMiddlewares, globals, config),
     filter,
   )
   assertUniqueToolNames(tools)
@@ -581,6 +599,7 @@ function collectToolEntries(
   prefix: string[],
   parentMiddlewares: MiddlewareHandler[] = [],
   globals?: z.ZodObject<any> | undefined,
+  config?: Defaults['options'],
 ): ToolEntry[] {
   const result: ToolEntry[] = []
   for (const [name, entry] of commands) {
@@ -593,9 +612,9 @@ function collectToolEntries(
         ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
       ]
       if (entry.root && entry.root.mcp !== false)
-        result.push(toToolEntry(entry.root, path, groupMw, globals))
-      result.push(...collectToolEntries(entry.commands, path, groupMw, globals))
-    } else result.push(toToolEntry(entry, path, parentMiddlewares, globals))
+        result.push(toToolEntry(entry.root, path, groupMw, globals, config))
+      result.push(...collectToolEntries(entry.commands, path, groupMw, globals, config))
+    } else result.push(toToolEntry(entry, path, parentMiddlewares, globals, config))
   }
   return result
 }
@@ -605,19 +624,36 @@ function toToolEntry(
   path: string[],
   middlewares: MiddlewareHandler[],
   globals: z.ZodObject<any> | undefined,
+  config: Defaults['options'],
 ): ToolEntry {
   const mcp = entry.mcp === false ? undefined : entry.mcp
   const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
+  const values = config ? Parser.parseDefaults(config(path), entry.options) : undefined
+  const options = withDefaults(entry.options, values)
+  const command = options === entry.options ? entry : { ...entry, options }
   return {
     name: mcp?.name ?? path.join('_'),
     description: mcp?.description ?? entry.description,
-    inputSchema: buildToolSchema(entry.args, entry.options, globals),
+    inputSchema: buildToolSchema(entry.args, options, globals),
     ...(outputSchema ? { outputSchema } : undefined),
     ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
     ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
-    command: entry,
+    command,
     ...(middlewares.length > 0 ? { middlewares } : undefined),
   }
+}
+
+/** Returns `schema` with parsed `values` as the defaults of their fields. */
+function withDefaults(
+  schema: z.ZodObject<any> | undefined,
+  values: Record<string, unknown> | undefined,
+): z.ZodObject<any> | undefined {
+  if (!schema || !values || Object.keys(values).length === 0) return schema
+  const shape = Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, schema.shape[key].default(value)]),
+  )
+  // `safeExtend` keeps object-level refinements, which `extend` rejects
+  return schema.safeExtend(shape)
 }
 
 /** Filters MCP tools by include and exclude patterns. */
