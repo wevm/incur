@@ -2555,7 +2555,10 @@ impl Run<'_, '_> {
             env: self.io.env,
             settings: &cli.sync,
         };
-        self.write("Syncing...");
+        // Progress and the summary are for people; an explicit format prints only the result.
+        if !flags.format_explicit {
+            self.write("Syncing...");
+        }
         let synced = match sync::sync(&source, depth, global) {
             Ok(synced) => synced,
             Err(error) => {
@@ -2563,7 +2566,6 @@ impl Run<'_, '_> {
                 return;
             }
         };
-        self.write("\r\x1b[K");
         let width = synced
             .skills
             .iter()
@@ -2605,7 +2607,10 @@ impl Run<'_, '_> {
             "Run `{} --help` to see the full command reference.",
             cli.name
         ));
-        self.writeln(&lines.join("\n"));
+        if !flags.format_explicit {
+            self.write("\r\x1b[K");
+            self.writeln(&lines.join("\n"));
+        }
         if flags.full_output || flags.format_explicit {
             let mut out = Map::new();
             out.insert(

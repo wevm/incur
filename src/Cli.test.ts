@@ -4167,8 +4167,11 @@ describe('built-in commands', () => {
       cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
       const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
 
-      expect(output).toContain('"body"')
-      expect(output).toContain('Authorize the app')
+      // Only the result: no progress or summary before the JSON.
+      expect(JSON.parse(output)).toEqual({
+        skills: [expect.stringMatching(/[/\\]test-ping$/)],
+        body: 'Authorize the app',
+      })
     } finally {
       process.chdir(cwd)
       await rm(tmp, { force: true, recursive: true })

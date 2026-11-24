@@ -1651,12 +1651,12 @@ const Run = struct {
             }
         } else sync.depth;
         const global = !contains(rest, "--no-global");
-        run.write("Syncing...");
+        // Progress and the summary are for people; an explicit format prints only the result.
+        if (!flags.format_explicit) run.write("Syncing...");
         const result = switch (try sync_api.add(a, run.cli, &run.process, depth, global)) {
             .ok => |r| r,
             .err => |message| return run.builtinFailure("SYNC_SKILLS_FAILED", message, format),
         };
-        run.write("\r\x1b[K");
         var width: usize = 0;
         for (result.skills) |skill_| width = @max(width, js.utf16Len(skill_.name));
         var lines: std.ArrayList([]const u8) = .empty;
@@ -1672,7 +1672,10 @@ const Run = struct {
             for (sync.suggestions) |suggestion| try lines.append(a, try std.fmt.allocPrint(a, "  \"{s}\"", .{suggestion}));
         }
         try lines.appendSlice(a, &.{ "", try std.fmt.allocPrint(a, "Run `{s} --help` to see the full command reference.", .{run.cli.name}) });
-        run.writeln(try std.mem.join(a, "\n", lines.items));
+        if (!flags.format_explicit) {
+            run.write("\r\x1b[K");
+            run.writeln(try std.mem.join(a, "\n", lines.items));
+        }
         if (flags.full_output or flags.format_explicit) {
             var out: json.ObjectBuilder = .{};
             try out.put(a, "skills", try schema.strings(a, result.paths));
