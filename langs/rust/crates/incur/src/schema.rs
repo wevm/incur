@@ -63,6 +63,8 @@ pub struct Type {
     pub(crate) converted: Option<Box<Converted>>,
     /// Whether input converts to the kind first, as `z.coerce` does.
     pub(crate) coerce: bool,
+    /// The `x-mcp-header` name MCP clients mirror the field into, as `.meta()` adds it.
+    pub(crate) header: Option<String>,
 }
 
 /// What a schema converted from JSON Schema, such as an OpenAPI parameter or a remote MCP
@@ -159,6 +161,7 @@ impl Type {
             optional: false,
             converted: None,
             coerce: false,
+            header: None,
         }
     }
 
@@ -439,6 +442,9 @@ fn metadata(ty: &Type, out: &mut Map<String, Value>) {
     }
     if ty.deprecated {
         out.insert("deprecated".into(), true.into());
+    }
+    if let Some(header) = &ty.header {
+        out.insert("x-mcp-header".into(), header.clone().into());
     }
 }
 

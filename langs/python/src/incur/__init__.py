@@ -11,7 +11,7 @@ from ._errors import Cta, CtaBlock, Error, FieldError
 from ._formatter import Format
 from ._help import Example, Usage
 from ._http import FetchHandler, Headers, Request, RequestSource, Response, from_request, set_fetch
-from ._mcp import McpOptions, McpTool, ToolAnnotations, ToolFilter
+from ._mcp import CacheHint, Icon, McpOptions, McpTool, ToolAnnotations, ToolFilter
 from ._model import FieldInfo, RenameRule, SchemaError, arg, dump, env, field, schema
 from ._openapi import OpenapiConfig, OpenapiOperation, OpenapiSource
 from ._sync import Sync
@@ -19,6 +19,7 @@ from ._update import Update, UpdateCheck, UpdateInstall
 
 __all__ = [
     "BannerMode",
+    "CacheHint",
     "Cli",
     "CliOptions",
     "Command",
@@ -35,6 +36,7 @@ __all__ = [
     "Group",
     "Handler",
     "Headers",
+    "Icon",
     "McpOptions",
     "McpTool",
     "Middleware",

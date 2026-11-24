@@ -1012,6 +1012,10 @@ function toolCli(
     .command('named', {
       description: 'Positional named like a global',
       args: z.object({ profile: z.string().describe('Profile argument') }),
+      mcp: {
+        title: 'Named',
+        icons: [{ src: 'https://example.com/named.svg', sizes: ['any'], theme: 'light' }],
+      },
       run: (c) => ({ arg: c.args.profile, global: c.globals.profile }),
     })
     .command('deploy', {
@@ -1149,6 +1153,61 @@ const catalog = toolCli('catalog', {
     exclude: ['stream-throw'],
   },
 })
+
+/** Exercises MCP tool titles, icons, `x-mcp-header` declarations, and cache hints. */
+const params = Cli.create('params', {
+  description: 'MCP tool metadata',
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { cache: { ttlMs: 60000, cacheScope: 'public' }, tools: { discovery: 'direct' } },
+})
+  .command('get', {
+    description: 'Get an item',
+    args: z.object({ id: z.string().describe('Item id') }),
+    options: z.object({
+      limit: z.number().int().optional().describe('Limit'),
+      verbose: z.boolean().default(false),
+      tags: z.array(z.string()).optional(),
+    }),
+    mcp: {
+      title: 'Get item',
+      icons: [
+        { src: 'https://example.com/get.png', mimeType: 'image/png', sizes: ['48x48'] },
+        { src: 'data:image/svg+xml;base64,PHN2Zy8+', theme: 'dark' },
+      ],
+      headers: { id: 'Item-Id', limit: 'Limit', verbose: 'Verbose' },
+    },
+    run: (c) => ({ ...c.args, ...c.options }),
+  })
+  .command('blank', {
+    description: 'Empty title',
+    mcp: { title: '' },
+    run: () => ({ ok: true }),
+  })
+
+/** Builds a CLI whose one command declares an invalid `x-mcp-header`. */
+function badHeaders(name: string, headers: Record<string, string>) {
+  return Cli.create(name, { version: '1.0.0', update: false, sync: false }).command('bad', {
+    description: 'Invalid header',
+    options: z.object({
+      a: z.string(),
+      n: z.number(),
+      tags: z.array(z.string()),
+      b: z.string().optional(),
+    }),
+    mcp: { headers },
+    run: () => ({ ok: true }),
+  })
+}
+
+const hdrkey = badHeaders('hdrkey', { a: 'A', missing: 'Missing' })
+const hdrtoken = badHeaders('hdrtoken', { a: 'Bad Header' })
+const hdrempty = badHeaders('hdrempty', { a: '' })
+const hdrnumber = badHeaders('hdrnumber', { n: 'N' })
+const hdrarray = badHeaders('hdrarray', { tags: 'Tags' })
+const hdrdupe = badHeaders('hdrdupe', { a: 'Same', b: 'same' })
+const hdrnewline = badHeaders('hdrnewline', { a: 'A\n' })
 
 const bare = Cli.create('bare', { update: false, sync: false })
 
@@ -1653,6 +1712,13 @@ export const clis = {
   gateway,
   globals,
   greet,
+  hdrarray,
+  hdrdupe,
+  hdrempty,
+  hdrkey,
+  hdrnewline,
+  hdrnumber,
+  hdrtoken,
   kit,
   kitbad,
   kitcmd,
@@ -1662,6 +1728,7 @@ export const clis = {
   kitver,
   oa,
   oaroot,
+  params,
   plain,
   proxy,
   raw,

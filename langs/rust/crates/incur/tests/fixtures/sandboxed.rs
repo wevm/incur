@@ -5,7 +5,7 @@ use std::io::Write as _;
 
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, stream};
-use incur::mcp::{Annotations, Discovery, Mcp, Tool};
+use incur::mcp::{Annotations, CacheHint, CacheScope, Discovery, Icon, Mcp, Theme, Tool};
 use incur::openapi::{Mode, Openapi, Versions};
 use incur::update::{CheckContext, InstallContext};
 use incur::{
@@ -192,6 +192,14 @@ fn tool_cli(name: &str, mcp: Mcp) -> Cli {
             "named",
             Command::new()
                 .description("Positional named like a global")
+                .mcp(
+                    Tool::new()
+                        .title("Named")
+                        .icons([Icon::new("https://example.com/named.svg")
+                            .sizes(["any"])
+                            .theme(Theme::Light)
+                            .theme(Theme::Light)]),
+                )
                 .run(|c: Context<NamedArgs>| {
                     data(json!({ "arg": c.args.profile, "global": c.globals["profile"] }))
                 }),
@@ -400,6 +408,100 @@ pub(crate) fn catalog() -> Cli {
 
 pub(crate) fn bare() -> Cli {
     client(Cli::new("bare")).update(false).sync(false)
+}
+
+#[derive(Deserialize, Schema)]
+struct ParamArgs {
+    /// Item id
+    id: String,
+}
+
+#[derive(Deserialize, Schema, Serialize)]
+struct ParamOptions {
+    /// Limit
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<i64>,
+    #[serde(default)]
+    verbose: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
+}
+
+/// Exercises MCP tool titles, icons, `x-mcp-header` declarations, and cache hints.
+pub(crate) fn params() -> Cli {
+    client(Cli::new("params"))
+        .description("MCP tool metadata")
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .mcp(
+            Mcp::new()
+                .cache(CacheHint {
+                    ttl_ms: Some(60000),
+                    cache_scope: Some(CacheScope::Public),
+                })
+                .discovery(Discovery::Direct),
+        )
+        .command(
+            "get",
+            Command::new()
+                .description("Get an item")
+                .mcp(
+                    Tool::new()
+                        .title("Get item")
+                        .icons([
+                            Icon::new("https://example.com/get.png")
+                                .mime_type("image/png")
+                                .sizes(["48x48"]),
+                            Icon::new("data:image/svg+xml;base64,PHN2Zy8+").theme(Theme::Dark),
+                        ])
+                        .headers([
+                            ("id", "Item-Id"),
+                            ("limit", "Limit"),
+                            ("verbose", "Verbose"),
+                        ]),
+                )
+                .run(|c: Context<ParamArgs, ParamOptions>| {
+                    let mut out = json!({ "id": c.args.id });
+                    if let (Value::Object(out), Ok(Value::Object(options))) =
+                        (&mut out, serde_json::to_value(&c.options))
+                    {
+                        out.extend(options);
+                    }
+                    data(out)
+                }),
+        )
+        .command(
+            "blank",
+            Command::new()
+                .description("Empty title")
+                .mcp(Tool::new().title(""))
+                .run(|_: Context| data(json!({ "ok": true }))),
+        )
+}
+
+#[derive(Deserialize, Schema)]
+#[expect(dead_code, reason = "Only the schema is used.")]
+struct BadHeaderOptions {
+    a: String,
+    n: f64,
+    tags: Vec<String>,
+    b: Option<String>,
+}
+
+/// Builds a CLI whose one command declares an invalid `x-mcp-header`.
+pub(crate) fn bad_headers(name: &str, headers: &[(&str, &str)]) -> Cli {
+    client(Cli::new(name))
+        .version("1.0.0")
+        .update(false)
+        .sync(false)
+        .command(
+            "bad",
+            Command::new()
+                .description("Invalid header")
+                .mcp(Tool::new().headers(headers.iter().copied()))
+                .run(|_: Context<(), BadHeaderOptions>| data(json!({ "ok": true }))),
+        )
 }
 
 pub(crate) fn dupe() -> Cli {

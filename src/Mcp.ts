@@ -32,6 +32,7 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
         defaults: options.defaults,
         env: options.env,
         globals: options.globals,
+        cache: options.cache,
         instructions: options.instructions,
         middlewares: options.middlewares as MiddlewareHandler[] | undefined,
         title: options.title,
@@ -57,6 +58,7 @@ export function createServer(
       // Registers `tools/list` up front so a CLI without tools answers with an empty list.
       capabilities: { tools: {} },
       ...(options.instructions ? { instructions: options.instructions } : undefined),
+      ...(options.cache ? { cacheHints: cacheHints(options.cache) } : undefined),
     },
   )
   registerTools(server, commands, {
@@ -75,6 +77,14 @@ export function createServer(
   return server
 }
 
+function cacheHints({ ttlMs, cacheScope }: CacheHint) {
+  const hint = {
+    ...(ttlMs !== undefined ? { ttlMs } : undefined),
+    ...(cacheScope ? { cacheScope } : undefined),
+  }
+  return { 'tools/list': hint, 'server/discover': hint }
+}
+
 export declare namespace createServer {
   /** Options for an MCP server instance. */
   type Options = {
@@ -84,6 +94,8 @@ export declare namespace createServer {
     env?: z.ZodObject<any> | undefined
     /** CLI-level global options schema. */
     globals?: z.ZodObject<any> | undefined
+    /** Cache hints for `tools/list` and `server/discover` results under MCP 2026-07-28. */
+    cache?: CacheHint | undefined
     /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
     /** Middleware handlers registered on the root CLI. */
@@ -118,6 +130,8 @@ export declare namespace serve {
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version?: string | undefined
+    /** Cache hints for `tools/list` and `server/discover` results under MCP 2026-07-28. */
+    cache?: CacheHint | undefined
     /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
     /** Human-readable MCP server title. */
@@ -309,8 +323,31 @@ export type ToolEntry = {
   outputSchema?: Record<string, unknown> | undefined
   annotations?: ToolAnnotations | undefined
   instructions?: string | undefined
+  title?: string | undefined
+  icons?: Icon[] | undefined
+  headers?: Record<string, string> | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
+}
+
+/** How long MCP 2026-07-28 clients may cache a result, and who may share it. */
+export type CacheHint = {
+  /** Freshness in milliseconds. Defaults to `0`. */
+  ttlMs?: number | undefined
+  /** Whether shared caches may store the result. Defaults to `'private'`. */
+  cacheScope?: 'public' | 'private' | undefined
+}
+
+/** An icon clients may show for a tool. */
+export type Icon = {
+  /** The icon URL, such as an `https:` or `data:` URI. */
+  src: string
+  /** The icon's MIME type, such as `image/png`. */
+  mimeType?: string | undefined
+  /** Sizes the icon suits, such as `48x48` or `any`. */
+  sizes?: string[] | undefined
+  /** The theme the icon suits. */
+  theme?: 'light' | 'dark' | undefined
 }
 
 /** MCP tool annotations that describe tool behavior to clients. */
@@ -394,11 +431,16 @@ function registerDirectTool(
     ...tool.command.options?.shape,
     ...options.globals?.shape,
   }
+  // `x-mcp-header` asks 2026-07-28 HTTP clients to mirror the argument into `Mcp-Param-{name}`.
+  for (const [key, header] of Object.entries(tool.headers ?? {}))
+    mergedShape[key] = mergedShape[key].meta({ 'x-mcp-header': header })
   const hasInput = Object.keys(mergedShape).length > 0
 
   server.registerTool(
     tool.name,
     {
+      ...(tool.title ? { title: tool.title } : undefined),
+      ...(tool.icons ? { icons: tool.icons } : undefined),
       ...(tool.description ? { description: tool.description } : undefined),
       ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
       ...(tool.outputSchema
@@ -465,10 +507,12 @@ function registerDiscoveryTools(
       if (!tool) return toolError(`Unknown tool: ${params.name}`)
       return toolResult({
         name: tool.name,
+        ...(tool.title ? { title: tool.title } : undefined),
         ...(tool.description ? { description: tool.description } : undefined),
         inputSchema: tool.inputSchema,
         ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
         ...(tool.annotations ? { annotations: tool.annotations } : undefined),
+        ...(tool.icons ? { icons: tool.icons } : undefined),
         ...(tool.instructions ? { instructions: tool.instructions } : undefined),
       })
     },
@@ -646,12 +690,18 @@ function toToolEntry(
   const values = config ? Parser.parseDefaults(config(path), entry.options) : undefined
   const options = withDefaults(entry.options, values)
   const command = options === entry.options ? entry : { ...entry, options }
+  const name = mcp?.name ?? path.join('_')
+  const inputSchema = buildToolSchema(entry.args, options, globals)
+  if (mcp?.headers) assertHeaders(name, mcp.headers, inputSchema)
   return {
-    name: mcp?.name ?? path.join('_'),
+    name,
     description: mcp?.description ?? entry.description,
-    inputSchema: buildToolSchema(entry.args, options, globals),
+    inputSchema,
     ...(outputSchema ? { outputSchema } : undefined),
     ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
+    ...(mcp?.title ? { title: mcp.title } : undefined),
+    ...(mcp?.icons ? { icons: mcp.icons } : undefined),
+    ...(mcp?.headers ? { headers: mcp.headers } : undefined),
     ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
     command,
     ...(middlewares.length > 0 ? { middlewares } : undefined),
@@ -669,6 +719,30 @@ function withDefaults(
   )
   // `safeExtend` keeps object-level refinements, which `extend` rejects
   return schema.safeExtend(shape)
+}
+
+/** Rejects `x-mcp-header` declarations that 2026-07-28 clients would refuse, so the tool stays callable. */
+function assertHeaders(
+  name: string,
+  headers: Record<string, string>,
+  inputSchema: Record<string, unknown>,
+) {
+  const properties = inputSchema.properties as Record<string, { type?: unknown }>
+  const seen = new Map<string, string>()
+  for (const [key, header] of Object.entries(headers)) {
+    const fail = (reason: string) => {
+      throw new Error(`Invalid MCP header on tool ${name}: ${reason}`)
+    }
+    const type = properties[key]?.type
+    if (type === undefined) fail(`${key} is not an input`)
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(header))
+      fail(`'${header}' is not a valid HTTP header name`)
+    if (type !== 'string' && type !== 'integer' && type !== 'boolean')
+      fail(`${key} must be a string, integer, or boolean`)
+    const prior = seen.get(header.toLowerCase())
+    if (prior !== undefined) fail(`'${header}' duplicates '${prior}'`)
+    seen.set(header.toLowerCase(), header)
+  }
 }
 
 /** Filters MCP tools by include and exclude patterns. */

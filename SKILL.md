@@ -275,6 +275,8 @@ The MCP server is initialized lazily on the first `/mcp` request. Non-`/mcp` pat
 
 Both `/mcp` and `--mcp` speak MCP 2026-07-28 (`server/discover`, protocol version and client capabilities in each request's `_meta`) as well as the earlier `initialize` handshake.
 
+A command's `mcp` settings take `title`, `icons`, and `headers` (`{ region: 'Region' }` asks 2026-07-28 HTTP clients to send `region` as `Mcp-Param-Region`; string, integer, and boolean inputs only). `mcp.cache` (`{ ttlMs, cacheScope }`) sets cache hints for `tools/list` and `server/discover`.
+
 ## Arguments & Options
 
 All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.

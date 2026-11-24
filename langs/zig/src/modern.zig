@@ -150,13 +150,13 @@ pub fn envelopeError(a: Allocator, params: Value) Allocator.Error!?[]const u8 {
 }
 
 /// Stamps `resultType`, cache hints, and the server identity on a modern result.
-pub fn encode(a: Allocator, method: []const u8, result: Value, info: Value) Allocator.Error!Value {
+pub fn encode(a: Allocator, method: []const u8, result: Value, info: Value, cache: CacheHint) Allocator.Error!Value {
     var out: json.ObjectBuilder = .{};
     for (result.object) |entry| try out.put(a, entry.key, entry.value);
     try out.put(a, "resultType", .{ .string = "complete" });
     if (std.mem.eql(u8, method, "tools/list") or std.mem.eql(u8, method, "server/discover")) {
-        try out.put(a, "ttlMs", .{ .integer = 0 });
-        try out.put(a, "cacheScope", .{ .string = "private" });
+        try out.put(a, "ttlMs", .{ .integer = cache.ttl_ms orelse 0 });
+        try out.put(a, "cacheScope", .{ .string = @tagName(cache.cache_scope orelse .private) });
     }
     var meta: json.ObjectBuilder = .{};
     if (result.get("_meta")) |m| for (m.object) |entry| try meta.put(a, entry.key, entry.value);
@@ -165,7 +165,16 @@ pub fn encode(a: Allocator, method: []const u8, result: Value, info: Value) Allo
     return out.finish();
 }
 
-fn mismatch(a: Allocator, header: []const u8, body: []const u8) Allocator.Error!Reject {
+/// How long MCP 2026-07-28 clients may cache a result, and who may share it.
+pub const CacheHint = struct {
+    /// Freshness in milliseconds. Defaults to 0.
+    ttl_ms: ?u32 = null,
+    /// Whether shared caches may store the result. Defaults to `.private`.
+    cache_scope: ?enum { public, private } = null,
+};
+
+/// Returns a header and body disagreement.
+pub fn mismatch(a: Allocator, header: []const u8, body: []const u8) Allocator.Error!Reject {
     var m: json.ObjectBuilder = .{};
     try m.put(a, "header", .{ .string = header });
     try m.put(a, "body", .{ .string = body });
@@ -313,7 +322,7 @@ fn digit(c: u8) ?u32 {
 }
 
 /// Decodes an `Mcp-Name` value: a `=?base64?…?=` sentinel carries canonical Base64 UTF-8.
-fn decodeName(a: Allocator, value: []const u8) Allocator.Error!?[]const u8 {
+pub fn decodeName(a: Allocator, value: []const u8) Allocator.Error!?[]const u8 {
     if (!std.mem.startsWith(u8, value, "=?base64?") or !std.mem.endsWith(u8, value, "?=")) return value;
     const payload = if (value.len >= 11) value[9 .. value.len - 2] else "";
     const data = std.mem.trimEnd(u8, payload, "=");

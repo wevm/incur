@@ -2191,8 +2191,8 @@ fn describes_builders_and_bodies() {
     Body(Stream)
     Fetch(Handler) Fetch("http://h.test/a") Fetch("nope")
     Openapi { mode: Operation, versions: All, .. }
-    Mcp { agents: [], command: None, discovery: Progressive, enabled: true, exclude: [], include: [], instructions: None, name: None, stateless: true, title: None }
-    Tool { annotations: None, description: None, enabled: true, instructions: None, name: None }
+    Mcp { agents: [], cache: None, command: None, discovery: Progressive, enabled: true, exclude: [], include: [], instructions: None, name: None, stateless: true, title: None }
+    Tool { annotations: None, description: None, enabled: true, headers: [], icons: None, instructions: None, name: None, title: None }
     SkillSync { body: None, command: None, cwd: None, depth: None, enabled: true, include: [], suggestions: [] }
     "#);
 }

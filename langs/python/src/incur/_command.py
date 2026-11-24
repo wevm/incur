@@ -168,6 +168,9 @@ class ToolMeta:
     description: str | None = None
     annotations: dict[str, Json] | None = None
     instructions: str | None = None
+    title: str | None = None
+    icons: list[Json] | None = None
+    headers: dict[str, str] | None = None
 
 
 @dataclass

@@ -1049,7 +1049,11 @@ fn toolCli(gpa: Allocator, name: []const u8, mcp: incur.Mcp) !*incur.Cli {
         .run = incur.handler(toolEcho),
     });
     try cli.command("context", .{ .description = "Show globals, env, and vars", .run = incur.handler(toolContext) });
-    try cli.command("named", .{ .description = "Positional named like a global", .run = incur.handler(toolNamed) });
+    try cli.command("named", .{
+        .description = "Positional named like a global",
+        .mcp = .{ .title = "Named", .icons = &.{.{ .src = "https://example.com/named.svg", .sizes = &.{"any"}, .theme = .light }} },
+        .run = incur.handler(toolNamed),
+    });
     try cli.command("deploy", .{ .description = "Deploy with a required token", .destructive = true, .run = incur.handler(toolDeploy) });
     try cli.command("fail", .{ .description = "Fail with details", .run = incur.handler(toolFail) });
     try cli.command("plain-fail", .{ .description = "Fail without details", .run = incur.handler(plainFail) });
@@ -1088,6 +1092,104 @@ fn catalog(gpa: Allocator) !*incur.Cli {
         .include = &.{ "echo", "ops*", "stream*", "fail", "context", "named", "deploy" },
         .exclude = &.{"stream-throw"},
     } });
+}
+
+const ParamArgs = struct {
+    id: []const u8,
+
+    pub const incur = .{ .fields = .{ .id = .{ .description = "Item id" } } };
+};
+
+const ParamOptions = struct {
+    limit: ?i64 = null,
+    verbose: bool = false,
+    tags: ?[]const []const u8 = null,
+
+    pub const incur = .{ .omit_null = true, .fields = .{ .limit = .{ .description = "Limit" } } };
+};
+
+fn paramGet(c: *Context(.{ .args = ParamArgs, .options = ParamOptions })) !Outcome {
+    var out: incur.ObjectBuilder = .{};
+    try out.put(c.allocator, "id", .{ .string = c.args.id });
+    for ((try incur.encode(c.allocator, c.options)).object) |entry| try out.put(c.allocator, entry.key, entry.value);
+    return c.ok(out.finish());
+}
+
+fn okTrue(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .ok = true });
+}
+
+/// Exercises MCP tool titles, icons, `x-mcp-header` declarations, and cache hints.
+fn paramsCli(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "params", .{
+        .description = "MCP tool metadata",
+        .version = "1.0.0",
+        .update = null,
+        .sync = null,
+        .mcp = .{ .cache = .{ .ttl_ms = 60000, .cache_scope = .public }, .tools = .{ .discovery = .direct } },
+    });
+    errdefer cli.destroy();
+    try cli.command("get", .{
+        .description = "Get an item",
+        .mcp = .{
+            .title = "Get item",
+            .icons = &.{
+                .{ .src = "https://example.com/get.png", .mime_type = "image/png", .sizes = &.{"48x48"} },
+                .{ .src = "data:image/svg+xml;base64,PHN2Zy8+", .theme = .dark },
+            },
+            .headers = &.{ .{ .input = "id", .name = "Item-Id" }, .{ .input = "limit", .name = "Limit" }, .{ .input = "verbose", .name = "Verbose" } },
+        },
+        .run = incur.handler(paramGet),
+    });
+    try cli.command("blank", .{ .description = "Empty title", .mcp = .{ .title = "" }, .run = incur.handler(okTrue) });
+    return cli;
+}
+
+const BadHeaderOptions = struct {
+    a: []const u8,
+    n: f64,
+    tags: []const []const u8,
+    b: ?[]const u8 = null,
+};
+
+fn badOk(c: *Context(.{ .options = BadHeaderOptions })) !Outcome {
+    return c.ok(.{ .ok = true });
+}
+
+/// Builds a CLI whose one command declares an invalid `x-mcp-header`.
+fn badHeaders(gpa: Allocator, name: []const u8, headers: []const incur.Header) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, name, .{ .version = "1.0.0", .update = null, .sync = null });
+    errdefer cli.destroy();
+    try cli.command("bad", .{ .description = "Invalid header", .mcp = .{ .headers = headers }, .run = incur.handler(badOk) });
+    return cli;
+}
+
+fn hdrarray(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrarray", &.{.{ .input = "tags", .name = "Tags" }});
+}
+
+fn hdrdupe(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrdupe", &.{ .{ .input = "a", .name = "Same" }, .{ .input = "b", .name = "same" } });
+}
+
+fn hdrempty(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrempty", &.{.{ .input = "a", .name = "" }});
+}
+
+fn hdrkey(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrkey", &.{ .{ .input = "a", .name = "A" }, .{ .input = "missing", .name = "Missing" } });
+}
+
+fn hdrnewline(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrnewline", &.{.{ .input = "a", .name = "A\n" }});
+}
+
+fn hdrnumber(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrnumber", &.{.{ .input = "n", .name = "N" }});
+}
+
+fn hdrtoken(gpa: Allocator) !*incur.Cli {
+    return badHeaders(gpa, "hdrtoken", &.{.{ .input = "a", .name = "Bad Header" }});
 }
 
 fn bare(gpa: Allocator) !*incur.Cli {
@@ -1569,15 +1671,17 @@ fn updbad(gpa: Allocator) !*incur.Cli {
 /// Returns the fixture CLI with the given key from `cases.json`.
 pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
     const fixtures = .{
-        .{ "app", app },             .{ "bare", bare },         .{ "catalog", catalog }, .{ "cfg", cfg },
-        .{ "dupe", dupe },           .{ "gateway", gateway },   .{ "globals", globals }, .{ "greet", greetCli },
-        .{ "plain", plain },         .{ "proxy", proxy },       .{ "raw", raw },         .{ "rooted", rooted },
-        .{ "tools", tools },         .{ "web", web },           .{ "oa", oa },           .{ "oaroot", oaroot },
-        .{ "remote", remote },       .{ "kit", kit },           .{ "kitpkg", kitpkg },   .{ "kitcmd", kitcmd },
-        .{ "kitbad", kitbad },       .{ "kitver", kitver },     .{ "spaced", spaced },   .{ "upd", upd },
-        .{ "updbeta", updbeta },     .{ "updcheck", updcheck }, .{ "updnone", updnone }, .{ "updpkg", updpkg },
-        .{ "updbad", updbad },       .{ "shadow", shadow },     .{ "kitcwd", kitcwd },   .{ "kitrun", kitrun },
-        .{ "shadowall", shadowall },
+        .{ "app", app },               .{ "bare", bare },         .{ "catalog", catalog },     .{ "cfg", cfg },
+        .{ "dupe", dupe },             .{ "gateway", gateway },   .{ "globals", globals },     .{ "greet", greetCli },
+        .{ "plain", plain },           .{ "proxy", proxy },       .{ "raw", raw },             .{ "rooted", rooted },
+        .{ "tools", tools },           .{ "web", web },           .{ "oa", oa },               .{ "oaroot", oaroot },
+        .{ "remote", remote },         .{ "kit", kit },           .{ "kitpkg", kitpkg },       .{ "kitcmd", kitcmd },
+        .{ "kitbad", kitbad },         .{ "kitver", kitver },     .{ "spaced", spaced },       .{ "upd", upd },
+        .{ "updbeta", updbeta },       .{ "updcheck", updcheck }, .{ "updnone", updnone },     .{ "updpkg", updpkg },
+        .{ "updbad", updbad },         .{ "shadow", shadow },     .{ "kitcwd", kitcwd },       .{ "kitrun", kitrun },
+        .{ "shadowall", shadowall },   .{ "params", paramsCli },  .{ "hdrarray", hdrarray },   .{ "hdrdupe", hdrdupe },
+        .{ "hdrempty", hdrempty },     .{ "hdrkey", hdrkey },     .{ "hdrnumber", hdrnumber }, .{ "hdrtoken", hdrtoken },
+        .{ "hdrnewline", hdrnewline },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

@@ -54,6 +54,41 @@ class ToolAnnotations:
 
 
 @dataclass
+class Icon:
+    """An icon clients may show for a tool."""
+
+    src: str
+    """The icon URL, such as an `https:` or `data:` URI."""
+    mime_type: str | None = None
+    """The icon's MIME type, such as `image/png`."""
+    sizes: list[str] | None = None
+    """Sizes the icon suits, such as `48x48` or `any`."""
+    theme: Literal["light", "dark"] | None = None
+    """The theme the icon suits."""
+
+    def to_json(self) -> dict[str, Json]:
+        """Returns the icon as MCP spells it."""
+        out: dict[str, Json] = {"src": self.src}
+        if self.mime_type is not None:
+            out["mimeType"] = self.mime_type
+        if self.sizes is not None:
+            out["sizes"] = list[Json](self.sizes)
+        if self.theme is not None:
+            out["theme"] = self.theme
+        return out
+
+
+@dataclass
+class CacheHint:
+    """How long MCP 2026-07-28 clients may cache a result, and who may share it."""
+
+    ttl_ms: int | None = None
+    """Freshness in milliseconds. Defaults to 0."""
+    cache_scope: Literal["public", "private"] | None = None
+    """Whether shared caches may store the result. Defaults to `private`."""
+
+
+@dataclass
 class McpTool:
     """How a command appears as an MCP tool."""
 
@@ -65,11 +100,29 @@ class McpTool:
     """Behavior hints for clients."""
     instructions: str | None = None
     """Usage instructions, sent as the tool's `_meta.instructions`."""
+    title: str | None = None
+    """A human-readable tool title."""
+    icons: list[Icon] | None = None
+    """Icons clients may show for the tool."""
+    headers: dict[str, str] | None = None
+    """HTTP headers 2026-07-28 clients mirror inputs into, keyed by input name.
+
+    `{"region": "Region"}` sends `region` as `Mcp-Param-Region`. Applies to directly listed tools.
+    """
 
     def meta(self) -> ToolMeta:
         """Returns the tool settings as commands store them."""
         annotations = self.annotations.to_json() if self.annotations else None
-        return ToolMeta(self.name, self.description, annotations, self.instructions)
+        icons = [icon.to_json() for icon in self.icons] if self.icons is not None else None
+        return ToolMeta(
+            self.name,
+            self.description,
+            annotations,
+            self.instructions,
+            self.title,
+            list[Json](icons) if icons is not None else None,
+            self.headers,
+        )
 
 
 @dataclass
@@ -91,6 +144,8 @@ class McpOptions:
 
     agents: list[str] = field(default_factory=list[str])
     """Agents that `mcp add` targets by default, such as `claude-code` or `cursor`."""
+    cache: CacheHint | None = None
+    """Cache hints for `tools/list` and `server/discover` results under MCP 2026-07-28."""
     command: str | None = None
     """The command agents run to start the server. Detected when omitted."""
     instructions: str | None = None
@@ -120,6 +175,9 @@ class Tool:
     instructions: str | None
     inputs: Type
     """Args, options, and globals merged, as direct tools validate input."""
+    title: str | None = None
+    icons: list[Json] | None = None
+    headers: dict[str, str] | None = None
 
 
 #: Returns the config section of a command path, such as `project list`.
@@ -229,8 +287,11 @@ def _tool(
     if required:
         details["required"] = required
     output = json_schema(command.output) if command.output is not None else None
+    name = meta.name or "_".join(path)
+    if meta.headers:
+        _check_headers(name, meta.headers, properties)
     return Tool(
-        name=meta.name or "_".join(path),
+        name=name,
         description=meta.description or command.description,
         command=command,
         middleware=middleware,
@@ -239,7 +300,36 @@ def _tool(
         annotations=meta.annotations,
         instructions=meta.instructions,
         inputs=object_type(list(merged.values())),
+        title=meta.title,
+        icons=meta.icons,
+        headers=meta.headers,
     )
+
+
+_TOKEN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def _check_headers(name: str, headers: dict[str, str], properties: dict[str, Json]) -> None:
+    """Rejects `x-mcp-header` declarations that 2026-07-28 clients would refuse.
+
+    Raises:
+        Error: When a header names no input, is not an HTTP token, sits on an input other
+            than a string, integer, or boolean, or repeats another header ignoring case.
+    """
+    seen: dict[str, str] = {}
+    for key, header in headers.items():
+        prefix = f"Invalid MCP header on tool {name}: "
+        prop = properties.get(key)
+        if not isinstance(prop, dict) or "type" not in prop:
+            raise unknown(f"{prefix}{key} is not an input")
+        if not _TOKEN.fullmatch(header):
+            raise unknown(f"{prefix}'{header}' is not a valid HTTP header name")
+        if prop["type"] not in ("string", "integer", "boolean"):
+            raise unknown(f"{prefix}{key} must be a string, integer, or boolean")
+        prior = seen.get(header.lower())
+        if prior is not None:
+            raise unknown(f"{prefix}'{header}' duplicates '{prior}'")
+        seen[header.lower()] = header
 
 
 #: Sends a progress message for a streamed chunk.
@@ -471,6 +561,9 @@ class _Registered:
     annotations: dict[str, Json] | None = None
     output: dict[str, Json] | None = None
     meta: dict[str, Json] | None = None
+    title: str | None = None
+    icons: list[Json] | None = None
+    headers: dict[str, str] | None = None
 
 
 class Server:
@@ -492,6 +585,7 @@ class Server:
         self.name = options.name or spec.name
         self.title = options.title
         self.instructions = options.instructions
+        self.cache = options.cache
         self.version = spec.version or "0.0.0"
         self.env = env
         self.tools = self._register(collect(spec, filter_, config), filter_)
@@ -527,6 +621,8 @@ class Server:
             if tool is None:
                 return _tool_error(f"Unknown tool: {params['name']}")
             out: dict[str, Json] = {"name": tool.name}
+            if tool.title:
+                out["title"] = tool.title
             if tool.description:
                 out["description"] = tool.description
             out["inputSchema"] = tool.details
@@ -534,6 +630,8 @@ class Server:
                 out["outputSchema"] = tool.output
             if tool.annotations:
                 out["annotations"] = tool.annotations
+            if tool.icons is not None:
+                out["icons"] = tool.icons
             if tool.instructions:
                 out["instructions"] = tool.instructions
             return _tool_result(out)
@@ -604,14 +702,24 @@ class Server:
                 spec, tool, params, parsed=True, progress=progress, request=request, env=self.env
             )
 
+        headers = tool.headers or {}
+        fields = [
+            Field(f.name, replace(f.ty, header=headers[f.name]), f.alias, f.attr)
+            if f.name in headers
+            else f
+            for f in tool.inputs.fields
+        ]
         return _Registered(
             tool.name,
             tool.description,
-            tool.inputs if tool.inputs.fields else None,
+            object_type(fields) if fields else None,
             run,
             tool.annotations,
             tool.output,
             {"instructions": tool.instructions} if tool.instructions else None,
+            tool.title,
+            tool.icons,
+            headers,
         )
 
     def info(self) -> dict[str, Json]:
@@ -640,6 +748,8 @@ class Server:
         tools: list[Json] = []
         for tool in self.tools.values():
             item: dict[str, Json] = {"name": tool.name}
+            if tool.title:
+                item["title"] = tool.title
             if tool.description is not None:
                 item["description"] = tool.description
             if tool.inputs is not None:
@@ -653,6 +763,8 @@ class Server:
                 item["inputSchema"] = {"type": "object", "properties": {}}
             if tool.annotations is not None:
                 item["annotations"] = tool.annotations
+            if tool.icons is not None:
+                item["icons"] = tool.icons
             if tool.meta is not None:
                 item["_meta"] = tool.meta
             if tool.output is not None:
@@ -734,7 +846,7 @@ class Server:
         assert response is not None
         if "result" in response:
             result = _js.as_object(response["result"])
-            response["result"] = _mcp_modern.encode(str(method), result, self.info())
+            response["result"] = _mcp_modern.encode(str(method), result, self.info(), self.cache)
         return response
 
     async def handle(

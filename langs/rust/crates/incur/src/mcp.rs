@@ -57,6 +57,8 @@ pub enum Discovery {
 pub struct Mcp {
     /// Agents `mcp add` registers with by default.
     pub(crate) agents: Vec<String>,
+    /// Cache hints for `tools/list` and `server/discover` under MCP 2026-07-28.
+    pub(crate) cache: Option<CacheHint>,
     /// The command agents run, overriding the detected one.
     pub(crate) command: Option<String>,
     /// Tool discovery.
@@ -97,6 +99,7 @@ impl Mcp {
     pub fn new() -> Self {
         Self {
             agents: Vec::new(),
+            cache: None,
             command: None,
             discovery: Discovery::Progressive,
             enabled: true,
@@ -113,6 +116,14 @@ impl Mcp {
     #[must_use]
     pub fn agents(mut self, agents: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.agents = agents.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets how long MCP 2026-07-28 clients may cache `tools/list` and `server/discover`
+    /// results. Defaults to no caching, privately.
+    #[must_use]
+    pub fn cache(mut self, cache: CacheHint) -> Self {
+        self.cache = Some(cache);
         self
     }
 
@@ -174,6 +185,106 @@ impl Mcp {
     }
 }
 
+/// How long MCP 2026-07-28 clients may cache a result, and who may share it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CacheHint {
+    /// Freshness in milliseconds. Defaults to 0.
+    pub ttl_ms: Option<u64>,
+    /// Whether shared caches may store the result. Defaults to [`CacheScope::Private`].
+    pub cache_scope: Option<CacheScope>,
+}
+
+/// Who may cache a result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheScope {
+    /// Shared caches may store it.
+    Public,
+    /// Only the requesting client may store it.
+    Private,
+}
+
+/// The theme an icon suits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Theme {
+    /// Light backgrounds.
+    Light,
+    /// Dark backgrounds.
+    Dark,
+}
+
+/// An icon clients may show for a tool.
+///
+/// ```
+/// use incur::mcp::{Icon, Theme};
+///
+/// let icon = Icon::new("https://example.com/tool.png").mime_type("image/png").theme(Theme::Dark);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Icon {
+    /// The icon URL, such as an `https:` or `data:` URI.
+    src: String,
+    /// The MIME type.
+    mime_type: Option<String>,
+    /// The sizes it suits, such as `48x48` or `any`.
+    sizes: Option<Vec<String>>,
+    /// The theme it suits.
+    theme: Option<Theme>,
+}
+
+impl Icon {
+    /// Creates an icon from its URL.
+    pub fn new(src: impl Into<String>) -> Self {
+        Self {
+            src: src.into(),
+            mime_type: None,
+            sizes: None,
+            theme: None,
+        }
+    }
+
+    /// Sets the MIME type, such as `image/png`.
+    #[must_use]
+    pub fn mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// Sets the sizes the icon suits, such as `48x48` or `any`.
+    #[must_use]
+    pub fn sizes(mut self, sizes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.sizes = Some(sizes.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Sets the theme the icon suits.
+    #[must_use]
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
+    /// Returns the icon as MCP JSON.
+    fn to_json(&self) -> Value {
+        let mut out = Map::new();
+        out.insert("src".into(), self.src.clone().into());
+        if let Some(mime_type) = &self.mime_type {
+            out.insert("mimeType".into(), mime_type.clone().into());
+        }
+        if let Some(sizes) = &self.sizes {
+            out.insert("sizes".into(), sizes.clone().into());
+        }
+        if let Some(theme) = self.theme {
+            let theme = if theme == Theme::Dark {
+                "dark"
+            } else {
+                "light"
+            };
+            out.insert("theme".into(), theme.into());
+        }
+        Value::Object(out)
+    }
+}
+
 /// Hints that describe a tool's behavior to MCP clients.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Annotations {
@@ -229,10 +340,16 @@ pub struct Tool {
     pub(crate) description: Option<String>,
     /// Whether the command is exposed.
     pub(crate) enabled: bool,
+    /// Input names mapped to the `Mcp-Param-*` headers clients mirror them into.
+    pub(crate) headers: Vec<(String, String)>,
+    /// Icons clients may show.
+    pub(crate) icons: Option<Vec<Icon>>,
     /// Instructions sent in the tool's `_meta`.
     pub(crate) instructions: Option<String>,
     /// The tool name, defaulting to the command path joined with `_`.
     pub(crate) name: Option<String>,
+    /// The human-readable title.
+    pub(crate) title: Option<String>,
 }
 
 impl Default for Tool {
@@ -257,9 +374,41 @@ impl Tool {
             annotations: None,
             description: None,
             enabled: true,
+            headers: Vec::new(),
+            icons: None,
             instructions: None,
             name: None,
+            title: None,
         }
+    }
+
+    /// Sets the HTTP headers MCP 2026-07-28 clients mirror inputs into, as input names and
+    /// header names: `("region", "Region")` sends `region` as `Mcp-Param-Region`. Applies to
+    /// directly listed tools.
+    #[must_use]
+    pub fn headers(
+        mut self,
+        headers: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.headers = headers
+            .into_iter()
+            .map(|(key, header)| (key.into(), header.into()))
+            .collect();
+        self
+    }
+
+    /// Sets icons clients may show for the tool.
+    #[must_use]
+    pub fn icons(mut self, icons: impl IntoIterator<Item = Icon>) -> Self {
+        self.icons = Some(icons.into_iter().collect());
+        self
+    }
+
+    /// Sets the human-readable tool title.
+    #[must_use]
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
     }
 
     /// Sets behavior hints.
@@ -312,6 +461,13 @@ pub(crate) struct ToolEntry {
     name: String,
     /// The JSON Schema of object output.
     output_schema: Option<Value>,
+    /// Icons as MCP JSON.
+    icons: Option<Value>,
+    /// The `Mcp-Param-*` declarations in input order: input name, header name, and whether the
+    /// input is an integer.
+    params: Vec<(String, String, bool)>,
+    /// The non-empty title.
+    title: Option<String>,
 }
 
 /// Returns the config section of a command path, such as `project list`.
@@ -504,6 +660,19 @@ fn tool(
             }
         }
     }
+    let name = settings
+        .and_then(|t| t.name.clone())
+        .unwrap_or_else(|| path.join("_"));
+    let headers = settings.map_or(&[][..], |t| &t.headers[..]);
+    check_headers(&name, headers, &properties).map_err(Error::unknown)?;
+    let mut params = Vec::new();
+    for field in &mut fields {
+        if let Some((_, header)) = headers.iter().find(|(key, _)| *key == field.name) {
+            field.ty.header = Some(header.clone());
+            let integer = properties[&field.name]["type"] == "integer";
+            params.push((field.name.clone(), header.clone(), integer));
+        }
+    }
     let mut input = Map::new();
     input.insert("type".into(), "object".into());
     input.insert("properties".into(), properties.into());
@@ -520,11 +689,65 @@ fn tool(
         instructions: settings.and_then(|t| t.instructions.clone()),
         merged: (!fields.is_empty()).then(|| Type::object(fields)),
         middleware: middleware.to_vec(),
-        name: settings
-            .and_then(|t| t.name.clone())
-            .unwrap_or_else(|| path.join("_")),
+        name,
         output_schema,
+        params,
+        icons: settings
+            .and_then(|t| t.icons.as_ref())
+            .map(|icons| icons.iter().map(Icon::to_json).collect()),
+        title: settings
+            .and_then(|t| t.title.clone())
+            .filter(|title| !title.is_empty()),
     })
+}
+
+/// The text a primitive argument travels as in an `Mcp-Param-*` header, or `None` for other
+/// values and integers beyond JavaScript's safe range.
+fn param_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if text.starts_with(schema::NON_FINITE) => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Number(number) => {
+            let value = number.as_f64().unwrap_or_default();
+            (value.fract() != 0.0 || value.abs() <= 9_007_199_254_740_991.0)
+                .then(|| js::number_to_string(value))
+        }
+        _ => None,
+    }
+}
+
+/// Rejects `x-mcp-header` declarations that MCP 2026-07-28 clients would refuse.
+///
+/// # Errors
+///
+/// Returns a message when a header names no input, is not an HTTP token, sits on an input
+/// other than a string, integer, or boolean, or repeats another header ignoring case.
+fn check_headers(
+    name: &str,
+    headers: &[(String, String)],
+    properties: &Map<String, Value>,
+) -> Result<(), String> {
+    let mut seen: Vec<(String, &str)> = Vec::new();
+    for (key, header) in headers {
+        let fail = |reason: String| Err(format!("Invalid MCP header on tool {name}: {reason}"));
+        let Some(ty) = properties.get(key).and_then(|p| p.get("type")) else {
+            return fail(format!("{key} is not an input"));
+        };
+        let token = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+        if header.is_empty() || !header.chars().all(token) {
+            return fail(format!("'{header}' is not a valid HTTP header name"));
+        }
+        if !matches!(ty.as_str(), Some("string" | "integer" | "boolean")) {
+            return fail(format!("{key} must be a string, integer, or boolean"));
+        }
+        let lower = header.to_ascii_lowercase();
+        if let Some((_, prior)) = seen.iter().find(|(seen, _)| *seen == lower) {
+            return fail(format!("'{header}' duplicates '{prior}'"));
+        }
+        seen.push((lower, header));
+    }
+    Ok(())
 }
 
 /// Converts a schema to the JSON Schema the MCP SDK emits for tool input: Zod's input mode,
@@ -591,6 +814,8 @@ pub(crate) struct Context<'a> {
 
 /// An MCP server over a command tree.
 pub(crate) struct Server<'a> {
+    /// Cache hints for `tools/list` and `server/discover`.
+    pub(crate) cache: Option<CacheHint>,
     /// Call context.
     pub(crate) context: Context<'a>,
     /// Whether every command is its own tool.
@@ -726,7 +951,12 @@ impl Server<'_> {
             self.handle(id, method, params, request, notify).await
         };
         if let Some(Value::Object(out)) = response.get_mut("result") {
-            *out = modern::encode(method, std::mem::take(out), self.info());
+            *out = modern::encode(
+                method,
+                std::mem::take(out),
+                self.info(),
+                self.cache.as_ref(),
+            );
         }
         (response, false)
     }
@@ -785,6 +1015,57 @@ impl Server<'_> {
         }
     }
 
+    /// Checks a direct tool's `Mcp-Param-*` headers against a `tools/call`'s arguments, as the
+    /// MCP SDK does before dispatch.
+    pub(crate) fn check_params<'h>(
+        &self,
+        params: &Map<String, Value>,
+        header: impl Fn(&str) -> Option<&'h str>,
+    ) -> Result<(), modern::Reject> {
+        let name = params.get("name").and_then(Value::as_str);
+        let tool = name.and_then(|name| self.tools.iter().find(|t| self.direct && t.name == name));
+        let arguments = params.get("arguments").and_then(Value::as_object);
+        for (key, header_name, integer) in tool.map_or(&[][..], |t| &t.params[..]) {
+            let raw = arguments.and_then(|a| a.get(key)).unwrap_or(&Value::Null);
+            let Some(text) = param_text(raw) else {
+                continue;
+            };
+            let name = format!("Mcp-Param-{header_name}");
+            let body = js::stringify(raw);
+            let Some(value) = header(&name) else {
+                let detail =
+                    format!("the body carries {key}={body} but the {name} header is absent");
+                return Err(modern::Reject::mismatch(&name, &detail));
+            };
+            let Some(decoded) = modern::decode_name(value) else {
+                let detail = format!("the {name} header carries an invalid Base64 sentinel value");
+                return Err(modern::Reject::mismatch(&name, &detail));
+            };
+            let decimal = decoded.strip_prefix('-').unwrap_or(&decoded);
+            let decimal = decimal
+                .split_once('.')
+                .map_or((decimal, "0"), |(w, f)| (w, f));
+            let numeric = *integer
+                && raw.is_number()
+                && [decimal.0, decimal.1]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+            let equal = if numeric {
+                decoded.parse::<f64>().ok() == raw.as_f64()
+            } else {
+                decoded == text
+            };
+            if !equal {
+                let quoted = js::stringify(&Value::from(decoded));
+                let detail = format!(
+                    "the {name} header decodes to {quoted} but the body carries {key}={body}"
+                );
+                return Err(modern::Reject::mismatch(&name, &detail));
+            }
+        }
+        Ok(())
+    }
+
     /// Lists tools as `tools/list` returns them.
     pub(crate) fn list(&self) -> Vec<Value> {
         if self.tools.is_empty() {
@@ -798,6 +1079,9 @@ impl Server<'_> {
             .map(|tool| {
                 let mut out = Map::new();
                 out.insert("name".into(), tool.name.clone().into());
+                if let Some(title) = &tool.title {
+                    out.insert("title".into(), title.clone().into());
+                }
                 if let Some(description) = &tool.description {
                     out.insert("description".into(), description.clone().into());
                 }
@@ -817,6 +1101,9 @@ impl Server<'_> {
                 out.insert("inputSchema".into(), input.into());
                 if let Some(annotations) = &tool.annotations {
                     out.insert("annotations".into(), annotations.clone().into());
+                }
+                if let Some(icons) = &tool.icons {
+                    out.insert("icons".into(), icons.clone());
                 }
                 if let Some(instructions) = &tool.instructions {
                     out.insert("_meta".into(), json!({ "instructions": instructions }));
@@ -927,6 +1214,9 @@ impl Server<'_> {
         };
         let mut out = Map::new();
         out.insert("name".into(), tool.name.clone().into());
+        if let Some(title) = &tool.title {
+            out.insert("title".into(), title.clone().into());
+        }
         if let Some(description) = &tool.description {
             out.insert("description".into(), description.clone().into());
         }
@@ -936,6 +1226,9 @@ impl Server<'_> {
         }
         if let Some(annotations) = &tool.annotations {
             out.insert("annotations".into(), annotations.clone().into());
+        }
+        if let Some(icons) = &tool.icons {
+            out.insert("icons".into(), icons.clone());
         }
         if let Some(instructions) = &tool.instructions {
             out.insert("instructions".into(), instructions.clone().into());

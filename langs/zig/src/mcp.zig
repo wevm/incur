@@ -35,6 +35,9 @@ pub const Discovery = enum {
     direct,
 };
 
+/// How long MCP 2026-07-28 clients may cache a result, and who may share it.
+pub const CacheHint = modern.CacheHint;
+
 /// Which commands become tools, and how clients discover them.
 pub const Filter = struct {
     /// How clients discover tools.
@@ -81,6 +84,12 @@ pub const Tool = struct {
     instructions: ?[]const u8,
     /// The output schema, when the command's output is an object.
     output: ?Value,
+    /// The non-empty title.
+    title: ?[]const u8,
+    /// Icons as MCP JSON.
+    icons: ?Value,
+    /// Inputs mirrored into `Mcp-Param-*` headers.
+    headers: []const command.Header,
 };
 
 /// The tools of a CLI, or why they cannot be served.
@@ -131,6 +140,7 @@ fn withDefault(a: Allocator, node: Value, value: Value) Allocator.Error!Value {
 pub fn collect(a: Allocator, cli: *const Cli, filter: Filter, config: ?Value) Allocator.Error!Tools {
     var all: std.ArrayList(Tool) = .empty;
     if (try collectEntries(a, &all, cli, config, cli.commands.items, &.{}, &.{})) |e| return .{ .err = e };
+    for (all.items) |*tool| if (try checkHeaders(a, cli, tool)) |message| return .{ .err = .{ .message = message } };
     var tools: std.ArrayList(Tool) = .empty;
     for (all.items) |tool| {
         const excluded = for (filter.exclude) |pattern| {
@@ -209,7 +219,80 @@ fn toTool(a: Allocator, cli: *const Cli, config: ?Value, original: *const Comman
         .annotations = try settings.annotationsValue(a),
         .instructions = settings.instructions,
         .output = output,
+        .title = errors.nonEmpty(settings.title),
+        .icons = if (settings.icons) |icons| icons: {
+            const items = try a.alloc(Value, icons.len);
+            for (icons, items) |icon, *slot| slot.* = try icon.toValue(a);
+            break :icons .{ .array = items };
+        } else null,
+        .headers = settings.headers,
     } };
+}
+
+/// Returns the text a primitive argument travels as in an `Mcp-Param-*` header, or null for
+/// other values and integers beyond JavaScript's safe range.
+fn paramText(a: Allocator, value: Value) Allocator.Error!?[]const u8 {
+    const safe = 9007199254740991;
+    return switch (value) {
+        .string => |text| text,
+        .bool => |flag| if (flag) "true" else "false",
+        .integer => |int| if (@abs(int) > safe) null else try json.toString(a, value),
+        .float => |float| if (@trunc(float) == float and @abs(float) > safe) null else try json.toString(a, value),
+        else => null,
+    };
+}
+
+/// Whether text is a plain decimal number, such as `-12` or `4.50`.
+fn isDecimal(text: []const u8) bool {
+    const unsigned = if (std.mem.startsWith(u8, text, "-")) text[1..] else text;
+    const dot = std.mem.findScalar(u8, unsigned, '.');
+    const whole = unsigned[0 .. dot orelse unsigned.len];
+    const fraction = if (dot) |d| unsigned[d + 1 ..] else "0";
+    for ([_][]const u8{ whole, fraction }) |part| {
+        if (part.len == 0) return false;
+        for (part) |c| if (!std.ascii.isDigit(c)) return false;
+    }
+    return true;
+}
+
+/// Returns why a tool's `x-mcp-header` declarations would be refused by MCP 2026-07-28
+/// clients: a header naming no input, a header that is not an HTTP token, a header on an input
+/// other than a string, integer, or boolean, or a header repeating another ignoring case.
+fn checkHeaders(a: Allocator, cli: *const Cli, tool: *const Tool) Allocator.Error!?[]const u8 {
+    const properties = (try detailSchema(a, cli.options.globals, tool)).get("properties").?;
+    for (tool.headers, 0..) |header, i| {
+        const prefix = try std.fmt.allocPrint(a, "Invalid MCP header on tool {s}: ", .{tool.name});
+        const ty = if (properties.get(header.input)) |p| p.get("type") else null;
+        if (ty == null) return try std.fmt.allocPrint(a, "{s}{s} is not an input", .{ prefix, header.input });
+        const token = header.name.len > 0 and for (header.name) |c| {
+            if (!std.ascii.isAlphanumeric(c) and std.mem.findScalar(u8, "!#$%&'*+-.^_`|~", c) == null) break false;
+        } else true;
+        if (!token) return try std.fmt.allocPrint(a, "{s}'{s}' is not a valid HTTP header name", .{ prefix, header.name });
+        const kind = ty.?.string;
+        if (!std.mem.eql(u8, kind, "string") and !std.mem.eql(u8, kind, "integer") and !std.mem.eql(u8, kind, "boolean"))
+            return try std.fmt.allocPrint(a, "{s}{s} must be a string, integer, or boolean", .{ prefix, header.input });
+        for (tool.headers[0..i]) |prior| if (std.ascii.eqlIgnoreCase(prior.name, header.name))
+            return try std.fmt.allocPrint(a, "{s}'{s}' duplicates '{s}'", .{ prefix, header.name, prior.name });
+    }
+    return null;
+}
+
+/// Returns the input schema `get_tool_details` shows: the output-mode schemas of the
+/// arguments, options, and globals, merged.
+fn detailSchema(a: Allocator, globals: ?*const Type, tool: *const Tool) Allocator.Error!Value {
+    var properties: json.ObjectBuilder = .{};
+    var required: std.ArrayList(Value) = .empty;
+    for ([_]?*const Type{ tool.command.args(), tool.command.options(), globals }) |ty| {
+        const t = ty orelse continue;
+        const generated = try schema.jsonSchema(a, t);
+        if (generated.get("properties")) |p| for (p.object) |entry| try properties.put(a, entry.key, entry.value);
+        if (generated.get("required")) |r| try required.appendSlice(a, r.array);
+    }
+    var out: json.ObjectBuilder = .{};
+    try out.put(a, "type", .{ .string = "object" });
+    try out.put(a, "properties", properties.finish());
+    if (required.items.len > 0) try out.put(a, "required", .{ .array = required.items });
+    return out.finish();
 }
 
 /// Whether a name matches a pattern where `*` matches any characters.
@@ -375,7 +458,8 @@ const Server = struct {
         const result = response.get("result") orelse return response;
         var out: json.ObjectBuilder = .{};
         for (response.object) |entry| try out.put(a, entry.key, entry.value);
-        try out.put(a, "result", try modern.encode(a, method, result, try s.identity()));
+        const cache: modern.CacheHint = (s.cli.options.mcp orelse cli_.Mcp{}).cache orelse .{};
+        try out.put(a, "result", try modern.encode(a, method, result, try s.identity(), cache));
         return out.finish();
     }
 
@@ -412,9 +496,11 @@ const Server = struct {
             for (s.tools, items) |tool, *slot| {
                 var entry: json.ObjectBuilder = .{};
                 try entry.put(a, "name", .{ .string = tool.name });
+                if (tool.title) |t| try entry.put(a, "title", .{ .string = t });
                 if (tool.description) |d| try entry.put(a, "description", .{ .string = d });
                 try entry.put(a, "inputSchema", try s.directSchema(&tool));
                 if (tool.annotations) |an| try entry.put(a, "annotations", an);
+                if (tool.icons) |icons| try entry.put(a, "icons", icons);
                 if (errors.nonEmpty(tool.instructions)) |i| {
                     var meta: json.ObjectBuilder = .{};
                     try meta.put(a, "instructions", .{ .string = i });
@@ -445,7 +531,44 @@ const Server = struct {
                 } else try fields.append(s.a, f);
             }
         }
+        for (fields.items) |*f| for (tool.headers) |header| if (std.mem.eql(u8, header.input, f.name)) {
+            f.ty.header = header.name;
+        };
         return .{ .kind = .{ .object = fields.items } };
+    }
+
+    /// Checks a direct tool's `Mcp-Param-*` headers against a `tools/call`'s arguments, as the
+    /// MCP SDK does before dispatch.
+    fn checkParams(s: *Server, message: Value, request: *const http.Request) Allocator.Error!?modern.Reject {
+        const a = s.a;
+        if (!std.mem.eql(u8, message.get("method").?.string, "tools/call") or !s.direct) return null;
+        const params = message.get("params") orelse return null;
+        const name = params.get("name") orelse return null;
+        if (name != .string) return null;
+        const tool = s.find(name.string) orelse return null;
+        const merged = try s.mergedType(tool);
+        const arguments = params.get("arguments");
+        for (merged.fields()) |f| {
+            const header_name = f.ty.header orelse continue;
+            const raw = (if (arguments) |args| (if (args == .object) args.get(f.name) else null) else null) orelse continue;
+            const text = try paramText(a, raw) orelse continue;
+            const key = try std.fmt.allocPrint(a, "Mcp-Param-{s}", .{header_name});
+            const body = try json.stringify(a, raw);
+            const value = request.headers.get(key) orelse
+                return try modern.mismatch(a, key, try std.fmt.allocPrint(a, "the body carries {s}={s} but the {s} header is absent", .{ f.name, body, key }));
+            const decoded = try modern.decodeName(a, value) orelse
+                return try modern.mismatch(a, key, try std.fmt.allocPrint(a, "the {s} header carries an invalid Base64 sentinel value", .{key}));
+            const integer = f.ty.kind == .integer;
+            const equal = if (integer and isDecimal(decoded) and (raw == .integer or raw == .float))
+                (std.fmt.parseFloat(f64, decoded) catch unreachable) == (if (raw == .integer) @as(f64, @floatFromInt(raw.integer)) else raw.float)
+            else
+                std.mem.eql(u8, decoded, text);
+            if (!equal) {
+                const quoted = try json.stringify(a, .{ .string = decoded });
+                return try modern.mismatch(a, key, try std.fmt.allocPrint(a, "the {s} header decodes to {s} but the body carries {s}={s}", .{ key, quoted, f.name, body }));
+            }
+        }
+        return null;
     }
 
     /// Returns the input schema `tools/list` shows for a directly listed tool.
@@ -461,25 +584,6 @@ const Server = struct {
         try out.put(a, "$schema", .{ .string = "https://json-schema.org/draft/2020-12/schema" });
         const generated = try schema.jsonSchemaIo(a, &merged, .input);
         for (generated.object) |entry| if (!std.mem.eql(u8, entry.key, "type")) try out.put(a, entry.key, entry.value);
-        return out.finish();
-    }
-
-    /// Returns the input schema `get_tool_details` shows: the output-mode schemas of the
-    /// arguments, options, and globals, merged.
-    fn detailSchema(s: *Server, tool: *const Tool) Allocator.Error!Value {
-        const a = s.a;
-        var properties: json.ObjectBuilder = .{};
-        var required: std.ArrayList(Value) = .empty;
-        for ([_]?*const Type{ tool.command.args(), tool.command.options(), s.globals }) |ty| {
-            const t = ty orelse continue;
-            const generated = try schema.jsonSchema(a, t);
-            if (generated.get("properties")) |p| for (p.object) |entry| try properties.put(a, entry.key, entry.value);
-            if (generated.get("required")) |r| try required.appendSlice(a, r.array);
-        }
-        var out: json.ObjectBuilder = .{};
-        try out.put(a, "type", .{ .string = "object" });
-        try out.put(a, "properties", properties.finish());
-        if (required.items.len > 0) try out.put(a, "required", .{ .array = required.items });
         return out.finish();
     }
 
@@ -580,10 +684,12 @@ const Server = struct {
         const a = s.a;
         var out: json.ObjectBuilder = .{};
         try out.put(a, "name", .{ .string = tool.name });
+        if (tool.title) |t| try out.put(a, "title", .{ .string = t });
         if (errors.nonEmpty(tool.description)) |d| try out.put(a, "description", .{ .string = d });
-        try out.put(a, "inputSchema", try s.detailSchema(tool));
+        try out.put(a, "inputSchema", try detailSchema(a, s.globals, tool));
         if (tool.output) |o| try out.put(a, "outputSchema", o);
         if (tool.annotations) |an| try out.put(a, "annotations", an);
+        if (tool.icons) |icons| try out.put(a, "icons", icons);
         if (errors.nonEmpty(tool.instructions)) |i| try out.put(a, "instructions", .{ .string = i });
         return out.finish();
     }
@@ -1055,6 +1161,7 @@ fn handleModern(a: Allocator, cli: *Cli, process: *const Process, request: *cons
         .err => return rejectResponse(a, .{ .code = -32603, .message = "Internal server error" }, id, 500),
     };
     server.request = request;
+    if (try server.checkParams(routed.message, request)) |r| return rejectResponse(a, r, id, 400);
     var unknown = false;
     const response = (try server.handleModern(routed.message, &unknown)).?;
     return http.Response.json(a, response, if (unknown) 404 else 200);

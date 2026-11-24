@@ -641,7 +641,8 @@ impl Cli {
                 "Unsupported Media Type: Content-Type must be application/json",
             );
         }
-        let body = js::json_parse(text, |_| Value::Null).unwrap_or_default();
+        // Infinite numbers stay numbers, as tool input validation reports them.
+        let body = js::json_parse(text, crate::parser::number_value).unwrap_or_default();
         let id = body
             .as_object()
             .filter(|object| object.get("method").is_some_and(Value::is_string))
@@ -687,6 +688,14 @@ impl Cli {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+        if method == "tools/call"
+            && let Err(reject) = server.check_params(&params, |name| header(&parts, name))
+        {
+            return json_response(
+                400,
+                &json!({ "jsonrpc": "2.0", "error": reject.error(), "id": id }),
+            );
+        }
         let (body, unknown) = server
             .handle_modern(
                 request_id,
@@ -737,6 +746,7 @@ impl Cli {
             .as_ref()
             .map(|globals| mcp::with_defaults(globals, &defaults.globals));
         Ok(mcp::Server {
+            cache: settings.cache.clone(),
             context: mcp::Context {
                 env,
                 env_schema: self.env.clone(),
