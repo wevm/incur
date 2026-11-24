@@ -2220,10 +2220,12 @@ impl Run<'_, '_> {
             root = self.root;
         }
         let markdown = !flags.format_explicit || flags.format == Format::Md;
+        // Markdown manifests show `sync.command` (e.g. `bunx @scope/cli`) in place of the name.
+        let shown = cli.sync.command.as_deref().unwrap_or(&cli.name);
         let scoped = if prefix.is_empty() {
-            cli.name.clone()
+            shown.to_owned()
         } else {
-            format!("{} {}", cli.name, prefix.join(" "))
+            format!("{shown} {}", prefix.join(" "))
         };
         if markdown {
             let mut groups = IndexMap::new();

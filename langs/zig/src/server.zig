@@ -113,7 +113,8 @@ fn isOpenapiRoute(parts: []const []const u8) bool {
 /// index at `/.well-known/skills/`, and each `SKILL.md`.
 fn skills(a: Allocator, cli: *Cli, url: http.Url, parts: []const []const u8) ServeError!http.Response {
     const infos = try cli_.skillInfos(a, cli);
-    const files = try skill.split(a, cli.name, infos.commands, infos.groups, 1);
+    const shown = if (cli.options.sync) |s| s.command orelse cli.name else cli.name;
+    const files = try skill.splitAs(a, cli.name, shown, infos.commands, infos.groups, 1);
     if (parts.len == 3 and std.mem.eql(u8, parts[2], "index.json")) {
         const v2 = std.mem.eql(u8, parts[1], "agent-skills");
         var entries: std.ArrayList(skill.Discovered) = .empty;

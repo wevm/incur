@@ -282,7 +282,13 @@ impl Cli {
         let root = self.root_command();
         let mut groups = IndexMap::new();
         let infos = skill_commands(tree, &[], &mut groups, root.as_ref());
-        let files = skill::split(&self.name, &infos, 1, &groups, &self.name);
+        let files = skill::split(
+            &self.name,
+            &infos,
+            1,
+            &groups,
+            self.sync.command.as_deref().unwrap_or(&self.name),
+        );
         let name_of = |file: &skill::File| {
             if file.dir.is_empty() {
                 self.name.clone()

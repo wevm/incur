@@ -1496,7 +1496,9 @@ class _Run:
                 break
         if not prefix:
             root = self.root
-        scoped = " ".join([cli.name, *prefix])
+        # Markdown manifests show `sync.command` (e.g. `bunx @scope/cli`) in place of the name.
+        command = cli.sync.command if cli.sync else None
+        scoped = " ".join([cli.name if command is None else command, *prefix])
         if not flags.format_explicit or flags.format == "md":
             groups: dict[str, str] = {}
             infos = _skill.collect(commands, [], groups, root)
