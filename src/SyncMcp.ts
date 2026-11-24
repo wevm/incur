@@ -19,14 +19,14 @@ export async function register(
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
-  // Amp is registered directly (add-mcp doesn't support it). Its settings are read first, so
-  // invalid settings fail before any agent is configured.
+  // Amp is registered directly (add-mcp doesn't support it). Its settings are checked first, so
+  // invalid settings fail before any agent is configured, and read again when written.
   const amp = targetAgents.length === 0 || targetAgents.includes('amp')
   const ampPath =
     options.global === false
       ? join(process.cwd(), '.amp', 'settings.json')
       : join(homedir(), '.config', 'amp', 'settings.json')
-  const ampConfig = amp ? readAmpSettings(ampPath) : undefined
+  if (amp) readAmpSettings(ampPath)
 
   const agents: string[] = []
 
@@ -55,7 +55,7 @@ export async function register(
     )
   }
 
-  if (ampConfig && registerAmp(ampPath, ampConfig, name, command)) agents.push('Amp')
+  if (amp && registerAmp(ampPath, name, command)) agents.push('Amp')
 
   return { command, agents }
 }
@@ -71,15 +71,11 @@ function readAmpSettings(path: string): Record<string, unknown> {
 }
 
 /** @internal Registers an MCP server in Amp's settings, keeping the other fields of an existing entry. */
-function registerAmp(
-  path: string,
-  config: Record<string, unknown>,
-  name: string,
-  command: string,
-): boolean {
+function registerAmp(path: string, name: string, command: string): boolean {
   const [cmd, ...args] = splitCommand(command)
   if (!cmd) return false
 
+  const config = readAmpSettings(path)
   const servers = isObject(config['amp.mcpServers']) ? config['amp.mcpServers'] : {}
   const existing = servers[name]
   servers[name] = { ...(isObject(existing) ? existing : undefined), command: cmd, args }

@@ -338,6 +338,21 @@ test('register writes amp config to existing settings', async () => {
   })
 })
 
+test('register keeps amp settings changed while add-mcp runs', async () => {
+  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  mkdirSync(join(fakeHome!, '.config', 'amp'), { recursive: true })
+  writeFileSync(configPath, '{}')
+  vi.mocked(execFile).mockImplementationOnce(((_cmd: string, _args: string[], cb: Function) => {
+    writeFileSync(configPath, JSON.stringify({ 'amp.mcpServers': { other: { command: 'x' } } }))
+    cb(null, '', '')
+  }) as any)
+
+  await register('my-cli', { command: 'npx my-cli --mcp' })
+
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  expect(Object.keys(config['amp.mcpServers'])).toEqual(['other', 'my-cli'])
+})
+
 test('register writes project amp config when not global', async () => {
   const cwd = vi.spyOn(process, 'cwd').mockReturnValue(tmp)
   try {

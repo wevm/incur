@@ -1097,11 +1097,12 @@ fn read_amp(path: &Path) -> Result<Map<String, Value>, Error> {
 
 /// Registers the server in Amp's settings, keeping the other fields of an existing entry.
 /// Returns whether it was registered.
-fn register_amp(path: &Path, mut config: Map<String, Value>, name: &str, command: &str) -> bool {
+fn register_amp(path: &Path, name: &str, command: &str) -> Result<bool, Error> {
     let mut tokens = split_command(command).into_iter();
     let Some(program) = tokens.next() else {
-        return false;
+        return Ok(false);
     };
+    let mut config = read_amp(path)?;
     let mut servers = take_object(&mut config, "amp.mcpServers");
     let mut server = take_object(&mut servers, name);
     server.insert("command".into(), program.into());
@@ -1111,11 +1112,11 @@ fn register_amp(path: &Path, mut config: Map<String, Value>, name: &str, command
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    std::fs::write(
+    Ok(std::fs::write(
         path,
         format!("{}\n", js::stringify_pretty(&Value::Object(config))),
     )
-    .is_ok()
+    .is_ok())
 }
 
 /// Takes the object at `key`, leaving the key in place so a later insert keeps its position, or
@@ -1149,8 +1150,8 @@ pub(crate) fn register(options: Register<'_>) -> Result<(String, Vec<String>), E
             )
         }
     };
-    // Amp is registered directly (`add-mcp` does not support it). Its settings are read first, so
-    // invalid settings fail before any agent is configured.
+    // Amp is registered directly (`add-mcp` does not support it). Its settings are checked first,
+    // so invalid settings fail before any agent is configured, and read again when written.
     let amp_path = if options.global {
         home(options.env)
             .join(".config")
@@ -1162,11 +1163,10 @@ pub(crate) fn register(options: Register<'_>) -> Result<(String, Vec<String>), E
             .join(".amp")
             .join("settings.json")
     };
-    let amp_config = if options.agents.is_empty() || options.agents.iter().any(|a| a == "amp") {
-        Some(read_amp(&amp_path)?)
-    } else {
-        None
-    };
+    let amp = options.agents.is_empty() || options.agents.iter().any(|a| a == "amp");
+    if amp {
+        read_amp(&amp_path)?;
+    }
     let amp_only = options.agents.len() == 1 && options.agents[0] == "amp";
     let mut agents = Vec::new();
     if !amp_only {
@@ -1201,7 +1201,7 @@ pub(crate) fn register(options: Register<'_>) -> Result<(String, Vec<String>), E
             }
         }
     }
-    if amp_config.is_some_and(|config| register_amp(&amp_path, config, options.name, &command)) {
+    if amp && register_amp(&amp_path, options.name, &command)? {
         agents.push("Amp".into());
     }
     Ok((command, agents))

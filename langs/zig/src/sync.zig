@@ -494,16 +494,14 @@ pub fn register(a: Allocator, cli: *cli_.Cli, process: *const Process, name: []c
         .ok => |c| c,
         .err => |message| return .{ .err = message },
     };
-    // Amp is registered directly (`add-mcp` does not support it). Its settings are read first, so
-    // invalid settings fail before any agent is configured.
+    // Amp is registered directly (`add-mcp` does not support it). Its settings are checked first,
+    // so invalid settings fail before any agent is configured, and read again when written.
     const amp_path = if (global)
         try std.fs.path.join(a, &.{ home(process), ".config", "amp", "settings.json" })
     else
         try std.fs.path.join(a, &.{ try currentPath(a, process.io), ".amp", "settings.json" });
-    const amp_config: ?Value = if (targets.len == 0 or contains(targets, "amp"))
-        try readAmp(a, process.io, amp_path) orelse return .{ .err = try std.fmt.allocPrint(a, "Invalid Amp settings at {s}: expected a JSON object", .{amp_path}) }
-    else
-        null;
+    const amp = targets.len == 0 or contains(targets, "amp");
+    if (amp and try readAmp(a, process.io, amp_path) == null) return .{ .err = try invalidAmp(a, amp_path) };
     var agents: std.ArrayList([]const u8) = .empty;
     const amp_only = targets.len == 1 and std.mem.eql(u8, targets[0], "amp");
     if (!amp_only) {
@@ -531,7 +529,10 @@ pub fn register(a: Allocator, cli: *cli_.Cli, process: *const Process, name: []c
             if (trimmed.len > 0) try agents.append(a, trimmed);
         }
     }
-    if (amp_config) |config| if (try registerAmp(a, process.io, amp_path, config, name, cmd)) try agents.append(a, "Amp");
+    if (amp) {
+        const config = try readAmp(a, process.io, amp_path) orelse return .{ .err = try invalidAmp(a, amp_path) };
+        if (try registerAmp(a, process.io, amp_path, config, name, cmd)) try agents.append(a, "Amp");
+    }
     return .{ .ok = .{ .command = cmd, .agents = agents.items } };
 }
 
@@ -543,6 +544,11 @@ fn readAmp(a: Allocator, io: std.Io, path: []const u8) ServeError!?Value {
     var message: []const u8 = undefined;
     const config = try command.optional(json.parse(a, text, &message)) orelse return null;
     return if (config == .object) config else null;
+}
+
+/// The error for Amp settings that do not hold a JSON object.
+fn invalidAmp(a: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(a, "Invalid Amp settings at {s}: expected a JSON object", .{path});
 }
 
 /// Adds the server to Amp's settings, keeping the other fields of an existing entry, or returns
