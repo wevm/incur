@@ -438,6 +438,12 @@ def _wrap(group: type, run: Handler[Any]) -> Handler[Any]:
 def _command(cls: type, meta: Meta, run: Handler[Any], *, root: bool) -> Registered:
     """Registers a command class: its handler builds an instance from the parsed input."""
     sources = (("args", meta.args), ("options", meta.options), ("env", meta.env))
+    # Optional fields without a default still need a value when omitted.
+    bare_fields = {
+        f.name
+        for f in dataclasses.fields(cls)
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+    }
 
     def handler(context: Context[Any, Any, Any, Any, Any]) -> object:
         values: dict[str, object] = {}
@@ -446,6 +452,8 @@ def _command(cls: type, meta: Meta, run: Handler[Any], *, root: bool) -> Registe
             for f in fields:
                 if f.name in data:
                     values[f.attr] = build(f.ty, data[f.name])
+                elif f.attr in bare_fields:
+                    values[f.attr] = None
         bare = dataclasses.replace(context, args=None, options=None, env=None)
         return run(cls(**values), bare)
 

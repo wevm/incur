@@ -256,6 +256,7 @@ test "returns the exit code of built-ins and invalid input" {
         \\  --format <toon|json|yaml|md|jsonl>  Output format
         \\  --full-output                       Show full output envelope
         \\  --help                              Show help
+        \\  --json                              Shorthand for --format json
         \\  --llms, --llms-full                 Print LLM-readable manifest
         \\  --schema                            Show JSON Schema for command
         \\  --token-count                       Print token count of output (instead of output)
@@ -290,6 +291,7 @@ test "returns the exit code of built-ins and invalid input" {
         \\  --format <toon|json|yaml|md|jsonl>  Output format
         \\  --full-output                       Show full output envelope
         \\  --help                              Show help
+        \\  --json                              Shorthand for --format json
         \\  --llms, --llms-full                 Print LLM-readable manifest
         \\  --schema                            Show JSON Schema for command
         \\  --token-count                       Print token count of output (instead of output)
@@ -330,6 +332,7 @@ fn opsHelp(comptime mcp: bool) []const u8 {
         \\  --format <toon|json|yaml|md|jsonl>  Output format
         \\  --full-output                       Show full output envelope
         \\  --help                              Show help
+        \\  --json                              Shorthand for --format json
         \\  --llms, --llms-full                 Print LLM-readable manifest
         \\
     ++ (if (mcp) "  --mcp                               Start as MCP stdio server\n" else "") ++

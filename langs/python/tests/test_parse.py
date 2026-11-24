@@ -92,6 +92,15 @@ class Bare(incur.Command, version="0.1.0"):
     """A CLI that takes no input."""
 
 
+class Loose(incur.Command):
+    """Optional fields without defaults."""
+
+    path: Annotated[str | None, arg("Path")]
+    tag: Annotated[str | None, field("Tag")]
+    home: Annotated[str | None, env("Home")]
+    extra: Any
+
+
 def ops() -> incur.Cli[Status | Deploy | Ship | Db | Admin | Misc | Wipe]:
     return incur.Cli(Ops, update=False, sync=False)
 
@@ -163,6 +172,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl>  Output format
   --full-output                       Show full output envelope
   --help                              Show help
+  --json                              Shorthand for --format json
   --llms, --llms-full                 Print LLM-readable manifest
   --schema                            Show JSON Schema for command
   --token-count                       Print token count of output (instead of output)
@@ -170,6 +180,10 @@ Global Options:
   --token-offset <n>                  Skip first n tokens of output
 """)
     assert Bare.parse_with([]) == Bare()
+    assert Loose.parse_with([], env={}) == Loose(path=None, tag=None, home=None, extra=None)
+    assert Loose.parse_with(["a", "--tag", "t", "--extra", "x"], env={"HOME": "/h"}) == Loose(
+        path="a", tag="t", home="/h", extra="x"
+    )
     assert Ops.parse_with(["db", "migrate"]) == Db(Migrate())
     assert Ops.parse_with(["--help"]) == 0
     assert repr(Admin(Shell(name="x"))) == "Admin(Shell(name='x'))"
@@ -272,6 +286,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl>  Output format
   --full-output                       Show full output envelope
   --help                              Show help
+  --json                              Shorthand for --format json
   --llms, --llms-full                 Print LLM-readable manifest
   --schema                            Show JSON Schema for command
   --token-count                       Print token count of output (instead of output)
@@ -334,6 +349,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl>  Output format
   --full-output                       Show full output envelope
   --help                              Show help
+  --json                              Shorthand for --format json
   --llms, --llms-full                 Print LLM-readable manifest
   --schema                            Show JSON Schema for command
   --token-count                       Print token count of output (instead of output)
@@ -369,6 +385,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl>  Output format
   --full-output                       Show full output envelope
   --help                              Show help
+  --json                              Shorthand for --format json
   --llms, --llms-full                 Print LLM-readable manifest
   --schema                            Show JSON Schema for command
   --token-count                       Print token count of output (instead of output)
@@ -392,6 +409,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl>  Output format
   --full-output                       Show full output envelope
   --help                              Show help
+  --json                              Shorthand for --format json
   --llms, --llms-full                 Print LLM-readable manifest
   --schema                            Show JSON Schema for command
   --token-count                       Print token count of output (instead of output)
@@ -448,6 +466,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl>  Output format
   --full-output                       Show full output envelope
   --help                              Show help
+  --json                              Shorthand for --format json
   --llms, --llms-full                 Print LLM-readable manifest
   --mcp                               Start as MCP stdio server
   --schema                            Show JSON Schema for command
