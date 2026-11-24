@@ -249,7 +249,7 @@ fn optionLines(a: Allocator, lines: *Lines, ty: *const Type) Allocator.Error!voi
 }
 
 /// A flag and its description in the global options section.
-const Flag = struct { []const u8, []const u8 };
+pub const Flag = struct { []const u8, []const u8 };
 
 /// Writes the integrations and global options sections.
 fn globalLines(a: Allocator, lines: *Lines, options: Options) Allocator.Error!void {
@@ -271,6 +271,15 @@ fn globalLines(a: Allocator, lines: *Lines, options: Options) Allocator.Error!vo
         try optionLines(a, lines, globals);
     };
 
+    const flags = try globalFlags(a, options);
+    var width: usize = 0;
+    for (flags) |f| width = @max(width, f[0].len);
+    try lines.appendSlice(a, &.{ "", "Global Options:" });
+    for (flags) |f| try lines.append(a, try std.fmt.allocPrint(a, "  {s}  {s}", .{ try js.pad(a, f[0], width), f[1] }));
+}
+
+/// Returns the built-in global flags listed under "Global Options", sorted as help shows them.
+pub fn globalFlags(a: Allocator, options: Options) Allocator.Error![]const Flag {
     var flags: std.ArrayList(Flag) = .empty;
     if (options.config_flag) |flag| {
         try flags.append(a, .{ try std.fmt.allocPrint(a, "--{s} <path>", .{flag}), "Load JSON option defaults from a file" });
@@ -295,10 +304,7 @@ fn globalLines(a: Allocator, lines: *Lines, options: Options) Allocator.Error!vo
             return js.localeCompare(x[0], y[0]) == .lt;
         }
     }.lessThan);
-    var width: usize = 0;
-    for (flags.items) |f| width = @max(width, f[0].len);
-    try lines.appendSlice(a, &.{ "", "Global Options:" });
-    for (flags.items) |f| try lines.append(a, try std.fmt.allocPrint(a, "  {s}  {s}", .{ try js.pad(a, f[0], width), f[1] }));
+    return flags.items;
 }
 
 /// Redacts a value, keeping only the last four characters of long values.

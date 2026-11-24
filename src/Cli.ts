@@ -882,6 +882,16 @@ async function serveImpl(
                 candidates.push({ value, description: sub.description })
         }
       }
+      // Add the built-in global flags that help lists for the active command
+      if (nonFlags && current.startsWith('-'))
+        for (const { flag, desc } of Help.globalFlags(
+          nonFlags.length <= 1,
+          configFlag,
+          !updateEnabled,
+        ))
+          for (const value of flag.split(', ').map((f) => f.split(' ')[0]!))
+            if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+              candidates.push({ value, description: desc })
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
     }

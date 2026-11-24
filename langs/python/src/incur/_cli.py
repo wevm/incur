@@ -51,7 +51,7 @@ from ._errors import (
 from ._filter import MISSING, Missing
 from ._formatter import FORMATS, Format, format_value
 from ._help import Entry as HelpEntry
-from ._help import Example, Usage, format_command, format_root
+from ._help import Example, Usage, format_command, format_root, global_flags
 from ._help import Options as HelpOptions
 from ._http import FetchHandler, Request, RequestSource, Response, asgi, call
 from ._js import Json
@@ -1684,6 +1684,12 @@ class _Run:
                     for value in (sub[1], *sub[3]):
                         if value.startswith(current):
                             candidates.append(_completions.Candidate(value, sub[2]))
+        # Add the built-in global flags that help lists for the active command
+        if non_flags is not None and current.startswith("-"):
+            for flag, description in global_flags(self.help_options(root=len(non_flags) <= 1)):
+                for value in (f.split(" ")[0] for f in flag.split(", ")):
+                    if value.startswith(current) and not any(c.value == value for c in candidates):
+                        candidates.append(_completions.Candidate(value, description))
         out = _completions.format_candidates(shell, candidates)
         if out:
             self.write(out)

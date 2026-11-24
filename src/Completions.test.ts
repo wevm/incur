@@ -681,6 +681,62 @@ describe('serve integration', () => {
     expect(output).toContain('--watch\tWatch mode')
   })
 
+  test('COMPLETE suggests the built-in global flags that help lists', async () => {
+    const cli = makeCli()
+    const complete = async (...words: string[]) =>
+      (
+        await serve(cli, ['--', 'mycli', ...words], {
+          COMPLETE: 'bash',
+          _COMPLETE_INDEX: String(words.length),
+        })
+      ).split('\v')
+
+    // Root-only flags appear at the root
+    expect(await complete('--')).toMatchInlineSnapshot(`
+      [
+        "--filter-output",
+        "--format",
+        "--full-output",
+        "--help",
+        "--json",
+        "--llms",
+        "--llms-full",
+        "--mcp",
+        "--schema",
+        "--token-count",
+        "--token-limit",
+        "--token-offset",
+        "--update",
+        "--version",
+      ]
+    `)
+    expect(await complete('build', '--')).toMatchInlineSnapshot(`
+      [
+        "--target",
+        "--watch",
+        "--out-dir",
+        "--filter-output",
+        "--format",
+        "--full-output",
+        "--help",
+        "--json",
+        "--llms",
+        "--llms-full",
+        "--schema",
+        "--token-count",
+        "--token-limit",
+        "--token-offset",
+      ]
+    `)
+    expect(await complete('db', 'migrate', '--tok')).toMatchInlineSnapshot(`
+      [
+        "--token-count",
+        "--token-limit",
+        "--token-offset",
+      ]
+    `)
+  })
+
   test('COMPLETE skips built-in and global flag values before the cursor', async () => {
     const cli = Cli.create('mycli', {
       config: { flag: 'config' },

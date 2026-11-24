@@ -225,6 +225,15 @@ def _global_lines(lines: list[str], options: Options) -> None:
         lines += ["", "Custom Global Options:"]
         _option_lines(lines, options.globals)
 
+    flags = global_flags(options)
+    width = max(len(flag) for flag, _ in flags)
+    lines += ["", "Global Options:"]
+    for flag, description in flags:
+        lines.append(f"  {_pad(flag, width)}  {description}")
+
+
+def global_flags(options: Options) -> list[tuple[str, str]]:
+    """Returns the built-in global flags under "Global Options", sorted as help shows them."""
     flags: list[tuple[str, str]] = []
     if options.config_flag is not None:
         flag = options.config_flag
@@ -247,10 +256,7 @@ def _global_lines(lines: list[str], options: Options) -> None:
         if not options.hide_update:
             flags.append(("--update", "Update to latest version"))
     flags.sort(key=lambda entry: _js.locale_key(entry[0]))
-    width = max(len(flag) for flag, _ in flags)
-    lines += ["", "Global Options:"]
-    for flag, description in flags:
-        lines.append(f"  {_pad(flag, width)}  {description}")
+    return flags
 
 
 def _redact(value: str) -> str:

@@ -1726,6 +1726,19 @@ const Run = struct {
                     };
                 }
             };
+            // Add the built-in global flags that help lists for the active command
+            if (std.mem.startsWith(u8, current, "-")) {
+                var options = run.helpOptions();
+                options.root = non_flags.items.len <= 1;
+                for (try help.globalFlags(a, options)) |f| {
+                    var flag_names = std.mem.splitSequence(u8, f[0], ", ");
+                    while (flag_names.next()) |name| {
+                        const value = name[0 .. std.mem.indexOfScalar(u8, name, ' ') orelse name.len];
+                        if (std.mem.startsWith(u8, value, current) and !listed(candidates.items, value))
+                            try candidates.append(a, .{ .description = f[1], .value = value });
+                    }
+                }
+            }
         }
         const out = try completions.format(a, shell, candidates.items);
         if (out.len > 0) run.write(out);
