@@ -85,14 +85,20 @@ class Type:
     """The JSON Schema to emit, for schemas converted from JSON Schema."""
     required: bool | None = None
     """Whether an object lists the field as required, when it differs from `is_optional`."""
+    null_default: bool = False
+    """Whether the default is JSON null, which `default` cannot tell from no default."""
 
     def field(self, name: str) -> Field | None:
         """Returns the field with the given name."""
         return next((f for f in self.fields if f.name == name), None)
 
+    def has_default(self) -> bool:
+        """Whether the input may omit the field and get a default, including JSON null."""
+        return self.default is not None or self.null_default
+
     def is_optional(self) -> bool:
         """Whether the input may omit the field without a default, as Zod's `optout` reports."""
-        return self.optional and self.default is None
+        return self.optional and not self.has_default()
 
     def is_flag(self) -> bool:
         """Whether the option reads no value from the next token."""
@@ -143,7 +149,7 @@ def json_schema(ty: Type, io: Literal["input", "output"] = "output") -> dict[str
     if ty.raw is not None:
         return dict(ty.raw)
     out: dict[str, Json] = {}
-    wrapped = ty.optional or ty.default is not None
+    wrapped = ty.optional or ty.has_default()
     if wrapped:
         _metadata(ty, out)
     kind = ty.kind
@@ -172,7 +178,7 @@ def json_schema(ty: Type, io: Literal["input", "output"] = "output") -> dict[str
             f.name
             for f in ty.fields
             if (not f.ty.is_optional() if f.ty.required is None else f.ty.required)
-            and (io == "output" or f.ty.default is None)
+            and (io == "output" or not f.ty.has_default())
         ]
         if required:
             out["required"] = required
@@ -191,7 +197,7 @@ def json_schema(ty: Type, io: Literal["input", "output"] = "output") -> dict[str
 
 def _metadata(ty: Type, out: dict[str, Json]) -> None:
     """Writes the default, description, and `.meta()` keys of a node."""
-    if ty.default is not None:
+    if ty.has_default():
         out["default"] = ty.default
     if ty.description is not None:
         out["description"] = ty.description
@@ -284,7 +290,7 @@ def parse(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -
     absent or the value is invalid.
     """
     if isinstance(value, _Absent):
-        if ty.default is not None:
+        if ty.has_default():
             return ty.default
         if ty.optional or ty.kind == "unknown":
             return _ABSENT

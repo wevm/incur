@@ -390,7 +390,7 @@ test "reports MCP tools that cannot be served" {
     try cli.command("pong", .{ .mcp = .{ .name = "ping" }, .run = incur.handler(ok) });
     const stdio = try serve(a, cli, &.{"--mcp"}, .{ .stdin = initialize ++ "\n" });
     try testing.expectEqual(1, stdio.exit);
-    try testing.expectEqualStrings("Duplicate MCP tool name: ping\n", stdio.stderr);
+    try testing.expectEqualStrings("code: UNKNOWN\nmessage: \"Duplicate MCP tool name: ping\"\n", stdio.stdout);
     const http = try fetch(a, cli, "POST", "http://localhost/mcp", mcp_headers, initialize);
     try testing.expectEqual(500, http.status);
 }

@@ -278,6 +278,35 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
     return .{ .ok = .{ .args = parsed_args, .options = parsed_options } };
 }
 
+/// Parses a config section on its own: normalizes its keys as `parse` does and validates only
+/// the options it sets.
+pub fn parseDefaults(a: Allocator, defaults: []const Value.Entry, options: ?*const Type) Allocator.Error!Result(Value) {
+    const names: Names = .{ .a = a, .schema = options };
+    var normalized: json.ObjectBuilder = .{};
+    for (defaults) |entry| {
+        const name = try names.long(entry.key) orelse return .{ .err = try parseError(a, "Unknown config option: {s}", .{entry.key}) };
+        try normalized.put(a, name, entry.value);
+    }
+    // Without a schema, any key is unknown, so nothing is left to validate.
+    return validatePassed(a, options orelse &.{ .kind = .{ .object = &.{} } }, normalized.finish());
+}
+
+/// Coerces and validates the globals passed in argv against their fields only, so missing
+/// required globals are not an error.
+pub fn parsePassedGlobals(a: Allocator, ty: *const Type, raw: Value) Allocator.Error!Result(Value) {
+    const names: Names = .{ .a = a, .schema = ty };
+    var coerced: json.ObjectBuilder = .{};
+    for (raw.object) |entry| try coerced.put(a, entry.key, coerce(entry.value, names.ty(entry.key)));
+    return validatePassed(a, ty, coerced.finish());
+}
+
+/// Validates values against only their fields of an object schema, in input order.
+fn validatePassed(a: Allocator, ty: *const Type, input: Value) Allocator.Error!Result(Value) {
+    const fields = try a.alloc(schema.Field, input.object.len);
+    for (input.object, fields) |entry, *slot| slot.* = ty.field(entry.key).?.*;
+    return validate(a, &.{ .kind = .{ .object = fields } }, input);
+}
+
 /// Parses environment variables against a schema. Returns a `VALIDATION_ERROR` when values do
 /// not match the schema.
 pub fn parseEnv(a: Allocator, ty: *const Type, env: *const std.process.Environ.Map) Allocator.Error!Result(Value) {

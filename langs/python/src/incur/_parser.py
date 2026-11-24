@@ -7,7 +7,7 @@ from collections.abc import Callable
 from . import _js
 from ._errors import Error, unknown, validation
 from ._js import Json
-from ._schema import Type, validate
+from ._schema import Type, object_type, validate
 
 #: Looks up an environment variable.
 EnvSource = Callable[[str], "str | None"]
@@ -236,6 +236,26 @@ def _normalize_defaults(defaults: dict[str, Json] | None, names: _Names) -> dict
             raise unknown(f"Unknown config option: {raw}")
         out[name] = value
     return out
+
+
+def parse_defaults(defaults: dict[str, Json], schema: Type | None) -> dict[str, Json]:
+    """Parses a config section on its own, validating only the options it sets."""
+    normalized = _normalize_defaults(defaults, _Names(schema))
+    # Without a schema, any key is unknown, so nothing is left to validate.
+    return _check_passed(schema or object_type([]), normalized)
+
+
+def parse_passed_globals(schema: Type, raw: dict[str, Json]) -> dict[str, Json]:
+    """Validates only the globals passed in argv, so missing required globals are no error."""
+    names = _Names(schema)
+    coerced = {name: _coerce(value, names.ty(name)) for name, value in raw.items()}
+    return _check_passed(schema, coerced)
+
+
+def _check_passed(schema: Type, data: dict[str, Json]) -> dict[str, Json]:
+    """Validates values against only their fields of an object schema, in input order."""
+    by_name = {f.name: f for f in schema.fields}
+    return check(object_type([by_name[key] for key in data]), data)
 
 
 def parse_env(schema: Type, env: EnvSource) -> dict[str, Json]:

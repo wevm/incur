@@ -1437,3 +1437,132 @@ describe('globals', () => {
     })
   })
 })
+
+describe('defaults', () => {
+  type Discovery = 'direct' | 'progressive'
+
+  const globals = z.object({
+    network: z.string().default('mainnet'),
+    rpcUrl: z
+      .string()
+      .default('https://default.example')
+      .transform((value) => new URL(value)),
+  })
+
+  const middlewares = [
+    async (c: any, next: () => Promise<void>) => {
+      c.set('url', c.globals.rpcUrl.href)
+      await next()
+    },
+  ]
+
+  const vars = z.object({ url: z.string().optional() })
+
+  function recordCommands(options: z.ZodObject<any>) {
+    return new Map<string, any>([
+      [
+        'audio',
+        {
+          _group: true,
+          commands: new Map<string, any>([
+            [
+              'record',
+              {
+                options,
+                run: (c: any) => ({
+                  globals: c.globals,
+                  middleware: c.var.url,
+                  options: c.options,
+                }),
+              },
+            ],
+          ]),
+        },
+      ],
+    ])
+  }
+
+  const rate = z.object({
+    network: z.string().default('option'),
+    sampleRate: z.number().default(44100),
+  })
+
+  async function callRecord(
+    discovery: Discovery,
+    args: Record<string, unknown>,
+    defaults: Mcp.Defaults,
+    options: z.ZodObject<any> = rate,
+  ) {
+    const params =
+      discovery === 'direct'
+        ? { name: 'audio_record', arguments: args }
+        : { name: 'call_write_tool', arguments: { name: 'audio_record', arguments: args } }
+    const [, res] = await mcpSession(
+      recordCommands(options),
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/call', params },
+      ],
+      { defaults, globals, middlewares, tools: { discovery }, vars },
+    )
+    return res.result
+  }
+
+  describe.each(['direct', 'progressive'] as const)('%s discovery', (discovery) => {
+    const config = vi.fn((_path: string[]) => ({ 'sample-rate': 22050, network: 'config' }))
+    const defaults = {
+      globals: { network: 'server', rpcUrl: new URL('https://server.example') },
+      options: config,
+    }
+
+    test('applies default globals and config values when omitted', async () => {
+      const result = await callRecord(discovery, {}, defaults)
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        globals: { network: 'server', rpcUrl: 'https://server.example/' },
+        middleware: 'https://server.example/',
+        // A global wins the shared key, so the config value only reaches the option
+        options: { network: 'config', sampleRate: 22050 },
+      })
+      expect(config).toHaveBeenCalledWith(['audio', 'record'])
+    })
+
+    test('prefers call arguments over defaults', async () => {
+      const args = { network: 'call', rpcUrl: 'https://call.example', sampleRate: 8000 }
+      const result = await callRecord(discovery, args, defaults)
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        globals: { network: 'call', rpcUrl: 'https://call.example/' },
+        middleware: 'https://call.example/',
+        options: { network: 'config', sampleRate: 8000 },
+      })
+    })
+
+    test('keeps object-level refinements of the options schema', async () => {
+      const options = z
+        .object({ max: z.number().default(10), min: z.number().default(0) })
+        .refine((value) => value.min <= value.max, { message: 'min must not exceed max' })
+      const invalid = await callRecord(discovery, {}, { options: () => ({ min: 20 }) }, options)
+      expect(invalid.isError).toBe(true)
+      expect(invalid.content[0].text).toContain('min must not exceed max')
+      const valid = await callRecord(
+        discovery,
+        { max: 30 },
+        { options: () => ({ min: 20 }) },
+        options,
+      )
+      expect(JSON.parse(valid.content[0].text).options).toEqual({ max: 30, min: 20 })
+    })
+  })
+
+  test.each([
+    { name: 'unknown options', config: { bogus: 1 }, error: 'Unknown config option: bogus' },
+    { name: 'invalid values', config: { sampleRate: 'x' }, error: 'expected number' },
+  ])('rejects config values with $name', async ({ config, error }) => {
+    await expect(
+      Mcp.serve('test-cli', '1.0.0', recordCommands(rate), {
+        defaults: { options: () => config },
+        input: new PassThrough(),
+        output: new PassThrough(),
+      }),
+    ).rejects.toThrow(error)
+  })
+})

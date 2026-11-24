@@ -8190,4 +8190,27 @@ describe('--mcp', () => {
       spy.mockRestore()
     }
   })
+  test('server globals and the config file become Mcp.serve defaults', async () => {
+    const spy = vi.spyOn(Mcp, 'serve').mockResolvedValue(undefined)
+    const dir = await mkdtemp(join(tmpdir(), 'incur-mcp-config-'))
+    try {
+      const file = join(dir, 'test.json')
+      const config = { commands: { audio: { commands: { record: { options: { rate: 22050 } } } } } }
+      await writeFile(file, JSON.stringify(config))
+      const cli = Cli.create('test', {
+        config: { flag: 'config' },
+        // A required global may still come with each call, so only passed globals are validated
+        globals: z.object({ display: z.enum(['auto', 'xvfb']), token: z.string() }),
+      }).command('ping', { run: () => ({ pong: true }) })
+      const { exitCode } = await serve(cli, ['--mcp', '--display', 'xvfb', '--config', file])
+      expect(exitCode).toBeUndefined()
+      const { defaults } = spy.mock.calls[0]![3]!
+      expect(defaults?.globals).toEqual({ display: 'xvfb' })
+      expect(defaults?.options?.(['audio', 'record'])).toEqual({ rate: 22050 })
+      expect(defaults?.options?.(['ping'])).toBeUndefined()
+    } finally {
+      spy.mockRestore()
+      await rm(dir, { force: true, recursive: true })
+    }
+  })
 })

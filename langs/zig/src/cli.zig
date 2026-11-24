@@ -1147,10 +1147,11 @@ const Run = struct {
         };
         const human = tty and !flags.format_explicit;
 
-        const filtered = if (cli.options.globals) |globals| switch (try parser.parseGlobals(a, flags.rest, globals, .{ .command = .unknown })) {
-            .ok => |g| g.rest,
+        const parsed_globals: parser.Globals = if (cli.options.globals) |globals| switch (try parser.parseGlobals(a, flags.rest, globals, .{ .command = .unknown })) {
+            .ok => |g| g,
             .err => |e| return run.earlyError(e, human, flags.format),
-        } else flags.rest;
+        } else .{ .values = .{ .object = &.{} }, .rest = flags.rest };
+        const filtered = parsed_globals.rest;
 
         // Generated groups load only when this invocation can reach them: by name, or through
         // tree-wide modes.
@@ -1166,10 +1167,18 @@ const Run = struct {
         // --help takes precedence over --update.
         if (flags.update and !flags.help) return run.install(&flags, human);
         if (flags.mcp) {
-            if (try mcp.serveStdio(a, cli, &run.process)) |message| {
-                run.process.stderr.print("{s}\n", .{message}) catch {};
-                run.exit = 1;
-            }
+            // Globals passed to the server apply to every call. Only those are validated: a
+            // required global may still come with each call.
+            const globals = if (cli.options.globals) |g| switch (try parser.parsePassedGlobals(a, g, parsed_globals.values)) {
+                .ok => |v| v.object,
+                .err => |e| return run.earlyError(e, human, flags.format),
+            } else &.{};
+            const config = switch (try run.loadConfig(&flags)) {
+                .ok => |c| c,
+                .err => |e| return run.earlyError(e, human, flags.format),
+            };
+            // An invalid global or config file stops the server before it serves.
+            if (try mcp.serveStdio(a, cli, &run.process, .{ .globals = globals, .config = config })) |e| return run.earlyError(e, human, flags.format);
             return;
         }
 
@@ -1982,6 +1991,14 @@ const Run = struct {
 
     /// Loads config-file defaults for a command path.
     fn configDefaults(run: *Run, path: []const u8, flags: *const Flags) ServeError!parser.Result(?[]const Value.Entry) {
+        return switch (try run.loadConfig(flags)) {
+            .ok => |loaded| if (loaded) |t| configSection(run.a, t, run.cli.name, path) else .{ .ok = null },
+            .err => |e| .{ .err = e },
+        };
+    }
+
+    /// Loads the config tree, honoring `--config`, `--no-config`, and a custom loader.
+    fn loadConfig(run: *Run, flags: *const Flags) ServeError!parser.Result(?Value) {
         const a = run.a;
         const io = run.process.io;
         const config = run.cli.options.config orelse return .{ .ok = null };
@@ -2024,18 +2041,7 @@ const Run = struct {
             if (value != .object) return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid config file: expected a top-level object in {s}", .{t}) } };
             break :parsed value;
         };
-        var node = parsed;
-        if (!std.mem.eql(u8, path, run.cli.name)) {
-            var segments = std.mem.splitScalar(u8, path, ' ');
-            while (segments.next()) |segment| {
-                const children = node.get("commands") orelse return .{ .ok = null };
-                node = children.get(segment) orelse return .{ .ok = null };
-            }
-        }
-        if (node != .object) return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid config section for '{s}': expected an object", .{path}) } };
-        const options = node.get("options") orelse return .{ .ok = null };
-        if (options != .object) return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid config 'options' for '{s}': expected an object", .{path}) } };
-        return .{ .ok = if (options.object.len == 0) null else options.object };
+        return .{ .ok = parsed };
     }
 
     /// Parses input, runs middleware and the handler, and writes the result.
@@ -2541,4 +2547,20 @@ fn tree(a: Allocator, commands: Commands, root: ?*const Command, description: ?[
         },
     };
     return .{ .commands = children, .description = description, .options = if (root) |r| r.options() else null };
+}
+
+/// Walks the config tree to the option defaults of a command path.
+pub fn configSection(a: Allocator, config: Value, cli: []const u8, path: []const u8) Allocator.Error!parser.Result(?[]const Value.Entry) {
+    var node = config;
+    if (!std.mem.eql(u8, path, cli)) {
+        var segments = std.mem.splitScalar(u8, path, ' ');
+        while (segments.next()) |segment| {
+            const children = node.get("commands") orelse return .{ .ok = null };
+            node = children.get(segment) orelse return .{ .ok = null };
+        }
+    }
+    if (node != .object) return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid config section for '{s}': expected an object", .{path}) } };
+    const options = node.get("options") orelse return .{ .ok = null };
+    if (options != .object) return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid config 'options' for '{s}': expected an object", .{path}) } };
+    return .{ .ok = if (options.object.len == 0) null else options.object };
 }

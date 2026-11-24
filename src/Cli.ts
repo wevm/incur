@@ -954,17 +954,21 @@ async function serveImpl(
       if (validate) globals = result.parsed
       return result.rest
     } catch (error) {
-      // Report like command option errors
-      const output = {
-        code: error instanceof ValidationError ? 'VALIDATION_ERROR' : 'UNKNOWN',
-        message: error instanceof Error ? error.message : String(error),
-        ...(error instanceof ValidationError ? { fieldErrors: error.fieldErrors } : undefined),
-      }
-      if (human) writeln(formatHumanError(output))
-      else writeln(Formatter.format(output, formatFlag))
-      exit(1)
+      reportError(error)
       return undefined
     }
+  }
+
+  /** Reports an error raised before a command resolves, like command option errors, and exits. */
+  function reportError(error: unknown) {
+    const output = {
+      code: error instanceof ValidationError ? 'VALIDATION_ERROR' : 'UNKNOWN',
+      message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof ValidationError ? { fieldErrors: error.fieldErrors } : undefined),
+    }
+    if (human) writeln(formatHumanError(output))
+    else writeln(Formatter.format(output, formatFlag))
+    exit(1)
   }
 
   // The command is not resolved yet, so stop at its first flag: it may take a value.
@@ -1017,16 +1021,43 @@ async function serveImpl(
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
-    await Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
-      middlewares: options.middlewares,
-      env: options.envSchema,
-      globals: options.globals?.schema,
-      vars: options.vars,
-      version: options.version,
-      ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
-      ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
-      ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
-    })
+    try {
+      // Globals passed to the server apply to every call. Only those are validated: a required
+      // global may still come with each call.
+      const serverGlobals = options.globals
+        ? Parser.parseGlobals(rest, options.globals.schema, options.globals.alias, {
+            command: {},
+            validate: 'passed',
+          }).parsed
+        : undefined
+      const config = configEnabled
+        ? await loadConfig(name, {
+            configDisabled,
+            configPath,
+            files: options.config?.files,
+            loader: options.config?.loader,
+          })
+        : undefined
+      await Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
+        defaults: {
+          globals: serverGlobals,
+          ...(config
+            ? { options: (path: string[]) => extractCommandSection(config, name, path.join(' ')) }
+            : undefined),
+        },
+        middlewares: options.middlewares,
+        env: options.envSchema,
+        globals: options.globals?.schema,
+        vars: options.vars,
+        version: options.version,
+        ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+        ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
+        ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
+      })
+    } catch (error) {
+      // An invalid global or config file stops the server before it connects
+      reportError(error)
+    }
     return
   }
 
@@ -2978,6 +3009,19 @@ async function loadCommandOptionDefaults(
   path: string,
   options: loadCommandOptionDefaults.Options = {},
 ): Promise<Record<string, unknown> | undefined> {
+  const parsed = await loadConfig(cli, options)
+  return parsed && extractCommandSection(parsed, cli, path)
+}
+
+declare namespace loadCommandOptionDefaults {
+  type Options = loadConfig.Options
+}
+
+/** @internal Loads the config tree, honoring `--config`, `--no-config`, and a custom loader. */
+async function loadConfig(
+  cli: string,
+  options: loadConfig.Options = {},
+): Promise<Record<string, unknown> | undefined> {
   if (options.configDisabled) return undefined
 
   const { loader } = options
@@ -2991,26 +3035,18 @@ async function loadCommandOptionDefaults(
     targetPath = await findFirstExisting(searchPaths)
   }
 
-  // Load and parse the config
-  let parsed: Record<string, unknown>
   if (loader) {
     const result = await loader(targetPath)
     if (result === undefined) return undefined
     if (!isRecord(result))
       throw new ParseError({ message: 'Config loader must return a plain object or undefined' })
-    parsed = result
-  } else {
-    if (!targetPath) return undefined
-    const result = await readJsonConfig(targetPath, !!options.configPath)
-    if (!result) return undefined
-    parsed = result
+    return result
   }
-
-  // Extract the command section from the config tree
-  return extractCommandSection(parsed, cli, path)
+  if (!targetPath) return undefined
+  return readJsonConfig(targetPath, !!options.configPath)
 }
 
-declare namespace loadCommandOptionDefaults {
+declare namespace loadConfig {
   type Options = {
     configDisabled?: boolean | undefined
     configPath?: string | undefined

@@ -17,7 +17,7 @@ from ._errors import Error, format_cta, unknown
 from ._http import Request, Response
 from ._js import Json
 from ._model import build, to_json
-from ._parser import check, parse_env
+from ._parser import check, parse_defaults, parse_env
 from ._schema import Field, Type, json_schema, object_type, validate
 from ._tree import Entry, Group, Spec
 
@@ -121,13 +121,40 @@ class Tool:
     """Args, options, and globals merged, as direct tools validate input."""
 
 
-def collect(spec: Spec, filter_: ToolFilter | None) -> list[Tool]:
+#: Returns the config section of a command path, such as `project list`.
+ConfigSection = Callable[[str], "dict[str, Json] | None"]
+
+
+def with_defaults(ty: Type, values: dict[str, Json]) -> Type:
+    """Returns a schema with parsed values as the defaults of their fields."""
+    fields = [
+        replace(f, ty=_with_default(f.ty, values[f.name])) if f.name in values else f
+        for f in ty.fields
+    ]
+    return replace(ty, fields=fields)
+
+
+def _with_default(ty: Type, value: Json) -> Type:
+    """Returns a field schema with a new default."""
+    if ty.raw is None:
+        return replace(ty, default=value, null_default=value is None)
+    # `.default()` wraps a converted schema: its JSON leads with the new default, and the field
+    # is no longer optional.
+    raw = {"default": value, **{k: v for k, v in ty.raw.items() if k != "default"}}
+    return replace(
+        ty, default=value, null_default=value is None, optional=False, required=None, raw=raw
+    )
+
+
+def collect(
+    spec: Spec, filter_: ToolFilter | None, config: ConfigSection | None = None
+) -> list[Tool]:
     """Collects the tools of a CLI, filtered and sorted by name.
 
     Raises:
-        ValueError: When two tools share a name.
+        Error: When two tools share a name, or a config section is invalid.
     """
-    tools = _entries(spec.commands, [], [], spec.globals)
+    tools = _entries(spec.commands, [], [], spec.globals, config)
     if filter_ is not None:
         includes = [_pattern(p) for p in filter_.include or []]
         excludes = [_pattern(p) for p in filter_.exclude]
@@ -140,7 +167,7 @@ def collect(spec: Spec, filter_: ToolFilter | None) -> list[Tool]:
     seen: set[str] = set()
     for tool in tools:
         if tool.name in seen:
-            raise ValueError(f"Duplicate MCP tool name: {tool.name}")
+            raise unknown(f"Duplicate MCP tool name: {tool.name}")
         seen.add(tool.name)
     return sorted(tools, key=lambda t: _js.locale_key(t.name))
 
@@ -154,6 +181,7 @@ def _entries(
     prefix: list[str],
     middleware: list[Middleware],
     globals_: Type | None,
+    config: ConfigSection | None,
 ) -> list[Tool]:
     out: list[Tool] = []
     for name, entry in commands.items():
@@ -163,16 +191,27 @@ def _entries(
                 continue
             chain = [*middleware, *entry.middleware]
             if entry.root is not None and entry.root.mcp_enabled:
-                out.append(_tool(entry.root, path, chain, globals_))
-            out += _entries(entry.commands, path, chain, globals_)
+                out.append(_tool(entry.root, path, chain, globals_, config))
+            out += _entries(entry.commands, path, chain, globals_, config)
         elif isinstance(entry, Command) and entry.mcp_enabled:
-            out.append(_tool(entry, path, middleware, globals_))
+            out.append(_tool(entry, path, middleware, globals_, config))
     return out
 
 
 def _tool(
-    command: Command, path: list[str], middleware: list[Middleware], globals_: Type | None
+    command: Command,
+    path: list[str],
+    middleware: list[Middleware],
+    globals_: Type | None,
+    config: ConfigSection | None,
 ) -> Tool:
+    # Config values become option defaults, so a call's own arguments still win.
+    section = config(" ".join(path)) if config is not None else None
+    if section is not None:
+        values = parse_defaults(section, command.options)
+        # Without options, any key fails above, so the section reaches only commands with options.
+        options = typing.cast("Type", command.options)
+        command = replace(command, options=with_defaults(options, values))
     meta = command.mcp or ToolMeta()
     properties: dict[str, Json] = {}
     required: list[Json] = []
@@ -437,7 +476,12 @@ class Server:
     """An MCP server answering JSON-RPC messages for a CLI's tools."""
 
     def __init__(
-        self, spec: Spec, env: dict[str, str] | None = None, *, direct: bool = False
+        self,
+        spec: Spec,
+        env: dict[str, str] | None = None,
+        *,
+        direct: bool = False,
+        config: ConfigSection | None = None,
     ) -> None:
         self.spec = spec
         options = spec.mcp or McpOptions()
@@ -449,7 +493,7 @@ class Server:
         self.instructions = options.instructions
         self.version = spec.version or "0.0.0"
         self.env = env
-        self.tools = self._register(collect(spec, filter_), filter_)
+        self.tools = self._register(collect(spec, filter_, config), filter_)
 
     def _register(self, tools: list[Tool], filter_: ToolFilter | None) -> dict[str, _Registered]:
         if not tools:
@@ -729,9 +773,8 @@ def is_message(value: Json) -> bool:
     return has_id and ("result" in value or "error" in value)
 
 
-async def serve_stdio(spec: Spec, env: dict[str, str], stdin: TextIO, stdout: TextIO) -> None:
+async def serve_stdio(server: Server, stdin: TextIO, stdout: TextIO) -> None:
     """Serves MCP over stdio until the input ends: one JSON-RPC message per line."""
-    server = Server(spec, env)
 
     async def write(message: dict[str, Json]) -> None:
         stdout.write(_js.stringify(message) + "\n")
