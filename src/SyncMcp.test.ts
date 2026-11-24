@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -315,11 +316,53 @@ test.each([
 test('register writes amp config to existing settings', async () => {
   const configDir = join(fakeHome!, '.config', 'amp')
   mkdirSync(configDir, { recursive: true })
-  writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ 'amp.theme': 'dark' }))
+  writeFileSync(
+    join(configDir, 'settings.json'),
+    JSON.stringify({
+      'amp.theme': 'dark',
+      'amp.mcpServers': {
+        'my-cli': { command: 'old', args: ['x'], env: { KEEP: 'yes' }, disabled: true },
+      },
+    }),
+  )
 
   await register('my-cli', { command: 'npx my-cli --mcp', agents: ['amp'] })
 
   const config = JSON.parse(readFileSync(join(configDir, 'settings.json'), 'utf-8'))
   expect(config['amp.theme']).toBe('dark')
-  expect(config['amp.mcpServers']['my-cli']).toBeDefined()
+  expect(config['amp.mcpServers']['my-cli']).toEqual({
+    command: 'npx',
+    args: ['my-cli', '--mcp'],
+    env: { KEEP: 'yes' },
+    disabled: true,
+  })
 })
+
+test('register writes project amp config when not global', async () => {
+  const cwd = vi.spyOn(process, 'cwd').mockReturnValue(tmp)
+  try {
+    await register('my-cli', { command: 'npx my-cli --mcp', agents: ['amp'], global: false })
+  } finally {
+    cwd.mockRestore()
+  }
+
+  const config = JSON.parse(readFileSync(join(tmp, '.amp', 'settings.json'), 'utf-8'))
+  expect(config['amp.mcpServers']['my-cli']).toEqual({ command: 'npx', args: ['my-cli', '--mcp'] })
+  expect(existsSync(join(fakeHome!, '.config'))).toBe(false)
+})
+
+test.each(['{broken', '[]', 'null'])(
+  'register fails before configuring agents when amp settings are %s',
+  async (contents) => {
+    const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+    mkdirSync(join(fakeHome!, '.config', 'amp'), { recursive: true })
+    writeFileSync(configPath, contents)
+    vi.mocked(execFile).mockClear()
+
+    await expect(register('my-cli', { command: 'npx my-cli --mcp' })).rejects.toThrow(
+      `Invalid Amp settings at ${configPath}: expected a JSON object`,
+    )
+    expect(execFile).not.toHaveBeenCalled()
+    expect(readFileSync(configPath, 'utf-8')).toBe(contents)
+  },
+)

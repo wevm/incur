@@ -19,6 +19,15 @@ export async function register(
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
+  // Amp is registered directly (add-mcp doesn't support it). Its settings are read first, so
+  // invalid settings fail before any agent is configured.
+  const amp = targetAgents.length === 0 || targetAgents.includes('amp')
+  const ampPath =
+    options.global === false
+      ? join(process.cwd(), '.amp', 'settings.json')
+      : join(homedir(), '.config', 'amp', 'settings.json')
+  const ampConfig = amp ? readAmpSettings(ampPath) : undefined
+
   const agents: string[] = []
 
   // Run add-mcp for agents it supports (skip if only targeting Amp)
@@ -46,40 +55,45 @@ export async function register(
     )
   }
 
-  // Register with Amp directly (add-mcp doesn't support it)
-  if (targetAgents.length === 0 || targetAgents.includes('amp')) {
-    const registered = registerAmp(name, command)
-    if (registered) agents.push('Amp')
-  }
+  if (ampConfig && registerAmp(ampPath, ampConfig, name, command)) agents.push('Amp')
 
   return { command, agents }
 }
 
-/** @internal Registers an MCP server in Amp's settings.json. */
-function registerAmp(name: string, command: string): boolean {
-  const configPath = join(homedir(), '.config', 'amp', 'settings.json')
+/** @internal Reads Amp's settings: `{}` when the file is missing, or throws unless it holds a JSON object. */
+function readAmpSettings(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {}
+  try {
+    const config = JSON.parse(readFileSync(path, 'utf-8'))
+    if (isObject(config)) return config
+  } catch {}
+  throw new Error(`Invalid Amp settings at ${path}: expected a JSON object`)
+}
 
-  let config: Record<string, any> = {}
-  if (existsSync(configPath)) {
-    try {
-      config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    } catch {
-      return false
-    }
-  }
-
+/** @internal Registers an MCP server in Amp's settings, keeping the other fields of an existing entry. */
+function registerAmp(
+  path: string,
+  config: Record<string, unknown>,
+  name: string,
+  command: string,
+): boolean {
   const [cmd, ...args] = splitCommand(command)
   if (!cmd) return false
 
-  const servers: Record<string, any> = config['amp.mcpServers'] ?? {}
-  servers[name] = { command: cmd, args }
+  const servers = isObject(config['amp.mcpServers']) ? config['amp.mcpServers'] : {}
+  const existing = servers[name]
+  servers[name] = { ...(isObject(existing) ? existing : undefined), command: cmd, args }
   config['amp.mcpServers'] = servers
 
-  const dir = dirname(configPath)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(config, null, 2) + '\n')
 
   return true
+}
+
+/** @internal Whether a JSON value is an object (not an array or `null`). */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export declare namespace register {
@@ -95,7 +109,7 @@ export declare namespace register {
      * defaults to `<runner> <package> --mcp`.
      */
     command?: string | undefined
-    /** Install globally. Defaults to `true`. */
+    /** Install globally. Defaults to `true`. Otherwise Amp is registered in `.amp/settings.json` in the working directory. */
     global?: boolean | undefined
     /** Trusted npm package used to run the CLI. */
     package?: string | undefined

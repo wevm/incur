@@ -494,6 +494,16 @@ pub fn register(a: Allocator, cli: *cli_.Cli, process: *const Process, name: []c
         .ok => |c| c,
         .err => |message| return .{ .err = message },
     };
+    // Amp is registered directly (`add-mcp` does not support it). Its settings are read first, so
+    // invalid settings fail before any agent is configured.
+    const amp_path = if (global)
+        try std.fs.path.join(a, &.{ home(process), ".config", "amp", "settings.json" })
+    else
+        try std.fs.path.join(a, &.{ try currentPath(a, process.io), ".amp", "settings.json" });
+    const amp_config: ?Value = if (targets.len == 0 or contains(targets, "amp"))
+        try readAmp(a, process.io, amp_path) orelse return .{ .err = try std.fmt.allocPrint(a, "Invalid Amp settings at {s}: expected a JSON object", .{amp_path}) }
+    else
+        null;
     var agents: std.ArrayList([]const u8) = .empty;
     const amp_only = targets.len == 1 and std.mem.eql(u8, targets[0], "amp");
     if (!amp_only) {
@@ -521,29 +531,34 @@ pub fn register(a: Allocator, cli: *cli_.Cli, process: *const Process, name: []c
             if (trimmed.len > 0) try agents.append(a, trimmed);
         }
     }
-    if (targets.len == 0 or contains(targets, "amp")) if (try registerAmp(a, process, name, cmd)) try agents.append(a, "Amp");
+    if (amp_config) |config| if (try registerAmp(a, process.io, amp_path, config, name, cmd)) try agents.append(a, "Amp");
     return .{ .ok = .{ .command = cmd, .agents = agents.items } };
 }
 
-/// Adds the server to Amp's `settings.json`, or returns false when the file is not valid JSON or
-/// the command is empty.
-fn registerAmp(a: Allocator, process: *const Process, name: []const u8, cmd: []const u8) ServeError!bool {
-    const io = process.io;
-    const path = try std.fs.path.join(a, &.{ home(process), ".config", "amp", "settings.json" });
-    const config: Value = if (try readOptional(a, io, path)) |text| config: {
-        var message: []const u8 = undefined;
-        break :config try command.optional(json.parse(a, text, &message)) orelse return false;
-    } else .{ .object = &.{} };
+/// Reads Amp's settings: an empty object when the file is missing, the JSON object it holds, or
+/// null when it holds anything else.
+fn readAmp(a: Allocator, io: std.Io, path: []const u8) ServeError!?Value {
+    if (!try exists(io, path)) return .{ .object = &.{} };
+    const text = try readOptional(a, io, path) orelse return null;
+    var message: []const u8 = undefined;
+    const config = try command.optional(json.parse(a, text, &message)) orelse return null;
+    return if (config == .object) config else null;
+}
+
+/// Adds the server to Amp's settings, keeping the other fields of an existing entry, or returns
+/// false when the command is empty.
+fn registerAmp(a: Allocator, io: std.Io, path: []const u8, config: Value, name: []const u8, cmd: []const u8) ServeError!bool {
     const tokens = try splitCommand(a, cmd);
     if (tokens.len == 0) return false;
-    var server: json.ObjectBuilder = .{};
-    try server.put(a, "command", .{ .string = tokens[0] });
-    try server.put(a, "args", try strings(a, tokens[1..]));
     var servers: json.ObjectBuilder = .{};
     if (config.get("amp.mcpServers")) |existing| if (existing == .object) try servers.entries.appendSlice(a, existing.object);
+    var server: json.ObjectBuilder = .{};
+    if (servers.finish().get(name)) |existing| if (existing == .object) try server.entries.appendSlice(a, existing.object);
+    try server.put(a, "command", .{ .string = tokens[0] });
+    try server.put(a, "args", try strings(a, tokens[1..]));
     try servers.put(a, name, server.finish());
     var out: json.ObjectBuilder = .{};
-    if (config == .object) try out.entries.appendSlice(a, config.object);
+    try out.entries.appendSlice(a, config.object);
     try out.put(a, "amp.mcpServers", servers.finish());
     _ = try writeFile(io, path, try std.fmt.allocPrint(a, "{s}\n", .{try json.stringifyPretty(a, out.finish())}));
     return true;

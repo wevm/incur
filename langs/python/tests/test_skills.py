@@ -277,10 +277,6 @@ def test_mcp_add_to_amp(tmp_path: Path) -> None:
             (
                 0,
                 """\
-Registering MCP server...\r\x1b[K✓ Registered kit as MCP server
-  Agents: Amp
-
-Agents can now use kit tools.
 {
   "name": "kit",
   "command": "kit serve ",
@@ -293,9 +289,6 @@ Agents can now use kit tools.
             (
                 0,
                 """\
-Registering MCP server...\r\x1b[K✓ Registered kit as MCP server
-
-Agents can now use kit tools.
 {
   "name": "kit",
   "command": " ",

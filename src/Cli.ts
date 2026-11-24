@@ -1383,7 +1383,8 @@ async function serveImpl(
 
     try {
       const mcpName = options.mcp?.name ?? name
-      stdout('Registering MCP server...')
+      // Progress and the summary are for people; an explicit format prints only the result.
+      if (!formatExplicit) stdout('Registering MCP server...')
       const result = await SyncMcp.register(mcpName, {
         ...(mcpName === name ? undefined : { cli: name }),
         command,
@@ -1393,19 +1394,21 @@ async function serveImpl(
           ? { package: options.package, version: options.version }
           : undefined),
       })
-      stdout('\r\x1b[K')
-      const lines: string[] = []
-      lines.push(`✓ Registered ${mcpName} as MCP server`)
-      if (result.agents.length > 0) lines.push(`  Agents: ${result.agents.join(', ')}`)
-      lines.push('')
-      lines.push(`Agents can now use ${mcpName} tools.`)
-      const suggestions = sync?.suggestions
-      if (suggestions && suggestions.length > 0) {
+      if (!formatExplicit) {
+        stdout('\r\x1b[K')
+        const lines: string[] = []
+        lines.push(`✓ Registered ${mcpName} as MCP server`)
+        if (result.agents.length > 0) lines.push(`  Agents: ${result.agents.join(', ')}`)
         lines.push('')
-        lines.push('Try asking:')
-        for (const s of suggestions) lines.push(`  "${s}"`)
+        lines.push(`Agents can now use ${mcpName} tools.`)
+        const suggestions = sync?.suggestions
+        if (suggestions && suggestions.length > 0) {
+          lines.push('')
+          lines.push('Try asking:')
+          for (const s of suggestions) lines.push(`  "${s}"`)
+        }
+        writeln(lines.join('\n'))
       }
-      writeln(lines.join('\n'))
       if (fullOutput || formatExplicit)
         writeln(
           Formatter.format(

@@ -1081,25 +1081,29 @@ fn split_command(input: &str) -> Vec<String> {
     tokens
 }
 
-/// Registers the server in Amp's settings. Returns whether it was registered.
-fn register_amp(name: &str, command: &str, env: Env<'_>) -> bool {
-    let path = home(env).join(".config").join("amp").join("settings.json");
-    let mut config = match std::fs::read_to_string(&path) {
-        Ok(text) => match js::json_parse(&text, |_| Value::Null) {
-            Ok(Value::Object(config)) => config,
-            Ok(_) | Err(_) => return false,
-        },
-        Err(_) => Map::new(),
-    };
+/// Reads Amp's settings: an empty map when the file is missing, else the JSON object it holds.
+fn read_amp(path: &Path) -> Result<Map<String, Value>, Error> {
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+    match std::fs::read_to_string(path).map(|text| js::json_parse(&text, |_| Value::Null)) {
+        Ok(Ok(Value::Object(config))) => Ok(config),
+        _ => Err(Error::unknown(format!(
+            "Invalid Amp settings at {}: expected a JSON object",
+            path.display()
+        ))),
+    }
+}
+
+/// Registers the server in Amp's settings, keeping the other fields of an existing entry.
+/// Returns whether it was registered.
+fn register_amp(path: &Path, mut config: Map<String, Value>, name: &str, command: &str) -> bool {
     let mut tokens = split_command(command).into_iter();
     let Some(program) = tokens.next() else {
         return false;
     };
-    let mut servers = match config.remove("amp.mcpServers") {
-        Some(Value::Object(servers)) => servers,
-        _ => Map::new(),
-    };
-    let mut server = Map::new();
+    let mut servers = take_object(&mut config, "amp.mcpServers");
+    let mut server = take_object(&mut servers, name);
     server.insert("command".into(), program.into());
     server.insert("args".into(), tokens.map(Value::String).collect());
     servers.insert(name.into(), Value::Object(server));
@@ -1108,10 +1112,19 @@ fn register_amp(name: &str, command: &str, env: Env<'_>) -> bool {
         let _ = std::fs::create_dir_all(dir);
     }
     std::fs::write(
-        &path,
+        path,
         format!("{}\n", js::stringify_pretty(&Value::Object(config))),
     )
     .is_ok()
+}
+
+/// Takes the object at `key`, leaving the key in place so a later insert keeps its position, or
+/// an empty object when the value is missing or not an object.
+fn take_object(map: &mut Map<String, Value>, key: &str) -> Map<String, Value> {
+    match map.get_mut(key) {
+        Some(Value::Object(object)) => std::mem::take(object),
+        _ => Map::new(),
+    }
 }
 
 /// Registers the CLI as an MCP server with agents through `add-mcp`, and with Amp directly.
@@ -1135,6 +1148,24 @@ pub(crate) fn register(options: Register<'_>) -> Result<(String, Vec<String>), E
                 specifier.unwrap_or_else(|| options.cli.to_owned())
             )
         }
+    };
+    // Amp is registered directly (`add-mcp` does not support it). Its settings are read first, so
+    // invalid settings fail before any agent is configured.
+    let amp_path = if options.global {
+        home(options.env)
+            .join(".config")
+            .join("amp")
+            .join("settings.json")
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(".amp")
+            .join("settings.json")
+    };
+    let amp_config = if options.agents.is_empty() || options.agents.iter().any(|a| a == "amp") {
+        Some(read_amp(&amp_path)?)
+    } else {
+        None
     };
     let amp_only = options.agents.len() == 1 && options.agents[0] == "amp";
     let mut agents = Vec::new();
@@ -1170,9 +1201,7 @@ pub(crate) fn register(options: Register<'_>) -> Result<(String, Vec<String>), E
             }
         }
     }
-    if (options.agents.is_empty() || options.agents.iter().any(|a| a == "amp"))
-        && register_amp(options.name, &command, options.env)
-    {
+    if amp_config.is_some_and(|config| register_amp(&amp_path, config, options.name, &command)) {
         agents.push("Amp".into());
     }
     Ok((command, agents))
