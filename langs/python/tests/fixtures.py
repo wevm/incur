@@ -725,6 +725,8 @@ async def upstream(request: incur.Request) -> incur.Response:
         return reply({"error": {"code": "NOT_FOUND", "message": "No such thing"}}, 404)
     if route == "bad":
         return reply({"message": "Bad input", "error": {"code": 7}}, 400)
+    if route == "bad-object":
+        return reply({"message": {"detail": "Bad input"}}, 422)
     if route == "boom":
         return incur.Response("Internal failure", status=500)
     if route == "down":
