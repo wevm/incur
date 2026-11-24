@@ -438,6 +438,9 @@ pub const Tool = struct {
     description: ?[]const u8 = null,
     /// Usage guidance sent as `_meta.instructions`.
     instructions: ?[]const u8 = null,
+    /// The name of an app registered with `Cli.app`, which hosts render the tool's results in.
+    /// Applies to directly listed tools.
+    app: ?[]const u8 = null,
     /// Behavior annotations.
     annotations: ?Annotations = null,
     /// Annotations as JSON, kept in their original key order. Generated commands set this to

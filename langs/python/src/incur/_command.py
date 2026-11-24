@@ -174,6 +174,7 @@ class ToolMeta:
     title: str | None = None
     icons: list[Json] | None = None
     headers: dict[str, str] | None = None
+    app: str | None = None
 
 
 @dataclass

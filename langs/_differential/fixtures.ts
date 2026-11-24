@@ -1355,6 +1355,67 @@ const ask = Cli.create('ask', {
     },
   })
 
+/** Exercises MCP Apps: `ui://` views and the tools that link to them. */
+const view = Cli.create('view', {
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { tools: { discovery: 'direct' } },
+})
+  .resource('notes', { uri: 'view://notes', read: () => 'Notes' })
+  .app('dashboard', {
+    uri: 'ui://view/dashboard',
+    title: 'Dashboard',
+    description: 'Weather dashboard',
+    html: '<!doctype html><p>Weather</p>',
+    csp: {
+      resourceDomains: ['https://cdn.example.com'],
+      connectDomains: ['https://api.example.com', 'wss://live.example.com'],
+    },
+    prefersBorder: true,
+  })
+  .app('plain', { uri: 'ui://view/plain', html: '<p>Plain</p>' })
+  .app('framed', {
+    uri: 'ui://view/framed',
+    html: '',
+    csp: { baseUriDomains: ['https://base.example.com'], frameDomains: [] },
+    prefersBorder: false,
+  })
+  .app('open', { uri: 'ui://view/open', html: '<p>Open</p>', csp: {} })
+  .command('weather', {
+    description: 'Show the weather',
+    mcp: { app: 'dashboard', instructions: 'Render it' },
+    run: () => ({ temp: 20 }),
+  })
+  .command('plain', { description: 'Plain view', mcp: { app: 'plain' }, run: () => ({ ok: true }) })
+  .command('other', { description: 'No view', run: () => ({ ok: true }) })
+
+/** Mounts a CLI whose command links to its own app. A parent app with the same name wins. */
+const viewhost = Cli.create('viewhost', {
+  version: '1.0.0',
+  update: false,
+  sync: false,
+  mcp: { tools: { discovery: 'direct' } },
+})
+  .app('chart', { uri: 'ui://viewhost/chart', html: '<p>Host</p>' })
+  .command(
+    Cli.create('kid', { description: 'Mounted views' })
+      .app('chart', { uri: 'ui://kid/chart', html: '<p>Kid chart</p>' })
+      .app('table', { uri: 'ui://kid/table', html: '<p>Kid table</p>' })
+      .command('chart', { description: 'Chart', mcp: { app: 'chart' }, run: () => ({}) })
+      .command('table', { description: 'Table', mcp: { app: 'table' }, run: () => ({}) }),
+  )
+
+/** A command that links to an app the CLI never registers. */
+const viewmissing = Cli.create('viewmissing', { version: '1.0.0', update: false, sync: false })
+  .app('real', { uri: 'ui://viewmissing/real', html: '' })
+  .command('show', { description: 'Show', mcp: { app: 'ghost' }, run: () => ({}) })
+
+/** An app whose URI is not a `ui://` URI. */
+const viewscheme = Cli.create('viewscheme', { version: '1.0.0', update: false, sync: false })
+  .app('web', { uri: 'https://example.com/view', html: '' })
+  .command('show', { description: 'Show', run: () => ({}) })
+
 const hdrkey = badHeaders('hdrkey', { a: 'A', missing: 'Missing' })
 const hdrtoken = badHeaders('hdrtoken', { a: 'Bad Header' })
 const hdrempty = badHeaders('hdrempty', { a: '' })
@@ -1876,6 +1937,10 @@ export const clis = {
   hdrtoken,
   kb,
   kbbad,
+  view,
+  viewhost,
+  viewmissing,
+  viewscheme,
   kit,
   kitbad,
   kitcmd,

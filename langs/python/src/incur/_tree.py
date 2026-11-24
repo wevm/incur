@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ._cli import Config
     from ._formatter import Format
     from ._mcp import McpOptions
-    from ._mcp_features import Prompt, Resource, ResourceTemplate
+    from ._mcp_features import App, Prompt, Resource, ResourceTemplate
     from ._sync import Sync
     from ._update import Update
 
@@ -90,6 +90,7 @@ class Spec:
     prompts: list[Prompt] = field(default_factory=list["Prompt"])
     resources: list[Resource] = field(default_factory=list["Resource"])
     resource_templates: list[ResourceTemplate] = field(default_factory=list["ResourceTemplate"])
+    apps: list[App] = field(default_factory=list["App"])
     package: str | None = None
     update: Update | None = None
     pending: list[Callable[[], Awaitable[None]]] = field(

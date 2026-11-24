@@ -118,6 +118,141 @@ impl Resource {
     display_setters!();
 }
 
+/// External origins an MCP App may reach, as hosts map them to Content Security Policy
+/// directives.
+#[derive(Clone, Debug, Default)]
+pub struct AppCsp {
+    /// Origins for fetch, XHR, and WebSocket connections (`connect-src`).
+    pub connect_domains: Option<Vec<String>>,
+    /// Origins for scripts, styles, images, fonts, and media.
+    pub resource_domains: Option<Vec<String>>,
+    /// Origins for nested iframes (`frame-src`).
+    pub frame_domains: Option<Vec<String>>,
+    /// Allowed document base URIs (`base-uri`).
+    pub base_uri_domains: Option<Vec<String>>,
+}
+
+/// An MCP App: an HTML view hosts render for the tools that link to it with
+/// [`Tool::app`](crate::mcp::Tool::app). It is listed and read as a resource after the others.
+///
+/// ```
+/// use incur::mcp::App;
+///
+/// let dashboard = App::new("ui://weather/dashboard", "dashboard", "<!doctype html>").prefers_border(true);
+/// ```
+#[derive(Clone, Debug)]
+pub struct App {
+    uri: String,
+    name: String,
+    html: String,
+    title: Option<String>,
+    description: Option<String>,
+    csp: Option<AppCsp>,
+    prefers_border: Option<bool>,
+}
+
+impl App {
+    /// Creates an app whose view hosts read at the `ui://` URI `uri`.
+    pub fn new(uri: impl Into<String>, name: impl Into<String>, html: impl Into<String>) -> Self {
+        Self {
+            uri: uri.into(),
+            name: name.into(),
+            html: html.into(),
+            title: None,
+            description: None,
+            csp: None,
+            prefers_border: None,
+        }
+    }
+
+    /// Sets the human-readable title.
+    #[must_use]
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Sets the description.
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Sets the external origins the view may reach. Hosts block every other origin.
+    #[must_use]
+    pub fn csp(mut self, csp: AppCsp) -> Self {
+        self.csp = Some(csp);
+        self
+    }
+
+    /// Sets whether the host draws a border and background around the view. Hosts decide when
+    /// unset.
+    #[must_use]
+    pub fn prefers_border(mut self, prefers_border: bool) -> Self {
+        self.prefers_border = Some(prefers_border);
+        self
+    }
+
+    /// The app's name, which tools link to.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The app's URI.
+    pub(crate) fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    /// Lists and reads the app as a resource whose contents carry its hints in `_meta.ui`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the URI is not a `ui://` URI.
+    fn resource(&self) -> Result<Resource, String> {
+        if !self.uri.starts_with("ui://") {
+            return Err(format!(
+                "MCP app \"{}\" needs a ui:// URI, got \"{}\".",
+                self.name, self.uri
+            ));
+        }
+        let mut ui = Map::new();
+        if let Some(csp) = &self.csp {
+            let domains = [
+                ("connectDomains", &csp.connect_domains),
+                ("resourceDomains", &csp.resource_domains),
+                ("frameDomains", &csp.frame_domains),
+                ("baseUriDomains", &csp.base_uri_domains),
+            ];
+            let csp: Map<String, Value> = domains
+                .into_iter()
+                .filter_map(|(key, value)| value.as_ref().map(|value| (key.into(), json!(value))))
+                .collect();
+            ui.insert("csp".into(), csp.into());
+        }
+        if let Some(prefers_border) = self.prefers_border {
+            ui.insert("prefersBorder".into(), prefers_border.into());
+        }
+        let mut contents = Map::new();
+        contents.insert("text".into(), self.html.clone().into());
+        if !ui.is_empty() {
+            contents.insert("_meta".into(), json!({ "ui": ui }));
+        }
+        let contents = Value::Object(contents);
+        Ok(Resource {
+            uri: self.uri.clone(),
+            name: self.name.clone(),
+            mime_type: Some("text/html;profile=mcp-app".into()),
+            display: Display {
+                title: self.title.clone(),
+                description: self.description.clone(),
+                icons: None,
+            },
+            read: Arc::new(move || contents.clone()),
+        })
+    }
+}
+
 /// Resources whose URIs match a template such as `docs://{section}/{page}`. Templates support
 /// `{name}` expressions, which match one or more characters other than `/` and `,`.
 #[derive(Clone)]
@@ -232,12 +367,18 @@ impl Features {
     ///
     /// # Errors
     ///
-    /// Returns a message for a template with other expressions or stray braces.
+    /// Returns a message for an app without a `ui://` URI, or a template with other expressions
+    /// or stray braces.
     pub(crate) fn new(
         resources: &[Resource],
         templates: &[ResourceTemplate],
         prompts: &[Prompt],
+        apps: &[App],
     ) -> Result<Self, String> {
+        let mut resources = resources.to_vec();
+        for app in apps {
+            resources.push(app.resource()?);
+        }
         let templates = templates
             .iter()
             .map(|template| {
@@ -246,7 +387,7 @@ impl Features {
             })
             .collect::<Result<_, String>>()?;
         Ok(Self {
-            resources: resources.to_vec(),
+            resources,
             templates,
             prompts: prompts.to_vec(),
         })

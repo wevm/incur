@@ -298,6 +298,8 @@ pub const Cli = struct {
     resources: std.ArrayList(mcp.Resource) = .empty,
     /// MCP resource templates.
     resource_templates: std.ArrayList(mcp.ResourceTemplate) = .empty,
+    /// MCP Apps.
+    apps: std.ArrayList(mcp.App) = .empty,
     /// Where a generated group's commands come from.
     source: ?Source = null,
     /// Whether generated commands have been loaded.
@@ -426,6 +428,12 @@ pub const Cli = struct {
         try cli.prompts.append(cli.arena.allocator(), definition);
     }
 
+    /// Registers an MCP App: an HTML view at a `ui://` URI that hosts render for commands linking
+    /// to it with `Tool.app`.
+    pub fn app(cli: *Cli, definition: mcp.App) Allocator.Error!void {
+        try cli.apps.append(cli.arena.allocator(), definition);
+    }
+
     /// Registers an MCP resource clients can list and read at a fixed URI.
     pub fn resource(cli: *Cli, definition: mcp.Resource) Allocator.Error!void {
         try cli.resources.append(cli.arena.allocator(), definition);
@@ -443,6 +451,8 @@ pub const Cli = struct {
     pub fn group(cli: *Cli, child: *Cli) Allocator.Error!void {
         const a = cli.arena.allocator();
         try cli.children.ensureUnusedCapacity(a, 1);
+        // Linked commands need their apps, so mounting carries them over.
+        try cli.apps.appendSlice(a, child.apps.items);
         child.options.root = child.rootCommand();
         if (child.options.root != null and child.commands.items.len == 0) {
             const root = try a.create(Command);
