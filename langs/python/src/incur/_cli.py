@@ -1595,7 +1595,9 @@ class _Run:
                     command = value
             i += 1
         name = options.name or cli.name
-        self.write("Registering MCP server...")
+        # Progress and the summary are for people; an explicit format prints only the result.
+        if not flags.format_explicit:
+            self.write("Registering MCP server...")
         try:
             result = await _syncmcp.register(
                 name,
@@ -1614,15 +1616,16 @@ class _Run:
             self.writeln(format_value(failure, fmt))
             self.exit = 1
             return
-        self.write("\r\x1b[K")
-        lines = [f"\u2713 Registered {name} as MCP server"]
-        if result.agents:
-            lines.append(f"  Agents: {', '.join(result.agents)}")
-        lines += ["", f"Agents can now use {name} tools."]
-        suggestions = cli.sync.suggestions if cli.sync else []
-        if suggestions:
-            lines += ["", "Try asking:", *(f'  "{s}"' for s in suggestions)]
-        self.writeln("\n".join(lines))
+        if not flags.format_explicit:
+            self.write("\r\x1b[K")
+            lines = [f"\u2713 Registered {name} as MCP server"]
+            if result.agents:
+                lines.append(f"  Agents: {', '.join(result.agents)}")
+            lines += ["", f"Agents can now use {name} tools."]
+            suggestions = cli.sync.suggestions if cli.sync else []
+            if suggestions:
+                lines += ["", "Try asking:", *(f'  "{s}"' for s in suggestions)]
+            self.writeln("\n".join(lines))
         if flags.full_output or flags.format_explicit:
             out: dict[str, Json] = {
                 "name": name,

@@ -2666,7 +2666,10 @@ impl Run<'_, '_> {
             }
         }
         let name = cli.mcp.name.clone().unwrap_or_else(|| cli.name.clone());
-        self.write("Registering MCP server...");
+        // Progress and the summary are for people; an explicit format prints only the result.
+        if !flags.format_explicit {
+            self.write("Registering MCP server...");
+        }
         let registered = sync::register(sync::Register {
             name: &name,
             cli: &cli.name,
@@ -2686,21 +2689,23 @@ impl Run<'_, '_> {
                 return;
             }
         };
-        self.write("\r\x1b[K");
-        let mut lines = vec![format!("\u{2713} Registered {name} as MCP server")];
-        if !agents.is_empty() {
-            lines.push(format!("  Agents: {}", agents.join(", ")));
-        }
-        lines.push(String::new());
-        lines.push(format!("Agents can now use {name} tools."));
-        if !cli.sync.suggestions.is_empty() {
-            lines.push(String::new());
-            lines.push("Try asking:".into());
-            for suggestion in &cli.sync.suggestions {
-                lines.push(format!("  \"{suggestion}\""));
+        if !flags.format_explicit {
+            self.write("\r\x1b[K");
+            let mut lines = vec![format!("\u{2713} Registered {name} as MCP server")];
+            if !agents.is_empty() {
+                lines.push(format!("  Agents: {}", agents.join(", ")));
             }
+            lines.push(String::new());
+            lines.push(format!("Agents can now use {name} tools."));
+            if !cli.sync.suggestions.is_empty() {
+                lines.push(String::new());
+                lines.push("Try asking:".into());
+                for suggestion in &cli.sync.suggestions {
+                    lines.push(format!("  \"{suggestion}\""));
+                }
+            }
+            self.writeln(&lines.join("\n"));
         }
-        self.writeln(&lines.join("\n"));
         if flags.full_output || flags.format_explicit {
             let mut out = Map::new();
             out.insert("name".into(), name.into());

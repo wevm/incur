@@ -238,7 +238,7 @@ test "registers MCP servers with exact package versions" {
     defer dir.cleanup();
     try dir.dir.createDirPath(testing.io, "bin");
     try dir.dir.writeFile(testing.io, .{ .sub_path = "bin/npx", .data = stub, .flags = .{ .permissions = .executable_file } });
-    try seed(dir, &.{.{ ".config/amp/settings.json", "[]" }});
+    try seed(dir, &.{.{ ".config/amp/settings.json", "{}" }});
     const home = try tmpPath(a, dir);
     const bin = try std.fs.path.join(a, &.{ home, "bin" });
 

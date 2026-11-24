@@ -1652,22 +1652,25 @@ const Run = struct {
             if (is_agent) try agents.append(a, value) else command_override = value;
         }
         const name = settings.name orelse cli.name;
-        run.write("Registering MCP server...");
+        // Progress and the summary are for people; an explicit format prints only the result.
+        if (!flags.format_explicit) run.write("Registering MCP server...");
         const result = switch (try sync_api.register(a, cli, &run.process, name, command_override, !contains(rest, "--no-global"), agents.items)) {
             .ok => |r| r,
             .err => |message| return run.builtinFailure("MCP_ADD_FAILED", message, format),
         };
-        run.write("\r\x1b[K");
-        var lines: std.ArrayList([]const u8) = .empty;
-        try lines.append(a, try std.fmt.allocPrint(a, "\u{2713} Registered {s} as MCP server", .{name}));
-        if (result.agents.len > 0) try lines.append(a, try std.fmt.allocPrint(a, "  Agents: {s}", .{try std.mem.join(a, ", ", result.agents)}));
-        try lines.appendSlice(a, &.{ "", try std.fmt.allocPrint(a, "Agents can now use {s} tools.", .{name}) });
-        const suggestions = if (cli.options.sync) |sync| sync.suggestions else &.{};
-        if (suggestions.len > 0) {
-            try lines.appendSlice(a, &.{ "", "Try asking:" });
-            for (suggestions) |suggestion| try lines.append(a, try std.fmt.allocPrint(a, "  \"{s}\"", .{suggestion}));
+        if (!flags.format_explicit) {
+            run.write("\r\x1b[K");
+            var lines: std.ArrayList([]const u8) = .empty;
+            try lines.append(a, try std.fmt.allocPrint(a, "\u{2713} Registered {s} as MCP server", .{name}));
+            if (result.agents.len > 0) try lines.append(a, try std.fmt.allocPrint(a, "  Agents: {s}", .{try std.mem.join(a, ", ", result.agents)}));
+            try lines.appendSlice(a, &.{ "", try std.fmt.allocPrint(a, "Agents can now use {s} tools.", .{name}) });
+            const suggestions = if (cli.options.sync) |sync| sync.suggestions else &.{};
+            if (suggestions.len > 0) {
+                try lines.appendSlice(a, &.{ "", "Try asking:" });
+                for (suggestions) |suggestion| try lines.append(a, try std.fmt.allocPrint(a, "  \"{s}\"", .{suggestion}));
+            }
+            run.writeln(try std.mem.join(a, "\n", lines.items));
         }
-        run.writeln(try std.mem.join(a, "\n", lines.items));
         if (flags.full_output or flags.format_explicit) {
             var out: json.ObjectBuilder = .{};
             try out.put(a, "name", .{ .string = name });

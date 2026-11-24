@@ -115,24 +115,33 @@ def _split(command: str) -> list[str]:
     return tokens
 
 
-def _register_amp(name: str, command: str, env: Mapping[str, str]) -> bool:
-    """Adds the server to Amp's `settings.json`, which `add-mcp` does not support."""
-    home = env.get("HOME") or os.path.expanduser("~")
-    path = os.path.join(home, ".config", "amp", "settings.json")
-    config: dict[str, Json] = {}
-    if os.path.exists(path):
+def _read_amp(path: str) -> dict[str, Json]:
+    """Reads Amp's settings: `{}` when the file is missing, else the JSON object it holds."""
+    if not os.path.exists(path):
+        return {}
+    try:
         with open(path, encoding="utf-8") as file:
             text = file.read()
-        if _js.json_parse_error(text) is not None:
-            return False
-        parsed = _js.parse_json(text)
-        config = parsed if isinstance(parsed, dict) else {}
+    except OSError:
+        text = ""
+    config = None if _js.json_parse_error(text) is not None else _js.parse_json(text)
+    if not isinstance(config, dict):
+        raise ValueError(f"Invalid Amp settings at {path}: expected a JSON object")
+    return config
+
+
+def _register_amp(path: str, name: str, command: str) -> bool:
+    """Adds the server to Amp's settings, keeping the other fields of an existing entry."""
     tokens = _split(command)
     if not tokens:
         return False
+    config = _read_amp(path)
     servers = config.get("amp.mcpServers")
     servers = servers if isinstance(servers, dict) else {}
-    servers[name] = {"command": tokens[0], "args": list[Json](tokens[1:])}
+    existing = servers.get(name)
+    server = dict(existing) if isinstance(existing, dict) else {}
+    server.update(command=tokens[0], args=list[Json](tokens[1:]))
+    servers[name] = server
     config["amp.mcpServers"] = servers
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as file:
@@ -148,6 +157,16 @@ async def register(name: str, options: Options) -> Result:
     if command is None:
         command = _default_command(options.cli or name, runner, options.package, options.version)
     targets = options.agents
+    # Amp is registered directly (`add-mcp` does not support it). Its settings are checked first,
+    # so invalid settings fail before any agent is configured, and read again when written.
+    amp = not targets or "amp" in targets
+    if options.global_:
+        home = env.get("HOME") or os.path.expanduser("~")
+        amp_path = os.path.join(home, ".config", "amp", "settings.json")
+    else:
+        amp_path = os.path.join(os.getcwd(), ".amp", "settings.json")
+    if amp:
+        _read_amp(amp_path)
     agents: list[str] = []
     if targets != ["amp"]:
         args = [command, "--name", name, "-y"]
@@ -164,6 +183,6 @@ async def register(name: str, options: Options) -> Result:
                 label = re.sub(r":.*", "", label).strip()
                 if label:
                     agents.append(label)
-    if (not targets or "amp" in targets) and _register_amp(name, command, env):
+    if amp and _register_amp(amp_path, name, command):
         agents.append("Amp")
     return Result(command, agents)

@@ -3577,7 +3577,6 @@ describe('built-in commands', () => {
         'pnpm test --mcp',
         '--agent',
         'cursor',
-        '--json',
       ])
       expect(exitCode).toBeUndefined()
       expect(spy).toHaveBeenCalledWith('test', {
@@ -3588,7 +3587,25 @@ describe('built-in commands', () => {
       expect(output).toContain('Registered test as MCP server')
       expect(output).toContain('Try asking:')
       expect(output).toContain('"Check health"')
-      expect(output).toContain('"command": "pnpm test --mcp"')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp add --json prints only the result', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'pnpm test --mcp', agents: ['Cursor'] })
+    try {
+      const cli = Cli.create('test', { sync: { suggestions: ['Check health'] } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add', '--json'])
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toEqual({
+        name: 'test',
+        command: 'pnpm test --mcp',
+        agents: ['Cursor'],
+      })
     } finally {
       spy.mockRestore()
     }
@@ -3676,8 +3693,7 @@ describe('built-in commands', () => {
       cli.command('ping', { run: () => ({ pong: true }) })
       const { output, exitCode } = await serve(cli, ['mcp', 'add', '--json'])
       expect(exitCode).toBe(1)
-      expect(output).toContain('Registering MCP server...')
-      expect(JSON.parse(output.slice(output.indexOf('{')))).toEqual({
+      expect(JSON.parse(output)).toEqual({
         code: 'MCP_ADD_FAILED',
         message: 'register failed',
       })
