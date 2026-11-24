@@ -693,7 +693,8 @@ function toolCli(
       profile: z.string().default('dev').describe('Profile'),
       verbose: z.boolean().optional().describe('Verbose output'),
     }),
-    vars: z.object({ trace: z.string().default('none') }),
+    // Required: the root middleware sets it before any handler reads it.
+    vars: z.object({ trace: z.string() }),
   })
     .use(async (c, next) => {
       c.set('trace', `root:${c.command}:${c.env.TOOLS_REGION}`)
@@ -981,8 +982,11 @@ const gateway = Cli.create('gateway', {
   update: false,
   sync: false,
   env: z.object({ GATEWAY_MODE: z.string().optional().describe('Mode') }),
+  // Required: the middleware sets it before the fetch handler runs.
+  vars: z.object({ mode: z.string() }),
 })
   .use(async (c, next) => {
+    c.set('mode', c.env.GATEWAY_MODE ?? 'allow')
     if (c.env.GATEWAY_MODE === 'deny')
       return c.error({ code: 'DENIED', message: 'gateway denied', cta: { commands: ['status'] } })
     if (c.env.GATEWAY_MODE === 'throw') throw new Error('middleware threw')
