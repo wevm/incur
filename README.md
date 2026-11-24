@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> · <a href="#quickprompt">Quickprompt</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
+  <a href="#features">Features</a> · <a href="#agent-prompt">Agent Prompt</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
 </p>
 
 ## Features
@@ -47,7 +47,7 @@
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 - [**Multi-language**](#multi-language): Rust, Python, and Zig ports with the same output, help, and agent integrations
 
-## Quickprompt
+## Agent Prompt
 
 Paste this prompt into a coding agent:
 
