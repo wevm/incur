@@ -167,3 +167,50 @@ jobs:
       # The same tests under kcov, failing on any uncovered line in src/.
       - name: Test with coverage
         run: zig build coverage
+
+  # The Linux jobs cannot launch Windows `.cmd` package-manager scripts, so this job runs only the
+  # Windows-specific tests of each language against real `.cmd` scripts.
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Test TypeScript
+        run: pnpm vitest run --project core src/internal/pm.test.ts
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/0.12.9/install.sh | sh
+
+      - name: Test Python
+        working-directory: langs/python
+        run: uv run --locked pytest tests/test_skills.py -k "mcp_add" -o addopts=""
+
+      - name: Cache Rust builds
+        uses: wevm/actions/vendor/Swatinem/rust-cache/v2.9.2@8963daf30237417f873c8e2f17e3bf9415e3a7b9
+        with:
+          workspaces: langs/rust
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Test Rust
+        working-directory: langs/rust
+        run: cargo test -p incur --test windows
+
+      - name: Install Zig
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/zig.zip" https://ziglang.org/download/0.17.1/zig-x86_64-windows-0.17.1.zip
+          echo "b03f477a1943673e02aca0f570e8030dffd536ce1f45cbc4d3326ec31159562e  $RUNNER_TEMP/zig.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/zig.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-windows-0.17.1" >> "$GITHUB_PATH"
+
+      - name: Test Zig
+        working-directory: langs/zig
+        run: zig test --dep incur -Mroot=tests/api.zig -Mincur=src/root.zig --test-filter "Windows command scripts"
