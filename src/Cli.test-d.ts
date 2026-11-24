@@ -465,6 +465,28 @@ test('command mcp metadata accepts instructions and annotations', () => {
   })
 })
 
+test('command mcp headers are keyed by argument and option names', () => {
+  Cli.create('test').command('get', {
+    args: z.object({ id: z.string() }),
+    options: z.object({ region: z.string() }),
+    mcp: {
+      title: 'Get item',
+      icons: [{ src: 'https://example.com/get.png', theme: 'dark' }],
+      headers: { id: 'Item-Id', region: 'Region' },
+    },
+    run: () => ({ ok: true }),
+  })
+
+  // @ts-expect-error -- headers name arguments or options
+  Cli.create('test').command('get', {
+    args: z.object({ id: z.string() }),
+    mcp: { headers: { missing: 'Missing' } },
+    run: () => ({ ok: true }),
+  })
+
+  Cli.create('test', { mcp: { cache: { ttlMs: 60_000, cacheScope: 'public' } } })
+})
+
 test('command metadata accepts destructive flag', () => {
   Cli.create('test').command('destroy', {
     destructive: true,

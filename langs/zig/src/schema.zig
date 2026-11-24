@@ -41,6 +41,8 @@ pub const Type = struct {
     /// The JSON Schema to emit instead of the derived one, as schemas converted from JSON Schema
     /// carry to reproduce Zod's output exactly.
     json: ?*const Emitted = null,
+    /// The `x-mcp-header` name MCP clients mirror the field into, as `.meta()` adds it.
+    header: ?[]const u8 = null,
 
     /// Returns the fields of an object schema, or an empty slice.
     pub fn fields(ty: *const Type) []const Field {
@@ -297,6 +299,7 @@ fn metadata(a: Allocator, ty: *const Type, out: *json.ObjectBuilder) Allocator.E
     if (ty.description) |d| try out.put(a, "description", .{ .string = d });
     if (ty.count) try out.put(a, "count", .{ .bool = true });
     if (ty.deprecated) try out.put(a, "deprecated", .{ .bool = true });
+    if (ty.header) |h| try out.put(a, "x-mcp-header", .{ .string = h });
 }
 
 /// Writes a numeric bound when present.

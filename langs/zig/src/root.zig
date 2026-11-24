@@ -75,6 +75,10 @@ pub const Next = command.Next;
 pub const Tool = command.Tool;
 /// MCP tool annotations.
 pub const Annotations = command.Annotations;
+/// An icon clients may show for an MCP tool.
+pub const Icon = command.Icon;
+/// An input MCP clients mirror into an `Mcp-Param-*` header.
+pub const Header = command.Header;
 /// Where a command's output may appear.
 pub const OutputPolicy = command.OutputPolicy;
 /// The error returned after recording an incur `Error` with `fail`.

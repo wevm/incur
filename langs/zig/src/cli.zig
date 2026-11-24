@@ -165,6 +165,8 @@ pub const Update = struct {
 pub const Mcp = struct {
     /// Agents `mcp add` registers with by default.
     agents: []const []const u8 = &.{},
+    /// Cache hints for `tools/list` and `server/discover` under MCP 2026-07-28.
+    cache: ?mcp.CacheHint = null,
     /// The command agents run. Defaults to `<name> --mcp` or a package runner invocation.
     command: ?[]const u8 = null,
     /// Instructions describing how to use the server.

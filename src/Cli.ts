@@ -303,6 +303,7 @@ export function create(
   const loadAll = () =>
     Promise.all([...pending, ...[...lazy.values()].map((load) => load())]).then(() => {})
   const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
+    cache: def.mcp?.cache,
     instructions: def.mcp?.instructions,
     stateless: def.mcp?.stateless,
     title: def.mcp?.title,
@@ -690,6 +691,8 @@ export declare namespace create {
           agents?: string[] | undefined
           /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
           command?: string | undefined
+          /** Cache hints for `tools/list` and `server/discover` results under MCP 2026-07-28. Defaults to `{ ttlMs: 0, cacheScope: 'private' }`. */
+          cache?: Mcp.CacheHint | undefined
           /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
           /** MCP server and registration name. Defaults to the CLI name. */
@@ -1051,6 +1054,7 @@ async function serveImpl(
         globals: options.globals?.schema,
         vars: options.vars,
         version: options.version,
+        ...(options.mcp?.cache ? { cache: options.mcp.cache } : undefined),
         ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
         ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
         ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
@@ -2190,6 +2194,7 @@ function createMcpHttpHandler(
       Mcp.createServer(mcp, name, version, commands, {
         env: mcpOptions?.env,
         globals: mcpOptions?.globals,
+        cache: options.cache,
         instructions: options.instructions,
         middlewares: mcpOptions?.middlewares,
         request: (extra) => extra?.http?.req,
@@ -2307,6 +2312,8 @@ async function isModernMcpRequest(req: Request) {
 
 declare namespace createMcpHttpHandler {
   type Options = {
+    /** Cache hints for `tools/list` and `server/discover` results. */
+    cache?: Mcp.CacheHint | undefined
     /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
     /** Disable HTTP MCP session management. Defaults to `true`. */
@@ -2884,6 +2891,7 @@ declare namespace serveImpl {
     mcp?:
       | {
           agents?: string[] | undefined
+          cache?: Mcp.CacheHint | undefined
           command?: string | undefined
           instructions?: string | undefined
           name?: string | undefined
@@ -4252,8 +4260,16 @@ type CommandDefinition<
         description?: string | undefined
         /** MCP tool annotations that describe tool behavior to clients. */
         annotations?: Mcp.ToolAnnotations | undefined
+        /** HTTP headers 2026-07-28 clients mirror arguments into, keyed by argument or option name. `{ region: 'Region' }` sends `region` as `Mcp-Param-Region`. Applies to directly listed tools. */
+        headers?:
+          | Partial<Record<keyof z.output<args> | keyof z.output<options>, string>>
+          | undefined
+        /** Icons clients may show for the tool. */
+        icons?: Mcp.Icon[] | undefined
         /** Tool-specific instructions surfaced to MCP clients. */
         instructions?: string | undefined
+        /** Human-readable tool title. */
+        title?: string | undefined
       }
     | undefined
   /** Zod schema for the command's return value. */

@@ -368,6 +368,40 @@ pub const Annotations = struct {
     }
 };
 
+/// An icon clients may show for a tool.
+pub const Icon = struct {
+    /// The icon URL, such as an `https:` or `data:` URI.
+    src: []const u8,
+    /// The MIME type, such as `image/png`.
+    mime_type: ?[]const u8 = null,
+    /// The sizes the icon suits, such as `48x48` or `any`.
+    sizes: ?[]const []const u8 = null,
+    /// The theme the icon suits.
+    theme: ?enum { light, dark } = null,
+
+    /// Returns the icon as MCP JSON.
+    pub fn toValue(icon: Icon, a: Allocator) Allocator.Error!Value {
+        var out: json.ObjectBuilder = .{};
+        try out.put(a, "src", .{ .string = icon.src });
+        if (icon.mime_type) |m| try out.put(a, "mimeType", .{ .string = m });
+        if (icon.sizes) |sizes| {
+            const items = try a.alloc(Value, sizes.len);
+            for (sizes, items) |size, *slot| slot.* = .{ .string = size };
+            try out.put(a, "sizes", .{ .array = items });
+        }
+        if (icon.theme) |t| try out.put(a, "theme", .{ .string = @tagName(t) });
+        return out.finish();
+    }
+};
+
+/// An input MCP 2026-07-28 clients mirror into an `Mcp-Param-*` HTTP header.
+pub const Header = struct {
+    /// The argument or option name.
+    input: []const u8,
+    /// The header name after `Mcp-Param-`.
+    name: []const u8,
+};
+
 /// How a command appears as an MCP tool.
 pub const Tool = struct {
     /// The tool name. Defaults to the command path joined with `_`.
@@ -381,6 +415,12 @@ pub const Tool = struct {
     /// Annotations as JSON, kept in their original key order. Generated commands set this to
     /// forward a remote tool's annotations; it takes precedence over `annotations`.
     annotations_json: ?Value = null,
+    /// A human-readable title.
+    title: ?[]const u8 = null,
+    /// Icons clients may show.
+    icons: ?[]const Icon = null,
+    /// Inputs MCP 2026-07-28 clients mirror into headers, for directly listed tools.
+    headers: []const Header = &.{},
 
     /// Returns the annotations as JSON, or null.
     pub fn annotationsValue(t: Tool, a: Allocator) Allocator.Error!?Value {

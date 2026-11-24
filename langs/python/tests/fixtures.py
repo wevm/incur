@@ -1339,7 +1339,14 @@ def tool_cli(name: str, mcp: incur.McpOptions) -> incur.Cli:
             "trace": c.var.trace,
         }
 
-    @cli.command("named", description="Positional named like a global")
+    @cli.command(
+        "named",
+        description="Positional named like a global",
+        mcp=incur.McpTool(
+            title="Named",
+            icons=[incur.Icon("https://example.com/named.svg", sizes=["any"], theme="light")],
+        ),
+    )
     def named(c: Context[NamedArgs, None, None, Trace, ToolsGlobals]) -> Data:
         return {"arg": c.args.profile, "global": c.globals.profile}
 
@@ -1478,6 +1485,73 @@ def catalog() -> incur.Cli:
             )
         ),
     )
+
+
+@incur.schema
+class ItemArgs:
+    id: Annotated[str, field("Item id")]
+
+
+@incur.schema
+class ItemOptions:
+    limit: Annotated[int | None, field("Limit")] = None
+    verbose: bool = False
+    tags: list[str] | None = None
+
+
+def params() -> incur.Cli:
+    """Exercises MCP tool titles, icons, `x-mcp-header` declarations, and cache hints."""
+    cli = incur.Cli(
+        "params",
+        description="MCP tool metadata",
+        version="1.0.0",
+        update=False,
+        sync=False,
+        mcp=incur.McpOptions(
+            cache=incur.CacheHint(ttl_ms=60000, cache_scope="public"),
+            tools=incur.ToolFilter(discovery="direct"),
+        ),
+    )
+
+    @cli.command(
+        "get",
+        description="Get an item",
+        mcp=incur.McpTool(
+            title="Get item",
+            icons=[
+                incur.Icon("https://example.com/get.png", mime_type="image/png", sizes=["48x48"]),
+                incur.Icon("data:image/svg+xml;base64,PHN2Zy8+", theme="dark"),
+            ],
+            headers={"id": "Item-Id", "limit": "Limit", "verbose": "Verbose"},
+        ),
+    )
+    def get(c: Context[ItemArgs, ItemOptions]) -> Data:
+        return {"id": c.args.id, **incur.dump(c.options)}
+
+    @cli.command("blank", description="Empty title", mcp=incur.McpTool(title=""))
+    def blank(c: Context) -> Data:
+        return {"ok": True}
+
+    return cli
+
+
+@incur.schema
+class BadHeaderOptions:
+    a: str
+    n: float
+    tags: list[str]
+    b: str | None = None
+
+
+def bad_headers(name: str, headers: dict[str, str]) -> incur.Cli:
+    """Builds a CLI whose one command declares an invalid `x-mcp-header`."""
+    cli = incur.Cli(name, version="1.0.0", update=False, sync=False)
+
+    @cli.command("bad", description="Invalid header", mcp=incur.McpTool(headers=headers))
+    def bad(c: Context[None, BadHeaderOptions]) -> Data:
+        return {"ok": True}
+
+    return cli
 
 
 def bare() -> incur.Cli:
@@ -2076,6 +2150,13 @@ def cli(name: str) -> incur.Cli:
         "gateway": gateway,
         "globals": globals_cli,
         "greet": greet,
+        "hdrarray": lambda: bad_headers("hdrarray", {"tags": "Tags"}),
+        "hdrdupe": lambda: bad_headers("hdrdupe", {"a": "Same", "b": "same"}),
+        "hdrempty": lambda: bad_headers("hdrempty", {"a": ""}),
+        "hdrkey": lambda: bad_headers("hdrkey", {"a": "A", "missing": "Missing"}),
+        "hdrnewline": lambda: bad_headers("hdrnewline", {"a": "A\n"}),
+        "hdrnumber": lambda: bad_headers("hdrnumber", {"n": "N"}),
+        "hdrtoken": lambda: bad_headers("hdrtoken", {"a": "Bad Header"}),
         "kit": lambda: kit_cli("kit"),
         "kitbad": lambda: kit_cli("kitbad", package="Bad Name", version="1"),
         "kitcmd": lambda: kit_cli(
@@ -2089,6 +2170,7 @@ def cli(name: str) -> incur.Cli:
         "kitver": lambda: kit_cli("kitver", package="kitver", version="latest"),
         "oa": oa,
         "oaroot": oaroot,
+        "params": params,
         "plain": plain,
         "proxy": proxy,
         "raw": raw,

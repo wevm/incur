@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -16,9 +17,10 @@ from . import _js
 from ._errors import Error
 from ._http import Request, Response
 from ._js import Json
+from ._schema import MAX_SAFE_INTEGER, Type, is_number, json_schema
 
 if TYPE_CHECKING:
-    from ._mcp import Server
+    from ._mcp import CacheHint, Server
 
 #: The modern protocol revision the server speaks.
 VERSION = "2026-07-28"
@@ -32,6 +34,7 @@ _REQUIRED = (VERSION_KEY, CAPABILITIES_KEY)
 _LEVELS = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
 _CACHEABLE = ("tools/list", "server/discover")
 _NAME_SOURCE = {"tools/call": "name", "prompts/get": "name", "resources/read": "uri"}
+_DECIMAL = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 _BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
 
 
@@ -145,13 +148,17 @@ def envelope_error(params: Json) -> str | None:
     return None
 
 
-def encode(method: str, result: dict[str, Json], info: dict[str, Json]) -> dict[str, Json]:
+def encode(
+    method: str, result: dict[str, Json], info: dict[str, Json], cache: CacheHint | None = None
+) -> dict[str, Json]:
     """Stamps `resultType`, cache hints, and the server identity on a modern result."""
     out = dict(result)
     out["resultType"] = "complete"
     if method in _CACHEABLE:
-        out["ttlMs"] = 0
-        out["cacheScope"] = "private"
+        ttl = cache.ttl_ms if cache is not None else None
+        scope = cache.cache_scope if cache is not None else None
+        out["ttlMs"] = 0 if ttl is None else ttl
+        out["cacheScope"] = scope or "private"
     meta = dict(_js.as_object(out["_meta"])) if "_meta" in out else {}
     meta[SERVER_INFO_KEY] = info
     out["_meta"] = meta
@@ -359,6 +366,69 @@ def _check_headers(request: Request, message: dict[str, Json], revision: str) ->
         )
 
 
+def _param_text(value: Json) -> str | None:
+    """The text a primitive argument travels as in an `Mcp-Param-*` header, or `None`."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return value
+    if is_number(value):
+        assert isinstance(value, (int, float))
+        if not math.isfinite(value) or (value == int(value) and abs(value) > MAX_SAFE_INTEGER):
+            return None
+        return _js.number_to_string(value)
+    return None
+
+
+def _check_params(server: Server, request: Request, message: dict[str, Json]) -> None:
+    """Checks a direct tool's `Mcp-Param-*` headers against the call's arguments."""
+    params = message.get("params")
+    name = (
+        params.get("name")
+        if message["method"] == "tools/call" and isinstance(params, dict)
+        else None
+    )
+    tool = server.tools.get(name) if isinstance(name, str) else None
+    if tool is None or not tool.headers or tool.inputs is None:
+        return
+    assert isinstance(params, dict)
+    arguments = params.get("arguments")
+    for f in tool.inputs.fields:
+        if f.ty.header is None:
+            continue
+        key = f"Mcp-Param-{f.ty.header}"
+        raw = arguments.get(f.name) if isinstance(arguments, dict) else None
+        text = _param_text(raw) if raw is not None else None
+        if text is None:
+            continue
+        header = request.headers.get(key)
+        if header is None:
+            raise _mismatch(
+                key,
+                f"the body carries {f.name}={_js.stringify(raw)} but the {key} header is absent",
+            )
+        decoded = _decode_name(header)
+        if decoded is None:
+            raise _mismatch(key, f"the {key} header carries an invalid Base64 sentinel value")
+        if not _param_equal(f.ty, decoded, raw, text):
+            raise _mismatch(
+                key,
+                f"the {key} header decodes to {_js.stringify(decoded)} but the body carries "
+                f"{f.name}={_js.stringify(raw)}",
+            )
+
+
+def _param_equal(ty: Type, decoded: str, raw: Json, text: str) -> bool:
+    """Compares integer inputs numerically, as `42.0` equals `42`, and others as text."""
+    if (
+        json_schema(ty, "input").get("type") == "integer"
+        and _DECIMAL.fullmatch(decoded)
+        and is_number(raw)
+    ):
+        return float(decoded) == raw
+    return decoded == text
+
+
 def _content_type(header: str | None) -> bool:
     essence = (header or "").split(";", 1)[0].strip().lower()
     return essence == "application/json"
@@ -390,6 +460,10 @@ async def handle_http(create: Callable[[], Server], request: Request) -> Respons
         server = create()
     except Error:
         return _error(500, -32603, "Internal server error", None, id_)
+    try:
+        _check_params(server, request, message)
+    except _RejectError as reject:
+        return _error(400, reject.code, reject.message, reject.data, id_)
 
     async def drop(_: dict[str, Json]) -> None:
         return None

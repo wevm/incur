@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 
 use crate::js;
 use crate::mcp;
+use crate::mcp::{CacheHint, CacheScope};
 
 /// The modern protocol revision the server speaks.
 pub(crate) const VERSION: &str = "2026-07-28";
@@ -45,7 +46,7 @@ impl Reject {
         }
     }
 
-    fn mismatch(header: &str, body: &str) -> Self {
+    pub(crate) fn mismatch(header: &str, body: &str) -> Self {
         Self {
             code: -32020,
             message: format!("Bad Request: the request headers and body disagree: {body}"),
@@ -232,11 +233,21 @@ pub(crate) fn envelope_error(params: &Map<String, Value>) -> Option<String> {
 }
 
 /// Stamps `resultType`, cache hints, and the server identity on a modern result.
-pub(crate) fn encode(method: &str, mut out: Map<String, Value>, info: Value) -> Map<String, Value> {
+pub(crate) fn encode(
+    method: &str,
+    mut out: Map<String, Value>,
+    info: Value,
+    cache: Option<&CacheHint>,
+) -> Map<String, Value> {
     out.insert("resultType".into(), "complete".into());
     if method == "tools/list" || method == "server/discover" {
-        out.insert("ttlMs".into(), 0.into());
-        out.insert("cacheScope".into(), "private".into());
+        let ttl = cache.and_then(|c| c.ttl_ms).unwrap_or(0);
+        let public = cache.and_then(|c| c.cache_scope) == Some(CacheScope::Public);
+        out.insert("ttlMs".into(), ttl.into());
+        out.insert(
+            "cacheScope".into(),
+            if public { "public" } else { "private" }.into(),
+        );
     }
     let mut meta = out
         .get("_meta")
@@ -418,13 +429,12 @@ pub(crate) fn classify(
     })
 }
 
-fn decode_name(value: &str) -> Option<String> {
-    let Some(payload) = value
-        .strip_prefix("=?base64?")
-        .and_then(|rest| rest.strip_suffix("?="))
-    else {
+pub(crate) fn decode_name(value: &str) -> Option<String> {
+    if !(value.starts_with("=?base64?") && value.ends_with("?=")) {
         return Some(value.to_owned());
-    };
+    }
+    // As `slice(9, -2)`: `=?base64?=` overlaps its markers and carries an empty payload.
+    let payload = value.get(9..value.len() - 2).unwrap_or_default();
     let canonical =
         regex_lite::Regex::new(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
             .ok()?;

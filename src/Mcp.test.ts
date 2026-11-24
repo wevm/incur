@@ -471,6 +471,61 @@ describe('Mcp', () => {
     expect(callRes.result.content).toEqual([{ type: 'text', text: '{"balance":"1.00"}' }])
   })
 
+  test('tools/list shows titles, icons, and x-mcp-header declarations', async () => {
+    const commands = new Map<string, any>()
+    commands.set('get', {
+      args: z.object({ id: z.string() }),
+      options: z.object({ limit: z.number().int().optional() }),
+      mcp: {
+        title: 'Get item',
+        icons: [{ src: 'https://example.com/get.png', sizes: ['48x48'] }],
+        headers: { id: 'Item-Id' },
+      },
+      run: () => ({ ok: true }),
+    })
+
+    const [, listRes] = await mcpSession(
+      commands,
+      [
+        { id: 1, method: 'initialize', params: initParams },
+        { id: 2, method: 'tools/list', params: {} },
+      ],
+      { tools: { discovery: 'direct' } },
+    )
+    const [tool] = listRes.result.tools
+    expect(tool.title).toBe('Get item')
+    expect(tool.icons).toEqual([{ src: 'https://example.com/get.png', sizes: ['48x48'] }])
+    expect(tool.inputSchema.properties.id['x-mcp-header']).toBe('Item-Id')
+    expect(tool.inputSchema.properties.limit['x-mcp-header']).toBeUndefined()
+  })
+
+  test('collectTools rejects x-mcp-header declarations clients would refuse', () => {
+    const tool = (headers: Record<string, string>) =>
+      new Map<string, any>([
+        [
+          'get',
+          {
+            options: z.object({ a: z.string(), b: z.string(), n: z.number() }),
+            mcp: { headers },
+            run: () => ({ ok: true }),
+          },
+        ],
+      ])
+
+    expect(() => Mcp.collectTools(tool({ c: 'C' }), [])).toThrowError(
+      'Invalid MCP header on tool get: c is not an input',
+    )
+    expect(() => Mcp.collectTools(tool({ a: 'A B' }), [])).toThrowError(
+      "Invalid MCP header on tool get: 'A B' is not a valid HTTP header name",
+    )
+    expect(() => Mcp.collectTools(tool({ n: 'N' }), [])).toThrowError(
+      'Invalid MCP header on tool get: n must be a string, integer, or boolean',
+    )
+    expect(() => Mcp.collectTools(tool({ a: 'Same', b: 'same' }), [])).toThrowError(
+      "Invalid MCP header on tool get: 'same' duplicates 'Same'",
+    )
+  })
+
   test('collectTools rejects duplicate MCP tool names', () => {
     const commands = new Map<string, any>()
     commands.set('whoami', {

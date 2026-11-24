@@ -521,6 +521,18 @@ cli.command(Cli.create('admin', { mcp: false }).command('reset', { run: () => re
 
 Both `/mcp` and `--mcp` speak [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) and the earlier `initialize` handshake. 2026-07-28 clients call `server/discover` or send any request directly, with the protocol version and client capabilities in each request's `_meta` (and the `MCP-Protocol-Version` and `Mcp-Method` headers over HTTP). Each such request is served on its own, even when `mcp.stateless` is `false`.
 
+A command's `mcp` settings can also give its tool a `title` and `icons`, and `headers` that ask 2026-07-28 HTTP clients to mirror an argument or option into an `Mcp-Param-*` header, so proxies can route on it without reading the body. `mcp.cache` sets how long clients may cache `tools/list` and `server/discover`:
+
+```ts
+Cli.create('my-cli', { mcp: { cache: { ttlMs: 60_000, cacheScope: 'public' } } }).command('get', {
+  args: z.object({ region: z.string() }),
+  mcp: { title: 'Get item', headers: { region: 'Region' } }, // sent as Mcp-Param-Region
+  run: (c) => lookup(c.args.region),
+})
+```
+
+Headers apply to string, integer, and boolean inputs of directly listed tools. The server rejects a 2026-07-28 call whose header is missing or disagrees with its argument.
+
 Non-`/mcp` paths continue routing to the command API as usual.
 
 ## Walkthrough

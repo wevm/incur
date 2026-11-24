@@ -87,6 +87,8 @@ class Type:
     """Whether an object lists the field as required, when it differs from `is_optional`."""
     null_default: bool = False
     """Whether the default is JSON null, which `default` cannot tell from no default."""
+    header: str | None = None
+    """The `x-mcp-header` name MCP clients mirror the field into, as `.meta()` adds it."""
 
     def field(self, name: str) -> Field | None:
         """Returns the field with the given name."""
@@ -205,6 +207,8 @@ def _metadata(ty: Type, out: dict[str, Json]) -> None:
         out["count"] = True
     if ty.deprecated:
         out["deprecated"] = True
+    if ty.header is not None:
+        out["x-mcp-header"] = ty.header
 
 
 def _bound(out: dict[str, Json], key: str, value: float | None) -> None:
