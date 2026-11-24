@@ -747,6 +747,12 @@ impl Cli {
             .map(|globals| mcp::with_defaults(globals, &defaults.globals));
         Ok(mcp::Server {
             cache: settings.cache.clone(),
+            features: crate::features::Features::new(
+                &self.resources,
+                &self.resource_templates,
+                &self.prompts,
+            )
+            .map_err(Error::unknown)?,
             context: mcp::Context {
                 env,
                 env_schema: self.env.clone(),

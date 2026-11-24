@@ -240,7 +240,17 @@ pub(crate) fn encode(
     cache: Option<&CacheHint>,
 ) -> Map<String, Value> {
     out.insert("resultType".into(), "complete".into());
-    if method == "tools/list" || method == "server/discover" {
+    let cacheable = [
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "resources/templates/list",
+        "resources/read",
+        "server/discover",
+    ];
+    if cacheable.contains(&method) {
+        // The server's hints cover lists and discovery; reads keep the defaults.
+        let cache = cache.filter(|_| method != "resources/read");
         let ttl = cache.and_then(|c| c.ttl_ms).unwrap_or(0);
         let public = cache.and_then(|c| c.cache_scope) == Some(CacheScope::Public);
         out.insert("ttlMs".into(), ttl.into());

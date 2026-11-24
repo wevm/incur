@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ._cli import Config
     from ._formatter import Format
     from ._mcp import McpOptions
+    from ._mcp_features import Prompt, Resource, ResourceTemplate
     from ._sync import Sync
     from ._update import Update
 
@@ -86,6 +87,9 @@ class Spec:
     root_fetch: FetchHandler | None = None
     mcp: McpOptions | None = None
     mcp_enabled: bool = True
+    prompts: list[Prompt] = field(default_factory=list["Prompt"])
+    resources: list[Resource] = field(default_factory=list["Resource"])
+    resource_templates: list[ResourceTemplate] = field(default_factory=list["ResourceTemplate"])
     package: str | None = None
     update: Update | None = None
     pending: list[Callable[[], Awaitable[None]]] = field(

@@ -275,7 +275,9 @@ The MCP server is initialized lazily on the first `/mcp` request. Non-`/mcp` pat
 
 Both `/mcp` and `--mcp` speak MCP 2026-07-28 (`server/discover`, protocol version and client capabilities in each request's `_meta`) as well as the earlier `initialize` handshake.
 
-A command's `mcp` settings take `title`, `icons`, and `headers` (`{ region: 'Region' }` asks 2026-07-28 HTTP clients to send `region` as `Mcp-Param-Region`; string, integer, and boolean inputs only). `mcp.cache` (`{ ttlMs, cacheScope }`) sets cache hints for `tools/list` and `server/discover`.
+A command's `mcp` settings take `title`, `icons`, and `headers` (`{ region: 'Region' }` asks 2026-07-28 HTTP clients to send `region` as `Mcp-Param-Region`; string, integer, and boolean inputs only). `mcp.cache` (`{ ttlMs, cacheScope }`) sets cache hints for `server/discover` and the tool, resource, template, and prompt lists.
+
+`cli.resource(name, { uri, read })`, `cli.resourceTemplate(name, { uriTemplate, read, complete })`, and `cli.prompt(name, { args, get, complete })` serve MCP resources, resource templates (`{name}` expressions only), and prompts, with argument completion.
 
 ## Arguments & Options
 

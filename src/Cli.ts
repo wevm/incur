@@ -132,6 +132,21 @@ export type Cli<
   fetch(req: Request): Promise<Response>
   /** Discovers and registers command modules from a directory. Defaults to files beside the executed entrypoint. */
   fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals, cliName>
+  /** Registers an MCP prompt template clients can list, render, and complete arguments for. */
+  prompt<const args extends z.ZodObject<any> | undefined = undefined>(
+    name: string,
+    definition: Omit<Mcp.Prompt<args>, 'name'>,
+  ): Cli<commands, vars, env, globals, cliName>
+  /** Registers an MCP resource clients can list and read at a fixed URI. */
+  resource(
+    name: string,
+    definition: Omit<Mcp.Resource, 'name'>,
+  ): Cli<commands, vars, env, globals, cliName>
+  /** Registers an MCP resource template, such as `docs://{section}/{page}`, whose matching URIs clients can read. */
+  resourceTemplate(
+    name: string,
+    definition: Omit<Mcp.ResourceTemplate, 'name'>,
+  ): Cli<commands, vars, env, globals, cliName>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
@@ -297,6 +312,11 @@ export function create(
 
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
+  const features = {
+    prompts: [] as Mcp.Prompt<any>[],
+    resources: [] as Mcp.Resource[],
+    resourceTemplates: [] as Mcp.ResourceTemplate[],
+  }
   const pending: Promise<void>[] = []
   // Remote MCP groups resolve on first use, keyed by their command name.
   const lazy = new Map<string, () => Promise<void>>()
@@ -305,6 +325,7 @@ export function create(
   const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
     cache: def.mcp?.cache,
     instructions: def.mcp?.instructions,
+    ...features,
     stateless: def.mcp?.stateless,
     title: def.mcp?.title,
     tools: def.mcp?.tools,
@@ -468,6 +489,21 @@ export function create(
       return cli
     },
 
+    prompt(name: string, definition: any): any {
+      features.prompts.push({ name, ...definition })
+      return cli
+    },
+
+    resource(name: string, definition: any): any {
+      features.resources.push({ name, ...definition })
+      return cli
+    },
+
+    resourceTemplate(name: string, definition: any): any {
+      features.resourceTemplates.push({ name, ...definition })
+      return cli
+    },
+
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
       if (await Binary.handleArgv(argv)) return
       if (pending.length > 0) await Promise.all(pending)
@@ -481,6 +517,7 @@ export function create(
         description: def.description,
         envSchema: def.env,
         format: def.format,
+        features,
         globals: globalsDesc,
         mcp: def.mcp,
         middlewares,
@@ -691,7 +728,7 @@ export declare namespace create {
           agents?: string[] | undefined
           /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
           command?: string | undefined
-          /** Cache hints for `tools/list` and `server/discover` results under MCP 2026-07-28. Defaults to `{ ttlMs: 0, cacheScope: 'private' }`. */
+          /** Cache hints for list and `server/discover` results under MCP 2026-07-28. Defaults to `{ ttlMs: 0, cacheScope: 'private' }`. Resource reads keep the defaults. */
           cache?: Mcp.CacheHint | undefined
           /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
@@ -1056,6 +1093,7 @@ async function serveImpl(
         version: options.version,
         ...(options.mcp?.cache ? { cache: options.mcp.cache } : undefined),
         ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+        ...options.features,
         ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
         ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
       })
@@ -2197,7 +2235,10 @@ function createMcpHttpHandler(
         cache: options.cache,
         instructions: options.instructions,
         middlewares: mcpOptions?.middlewares,
+        prompts: options.prompts,
         request: (extra) => extra?.http?.req,
+        resources: options.resources,
+        resourceTemplates: options.resourceTemplates,
         title: options.title,
         tools: options.tools,
         vars: mcpOptions?.vars,
@@ -2311,8 +2352,8 @@ async function isModernMcpRequest(req: Request) {
 }
 
 declare namespace createMcpHttpHandler {
-  type Options = {
-    /** Cache hints for `tools/list` and `server/discover` results. */
+  type Options = Mcp.Features & {
+    /** Cache hints for list and `server/discover` results. */
     cache?: Mcp.CacheHint | undefined
     /** Instructions describing how to use the server and its features. */
     instructions?: string | undefined
@@ -2857,6 +2898,8 @@ function resolveCommand(
 /** @internal Options for serveImpl, extending public serve.Options with internal metadata. */
 declare namespace serveImpl {
   type Options = serve.Options & {
+    /** MCP resources, resource templates, and prompts registered on the CLI. */
+    features?: Mcp.Features | undefined
     /** Loads one deferred command group by name, or every group when omitted. */
     load?: ((command?: string) => Promise<void> | undefined) | undefined
     /** Alternative binary names for this CLI. */

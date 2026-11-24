@@ -165,7 +165,8 @@ pub const Update = struct {
 pub const Mcp = struct {
     /// Agents `mcp add` registers with by default.
     agents: []const []const u8 = &.{},
-    /// Cache hints for `tools/list` and `server/discover` under MCP 2026-07-28.
+    /// Cache hints for lists and `server/discover` under MCP 2026-07-28. Resource reads keep
+    /// the defaults.
     cache: ?mcp.CacheHint = null,
     /// The command agents run. Defaults to `<name> --mcp` or a package runner invocation.
     command: ?[]const u8 = null,
@@ -291,6 +292,12 @@ pub const Cli = struct {
     middleware: std.ArrayList(Middleware) = .empty,
     /// Mounted groups and owned CLIs, destroyed with this CLI.
     children: std.ArrayList(*Cli) = .empty,
+    /// MCP prompt templates.
+    prompts: std.ArrayList(mcp.Prompt) = .empty,
+    /// MCP resources at fixed URIs.
+    resources: std.ArrayList(mcp.Resource) = .empty,
+    /// MCP resource templates.
+    resource_templates: std.ArrayList(mcp.ResourceTemplate) = .empty,
     /// Where a generated group's commands come from.
     source: ?Source = null,
     /// Whether generated commands have been loaded.
@@ -412,6 +419,22 @@ pub const Cli = struct {
     /// Adds middleware, which runs around every command in registration order.
     pub fn use(cli: *Cli, middleware: Middleware) Allocator.Error!void {
         try cli.middleware.append(cli.arena.allocator(), middleware);
+    }
+
+    /// Registers an MCP prompt template clients can list, render, and complete arguments for.
+    pub fn prompt(cli: *Cli, definition: mcp.Prompt) Allocator.Error!void {
+        try cli.prompts.append(cli.arena.allocator(), definition);
+    }
+
+    /// Registers an MCP resource clients can list and read at a fixed URI.
+    pub fn resource(cli: *Cli, definition: mcp.Resource) Allocator.Error!void {
+        try cli.resources.append(cli.arena.allocator(), definition);
+    }
+
+    /// Registers an MCP resource template, such as `docs://{section}/{page}`, whose matching
+    /// URIs clients can read.
+    pub fn resourceTemplate(cli: *Cli, definition: mcp.ResourceTemplate) Allocator.Error!void {
+        try cli.resource_templates.append(cli.arena.allocator(), definition);
     }
 
     /// Mounts another CLI as a command group and takes ownership of it. A CLI with a root

@@ -12,6 +12,7 @@ from ._formatter import Format
 from ._help import Example, Usage
 from ._http import FetchHandler, Headers, Request, RequestSource, Response, from_request, set_fetch
 from ._mcp import CacheHint, Icon, McpOptions, McpTool, ToolAnnotations, ToolFilter
+from ._mcp_features import Completer
 from ._model import FieldInfo, RenameRule, SchemaError, arg, dump, env, field, schema
 from ._openapi import OpenapiConfig, OpenapiOperation, OpenapiSource
 from ._sync import Sync
@@ -23,6 +24,7 @@ __all__ = [
     "Cli",
     "CliOptions",
     "Command",
+    "Completer",
     "Config",
     "Context",
     "Cta",

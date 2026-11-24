@@ -154,10 +154,13 @@ pub fn encode(a: Allocator, method: []const u8, result: Value, info: Value, cach
     var out: json.ObjectBuilder = .{};
     for (result.object) |entry| try out.put(a, entry.key, entry.value);
     try out.put(a, "resultType", .{ .string = "complete" });
-    if (std.mem.eql(u8, method, "tools/list") or std.mem.eql(u8, method, "server/discover")) {
-        try out.put(a, "ttlMs", .{ .integer = cache.ttl_ms orelse 0 });
-        try out.put(a, "cacheScope", .{ .string = @tagName(cache.cache_scope orelse .private) });
-    }
+    const cacheable = [_][]const u8{ "tools/list", "prompts/list", "resources/list", "resources/templates/list", "resources/read", "server/discover" };
+    for (cacheable) |m| if (std.mem.eql(u8, m, method)) {
+        // The server's hints cover lists and discovery; reads keep the defaults.
+        const hint: CacheHint = if (std.mem.eql(u8, method, "resources/read")) .{} else cache;
+        try out.put(a, "ttlMs", .{ .integer = hint.ttl_ms orelse 0 });
+        try out.put(a, "cacheScope", .{ .string = @tagName(hint.cache_scope orelse .private) });
+    };
     var meta: json.ObjectBuilder = .{};
     if (result.get("_meta")) |m| for (m.object) |entry| try meta.put(a, entry.key, entry.value);
     try meta.put(a, server_info_key, info);

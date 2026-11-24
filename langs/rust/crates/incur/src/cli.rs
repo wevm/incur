@@ -266,6 +266,12 @@ pub struct Cli {
     pub(crate) output_policy: Option<OutputPolicy>,
     /// The trusted npm package that provides the CLI.
     pub(crate) package: Option<String>,
+    /// MCP prompt templates.
+    pub(crate) prompts: Vec<mcp::Prompt>,
+    /// MCP resource templates.
+    pub(crate) resource_templates: Vec<mcp::ResourceTemplate>,
+    /// MCP resources at fixed URIs.
+    pub(crate) resources: Vec<mcp::Resource>,
     /// The root command.
     pub(crate) root: Option<Command>,
     /// The root fetch handler, which runs when no command matches.
@@ -313,6 +319,9 @@ impl Cli {
             output_policy: None,
             package: None,
             parse_only: false,
+            prompts: Vec::new(),
+            resource_templates: Vec::new(),
+            resources: Vec::new(),
             root: None,
             root_fetch: None,
             root_generated: None,
@@ -514,6 +523,28 @@ impl Cli {
         R: Future<Output = Result<(), Error>> + Send + 'static,
     {
         self.middleware.push(command::middleware(f));
+        self
+    }
+
+    /// Registers an MCP prompt template clients can list, render, and complete arguments for.
+    #[must_use]
+    pub fn prompt(mut self, prompt: mcp::Prompt) -> Self {
+        self.prompts.push(prompt);
+        self
+    }
+
+    /// Registers an MCP resource clients can list and read at a fixed URI.
+    #[must_use]
+    pub fn resource(mut self, resource: mcp::Resource) -> Self {
+        self.resources.push(resource);
+        self
+    }
+
+    /// Registers an MCP resource template, such as `docs://{section}/{page}`, whose matching
+    /// URIs clients can read.
+    #[must_use]
+    pub fn resource_template(mut self, template: mcp::ResourceTemplate) -> Self {
+        self.resource_templates.push(template);
         self
     }
 

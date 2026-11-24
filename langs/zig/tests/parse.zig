@@ -161,7 +161,9 @@ fn parse(comptime T: type, argv: []const []const u8, options: Options) !Result(T
     defer cli.destroy();
     if (options.configure) |configure| try configure(cli);
     const parsed = try cli.parseWith(T, a, argv, .{ .io = testing.io, .env = &env, .stdout = &stdout.writer, .stderr = &stderr.writer, .tty = false });
-    return .{ .arena = arena, .parsed = parsed, .output = try std.mem.concat(a, u8, &.{ stdout.written(), stderr.written() }) };
+    // Allocate before copying the arena, so the copy owns every buffer.
+    const output = try std.mem.concat(a, u8, &.{ stdout.written(), stderr.written() });
+    return .{ .arena = arena, .parsed = parsed, .output = output };
 }
 
 /// Asserts that parsing exits with `code` and prints `output`.

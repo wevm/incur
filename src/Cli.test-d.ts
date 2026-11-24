@@ -605,3 +605,35 @@ test('globalAlias keys are constrained to globals schema keys', () => {
   const badAlias: Partial<Record<keyof z.output<typeof globals>, string>> = { foo: 'f' }
   void badAlias
 })
+
+test('prompt get() and complete infer from the args schema', () => {
+  Cli.create('test')
+    .prompt('review', {
+      args: z.object({ code: z.string(), style: z.enum(['brief', 'deep']).default('brief') }),
+      complete: { style: (value) => [value] },
+      get(args) {
+        expectTypeOf(args).toEqualTypeOf<{ code: string; style: 'brief' | 'deep' }>()
+        return `Review ${args.code}`
+      },
+    })
+    .prompt('bad', {
+      args: z.object({ code: z.string() }),
+      // @ts-expect-error — 'other' is not an argument
+      complete: { other: () => [] },
+      get: () => 'x',
+    })
+    .prompt('hello', {
+      get(args) {
+        expectTypeOf(args).toEqualTypeOf<Record<string, string>>()
+        return []
+      },
+    })
+    .resourceTemplate('docs', {
+      uriTemplate: 'docs://{page}',
+      read(uri, variables) {
+        expectTypeOf(uri).toEqualTypeOf<string>()
+        expectTypeOf(variables).toEqualTypeOf<Record<string, string>>()
+        return { text: uri }
+      },
+    })
+})
