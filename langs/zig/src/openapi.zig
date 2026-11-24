@@ -454,8 +454,12 @@ fn addOperation(group: *cli_.Cli, a: Allocator, document: Value, op: *const Entr
     for (body_props) |entry| {
         try body_keys.append(a, entry.key);
         var s = try json_schema.convert(a, entry.value);
-        if (!contains(body.required, entry.key)) s = try s.optional(a);
-        try putField(a, &option_fields, entry.key, try s.toType(a));
+        const is_required = contains(body.required, entry.key);
+        if (!is_required) s = try s.optional(a);
+        var ty = try s.toType(a);
+        // `.optional()` returns a new instance, which reports no description.
+        if (!is_required) ty.description = null;
+        try putField(a, &option_fields, entry.key, ty);
     }
     for (headers.items) |header| {
         var s = if (header.schema) |p| try paramSchema(a, p) else try paramSchema(a, .{ .object = &.{} });
@@ -723,6 +727,8 @@ fn withoutDefaults(a: Allocator, fields: BodyFields) Allocator.Error!BodyFields 
 
 /// Whether a union variant can be an object; others (e.g. a JSON-RPC batch array) carry no fields.
 fn isObjectVariant(variant: Value) bool {
+    // `true` accepts any body, so it adds no fields and makes none required.
+    if (variant == .bool) return variant.bool;
     if (variant != .object) return false;
     const ty = variant.get("type") orelse return true;
     if (ty == .array) for (ty.array) |t| if (t == .string and std.mem.eql(u8, t.string, "object")) return true;
@@ -730,8 +736,8 @@ fn isObjectVariant(variant: Value) bool {
 }
 
 /// Merges same-named fields in first-seen order. A field whose schemas differ keeps only the `type`
-/// they share, so argv still coerces, and otherwise accepts any value. The server validates it
-/// against the composed schema.
+/// they share, along with a default its members agree on, so argv still coerces; otherwise it
+/// accepts any value. The server validates it against the composed schema.
 fn mergeProperties(a: Allocator, fields: []const BodyFields) Allocator.Error![]const Value.Entry {
     var out: std.ArrayList(Value.Entry) = .empty;
     for (fields) |field| for (field.properties) |entry| {
@@ -741,16 +747,26 @@ fn mergeProperties(a: Allocator, fields: []const BodyFields) Allocator.Error![]c
         const ty_key = if (ty) |t| try json.stringify(a, t) else "";
         var same = true;
         var same_type = ty != null;
+        // Union variants drop their defaults, so a default here comes from a member that always
+        // applies.
+        var default: ?Value = null;
+        var default_key: []const u8 = "";
+        var same_default = true;
         for (fields) |other| if ((Value{ .object = other.properties }).get(entry.key)) |s| {
             same = same and std.mem.eql(u8, try json.stringify(a, s), key);
             const t = schemaType(s);
             same_type = same_type and t != null and std.mem.eql(u8, try json.stringify(a, t.?), ty_key);
+            if (s.get("default")) |d| {
+                const d_key = try json.stringify(a, d);
+                if (default == null) default_key = d_key;
+                same_default = same_default and std.mem.eql(u8, d_key, default_key);
+                default = default orelse d;
+            }
         };
-        const merged: Value = if (same) entry.value else if (same_type) blk: {
-            const shared = try a.alloc(Value.Entry, 1);
-            shared[0] = .{ .key = "type", .value = ty.? };
-            break :blk .{ .object = shared };
-        } else .{ .object = &.{} };
+        var kept: json.ObjectBuilder = .{};
+        if (same_type) try kept.put(a, "type", ty.?);
+        if (same_type and default != null and same_default) try kept.put(a, "default", default.?);
+        const merged: Value = if (same) entry.value else kept.finish();
         try out.append(a, .{ .key = entry.key, .value = merged });
     };
     return out.items;

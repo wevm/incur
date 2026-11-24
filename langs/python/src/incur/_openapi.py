@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from . import _gateway, _js
@@ -492,6 +492,9 @@ def _without_defaults(
 
 def _object_variant(schema: Json) -> bool:
     """Whether a union variant can be an object; others, such as a batch array, carry no fields."""
+    # `true` accepts any body, so it adds no fields and makes none required.
+    if schema is True:
+        return True
     if not isinstance(schema, dict):
         return False
     if "type" not in schema:
@@ -503,8 +506,9 @@ def _object_variant(schema: Json) -> bool:
 def _merge_properties(fields: list[tuple[dict[str, Json], list[str]]]) -> dict[str, Json]:
     """Merges same-named fields in first-seen order.
 
-    A field whose schemas differ keeps only the `type` they share, so argv still coerces, and
-    otherwise accepts any value. The server validates it against the composed schema.
+    A field whose schemas differ keeps only the `type` they share, along with a default its
+    members agree on, so argv still coerces; otherwise it accepts any value. The server
+    validates it against the composed schema.
     """
     properties: dict[str, Json] = {}
     for name in dict.fromkeys(n for p, _ in fields for n in p):
@@ -512,10 +516,16 @@ def _merge_properties(fields: list[tuple[dict[str, Json], list[str]]]) -> dict[s
         found = [_schema_type(s) for s in schemas]
         typed = all(has for has, _ in found)
         types = [t for _, t in found]
+        # Union variants drop their defaults, so a default here comes from a member that always
+        # applies.
+        defaults = [s["default"] for s in schemas if isinstance(s, dict) and "default" in s]
+        kept: dict[str, Json] = {}
+        if defaults and len({_js.stringify(d) for d in defaults}) == 1:
+            kept["default"] = defaults[0]
         if len({_js.stringify(schema) for schema in schemas}) == 1:
             properties[name] = schemas[0]
         elif typed and len({_js.stringify(t) for t in types}) == 1:
-            properties[name] = {"type": types[0]}
+            properties[name] = {"type": types[0], **kept}
         else:
             properties[name] = {}
     return properties
@@ -688,7 +698,9 @@ def _command(
         fields[name] = Field(name, coerce(_param_type(p, p.get("required") is True)))
     for key, schema in body_props.items():
         ty = convert(schema)
-        fields[key] = Field(key, ty if key in body_required else optional(ty))
+        # `.optional()` returns a new instance, which reports no description.
+        optional_ty = replace(optional(ty), description=None)
+        fields[key] = Field(key, ty if key in body_required else optional_ty)
     for option, p in header_options:
         ty = _param_type({**p, "description": None}, p.get("required") is True)
         description = _str(p.get("description")) or f"{p.get('name')} header"

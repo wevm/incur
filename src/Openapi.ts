@@ -783,6 +783,8 @@ function withoutDefaults({ properties, required }: BodyFields): BodyFields {
 
 /** Whether a union variant can be an object; others (e.g. a JSON-RPC batch array) carry no fields. */
 function isObjectVariant(schema: unknown) {
+  // `true` accepts any body, so it adds no fields and makes none required.
+  if (schema === true) return true
   if (!isSchemaObject(schema)) return false
   const { type } = schema
   return type === undefined || type === 'object' || (Array.isArray(type) && type.includes('object'))
@@ -790,8 +792,8 @@ function isObjectVariant(schema: unknown) {
 
 /**
  * Merges same-named fields in first-seen order. A field whose schemas differ keeps only the `type`
- * they share, so argv still coerces, and otherwise accepts any value. The server validates it
- * against the composed schema.
+ * they share, along with a default its members agree on, so argv still coerces; otherwise it
+ * accepts any value. The server validates it against the composed schema.
  */
 function mergeProperties(fields: BodyFields[]) {
   const properties: BodyFields['properties'] = {}
@@ -802,11 +804,21 @@ function mergeProperties(fields: BodyFields[]) {
     const [first] = schemas
     const types = schemas.map(schemaType)
     const [type] = types
+    // Union variants drop their defaults, so a default here comes from a member that always applies.
+    const defaults = schemas.flatMap((schema) =>
+      isSchemaObject(schema) && Object.hasOwn(schema, 'default') ? [schema.default] : [],
+    )
+    const [value] = defaults
+    const kept =
+      defaults.length > 0 && defaults.every((other) => sameSchema(other, value))
+        ? { default: value }
+        : {}
     properties[name] = (() => {
       // Every member agrees on the schema.
       if (schemas.every((schema) => sameSchema(schema, first))) return first!
       // The schemas differ but share a type, which argv coercion needs.
-      if (type !== undefined && types.every((other) => sameSchema(other, type))) return { type }
+      if (type !== undefined && types.every((other) => sameSchema(other, type)))
+        return { type, ...kept }
       // Nothing in common: any value passes through.
       return {}
     })()
