@@ -1,4 +1,4 @@
-import type { McpServer, Transport } from '@modelcontextprotocol/server'
+import type { McpServer } from '@modelcontextprotocol/server'
 import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
@@ -10,7 +10,7 @@ import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Parser from './Parser.js'
 import * as Schema from './Schema.js'
 
-/** Starts a stdio MCP server that exposes commands as tools. */
+/** Starts a stdio MCP server that exposes commands as tools. Serves the 2026-07-28 protocol and the 2025 `initialize` handshake. */
 export async function serve<const globals extends z.ZodObject<any> | undefined = undefined>(
   name: string,
   version: string,
@@ -18,11 +18,39 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
   options: serve.Options<globals> = {},
 ): Promise<void> {
   // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
-  const stdio = importStdioModule()
-  const mcp = await import('@modelcontextprotocol/server')
-  const { fromJsonSchema, McpServer } = mcp
-  const StdioServerTransport = await importStdioServerTransport(mcp, stdio)
+  const [mcp, { serveStdio, StdioServerTransport }] = await Promise.all([
+    import('@modelcontextprotocol/server'),
+    import('@modelcontextprotocol/server/stdio'),
+  ])
+  // Instances are created on the first message, so surface tool registration errors now.
+  collectTools(commands, [], [], options.tools, options.globals, options.defaults?.options)
+  const input = options.input ?? process.stdin
+  const output = options.output ?? process.stdout
+  serveStdio(
+    () =>
+      createServer(mcp, name, version, commands, {
+        defaults: options.defaults,
+        env: options.env,
+        globals: options.globals,
+        instructions: options.instructions,
+        middlewares: options.middlewares as MiddlewareHandler[] | undefined,
+        title: options.title,
+        tools: options.tools,
+        vars: options.vars,
+      }),
+    { transport: new StdioServerTransport(input as any, output as any) },
+  )
+}
 
+/** @internal Creates an MCP server instance with every command tool registered. Stdio serves one per connection; HTTP serves one per request. */
+export function createServer(
+  mcp: typeof import('@modelcontextprotocol/server'),
+  name: string,
+  version: string,
+  commands: Map<string, any>,
+  options: createServer.Options = {},
+): McpServer {
+  const { fromJsonSchema, McpServer } = mcp
   const server = new McpServer(
     { name, ...(options.title ? { title: options.title } : undefined), version },
     {
@@ -31,57 +59,44 @@ export async function serve<const globals extends z.ZodObject<any> | undefined =
       ...(options.instructions ? { instructions: options.instructions } : undefined),
     },
   )
-
   registerTools(server, commands, {
     defaults: options.defaults,
     env: options.env,
     fromJsonSchema,
     globals: options.globals,
-    middlewares: options.middlewares as MiddlewareHandler[] | undefined,
+    middlewares: options.middlewares,
     name,
+    request: options.request,
     sendNotification: (notification) => server.server.notification(notification),
     tools: options.tools,
     vars: options.vars,
     version,
   })
-
-  const input = options.input ?? process.stdin
-  const output = options.output ?? process.stdout
-  const transport = new StdioServerTransport(input as any, output as any)
-  await server.connect(transport)
+  return server
 }
 
-type StdioServerTransport = new (
-  input?: Readable,
-  output?: Writable,
-  options?: { maxBufferSize?: number | undefined },
-) => Transport
-
-type StdioModule = {
-  StdioServerTransport: StdioServerTransport
-}
-
-type StdioImportResult =
-  | { module: unknown; error?: undefined }
-  | { module?: undefined; error: unknown }
-
-async function importStdioServerTransport(
-  mcp: unknown,
-  stdio: Promise<StdioImportResult>,
-): Promise<StdioServerTransport> {
-  const transport = (mcp as Partial<StdioModule>).StdioServerTransport
-  if (transport) return transport
-
-  const result = await stdio
-  if (result.error) throw result.error
-  return (result.module as StdioModule).StdioServerTransport
-}
-
-function importStdioModule(): Promise<StdioImportResult> {
-  // Literal specifier so bundlers (`bun build --compile`, esbuild) can include the subpath.
-  return import('@modelcontextprotocol/server/stdio')
-    .then((module) => ({ module }))
-    .catch((error: unknown) => ({ error }))
+export declare namespace createServer {
+  /** Options for an MCP server instance. */
+  type Options = {
+    /** Values for tool calls that do not pass their own. */
+    defaults?: Defaults | undefined
+    /** CLI-level env schema. */
+    env?: z.ZodObject<any> | undefined
+    /** CLI-level global options schema. */
+    globals?: z.ZodObject<any> | undefined
+    /** Instructions describing how to use the server and its features. */
+    instructions?: string | undefined
+    /** Middleware handlers registered on the root CLI. */
+    middlewares?: MiddlewareHandler[] | undefined
+    /** Resolves the inbound HTTP request from MCP call metadata. */
+    request?: ((extra: any) => Request | undefined) | undefined
+    /** Human-readable MCP server title. */
+    title?: string | undefined
+    /** Filters which command tools are exposed to MCP clients. */
+    tools?: ToolFilter | undefined
+    /** Vars schema for middleware variables. */
+    vars?: z.ZodObject<any> | undefined
+  }
 }
 
 export declare namespace serve {

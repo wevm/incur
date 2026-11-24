@@ -7011,6 +7011,53 @@ describe('fetch', () => {
       `)
     })
 
+    test('POST /mcp serves 2026-07-28 requests per request, next to 2025 sessions', async () => {
+      const _meta = {
+        'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+        'io.modelcontextprotocol/clientCapabilities': {},
+      }
+      const call = (cli: Cli.Cli<any, any, any, any>, headers: Record<string, string>) =>
+        mcpRequest(
+          cli,
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'greet', arguments: { name: 'world' }, _meta },
+          },
+          undefined,
+          headers,
+        )
+      const headers = {
+        'mcp-protocol-version': '2026-07-28',
+        'mcp-method': 'tools/call',
+        'mcp-name': 'greet',
+      }
+
+      const res = await call(mcpCli(), headers)
+      expect(res.status).toBe(200)
+      expect((await res.json()).result.structuredContent).toBeUndefined()
+
+      // Sessionful servers keep their 2025 session and still answer 2026 requests.
+      const stateful = Cli.create('test', {
+        mcp: { stateless: false, tools: { discovery: 'direct' } },
+      })
+      stateful.command('greet', {
+        args: z.object({ name: z.string() }),
+        run: (c) => ({ message: `hello ${c.args.name}` }),
+      })
+      const { sessionId } = await initSession(stateful)
+      expect(sessionId).toBeDefined()
+      const modern = await call(stateful, headers)
+      expect((await modern.json()).result.content).toEqual([
+        { type: 'text', text: '{"message":"hello world"}' },
+      ])
+
+      const missing = await call(stateful, { 'mcp-protocol-version': '2026-07-28' })
+      expect(missing.status).toBe(400)
+      expect((await missing.json()).error.code).toBe(-32020)
+    })
+
     test('POST /mcp with tools/list works without session state', async () => {
       const cli = mcpCli()
       await mcpRequest(cli, {
@@ -7280,6 +7327,28 @@ describe('fetch', () => {
           controller.signal,
         ),
       ).rejects.toThrowErrorMatchingInlineSnapshot(`[AbortError: This operation was aborted]`)
+    })
+
+    test('POST /mcp rejects requests aborted while their body uploads', async () => {
+      const controller = new AbortController()
+      const body = new ReadableStream({
+        start(stream) {
+          stream.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0",'))
+        },
+      })
+      const response = mcpCli().fetch(
+        new Request('http://localhost/mcp', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body,
+          signal: controller.signal,
+          duplex: 'half',
+        } as RequestInit),
+      )
+      controller.abort()
+      await expect(response).rejects.toThrowErrorMatchingInlineSnapshot(
+        `[AbortError: This operation was aborted]`,
+      )
     })
 
     test('POST /mcp rejects requests aborted during server startup', async () => {

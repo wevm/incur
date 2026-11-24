@@ -11,11 +11,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TextIO
 
-from . import _js
+from . import _js, _mcp_modern
 from ._command import Command, Middleware, MiddlewareContext, Stream, ToolMeta, execute
 from ._errors import Error, format_cta, unknown
 from ._http import Request, Response
 from ._js import Json
+from ._mcp_modern import is_message
 from ._model import build, to_json
 from ._parser import check, parse_defaults, parse_env
 from ._schema import Field, Type, json_schema, object_type, validate
@@ -613,18 +614,22 @@ class Server:
             {"instructions": tool.instructions} if tool.instructions else None,
         )
 
-    def initialize(self, params: Json) -> dict[str, Json]:
-        """Answers `initialize`, negotiating the protocol version."""
-        requested = params.get("protocolVersion") if isinstance(params, dict) else None
-        version = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
+    def info(self) -> dict[str, Json]:
+        """The server's name, title, and version."""
         info: dict[str, Json] = {"name": self.name}
         if self.title:
             info["title"] = self.title
         info["version"] = self.version
+        return info
+
+    def initialize(self, params: Json) -> dict[str, Json]:
+        """Answers `initialize`, negotiating the protocol version."""
+        requested = params.get("protocolVersion") if isinstance(params, dict) else None
+        version = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
         out: dict[str, Json] = {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": True}},
-            "serverInfo": info,
+            "serverInfo": self.info(),
         }
         if self.instructions:
             out["instructions"] = self.instructions
@@ -697,6 +702,41 @@ class Server:
             return {"content": [_text(message)], "isError": True}
         return result
 
+    async def handle_modern(
+        self,
+        message: dict[str, Json],
+        notify: Callable[[dict[str, Json]], Awaitable[None]],
+        request: Request | None = None,
+    ) -> dict[str, Json] | None:
+        """Answers one JSON-RPC request under protocol revision 2026-07-28."""
+        method = message.get("method")
+        if "id" not in message or "method" not in message:
+            return None
+        if method not in ("server/discover", "tools/list", "tools/call"):
+            return _rpc_error(message["id"], -32601, "Method not found")
+        problem = _mcp_modern.envelope_error(message.get("params"))
+        if problem is not None:
+            return _rpc_error(message["id"], -32602, problem)
+        if method == "server/discover":
+            result: dict[str, Json] = {
+                "supportedVersions": [_mcp_modern.VERSION],
+                "capabilities": {"tools": {"listChanged": True}},
+            }
+            if self.instructions:
+                result["instructions"] = self.instructions
+            response: dict[str, Json] | None = {
+                "result": result,
+                "jsonrpc": "2.0",
+                "id": message["id"],
+            }
+        else:
+            response = await self.handle(message, notify, request)
+        assert response is not None
+        if "result" in response:
+            result = _js.as_object(response["result"])
+            response["result"] = _mcp_modern.encode(str(method), result, self.info())
+        return response
+
     async def handle(
         self,
         message: dict[str, Json],
@@ -743,12 +783,15 @@ class Server:
             else:
                 raise RpcError(-32601, "Method not found")
         except RpcError as error:
-            return {
-                "jsonrpc": "2.0",
-                "id": id_,
-                "error": {"code": error.code, "message": error.message},
-            }
+            return _rpc_error(id_, error.code, error.message)
         return {"result": result, "jsonrpc": "2.0", "id": id_}
+
+
+def _rpc_error(id_: Json, code: int, message: str, data: Json = None) -> dict[str, Json]:
+    error: dict[str, Json] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": id_, "error": error}
 
 
 class RpcError(Exception):
@@ -760,21 +803,13 @@ class RpcError(Exception):
         self.message = message
 
 
-def is_message(value: Json) -> bool:
-    """Whether a value is a JSON-RPC 2.0 request, notification, or response."""
-    if not isinstance(value, dict) or value.get("jsonrpc") != "2.0":
-        return False
-    id_ = value.get("id")
-    has_id = "id" in value and isinstance(id_, (str, int)) and not isinstance(id_, bool)
-    if "method" in value:
-        params = value.get("params")
-        valid_params = "params" not in value or isinstance(params, dict)
-        return isinstance(value["method"], str) and valid_params and ("id" not in value or has_id)
-    return has_id and ("result" in value or "error" in value)
-
-
 async def serve_stdio(server: Server, stdin: TextIO, stdout: TextIO) -> None:
-    """Serves MCP over stdio until the input ends: one JSON-RPC message per line."""
+    """Serves MCP over stdio until the input ends: one JSON-RPC message per line.
+
+    The opening message picks the era: a 2026-07-28 envelope pins the connection to per-request
+    `_meta` serving (after any `server/discover` probes), anything else to the 2025 handshake.
+    """
+    era: str | None = None
 
     async def write(message: dict[str, Json]) -> None:
         stdout.write(_js.stringify(message) + "\n")
@@ -788,9 +823,77 @@ async def serve_stdio(server: Server, stdin: TextIO, stdout: TextIO) -> None:
         if message is None or not is_message(message):
             continue
         assert isinstance(message, dict)
-        response = await server.handle(message, write)
+        if era in (None, "probe"):
+            opened = await _open_stdio(message, write)
+            if opened is None:
+                continue
+            if opened == "legacy":
+                era = "legacy"
+            elif message.get("method") == "server/discover" and "id" in message:
+                era = "probe"
+            elif era is None or "id" in message:
+                era = "modern"
+        if era == "legacy":
+            response = await server.handle(message, write)
+        elif (
+            message.get("method") == "initialize"
+            and "id" in message
+            and not _valid_claim(message.get("params"))
+        ):
+            response = _initialize_rejection(message)
+        else:
+            response = await server.handle_modern(message, write)
         if response is not None:
             await write(response)
+
+
+def _valid_claim(params: Json) -> bool:
+    version = _mcp_modern.claimed_version(params)
+    return (
+        version is not None
+        and _mcp_modern.is_modern_version(version)
+        and not _mcp_modern.envelope_issues(_mcp_modern.meta_of(params))
+    )
+
+
+def _initialize_rejection(message: dict[str, Json]) -> dict[str, Json]:
+    params = message.get("params")
+    requested = params.get("protocolVersion") if isinstance(params, dict) else None
+    if isinstance(requested, str):
+        return _rpc_error(message["id"], *_mcp_modern.unsupported(requested))
+    return _rpc_error(
+        message["id"],
+        -32022,
+        "Unsupported protocol version: the request did not name a protocol version",
+        {"supported": [_mcp_modern.VERSION]},
+    )
+
+
+async def _open_stdio(
+    message: dict[str, Json], write: Callable[[dict[str, Json]], Awaitable[None]]
+) -> str | None:
+    """Classifies a message on a connection without an era. Returns `None` after dropping it."""
+    if "method" not in message:
+        return None
+    params = message.get("params")
+    if message["method"] == "initialize" and not _valid_claim(params):
+        return "legacy"
+    if not _mcp_modern.has_claim(params):
+        return "legacy"
+    issues = _mcp_modern.envelope_issues(_mcp_modern.meta_of(params))
+    version = _mcp_modern.claimed_version(params)
+    if issues:
+        key, problem = issues[0]
+        if "id" in message:
+            text = f"Invalid _meta envelope for protocol revision 2026-07-28: {key}: {problem}"
+            data: Json = {"envelope": {"key": key, "problem": problem}}
+            await write(_rpc_error(message["id"], -32602, text, data))
+        return None
+    if version != _mcp_modern.VERSION:
+        if "id" in message:
+            await write(_rpc_error(message["id"], *_mcp_modern.unsupported(str(version))))
+        return None
+    return "modern"
 
 
 def _json_error(status: int, code: int, message: str) -> Response:
@@ -906,9 +1009,11 @@ class HttpHandler:
 
     async def __call__(self, request: Request) -> Response:
         options = self.spec.mcp or McpOptions()
+        if options.stateless and request.method != "POST":
+            return Response(status=405, headers={"allow": "POST"})
+        if request.method == "POST" and _mcp_modern.is_modern_request(request):
+            return await _mcp_modern.handle_http(lambda: Server(self.spec), request)
         if options.stateless:
-            if request.method != "POST":
-                return Response(status=405, headers={"allow": "POST"})
             return await HttpTransport(Server(self.spec), sessions=False).handle(request)
         if self.transport is None:
             self.transport = HttpTransport(Server(self.spec), sessions=True)

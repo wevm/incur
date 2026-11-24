@@ -13,6 +13,7 @@ use crate::errors::{Error, FormattedCtaBlock};
 use crate::execute::{self, Executed};
 use crate::formatter::Format;
 use crate::js;
+use crate::modern;
 use crate::parser::{self, Parsed};
 use crate::schema::{self, Field, Kind, Type};
 
@@ -683,6 +684,53 @@ fn error(id: &Value, code: i64, message: &str) -> Value {
 }
 
 impl Server<'_> {
+    /// The server's name, title, and version.
+    fn info(&self) -> Value {
+        let mut info = Map::new();
+        info.insert("name".into(), self.name.clone().into());
+        if let Some(title) = &self.title {
+            info.insert("title".into(), title.clone().into());
+        }
+        info.insert("version".into(), self.version.clone().into());
+        Value::Object(info)
+    }
+
+    /// Answers a request under protocol revision 2026-07-28. Returns the response and whether
+    /// it reports an unknown method.
+    pub(crate) async fn handle_modern(
+        &self,
+        id: &Value,
+        method: &str,
+        params: &Map<String, Value>,
+        request: Option<Arc<http::request::Parts>>,
+        notify: &mut (dyn FnMut(Value) + Send),
+    ) -> (Value, bool) {
+        if !matches!(method, "server/discover" | "tools/list" | "tools/call") {
+            return (error(id, -32601, "Method not found"), true);
+        }
+        if let Some(message) = modern::envelope_error(params) {
+            return (error(id, -32602, &message), false);
+        }
+        let mut response = if method == "server/discover" {
+            let mut out = Map::new();
+            out.insert("supportedVersions".into(), json!([modern::VERSION]));
+            out.insert(
+                "capabilities".into(),
+                json!({ "tools": { "listChanged": true } }),
+            );
+            if let Some(instructions) = &self.instructions {
+                out.insert("instructions".into(), instructions.clone().into());
+            }
+            result(id, Value::Object(out))
+        } else {
+            self.handle(id, method, params, request, notify).await
+        };
+        if let Some(Value::Object(out)) = response.get_mut("result") {
+            *out = modern::encode(method, std::mem::take(out), self.info());
+        }
+        (response, false)
+    }
+
     /// Answers a request. Progress notifications go to `notify`.
     pub(crate) async fn handle(
         &self,
@@ -698,19 +746,13 @@ impl Server<'_> {
                 let version = requested
                     .filter(|v| PROTOCOL_VERSIONS.contains(v))
                     .unwrap_or(PROTOCOL_VERSIONS[0]);
-                let mut info = Map::new();
-                info.insert("name".into(), self.name.clone().into());
-                if let Some(title) = &self.title {
-                    info.insert("title".into(), title.clone().into());
-                }
-                info.insert("version".into(), self.version.clone().into());
                 let mut out = Map::new();
                 out.insert("protocolVersion".into(), version.into());
                 out.insert(
                     "capabilities".into(),
                     json!({ "tools": { "listChanged": true } }),
                 );
-                out.insert("serverInfo".into(), info.into());
+                out.insert("serverInfo".into(), self.info());
                 if let Some(instructions) = &self.instructions {
                     out.insert("instructions".into(), instructions.clone().into());
                 }

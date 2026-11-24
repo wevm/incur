@@ -519,6 +519,8 @@ Set `mcp: false` on a command to hide it from MCP clients. On a CLI mounted as a
 cli.command(Cli.create('admin', { mcp: false }).command('reset', { run: () => reset() }))
 ```
 
+Both `/mcp` and `--mcp` speak [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) and the earlier `initialize` handshake. 2026-07-28 clients call `server/discover` or send any request directly, with the protocol version and client capabilities in each request's `_meta` (and the `MCP-Protocol-Version` and `Mcp-Method` headers over HTTP). Each such request is served on its own, even when `mcp.stateless` is `false`.
+
 Non-`/mcp` paths continue routing to the command API as usual.
 
 ## Walkthrough

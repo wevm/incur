@@ -2170,45 +2170,43 @@ function createMcpHttpHandler(
   version: string,
   options: createMcpHttpHandler.Options = {},
 ) {
+  type McpOptions =
+    | {
+        middlewares?: MiddlewareHandler[] | undefined
+        env?: z.ZodObject<any> | undefined
+        globals?: z.ZodObject<any> | undefined
+        vars?: z.ZodObject<any> | undefined
+      }
+    | undefined
   let session: ReturnType<typeof createServer> | undefined
+  let modern: import('@modelcontextprotocol/server').McpHttpHandler | undefined
+
+  function factory(
+    mcp: typeof import('@modelcontextprotocol/server'),
+    commands: Map<string, CommandEntry>,
+    mcpOptions: McpOptions,
+  ) {
+    return () =>
+      Mcp.createServer(mcp, name, version, commands, {
+        env: mcpOptions?.env,
+        globals: mcpOptions?.globals,
+        instructions: options.instructions,
+        middlewares: mcpOptions?.middlewares,
+        request: (extra) => extra?.http?.req,
+        title: options.title,
+        tools: options.tools,
+        vars: mcpOptions?.vars,
+      })
+  }
 
   async function createServer(
     commands: Map<string, CommandEntry>,
-    mcpOptions:
-      | {
-          middlewares?: MiddlewareHandler[] | undefined
-          env?: z.ZodObject<any> | undefined
-          globals?: z.ZodObject<any> | undefined
-          vars?: z.ZodObject<any> | undefined
-        }
-      | undefined,
+    mcpOptions: McpOptions,
     stateless: boolean,
   ) {
-    const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
-      await import('@modelcontextprotocol/server')
-
-    const server = new McpServer(
-      { name, ...(options.title ? { title: options.title } : undefined), version },
-      {
-        // Registers `tools/list` up front so a CLI without tools answers with an empty list.
-        capabilities: { tools: {} },
-        ...(options.instructions ? { instructions: options.instructions } : undefined),
-      },
-    )
-    Mcp.registerTools(server, commands, {
-      env: mcpOptions?.env,
-      fromJsonSchema,
-      globals: mcpOptions?.globals,
-      middlewares: mcpOptions?.middlewares,
-      name,
-      request: (extra) => extra?.http?.req,
-      sendNotification: (notification) => server.server.notification(notification),
-      tools: options.tools,
-      vars: mcpOptions?.vars,
-      version,
-    })
-
-    const transport = new WebStandardStreamableHTTPServerTransport(
+    const mcp = await import('@modelcontextprotocol/server')
+    const server = factory(mcp, commands, mcpOptions)()
+    const transport = new mcp.WebStandardStreamableHTTPServerTransport(
       stateless
         ? { enableJsonResponse: true }
         : {
@@ -2223,16 +2221,33 @@ function createMcpHttpHandler(
   return async (
     req: Request,
     commands: Map<string, CommandEntry>,
-    mcpOptions?: {
-      middlewares?: MiddlewareHandler[] | undefined
-      env?: z.ZodObject<any> | undefined
-      globals?: z.ZodObject<any> | undefined
-      vars?: z.ZodObject<any> | undefined
-    },
+    mcpOptions?: McpOptions,
   ): Promise<Response> => {
     const stateless = options.stateless ?? true
     if (stateless && req.method !== 'POST')
       return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+
+    const abortReason = () =>
+      req.signal.reason ?? new DOMException('This operation was aborted', 'AbortError')
+
+    // 2026-07-28 requests carry their protocol version in `_meta`; each gets a fresh server.
+    // 2025 requests keep the handshake-era transport below, sessionful or not.
+    // Reading the body can wait on an unfinished upload, so cancellation settles it.
+    if (req.signal.aborted) throw abortReason()
+    let stopDetecting!: () => void
+    const modernRequest = await Promise.race([
+      isModernMcpRequest(req),
+      new Promise<never>((_resolve, reject) => {
+        const abort = () => reject(abortReason())
+        req.signal.addEventListener('abort', abort, { once: true })
+        stopDetecting = () => req.signal.removeEventListener('abort', abort)
+      }),
+    ]).finally(() => stopDetecting())
+    if (modernRequest) {
+      const mcp = await import('@modelcontextprotocol/server')
+      modern ??= mcp.createMcpHandler(factory(mcp, commands, mcpOptions), { legacy: 'reject' })
+      return modern.fetch(req)
+    }
 
     if (!stateless) {
       session ??= createServer(commands, mcpOptions, false).catch((error) => {
@@ -2242,8 +2257,6 @@ function createMcpHttpHandler(
       return (await session).transport.handleRequest(req)
     }
 
-    const abortReason = () =>
-      req.signal.reason ?? new DOMException('This operation was aborted', 'AbortError')
     if (req.signal.aborted) throw abortReason()
 
     const { server, transport } = await createServer(commands, mcpOptions, true)
@@ -2272,6 +2285,24 @@ function createMcpHttpHandler(
       await close()
     }
   }
+}
+
+/** @internal Whether an MCP POST claims the 2026-07-28 revision: a JSON body with a `_meta` protocol version or a modern `MCP-Protocol-Version` header. Everything else keeps 2025 serving unchanged. */
+async function isModernMcpRequest(req: Request) {
+  let body: unknown
+  try {
+    body = JSON.parse(await req.clone().text())
+  } catch {
+    return false
+  }
+  const header = req.headers.get('mcp-protocol-version')
+  if (header && header >= '2026-07-28') return true
+  return (Array.isArray(body) ? body : [body]).some((message) => {
+    const meta = message?.params?._meta
+    return (
+      typeof meta === 'object' && meta !== null && 'io.modelcontextprotocol/protocolVersion' in meta
+    )
+  })
 }
 
 declare namespace createMcpHttpHandler {

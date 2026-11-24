@@ -273,6 +273,8 @@ POST /mcp  { "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "user
 
 The MCP server is initialized lazily on the first `/mcp` request. Non-`/mcp` paths route to the command API as usual.
 
+Both `/mcp` and `--mcp` speak MCP 2026-07-28 (`server/discover`, protocol version and client capabilities in each request's `_meta`) as well as the earlier `initialize` handshake.
+
 ## Arguments & Options
 
 All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.
