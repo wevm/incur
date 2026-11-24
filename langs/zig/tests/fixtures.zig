@@ -1382,7 +1382,7 @@ fn kitDeploy(c: *Context(.{ .args = KitDeployArgs })) !Outcome {
 }
 
 /// Builds a CLI that syncs skills and registers MCP servers.
-fn kitCli(gpa: Allocator, name: []const u8, options: struct { cwd: ?[]const u8 = null, mcp: incur.Mcp = .{}, package: ?[]const u8 = null, version: []const u8 = "1.4.0" }) !*incur.Cli {
+fn kitCli(gpa: Allocator, name: []const u8, options: struct { command: ?[]const u8 = null, cwd: ?[]const u8 = null, mcp: incur.Mcp = .{}, package: ?[]const u8 = null, version: []const u8 = "1.4.0" }) !*incur.Cli {
     const cli = try incur.Cli.create(gpa, name, .{
         .description = "Skill and MCP sync",
         .version = options.version,
@@ -1390,6 +1390,7 @@ fn kitCli(gpa: Allocator, name: []const u8, options: struct { cwd: ?[]const u8 =
         .package = options.package,
         .mcp = options.mcp,
         .sync = .{
+            .command = options.command,
             .cwd = options.cwd,
             .include = &.{ "skills/*", "_root" },
             .body = "Run `kit auth login` to finish setup.",
@@ -1420,6 +1421,10 @@ fn kitcmd(gpa: Allocator) !*incur.Cli {
 
 fn kitcwd(gpa: Allocator) !*incur.Cli {
     return kitCli(gpa, "kitcwd", .{ .cwd = "vendor" });
+}
+
+fn kitrun(gpa: Allocator) !*incur.Cli {
+    return kitCli(gpa, "kitrun", .{ .command = "bunx @acme/kit" });
 }
 
 fn kitbad(gpa: Allocator) !*incur.Cli {
@@ -1520,7 +1525,7 @@ pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
         .{ "remote", remote },   .{ "kit", kit },           .{ "kitpkg", kitpkg },   .{ "kitcmd", kitcmd },
         .{ "kitbad", kitbad },   .{ "kitver", kitver },     .{ "spaced", spaced },   .{ "upd", upd },
         .{ "updbeta", updbeta }, .{ "updcheck", updcheck }, .{ "updnone", updnone }, .{ "updpkg", updpkg },
-        .{ "updbad", updbad },   .{ "shadow", shadow },     .{ "kitcwd", kitcwd },
+        .{ "updbad", updbad },   .{ "shadow", shadow },     .{ "kitcwd", kitcwd },   .{ "kitrun", kitrun },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

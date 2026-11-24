@@ -709,6 +709,8 @@ export declare namespace create {
       | {
           /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
           body?: string | undefined
+          /** Command that generated skill files show in place of the CLI name, such as `bunx @scope/my-cli`. Skill names still derive from the CLI name. Defaults to the CLI name. */
+          command?: string | undefined
           /** Directory that `include` globs resolve against, in both `skills add` and `skills list`. Defaults to the package root of the running bin (the nearest `package.json` above `process.argv[1]`). Project installs (`skills add --no-global`) always go to the working directory, not here. */
           cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
@@ -1205,6 +1207,7 @@ async function serveImpl(
       }
       try {
         const result = await SyncSkills.list(name, commands, {
+          command: sync?.command,
           depth: sync?.depth ?? 1,
           description: options.description,
           include: sync?.include,
@@ -1261,6 +1264,7 @@ async function serveImpl(
     try {
       stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
+        command: sync?.command,
         depth,
         description: options.description,
         global,
@@ -2818,6 +2822,7 @@ declare namespace serveImpl {
       | false
       | {
           body?: string | undefined
+          command?: string | undefined
           cwd?: string | undefined
           depth?: number | undefined
           include?: string[] | undefined

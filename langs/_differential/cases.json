@@ -2571,5 +2571,9 @@
 {"cli": "kitcwd", "argv": ["skills", "add", "--no-global", "--depth", "0"], "sandbox": {"cli": "", "package.json": "{}", "vendor/skills/extra/SKILL.md": "---\nname: extra\ndescription: Extra skill\n---\n\n# Extra\n", ".claude": null}},
 {"cli": "kitcwd", "argv": ["skills", "list"], "sandbox": {"cli": "", "package.json": "{}", "vendor/skills/extra/SKILL.md": "---\nname: extra\ndescription: Extra skill\n---\n\n# Extra\n", "skills/stray/SKILL.md": "---\nname: stray\ndescription: Stray skill\n---\n"}},
 {"cli": "kitcwd", "argv": ["status"], "sandbox": {"cli": "", "package.json": "{}", ".local/share/incur/kitcwd.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kitcwd-status\"]}\n", "vendor/.agents/skills/kitcwd-status/SKILL.md": "old\n"}},
-{"cli": "kit", "argv": ["skills", "add", "--no-global", "--depth", "0"], "sandbox": {"cli": "", "package.json": "{}", ".claude": null, ".local/share/incur/kit.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kit-old\"]}\n", ".agents/skills/kit-old/SKILL.md": "old\n", ".claude/skills/kit-old": {"symlink": "../../.agents/skills/kit-old"}}}
+{"cli": "kit", "argv": ["skills", "add", "--no-global", "--depth", "0"], "sandbox": {"cli": "", "package.json": "{}", ".claude": null, ".local/share/incur/kit.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kit-old\"]}\n", ".agents/skills/kit-old/SKILL.md": "old\n", ".claude/skills/kit-old": {"symlink": "../../.agents/skills/kit-old"}}},
+{"cli": "kitrun", "argv": ["skills", "add"], "sandbox": {"cli": "", "package.json": "{}", "skills/extra/SKILL.md": "---\nname: extra\ndescription: Extra skill\n---\n\n# Extra\n"}},
+{"cli": "kitrun", "argv": ["skills", "add", "--depth", "0"], "sandbox": {"cli": "", "package.json": "{}"}},
+{"cli": "kitrun", "argv": ["skills", "list"], "sandbox": {"cli": "", "package.json": "{}"}},
+{"cli": "kitrun", "argv": ["status"], "sandbox": {"cli": "", "package.json": "{}", ".local/share/incur/kitrun.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kitrun-status\"],\"paths\":[\"<sandbox>/.agents/skills/kitrun-status\"]}\n", ".agents/skills/kitrun-status/SKILL.md": "old\n"}}
 ]

@@ -129,6 +129,9 @@ pub const Options = struct {
 pub const Sync = struct {
     /// Text shown after `skills add` lists the synced skills.
     body: ?[]const u8 = null,
+    /// The command generated skill files show in place of the CLI name, such as
+    /// `bunx @scope/my-cli`. Skill names still derive from the CLI name.
+    command: ?[]const u8 = null,
     /// The directory `include` patterns resolve against, for `skills add` and `skills list`.
     /// Defaults to the package root. Project installs (`skills add --no-global`) always go to the
     /// working directory.

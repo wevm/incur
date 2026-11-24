@@ -101,7 +101,8 @@ fn files(a: Allocator, cli: *cli_.Cli, depth: f64) ServeError![]const skill.File
     var groups: std.ArrayList(skill.Group) = .empty;
     if (errors.nonEmpty(cli.options.description)) |d| try groups.append(a, .{ .name = cli.name, .description = d });
     try groups.appendSlice(a, infos.groups);
-    return skill.split(a, cli.name, infos.commands, groups.items, depth);
+    const sync = cli.options.sync.?;
+    return skill.splitAs(a, cli.name, sync.command orelse cli.name, infos.commands, groups.items, depth);
 }
 
 /// A `SKILL.md` an `include` pattern matched.

@@ -938,6 +938,10 @@ pub(crate) fn kitcwd() -> Cli {
     kit_cli("kitcwd", None, None, None).sync(kit_sync().cwd("vendor"))
 }
 
+pub(crate) fn kitrun() -> Cli {
+    kit_cli("kitrun", None, None, None).sync(kit_sync().command("bunx @acme/kit"))
+}
+
 pub(crate) fn kitbad() -> Cli {
     kit_cli("kitbad", Some("Bad Name"), Some("1"), None)
 }
