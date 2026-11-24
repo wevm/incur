@@ -66,6 +66,8 @@ pub struct Options<'a> {
     pub globals: Option<&'a Type>,
     /// Hide the global options section.
     pub hide_global_options: bool,
+    /// Hide the MCP integration and the `--mcp` flag.
+    pub hide_mcp: bool,
     /// Hide the skills integration.
     pub hide_skills: bool,
     /// Hide the root `--update` flag.
@@ -345,6 +347,7 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         let builtins = INTEGRATIONS
             .iter()
             .filter(|(name, _)| !options.hide_skills || *name != "skills")
+            .filter(|(name, _)| !options.hide_mcp || *name != "mcp")
             .collect::<Vec<_>>();
         let width = builtins.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
         lines.push(String::new());
@@ -360,7 +363,18 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         option_lines(lines, globals);
     }
 
-    let mut flags: Vec<(String, &str)> = Vec::new();
+    let flags = global_flags(options);
+    let width = flags.iter().map(|(f, _)| f.len()).max().unwrap_or(0);
+    lines.push(String::new());
+    lines.push("Global Options:".into());
+    for (flag, description) in flags {
+        lines.push(format!("  {}  {description}", pad(&flag, width)));
+    }
+}
+
+/// Returns the built-in global flags listed under "Global Options", sorted as help shows them.
+pub(crate) fn global_flags(options: &Options<'_>) -> Vec<(String, &'static str)> {
+    let mut flags: Vec<(String, &'static str)> = Vec::new();
     if let Some(flag) = options.config_flag {
         flags.push((
             format!("--{flag} <path>"),
@@ -378,6 +392,7 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         ),
         ("--format <toon|json|yaml|md|jsonl>".into(), "Output format"),
         ("--help".into(), "Show help"),
+        ("--json".into(), "Shorthand for --format json"),
         ("--llms, --llms-full".into(), "Print LLM-readable manifest"),
         ("--schema".into(), "Show JSON Schema for command"),
         (
@@ -389,19 +404,16 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         ("--full-output".into(), "Show full output envelope"),
     ]);
     if options.root {
-        flags.push(("--mcp".into(), "Start as MCP stdio server"));
+        if !options.hide_mcp {
+            flags.push(("--mcp".into(), "Start as MCP stdio server"));
+        }
         if !options.hide_update {
             flags.push(("--update".into(), "Update to latest version"));
         }
         flags.push(("--version".into(), "Show version"));
     }
     flags.sort_by(|a, b| js::locale_compare(&a.0, &b.0));
-    let width = flags.iter().map(|(f, _)| f.len()).max().unwrap_or(0);
-    lines.push(String::new());
-    lines.push("Global Options:".into());
-    for (flag, description) in flags {
-        lines.push(format!("  {}  {description}", pad(&flag, width)));
-    }
+    flags
 }
 
 /// Redacts a value, keeping only the last four characters of long values.

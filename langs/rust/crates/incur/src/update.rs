@@ -66,8 +66,8 @@ type Install = Arc<dyn Fn(InstallContext) -> BoxFuture<Result<(), Error>> + Send
 ///
 /// let cli = Cli::new("tool").version("1.0.0").update(
 ///     Update::new()
-///         .check(|c: incur::update::CheckContext| Ok::<_, incur::Error>(Some(format!("{}-next", c.current))))
-///         .install(|_| async { Ok::<_, incur::Error>(()) }),
+///         .check(|c: incur::update::CheckContext| Ok(Some(format!("{}-next", c.current))))
+///         .install(|_| async { Ok(()) }),
 /// );
 /// let disabled = Cli::new("tool").update(false);
 /// ```
@@ -651,12 +651,29 @@ fn schedule_refresh(file: &Path, checked: f64, latest: Option<&str>) {
 /// Runs a program and returns its standard output. The child inherits the process environment
 /// with `PATH` and `HOME` from the CLI's environment. Failures report standard error, else
 /// standard output, else the command line, as Node's `execFile` does.
+///
+/// On Windows, npm, npx, pnpm, and pnpx are `.cmd` scripts. `Command` runs a script given by its
+/// path through `cmd.exe` with batch-safe quoting, but does not find it on `PATH` by itself.
 pub(crate) fn exec(
     program: &str,
     args: &[String],
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, Error> {
-    let mut command = std::process::Command::new(program);
+    #[cfg(windows)]
+    let path = {
+        let path = which(program, env).unwrap_or_else(|| program.into());
+        let script = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("bat") || e.eq_ignore_ascii_case("cmd"));
+        // `cmd.exe` ends the command line at a line break, which would drop the arguments after it.
+        if script && args.iter().any(|arg| arg.contains(['\r', '\n'])) {
+            return Err(Error::unknown(format!("spawn {program} EINVAL")));
+        }
+        path
+    };
+    #[cfg(not(windows))]
+    let path = program;
+    let mut command = std::process::Command::new(path);
     command.args(args);
     for key in ["PATH", "HOME"] {
         if let Some(value) = env(key) {
@@ -687,6 +704,23 @@ pub(crate) fn exec(
         str::to_owned,
     );
     Err(Error::unknown(message))
+}
+
+/// Finds `program` on `PATH` with each `PATHEXT` extension, as `cmd.exe` does, without searching
+/// the working directory.
+#[cfg(windows)]
+fn which(program: &str, env: &dyn Fn(&str) -> Option<String>) -> Option<std::path::PathBuf> {
+    let extensions = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    let path = env("PATH").or_else(|| std::env::var("PATH").ok())?;
+    std::env::split_paths(&path)
+        .filter(|directory| !directory.as_os_str().is_empty())
+        .flat_map(|directory| {
+            extensions
+                .split(';')
+                .filter(|extension| !extension.is_empty())
+                .map(move |extension| directory.join(format!("{program}{extension}")))
+        })
+        .find(|file| file.is_file())
 }
 
 /// Whether the environment suppresses update notifications.

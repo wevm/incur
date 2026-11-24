@@ -95,12 +95,7 @@ def estimate(text: str) -> int:
 
 
 def slice_tokens(text: str, start: float, end: float) -> str:
-    """Returns the text between token positions; negative positions count from the end."""
-    total = float(estimate(text)) if start < 0 or end < 0 else 0.0
-    if start < 0:
-        start = max(total + start, 0.0)
-    if end < 0:
-        end = max(total + end, 0.0)
+    """Returns the text between the nonnegative token positions `start` and `end`."""
     if start >= end:
         return ""
     out: list[str] = []

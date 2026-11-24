@@ -390,6 +390,14 @@ describe('register', () => {
     expect(script).toContain('compopt -o nospace')
   })
 
+  test('bash: falls back without nosort for Bash before 4.4', () => {
+    const script = Completions.register('bash', 'mycli')
+    expect(script).toContain(
+      `complete -o default -o bashdefault -o nosort -F _incur_complete_mycli mycli 2>/dev/null ||
+    complete -o default -o bashdefault -F _incur_complete_mycli mycli`,
+    )
+  })
+
   test.skipIf(!bash)('bash: exports completion env vars to the CLI subprocess', async () => {
     await withFakeCli(async (dir) => {
       const output = await exec(
@@ -673,6 +681,62 @@ describe('serve integration', () => {
     expect(output).toContain('--watch\tWatch mode')
   })
 
+  test('COMPLETE suggests the built-in global flags that help lists', async () => {
+    const cli = makeCli()
+    const complete = async (...words: string[]) =>
+      (
+        await serve(cli, ['--', 'mycli', ...words], {
+          COMPLETE: 'bash',
+          _COMPLETE_INDEX: String(words.length),
+        })
+      ).split('\v')
+
+    // Root-only flags appear at the root
+    expect(await complete('--')).toMatchInlineSnapshot(`
+      [
+        "--filter-output",
+        "--format",
+        "--full-output",
+        "--help",
+        "--json",
+        "--llms",
+        "--llms-full",
+        "--mcp",
+        "--schema",
+        "--token-count",
+        "--token-limit",
+        "--token-offset",
+        "--update",
+        "--version",
+      ]
+    `)
+    expect(await complete('build', '--')).toMatchInlineSnapshot(`
+      [
+        "--target",
+        "--watch",
+        "--out-dir",
+        "--filter-output",
+        "--format",
+        "--full-output",
+        "--help",
+        "--json",
+        "--llms",
+        "--llms-full",
+        "--schema",
+        "--token-count",
+        "--token-limit",
+        "--token-offset",
+      ]
+    `)
+    expect(await complete('db', 'migrate', '--tok')).toMatchInlineSnapshot(`
+      [
+        "--token-count",
+        "--token-limit",
+        "--token-offset",
+      ]
+    `)
+  })
+
   test('COMPLETE skips built-in and global flag values before the cursor', async () => {
     const cli = Cli.create('mycli', {
       config: { flag: 'config' },
@@ -724,7 +788,7 @@ describe('serve integration', () => {
         "mycli --network ": "",
         "mycli --network db ": "build db completions mcp skills",
         "mycli --network testnet com": "completions",
-        "mycli --network testnet skills ": "build db add list ls",
+        "mycli --network testnet skills ": "add list ls",
         "mycli --token-limit 5 --token-offset 10 ": "build db completions mcp skills",
         "mycli --version ": "build db completions mcp skills",
         "mycli -n testnet com": "completions",

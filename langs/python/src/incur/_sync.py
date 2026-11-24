@@ -29,7 +29,9 @@ class Sync:
     body: str | None = None
     """Text printed after the synced skills, for whatever installing skills cannot do itself."""
     cwd: str | None = None
-    """Directory that resolves `include` globs. Defaults to the working directory."""
+    """Directory that resolves `include` globs, for `skills add` and `skills list`. Defaults to the
+    package root: the nearest directory above the entry point with a `package.json`. Project
+    installs (`skills add --no-global`) always go to the working directory."""
     depth: float = 1
     """Grouping depth of skill files: commands sharing this many name segments share a file."""
     include: list[str] = field(default_factory=list[str])
@@ -232,10 +234,9 @@ def _uninstall(name: str, is_global: bool, cwd: str, env: Mapping[str, str]) -> 
 def _package_root() -> str:
     """The nearest directory above the entry point with a `package.json`, or the working one."""
     entry = sys.argv[0] if sys.argv else ""
-    if not entry:
+    if not os.path.exists(entry):
         return os.getcwd()
-    path = os.path.realpath(entry) if os.path.exists(entry) else sys.executable
-    directory = os.path.dirname(path)
+    directory = os.path.dirname(os.path.realpath(entry))
     root = os.path.abspath(os.sep)
     while directory != root:
         if os.path.exists(os.path.join(directory, "package.json")):
@@ -269,7 +270,7 @@ def _strings(value: Json | None) -> list[str]:
     return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
 
 
-def _installed(name: str, env: Mapping[str, str], cwd: str | None) -> set[str]:
+def _installed(name: str, env: Mapping[str, str]) -> set[str]:
     """Names of previously synced skills that are still installed."""
     meta = _read_meta(name, env)
     skills = _strings(meta.get("skills")) if meta else []
@@ -280,14 +281,14 @@ def _installed(name: str, env: Mapping[str, str], cwd: str | None) -> set[str]:
         return {os.path.basename(p) for p in paths if os.path.exists(os.path.join(p, "SKILL.md"))}
     bases = [
         os.path.join(_home(env), ".agents", "skills"),
-        os.path.join(cwd or os.getcwd(), ".agents", "skills"),
+        os.path.join(os.getcwd(), ".agents", "skills"),
     ]
     return {s for s in skills if any(os.path.exists(os.path.join(b, s, "SKILL.md")) for b in bases)}
 
 
-def has_installed_skills(name: str, env: Mapping[str, str], cwd: str | None) -> bool:
+def has_installed_skills(name: str, env: Mapping[str, str]) -> bool:
     """Whether any previously synced skill is still installed."""
-    return bool(_installed(name, env, cwd))
+    return bool(_installed(name, env))
 
 
 def _included(pattern: str, cwd: str) -> list[str]:
@@ -312,16 +313,16 @@ async def list_skills(
     name: str, infos: list[_skill.CommandInfo], groups: dict[str, str], options: Options
 ) -> list[Skill]:
     """Lists generated and included skills with their install status."""
-    cwd = options.cwd or os.getcwd()
-    installed = _installed(name, options.env, options.cwd)
+    root = options.cwd or _package_root()
+    installed = _installed(name, options.env)
     skills = [
         Skill(skill, description, skill in installed)
         for _, skill, description in _generated(name, infos, groups, options)
     ]
     for pattern in options.include:
-        for match in _included(pattern, cwd):
+        for match in _included(pattern, root):
             with contextlib.suppress(OSError, UnicodeDecodeError, ValueError):
-                with open(os.path.join(cwd, match), encoding="utf-8") as file:
+                with open(os.path.join(root, match), encoding="utf-8") as file:
                     meta_name, description = frontmatter(file.read())
                 skill = (
                     (meta_name or name)
@@ -340,7 +341,8 @@ async def sync(
     """Generates skill files, installs them for detected agents, and records their hash."""
     env = options.env
     is_global = options.global_ is not False
-    cwd = options.cwd or (_package_root() if is_global else os.getcwd())
+    root = options.cwd or _package_root()
+    cwd = os.getcwd()
     tmp = tempfile.mkdtemp(prefix=f"incur-skills-{name}-", dir=env.get("TMPDIR") or None)
     try:
         skills: list[Skill] = []
@@ -355,9 +357,9 @@ async def sync(
                 out.write(f"{file.content}\n")
             skills.append(Skill(skill, description))
         for pattern in options.include:
-            for match in _included(pattern, cwd):
+            for match in _included(pattern, root):
                 with contextlib.suppress(OSError, UnicodeDecodeError, ValueError):
-                    with open(os.path.join(cwd, match), encoding="utf-8") as file:
+                    with open(os.path.join(root, match), encoding="utf-8") as file:
                         content = file.read()
                     meta_name, description = frontmatter(content)
                     skill = (

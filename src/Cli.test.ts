@@ -1980,6 +1980,7 @@ describe('subcommands', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -2799,6 +2800,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for command
@@ -2838,6 +2840,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for command
@@ -2996,6 +2999,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3030,6 +3034,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3073,6 +3078,56 @@ describe('help', () => {
     })
     const { output } = await serve(cli, [])
     expect(output).toContain('no url')
+  })
+
+  test('extra positional fails before a scalar command runs', async () => {
+    const run = vi.fn(() => ({ cleaned: 'a' }))
+    const cli = Cli.create('mycli').command('clean', {
+      args: z.object({ target: z.string() }),
+      run,
+    })
+
+    const { output, exitCode } = await serve(cli, ['clean', 'a', 'b', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({ code: 'UNKNOWN', message: 'Unexpected argument: b' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('extra positional fails before a no-args command runs', async () => {
+    const run = vi.fn(() => ({ ok: true }))
+    const cli = Cli.create('mycli').command('info', { run })
+
+    const { output, exitCode } = await serve(cli, ['info', 'extra', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({ code: 'UNKNOWN', message: 'Unexpected argument: extra' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('extra positional fails before a group root command runs', async () => {
+    const run = vi.fn(() => ({ cleaned: 'a' }))
+    const group = Cli.create('clean', {
+      args: z.object({ target: z.string() }),
+      run,
+    }).command('status', { run: () => ({ ok: true }) })
+    const cli = Cli.create('mycli').command(group)
+
+    const { output, exitCode } = await serve(cli, ['clean', 'zzzz', 'b', '--format', 'json'])
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({ code: 'UNKNOWN', message: 'Unexpected argument: b' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  test('global boolean leaves a required boolean-looking positional intact', async () => {
+    const cli = Cli.create('mycli', {
+      globals: z.object({ dryRun: z.boolean().default(false) }),
+    }).command('clean', {
+      args: z.object({ target: z.enum(['true', 'false']) }),
+      run: ({ args, globals }) => ({ target: args.target, dryRun: globals.dryRun }),
+    })
+
+    const { output, exitCode } = await serve(cli, ['clean', '--dry-run', 'false', '--json'])
+    expect(exitCode).toBeUndefined()
+    expect(JSON.parse(output)).toEqual({ target: 'false', dryRun: true })
   })
 
   test('invalid subcommand in group returns COMMAND_NOT_FOUND instead of falling through to root', async () => {
@@ -3137,6 +3192,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --schema                            Show JSON Schema for command
@@ -3170,6 +3226,7 @@ describe('help', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3287,6 +3344,7 @@ describe('env', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -3325,6 +3383,7 @@ describe('env', () => {
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
           --help                              Show help
+          --json                              Shorthand for --format json
           --llms, --llms-full                 Print LLM-readable manifest
           --schema                            Show JSON Schema for command
           --token-count                       Print token count of output (instead of output)
@@ -3453,6 +3512,27 @@ describe('built-in commands', () => {
     expect(output).toContain('Generate shell completion script')
   })
 
+  test('registered commands and aliases shadow built-ins of the same name', async () => {
+    const cli = Cli.create('test')
+      .command('mcp', { run: () => ({ user: true }) })
+      .command('skill', { args: z.object({ id: z.string() }), run: (c) => ({ id: c.args.id }) })
+      .command('shell', { aliases: ['completions'], run: () => ({ shell: true }) })
+    expect((await serve(cli, ['mcp'])).output).toMatchInlineSnapshot(`
+      "user: true
+      "
+    `)
+    expect((await serve(cli, ['skill', 'abc'])).output).toMatchInlineSnapshot(`
+      "id: abc
+      "
+    `)
+    expect((await serve(cli, ['completions'])).output).toMatchInlineSnapshot(`
+      "shell: true
+      "
+    `)
+    // Names nothing shadows still reach the built-in
+    expect((await serve(cli, ['skills'])).output).toContain('test skills')
+  })
+
   test('bare mcp shows help with subcommands', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
@@ -3509,6 +3589,58 @@ describe('built-in commands', () => {
       expect(output).toContain('Try asking:')
       expect(output).toContain('"Check health"')
       expect(output).toContain('"command": "pnpm test --mcp"')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp add accepts option values after `=`', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'second command', agents: ['Cursor', 'Amp'] })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { exitCode } = await serve(cli, [
+        'mcp',
+        'add',
+        '--agent=cursor',
+        '--agent',
+        'amp',
+        '--command=first command',
+        '-c=second command',
+      ])
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('test', {
+        command: 'second command',
+        global: true,
+        agents: ['cursor', 'amp'],
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test.each([
+    { argv: ['--agent'], flag: '--agent' },
+    { argv: ['-c'], flag: '-c' },
+    { argv: ['--command', '--agent', 'amp'], flag: '--command' },
+    { argv: ['--agent', '-c', 'x'], flag: '--agent' },
+    { argv: ['--agent', ' '], flag: '--agent' },
+    { argv: ['--command='], flag: '--command' },
+    { argv: ['-c=--no-global'], flag: '-c' },
+  ])('mcp add rejects a missing value: $argv', async ({ argv, flag }) => {
+    const spy = vi.spyOn(SyncMcp, 'register')
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add', ...argv, '--json'])
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(output)).toEqual({
+        code: 'UNKNOWN',
+        message: `Missing value for flag: ${flag}`,
+      })
+      expect(spy).not.toHaveBeenCalled()
     } finally {
       spy.mockRestore()
     }
@@ -3986,11 +4118,12 @@ describe('built-in commands', () => {
 
   test('skills add prints the sync body before the suggestions', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'clac-body-'))
+    const cwd = process.cwd()
+    process.chdir(tmp)
     try {
       const cli = Cli.create('test', {
         sync: {
           body: 'Steps to finish:\n  1. Authorize the app\n  2. Add the line to AGENTS.md',
-          cwd: tmp,
           suggestions: ['do the thing'],
         },
       })
@@ -4002,15 +4135,18 @@ describe('built-in commands', () => {
       expect(output).toContain('2. Add the line to AGENTS.md')
       expect(output.indexOf('Steps to finish')).toBeLessThan(output.indexOf('Try asking'))
     } finally {
+      process.chdir(cwd)
       await rm(tmp, { force: true, recursive: true })
     }
   })
 
   test('skills add carries the sync body in the structured output', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'clac-body-json-'))
+    const cwd = process.cwd()
+    process.chdir(tmp)
     try {
       const cli = Cli.create('test', {
-        sync: { body: 'Authorize the app', cwd: tmp },
+        sync: { body: 'Authorize the app' },
       })
       cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
       const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
@@ -4018,6 +4154,7 @@ describe('built-in commands', () => {
       expect(output).toContain('"body"')
       expect(output).toContain('Authorize the app')
     } finally {
+      process.chdir(cwd)
       await rm(tmp, { force: true, recursive: true })
     }
   })
@@ -5720,6 +5857,25 @@ describe('--filter-output', () => {
     const { output } = await serve(cli, ['user', '--filter-output', 'name,age', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed).toEqual({ name: 'alice', age: 30 })
+  })
+
+  test('unclosed bracket produces an error', async () => {
+    let ran = false
+    const cli = Cli.create('test')
+    cli.command('list', {
+      run() {
+        ran = true
+        return { items: [1, 2, 3] }
+      },
+    })
+    const { exitCode, output } = await serve(cli, ['list', '--filter-output', 'items['])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: "Unclosed bracket in filter expression: \\"items[\\""
+      "
+    `)
+    expect(ran).toBe(false)
   })
 })
 
@@ -7427,6 +7583,28 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ chain: 'mainnet' })
   })
 
+  test('required vars set by middleware do not fail before it runs (#188)', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ chain: z.string().default('ethereum') }),
+      // A refined schema rejects `.partial()`, so defaults must not depend on it.
+      vars: z
+        .object({ chain: z.string().nonoptional(), retries: z.number().default(3) })
+        .refine((vars) => vars.retries > 0),
+    })
+      .use(async (c, next) => {
+        c.set('chain', c.globals.chain)
+        await next()
+      })
+      .command('ping', {
+        run(c) {
+          return { chain: c.var.chain, retries: c.var.retries }
+        },
+      })
+
+    const { output } = await serve(cli, ['ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ chain: 'ethereum', retries: 3 })
+  })
+
   test('globals appear in --help output', async () => {
     const cli = Cli.create('test', {
       globals: z.object({
@@ -7820,6 +7998,22 @@ test('--token-offset with non-numeric value errors', async () => {
   const { exitCode, output } = await serve(cli, ['hello', '--token-offset', 'foo', '--json'])
   expect(exitCode).toBe(1)
   expect(output).not.toContain('NaN')
+})
+
+test.each(['--token-limit', '--token-offset'])('%s with a negative value errors', async (flag) => {
+  let ran = false
+  const cli = Cli.create('test').command('hello', {
+    run: (c) => {
+      ran = true
+      return c.ok({ message: 'hello world' })
+    },
+  })
+
+  const { exitCode, output } = await serve(cli, ['hello', flag, '-3'])
+  expect(exitCode).toBe(1)
+  expect(output).toContain(`Invalid value for ${flag}`)
+  expect(output).toContain('-3')
+  expect(ran).toBe(false)
 })
 
 describe('command aliases', () => {

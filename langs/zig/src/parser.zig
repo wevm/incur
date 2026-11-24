@@ -53,10 +53,10 @@ const Names = struct {
         return null;
     }
 
-    /// Returns the schema of an option.
+    /// Returns the schema of an option, reading a `T | null` union as `T`.
     fn ty(n: Names, name: []const u8) ?*const Type {
         const f = (n.schema orelse return null).field(name) orelse return null;
-        return &f.ty;
+        return f.ty.unwrap();
     }
 
     /// Whether an option counts repeated flags.
@@ -82,6 +82,32 @@ fn parseError(a: Allocator, comptime fmt: []const u8, args: anytype) Allocator.E
 
 /// Raw option values in input order.
 const Raw = json.ObjectBuilder;
+
+/// A `true` or `false` token after a boolean flag, which may be the flag's value.
+const Candidate = struct {
+    /// Index of the token among the positionals.
+    index: usize,
+    /// The boolean option.
+    name: []const u8,
+    /// The token's value.
+    value: bool,
+    /// argv index of the flag.
+    flag: usize,
+};
+
+/// Reads `argv[i]` as a boolean when it is `true` or `false`.
+fn literal(argv: []const []const u8, i: usize) ?bool {
+    if (i >= argv.len) return null;
+    if (std.mem.eql(u8, argv[i], "true")) return true;
+    if (std.mem.eql(u8, argv[i], "false")) return false;
+    return null;
+}
+
+/// Whether one of the consumed candidates is the positional at `index`.
+fn isConsumed(consumed: []const Candidate, index: usize) bool {
+    for (consumed) |c| if (c.index == index) return true;
+    return false;
+}
 
 /// Increments a counter option.
 fn increment(a: Allocator, raw: *Raw, name: []const u8) Allocator.Error!void {
@@ -128,19 +154,28 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
     const names: Names = .{ .a = a, .schema = options };
     var positionals: std.ArrayList([]const u8) = .empty;
     var raw: Raw = .{};
+    // `true`/`false` tokens after boolean flags, kept as positionals until the arg count is known.
+    var candidates: std.ArrayList(Candidate) = .empty;
+    // The argv index of the last token that set each boolean option.
+    var last_boolean: std.StringHashMapUnmanaged(usize) = .empty;
 
     var i: usize = 0;
     while (i < argv.len) {
         const token = argv[i];
-        if (std.mem.startsWith(u8, token, "--no-") and token.len > 5) {
+        if (std.mem.eql(u8, token, "--")) {
+            try positionals.appendSlice(a, argv[i + 1 ..]);
+            break;
+        } else if (std.mem.startsWith(u8, token, "--no-") and token.len > 5) {
             const name = try names.long(token[5..]) orelse return .{ .err = try parseError(a, "Unknown flag: {s}", .{token}) };
             try raw.put(a, name, .{ .bool = false });
+            try last_boolean.put(a, name, i);
             i += 1;
         } else if (std.mem.startsWith(u8, token, "--")) {
             const body = token[2..];
             if (std.mem.findScalar(u8, body, '=')) |eq| {
                 const name = try names.long(body[0..eq]) orelse return .{ .err = try parseError(a, "Unknown flag: --{s}", .{body[0..eq]}) };
                 try set(a, &raw, names, name, body[eq + 1 ..]);
+                if (names.isBoolean(name)) try last_boolean.put(a, name, i);
                 i += 1;
             } else {
                 const name = try names.long(body) orelse return .{ .err = try parseError(a, "Unknown flag: {s}", .{token}) };
@@ -149,6 +184,12 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
                     i += 1;
                 } else if (names.isBoolean(name)) {
                     try raw.put(a, name, .{ .bool = true });
+                    try last_boolean.put(a, name, i);
+                    if (literal(argv, i + 1)) |value| {
+                        try candidates.append(a, .{ .index = positionals.items.len, .name = name, .value = value, .flag = i });
+                        try positionals.append(a, argv[i + 1]);
+                        i += 1;
+                    }
                     i += 1;
                 } else {
                     if (i + 1 >= argv.len) return .{ .err = try parseError(a, "Missing value for flag: {s}", .{token}) };
@@ -165,6 +206,13 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
                     try increment(a, &raw, name);
                 } else if (names.isBoolean(name)) {
                     try raw.put(a, name, .{ .bool = true });
+                    try last_boolean.put(a, name, i);
+                    if (!last) continue;
+                    if (literal(argv, i + 1)) |value| {
+                        try candidates.append(a, .{ .index = positionals.items.len, .name = name, .value = value, .flag = i });
+                        try positionals.append(a, argv[i + 1]);
+                        i += 1;
+                    }
                 } else if (!last) {
                     return .{ .err = try parseError(a, "Non-boolean flag -{u} must be last in a stacked alias", .{short}) };
                 } else {
@@ -180,19 +228,38 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
         }
     }
 
-    // Positionals fill args in order; a final array arg collects the rest.
-    var raw_args: json.ObjectBuilder = .{};
-    if (args) |s| {
-        const fields = s.fields();
-        for (fields, 0..) |f, j| {
-            if (f.ty.kind == .array) {
-                if (j != fields.len - 1) return .{ .err = try parseError(a, "Variadic arg \"{s}\" must be the last key in the args schema", .{f.name}) };
-                if (j < positionals.items.len) try raw_args.put(a, f.name, try schema.strings(a, positionals.items[j..]));
-            } else if (j < positionals.items.len) {
-                try raw_args.put(a, f.name, .{ .string = positionals.items[j] });
-            }
+    // A spaced `true`/`false` after a boolean flag is its value only when no positional slot is
+    // left for it, earliest first; a later assignment of the same flag still wins.
+    const fields = if (args) |s| s.fields() else &.{};
+    const variadic = fields.len > 0 and fields[fields.len - 1].ty.unwrap().kind == .array;
+    var kept = positionals.items;
+    if (!variadic) {
+        var consumed: usize = 0;
+        for (candidates.items) |c| {
+            if (positionals.items.len - consumed <= fields.len) break;
+            consumed += 1;
+            if (last_boolean.get(c.name).? == c.flag) try raw.put(a, c.name, .{ .bool = c.value });
+        }
+        kept = try a.alloc([]const u8, positionals.items.len - consumed);
+        var n: usize = 0;
+        for (positionals.items, 0..) |p, j| {
+            if (isConsumed(candidates.items[0..consumed], j)) continue;
+            kept[n] = p;
+            n += 1;
         }
     }
+
+    // Positionals fill args in order; a final array arg collects the rest.
+    var raw_args: json.ObjectBuilder = .{};
+    for (fields, 0..) |f, j| {
+        if (f.ty.unwrap().kind == .array) {
+            if (j != fields.len - 1) return .{ .err = try parseError(a, "Variadic arg \"{s}\" must be the last key in the args schema", .{f.name}) };
+            if (j < kept.len) try raw_args.put(a, f.name, try schema.strings(a, kept[j..]));
+        } else if (j < kept.len) {
+            try raw_args.put(a, f.name, .{ .string = kept[j] });
+        }
+    }
+    if (!variadic and kept.len > fields.len) return .{ .err = try parseError(a, "Unexpected argument: {s}", .{kept[fields.len]}) };
     const parsed_args = if (args) |s| switch (try validate(a, s, raw_args.finish())) {
         .ok => |v| v,
         .err => |e| return .{ .err = e },
@@ -216,7 +283,7 @@ pub fn parse(a: Allocator, argv: []const []const u8, args: ?*const Type, options
 pub fn parseEnv(a: Allocator, ty: *const Type, env: *const std.process.Environ.Map) Allocator.Error!Result(Value) {
     var raw: json.ObjectBuilder = .{};
     for (ty.fields()) |f| if (env.get(f.name)) |value| {
-        const coerced: Value = switch (f.ty.kind) {
+        const coerced: Value = switch (f.ty.unwrap().kind) {
             .number, .integer => .{ .float = js.toNumber(value) },
             .boolean => .{ .bool = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1") },
             else => .{ .string = value },

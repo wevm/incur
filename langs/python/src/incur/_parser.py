@@ -31,9 +31,9 @@ class _Names:
         return next((f.name for f in fields if f.name == raw), None)
 
     def ty(self, name: str) -> Type | None:
-        """Returns the schema of an option."""
+        """Returns the schema of an option, reading a `T | null` union as `T`."""
         f = self.schema.field(name) if self.schema else None
-        return f.ty if f else None
+        return f.ty.unwrap() if f else None
 
     def is_count(self, name: str) -> bool:
         ty = self.ty(name)
@@ -115,14 +115,22 @@ def parse(
     names = _Names(options)
     positionals: list[str] = []
     raw: dict[str, Json] = {}
+    # `true`/`false` tokens after boolean flags, kept as positionals until the arg count is known.
+    candidates: list[tuple[int, str, bool, int]] = []
+    # The argv index of the last token that set each boolean option.
+    last_boolean: dict[str, int] = {}
     i = 0
     while i < len(argv):
         token = argv[i]
+        if token == "--":
+            positionals.extend(argv[i + 1 :])
+            break
         if token.startswith("--no-") and len(token) > 5:
             name = names.long(token[5:])
             if name is None:
                 raise unknown(f"Unknown flag: {token}")
             raw[name] = False
+            last_boolean[name] = i
             i += 1
         elif token.startswith("--"):
             body = token[2:]
@@ -132,6 +140,8 @@ def parse(
                 if name is None:
                     raise unknown(f"Unknown flag: --{flag}")
                 _set(raw, names, name, value)
+                if names.is_boolean(name):
+                    last_boolean[name] = i
                 i += 1
                 continue
             name = names.long(body)
@@ -142,6 +152,11 @@ def parse(
                 i += 1
             elif names.is_boolean(name):
                 raw[name] = True
+                last_boolean[name] = i
+                if i + 1 < len(argv) and argv[i + 1] in ("true", "false"):
+                    candidates.append((len(positionals), name, argv[i + 1] == "true", i))
+                    positionals.append(argv[i + 1])
+                    i += 1
                 i += 1
             else:
                 if i + 1 >= len(argv):
@@ -158,6 +173,12 @@ def parse(
                     _increment(raw, name)
                 elif names.is_boolean(name):
                     raw[name] = True
+                    last_boolean[name] = i
+                    last = j == len(chars) - 1
+                    if last and i + 1 < len(argv) and argv[i + 1] in ("true", "false"):
+                        candidates.append((len(positionals), name, argv[i + 1] == "true", i))
+                        positionals.append(argv[i + 1])
+                        i += 1
                 elif j != len(chars) - 1:
                     raise unknown(f"Non-boolean flag -{short} must be last in a stacked alias")
                 else:
@@ -170,23 +191,34 @@ def parse(
             positionals.append(token)
             i += 1
 
+    # A spaced `true`/`false` after a boolean flag is its value only when no positional slot is
+    # left for it, earliest first; a later assignment of the same flag still wins.
+    fields = args.fields if args is not None else []
+    variadic = bool(fields) and fields[-1].ty.unwrap().kind == "array"
+    if not variadic:
+        consumed: set[int] = set()
+        for index, name, value, flag in candidates:
+            if len(positionals) - len(consumed) <= len(fields):
+                break
+            consumed.add(index)
+            if last_boolean[name] == flag:
+                raw[name] = value
+        positionals = [p for j, p in enumerate(positionals) if j not in consumed]
+
     # Positionals fill args in order; a final array arg collects the rest.
     raw_args: dict[str, Json] = {}
-    parsed_args: dict[str, Json] = {}
-    if args is not None:
-        fields = args.fields
-        for j, f in enumerate(fields):
-            if f.ty.kind == "array":
-                if j != len(fields) - 1:
-                    raise unknown(
-                        f'Variadic arg "{f.name}" must be the last key in the args schema'
-                    )
-                rest = positionals[j:]
-                if rest:
-                    raw_args[f.name] = list(rest)
-            elif j < len(positionals):
-                raw_args[f.name] = positionals[j]
-        parsed_args = check(args, raw_args)
+    for j, f in enumerate(fields):
+        if f.ty.unwrap().kind == "array":
+            if j != len(fields) - 1:
+                raise unknown(f'Variadic arg "{f.name}" must be the last key in the args schema')
+            rest = positionals[j:]
+            if rest:
+                raw_args[f.name] = list(rest)
+        elif j < len(positionals):
+            raw_args[f.name] = positionals[j]
+    if not variadic and len(positionals) > len(fields):
+        raise unknown(f"Unexpected argument: {positionals[len(fields)]}")
+    parsed_args = check(args, raw_args) if args is not None else {}
 
     merged = _normalize_defaults(defaults, names)
     for name, value in raw.items():
@@ -213,9 +245,10 @@ def parse_env(schema: Type, env: EnvSource) -> dict[str, Json]:
         value = env(f.name)
         if value is None:
             continue
-        if f.ty.kind in ("number", "integer"):
-            raw[f.name] = _number(value, f.ty)
-        elif f.ty.kind == "boolean":
+        ty = f.ty.unwrap()
+        if ty.kind in ("number", "integer"):
+            raw[f.name] = _number(value, ty)
+        elif ty.kind == "boolean":
             raw[f.name] = value in ("true", "1")
         else:
             raw[f.name] = value

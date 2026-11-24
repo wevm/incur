@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-import { globalInstall } from './pm.js'
+import { exec, globalInstall } from './pm.js'
 
 const defaultInterval = 24 * 60 * 60 * 1_000
 
@@ -226,7 +226,7 @@ function resolveProvider(name: string, options: Options): Provider | undefined {
     options.install ??
     (invocation
       ? () => {
-          return exec(invocation.command, invocation.args)
+          return exec(invocation.command, invocation.args).then(() => {})
         }
       : undefined)
   if (!check && !install) return undefined
@@ -390,16 +390,6 @@ function selfInvocation(
     args: [...process.execArgv, entry, checkFlag],
     command: process.execPath,
   }
-}
-
-/** @internal Runs a package-manager command and surfaces its useful error output. */
-function exec(command: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    childProcess.execFile(command, args, (error, stdout, stderr) => {
-      if (!error) return resolve()
-      reject(new Error(stderr.trim() || stdout.trim() || error.message))
-    })
-  })
 }
 
 /** @internal Returns whether the environment suppresses update notifications. */

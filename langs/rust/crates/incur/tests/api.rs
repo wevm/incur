@@ -16,7 +16,7 @@ use std::time::Duration;
 use futures::{StreamExt, stream};
 use incur::mcp::{Discovery, Mcp, Tool};
 use incur::schema::{Field, Type};
-use incur::{Cli, Command, Context, CtaBlock, Error, Format, Io, Outcome, Schema, Vars};
+use incur::{Cli, Command, Context, CtaBlock, Error, Format, Io, Outcome, Parser, Schema, Vars};
 use insta::assert_snapshot;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -499,10 +499,31 @@ fn sleeper() -> Cli {
     )
 }
 
-/// The blocking entry runs handlers on a tokio runtime with timers enabled.
+/// With the `tokio` feature, the blocking entry runs handlers on a tokio runtime with timers
+/// enabled.
+#[cfg(feature = "tokio")]
 #[test]
 fn blocking_entry_runs_tokio_handlers() {
     assert_snapshot!(format!("{:?}", serve(&sleeper(), &["wait", "--ms", "1"])), @r#"(0, "waited: 1\n")"#);
+}
+
+/// Without the `tokio` feature, the blocking entry parks the thread until a handler's future
+/// wakes it, so runtime-agnostic futures complete without a runtime.
+#[cfg(not(feature = "tokio"))]
+#[test]
+fn blocking_entry_runs_without_a_runtime() {
+    let cli = Cli::new("wait").update(false).command(
+        "wait",
+        Command::new().run(|_: Context| async {
+            let (tx, rx) = futures::channel::oneshot::channel();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(5));
+                tx.send("woken").unwrap();
+            });
+            rx.await.unwrap()
+        }),
+    );
+    assert_snapshot!(format!("{:?}", serve(&cli, &["wait"])), @r#"(0, "woken\n")"#);
 }
 
 /// `run` is a `Send` future, so it runs inside a caller's runtime and on spawned tasks.
@@ -1148,8 +1169,6 @@ fn syncs_skills_for_agents() {
         run(&second, &["skills", "add"], &env, &[], false),
         run(&second, &["status"], &env, &[], false),
         run(&second, &["skills", "list"], &env, &[], false),
-        run(&first, &["skills", "add", "--no-global"], &env, &[], false),
-        run(&second, &["skills", "add", "--no-global"], &env, &[], false),
     ];
     let mut tree = walk(&sandbox.path(""), &sandbox);
     tree.retain(|line| !line.starts_with("tmp"));
@@ -1174,14 +1193,6 @@ fn syncs_skills_for_agents() {
         (
             0,
             "  ✓ kit-status  A command. Run `kit status --help` for usage details.\n  ✓ nested      Nested\n  ✓ plain\n\n3 skills (3 installed)\n",
-        ),
-        (
-            0,
-            "Syncing...\r\u{1b}[K  ✓ kit-old     A command. Run `kit old --help` for usage details.\n  ✓ kit-status  A command. Run `kit status --help` for usage details.\n  ✓ nested      Nested\n  ✓ plain\n\n4 skills synced\n\nRun `kit --help` to see the full command reference.\n",
-        ),
-        (
-            0,
-            "Syncing...\r\u{1b}[K  ✓ kit-status  A command. Run `kit status --help` for usage details.\n  ✓ nested      Nested\n  ✓ plain\n\n3 skills synced\n\nRun `kit --help` to see the full command reference.\n",
         ),
     ]
     .agents/
@@ -2105,7 +2116,7 @@ fn mounts_unusual_mcp_servers() {
     [
         (
             0,
-            "remote direct\n\nUsage: remote direct <command>\n\nCommands:\n  listed\n  nulled\n  numeric\n  silent\n  zero\n\nGlobal Options:\n  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])\n  --format <toon|json|yaml|md|jsonl>  Output format\n  --full-output                       Show full output envelope\n  --help                              Show help\n  --llms, --llms-full                 Print LLM-readable manifest\n  --schema                            Show JSON Schema for command\n  --token-count                       Print token count of output (instead of output)\n  --token-limit <n>                   Limit output to n tokens\n  --token-offset <n>                  Skip first n tokens of output\n",
+            "remote direct\n\nUsage: remote direct <command>\n\nCommands:\n  listed\n  nulled\n  numeric\n  silent\n  zero\n\nGlobal Options:\n  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])\n  --format <toon|json|yaml|md|jsonl>  Output format\n  --full-output                       Show full output envelope\n  --help                              Show help\n  --json                              Shorthand for --format json\n  --llms, --llms-full                 Print LLM-readable manifest\n  --schema                            Show JSON Schema for command\n  --token-count                       Print token count of output (instead of output)\n  --token-limit <n>                   Limit output to n tokens\n  --token-offset <n>                  Skip first n tokens of output\n",
         ),
         (
             1,
@@ -2455,4 +2466,601 @@ fn reads_structured_frontmatter() {
 struct EchoOptions {
     /// Limit option
     limit: Option<String>,
+}
+
+/// Deployment environments.
+#[derive(Clone, Copy, Debug, Deserialize, Schema, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Stage {
+    Dev,
+    Prod,
+}
+
+/// Deploys a service.
+#[derive(Debug, Parser)]
+#[incur(hint = "Deploys are logged.", destructive, output = DeployOutput)]
+#[incur(middleware = trace_deploy, example = "api 3")]
+struct Deploy {
+    /// Service name
+    #[incur(arg)]
+    service: String,
+    /// Replica count
+    #[incur(arg)]
+    replicas: Option<u8>,
+    /// Target stage
+    #[incur(alias = 's', default = Stage::Dev)]
+    stage: Stage,
+    /// Verbosity
+    #[incur(alias = 'v', count)]
+    verbose: f64,
+    /// API token
+    #[incur(env)]
+    api_token: Option<String>,
+    /// Renamed flag
+    #[incur(name = "dry", coerce)]
+    dry_run: Option<bool>,
+    /// Not part of the input
+    #[incur(skip)]
+    cache: Vec<String>,
+    /// Region
+    #[incur(default)]
+    region: String,
+    /// Labels
+    labels: std::vec::Vec<String>,
+}
+
+#[derive(Schema)]
+#[expect(dead_code, reason = "Only the schema is used.")]
+struct DeployOutput {
+    /// Deployed service
+    service: String,
+}
+
+/// Database commands
+#[derive(Debug, Parser)]
+#[incur(middleware = trace_db)]
+enum Db {
+    /// Run migrations
+    Migrate,
+    /// Open a shell
+    #[incur(aliases = ["sh"])]
+    Shell {
+        /// Database name
+        #[incur(arg)]
+        name: Option<String>,
+    },
+}
+
+/// Operations tooling.
+#[derive(Debug, Parser)]
+#[incur(name = "ops", version = "2.0.0", aliases = ["op"], middleware = trace_ops)]
+enum Ops {
+    /// Show status
+    Status,
+    Deploy(Deploy),
+    /// Ship it now
+    #[incur(name = "ship", aliases = ["go"], hint = "Ships to prod.")]
+    #[incur(middleware = trace_ship, example(command = "web", description = "Ship web"))]
+    #[incur(usage(args = ["service"], options = ["stage"], prefix = "env X=1", suffix = "| tee log"))]
+    Ship(Deploy),
+    Db(Db),
+    /// Database admin
+    Admin(Db),
+    Misc(Misc),
+    /// Remove everything
+    #[incur(destructive, description = "Wipe all data", output = DeployOutput)]
+    Wipe {
+        /// Confirmation
+        #[incur(alias = 'y')]
+        yes: bool,
+        /// Strict level
+        #[incur(arg, coerce = false)]
+        level: Option<f64>,
+    },
+}
+
+#[derive(Debug, Parser)]
+enum Misc {
+    Ping,
+}
+
+/// The middleware that ran, in order.
+struct Trace(String);
+
+/// Appends `name` to the trace and runs the rest of the chain.
+fn traced(
+    mut c: incur::MiddlewareContext,
+    next: incur::Next,
+    name: &str,
+) -> impl Future<Output = Result<(), Error>> + Send + 'static {
+    let trace = c.var::<Trace>().map_or("", |t| t.0.as_str());
+    c.set(Trace(format!("{trace}{name},")));
+    next.run(c)
+}
+
+fn trace_ops(
+    c: incur::MiddlewareContext,
+    next: incur::Next,
+) -> impl Future<Output = Result<(), Error>> + Send + 'static {
+    traced(c, next, "ops")
+}
+
+fn trace_db(
+    c: incur::MiddlewareContext,
+    next: incur::Next,
+) -> impl Future<Output = Result<(), Error>> + Send + 'static {
+    traced(c, next, "db")
+}
+
+fn trace_deploy(
+    c: incur::MiddlewareContext,
+    next: incur::Next,
+) -> impl Future<Output = Result<(), Error>> + Send + 'static {
+    traced(c, next, "deploy")
+}
+
+async fn trace_ship(c: incur::MiddlewareContext, next: incur::Next) -> Result<(), Error> {
+    traced(c, next, "ship").await
+}
+
+/// A CLI that takes no input.
+#[derive(Debug, Parser)]
+#[incur(version)]
+struct Bare;
+
+/// Parses `argv` into a derived type with an injected environment, returning the result and
+/// the output.
+fn parse<T: incur::Parser + std::fmt::Debug>(
+    cli: Cli,
+    argv: &[&str],
+    env: &[(&str, &str)],
+) -> String {
+    let argv = argv.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    let vars = env
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect::<BTreeMap<_, _>>();
+    let lookup = |key: &str| vars.get(key).cloned();
+    let mut stdout = Vec::new();
+    let parsed = cli.parse_with::<T>(
+        &argv,
+        &mut Io {
+            env: &lookup,
+            stderr: &mut Vec::new(),
+            stdin: &mut futures::stream::empty(),
+            stdout: &mut stdout,
+            tty: false,
+        },
+    );
+    format!("{parsed:?}\n{}", String::from_utf8(stdout).unwrap())
+}
+
+/// `parse_with` returns the typed command: struct variants, nested commands and groups, command
+/// aliases, positional numbers, environment variables, defaults, and skipped fields. Output
+/// after the command, such as the envelope, is the caller's.
+#[test]
+fn parses_derived_commands() {
+    let ops = || Ops::cli().update(false).sync(false);
+    let outputs = [
+        parse::<Ops>(ops(), &["status"], &[]),
+        parse::<Ops>(ops(), &["status", "--full-output"], &[]),
+        parse::<Ops>(
+            ops(),
+            &["deploy", "api", "3", "-s", "prod", "-vv", "--dry"],
+            &[("API_TOKEN", "secret")],
+        ),
+        parse::<Ops>(ops(), &["go", "web"], &[]),
+        parse::<Ops>(ops(), &["db", "sh", "main"], &[]),
+        parse::<Ops>(ops(), &["admin", "migrate"], &[]),
+        parse::<Ops>(ops(), &["wipe", "-y"], &[]),
+        parse::<Ops>(ops(), &["wipe", "3"], &[]),
+        parse::<Ops>(ops(), &["deploy"], &[]),
+        parse::<Ops>(ops(), &["deploy", "api", "300"], &[]),
+        parse::<Bare>(Bare::cli(), &[], &[]),
+        parse::<Ops>(ops(), &["misc", "ping"], &[]),
+        parse::<Ops>(ops(), &["misc", "--help"], &[]),
+    ];
+    assert_snapshot!(outputs.join("---\n"), @r#"
+    Ok(Status)
+    ---
+    Ok(Status)
+    ---
+    Ok(Deploy(Deploy { service: "api", replicas: Some(3), stage: Prod, verbose: 2.0, api_token: Some("secret"), dry_run: Some(true), cache: [], region: "", labels: [] }))
+    ---
+    Ok(Ship(Deploy { service: "web", replicas: None, stage: Dev, verbose: 0.0, api_token: None, dry_run: None, cache: [], region: "", labels: [] }))
+    ---
+    Ok(Db(Shell { name: Some("main") }))
+    ---
+    Ok(Admin(Migrate))
+    ---
+    Ok(Wipe { yes: true, level: None })
+    ---
+    Err(1)
+    code: VALIDATION_ERROR
+    message: "Invalid input: expected number, received string\n\nDetails: [\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"level\"\n    ],\n    \"message\": \"Invalid input: expected number, received string\"\n  }\n]"
+    fieldErrors[1]{code,missing,path,expected,received,message}:
+      invalid_type,false,level,number,"","Invalid input: expected number, received string"
+    ---
+    Err(1)
+    code: VALIDATION_ERROR
+    message: "Invalid input: expected string, received undefined\n\nDetails: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"service\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+    fieldErrors[1]{code,missing,path,expected,received,message}:
+      invalid_type,true,service,string,"","Invalid input: expected string, received undefined"
+    ---
+    Err(1)
+    code: UNKNOWN
+    message: "invalid value: integer `300`, expected u8"
+    ---
+    Ok(Bare)
+    ---
+    Ok(Misc(Ping))
+    ---
+    Err(0)
+    ops misc
+
+    Usage: ops misc <command>
+
+    Commands:
+      ping
+
+    Global Options:
+      --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+      --format <toon|json|yaml|md|jsonl>  Output format
+      --full-output                       Show full output envelope
+      --help                              Show help
+      --json                              Shorthand for --format json
+      --llms, --llms-full                 Print LLM-readable manifest
+      --schema                            Show JSON Schema for command
+      --token-count                       Print token count of output (instead of output)
+      --token-limit <n>                   Limit output to n tokens
+      --token-offset <n>                  Skip first n tokens of output
+    "#);
+    assert_eq!(
+        parse::<Bare>(Bare::cli().update(false), &["--version"], &[]),
+        format!("Err(0)\n{}\n", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(Bare::cli().name(), env!("CARGO_PKG_NAME"));
+    let parsed = Bare::parse_with(
+        &[],
+        &mut Io {
+            env: &|_| None,
+            stderr: &mut Vec::new(),
+            stdin: &mut futures::stream::empty(),
+            stdout: &mut Vec::new(),
+            tty: false,
+        },
+    );
+    assert!(matches!(parsed, Ok(Bare)));
+}
+
+/// Middleware that fails after `next.run` fails the parse: its error is written and the exit
+/// code returned, though the command was already parsed.
+#[test]
+fn parses_failed_middleware() {
+    let cli = || {
+        Bare::cli().update(false).middleware(|c, next| async move {
+            next.run(c).await?;
+            Err(Error::new("DENIED", "failed after the command"))
+        })
+    };
+    assert_snapshot!(parse::<Bare>(cli(), &[], &[]), @r#"
+    Err(1)
+    code: DENIED
+    message: failed after the command
+    "#);
+    assert_snapshot!(parse::<Bare>(cli(), &["--format", "json"], &[]), @r#"
+    Err(1)
+    {
+      "code": "DENIED",
+      "message": "failed after the command"
+    }
+    "#);
+}
+
+/// In the parse form, help and completions hide `--mcp` and `mcp add`, which need a handler,
+/// and both are unknown commands.
+#[test]
+fn hides_mcp_when_parsing() {
+    let ops = || Ops::cli().update(false);
+    let outputs = [
+        parse::<Ops>(ops(), &["--help"], &[]),
+        parse::<Ops>(ops(), &["--mcp"], &[]),
+        parse::<Ops>(ops(), &["mcp", "add"], &[]),
+        parse::<Ops>(ops(), &["mc"], &[]),
+        parse::<Ops>(ops(), &["--", "ops", ""], &[("COMPLETE", "bash")]),
+        parse::<Ops>(ops(), &["--", "ops", "mcp", ""], &[("COMPLETE", "bash")]),
+        parse::<Ops>(ops(), &["deploy", "--help"], &[]),
+        parse::<Ops>(ops(), &["ship", "--help"], &[]),
+        parse::<Ops>(ops(), &["admin", "--help"], &[]),
+    ];
+    // Completion candidates are separated by control characters.
+    let outputs = outputs.map(|output| output.replace('\u{b}', " ").replace('\u{1}', "/"));
+    assert_snapshot!(outputs.join("---\n"), @r#"
+    Err(0)
+    ops@2.0.0 — Operations tooling.
+
+    Usage: ops <command>
+    Aliases: op
+
+    Commands:
+      admin   Database admin
+      db      Database commands
+      deploy  Deploys a service.
+      misc
+      ship    Ship it now
+      status  Show status
+      wipe    Wipe all data
+
+    Integrations:
+      completions  Generate shell completion script
+      skills       Sync skill files to agents (add, list)
+
+    Global Options:
+      --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+      --format <toon|json|yaml|md|jsonl>  Output format
+      --full-output                       Show full output envelope
+      --help                              Show help
+      --json                              Shorthand for --format json
+      --llms, --llms-full                 Print LLM-readable manifest
+      --schema                            Show JSON Schema for command
+      --token-count                       Print token count of output (instead of output)
+      --token-limit <n>                   Limit output to n tokens
+      --token-offset <n>                  Skip first n tokens of output
+      --version                           Show version
+    ---
+    Err(1)
+    code: COMMAND_NOT_FOUND
+    message: '--mcp' is not a command for 'ops'.
+    cta:
+      description: "Suggested command:"
+      commands[1]{command,description}:
+        ops --help,see all available commands
+    ---
+    Err(1)
+    code: COMMAND_NOT_FOUND
+    message: 'mcp' is not a command for 'ops'.
+    cta:
+      description: "Suggested command:"
+      commands[1]{command,description}:
+        ops --help,see all available commands
+    ---
+    Err(1)
+    code: COMMAND_NOT_FOUND
+    message: 'mc' is not a command for 'ops'. Did you mean 'go'?
+    cta:
+      description: "Suggested commands:"
+      commands[2]:
+        - command: ops go
+        - command: ops --help
+          description: see all available commands
+    ---
+    Err(0)
+    status deploy ship db/ admin/ misc/ wipe completions skills/---
+    Err(0)
+    status deploy ship db/ admin/ misc/ wipe---
+    Err(0)
+    ops deploy — Deploys a service.
+
+    Usage: ops deploy <service> [replicas] [options]
+
+    Arguments:
+      service   Service name
+      replicas  Replica count
+
+    Options:
+      --stage, -s <dev|prod>  Target stage (default: dev)
+      --verbose, -v <count>   Verbosity (default: 0)
+      --dry                   Renamed flag
+      --region <string>       Region (default: )
+      --labels <array>        Labels
+
+    Examples:
+      ops deploy api 3
+
+    Deploys are logged.
+
+    Global Options:
+      --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+      --format <toon|json|yaml|md|jsonl>  Output format
+      --full-output                       Show full output envelope
+      --help                              Show help
+      --json                              Shorthand for --format json
+      --llms, --llms-full                 Print LLM-readable manifest
+      --schema                            Show JSON Schema for command
+      --token-count                       Print token count of output (instead of output)
+      --token-limit <n>                   Limit output to n tokens
+      --token-offset <n>                  Skip first n tokens of output
+
+    Environment Variables:
+      API_TOKEN  API token
+    ---
+    Err(0)
+    ops ship — Ship it now
+
+    Usage: env X=1 ops ship <service> --stage <stage> | tee log
+    Aliases: go
+
+    Arguments:
+      service   Service name
+      replicas  Replica count
+
+    Options:
+      --stage, -s <dev|prod>  Target stage (default: dev)
+      --verbose, -v <count>   Verbosity (default: 0)
+      --dry                   Renamed flag
+      --region <string>       Region (default: )
+      --labels <array>        Labels
+
+    Examples:
+      ops ship api 3
+      ops ship web    # Ship web
+
+    Ships to prod.
+
+    Global Options:
+      --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+      --format <toon|json|yaml|md|jsonl>  Output format
+      --full-output                       Show full output envelope
+      --help                              Show help
+      --json                              Shorthand for --format json
+      --llms, --llms-full                 Print LLM-readable manifest
+      --schema                            Show JSON Schema for command
+      --token-count                       Print token count of output (instead of output)
+      --token-limit <n>                   Limit output to n tokens
+      --token-offset <n>                  Skip first n tokens of output
+
+    Environment Variables:
+      API_TOKEN  API token
+    ---
+    Err(0)
+    ops admin — Database admin
+
+    Usage: ops admin <command>
+
+    Commands:
+      migrate  Run migrations
+      shell    Open a shell
+
+    Global Options:
+      --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+      --format <toon|json|yaml|md|jsonl>  Output format
+      --full-output                       Show full output envelope
+      --help                              Show help
+      --json                              Shorthand for --format json
+      --llms, --llms-full                 Print LLM-readable manifest
+      --schema                            Show JSON Schema for command
+      --token-count                       Print token count of output (instead of output)
+      --token-limit <n>                   Limit output to n tokens
+      --token-offset <n>                  Skip first n tokens of output
+    "#);
+}
+
+#[derive(serde::Serialize)]
+struct Shipped {
+    service: String,
+    stage: Stage,
+    trace: String,
+}
+
+/// The handler form writes typed outputs in the requested format, and serves the same
+/// commands over MCP and HTTP: data, futures of data, and fallible handlers.
+#[test]
+fn handles_derived_commands() {
+    let cli = Ops::cli()
+        .update(false)
+        .sync(false)
+        .mcp(Mcp::new().discovery(Discovery::Direct))
+        .handle(|command, c| async move {
+            let trace = c.var::<Trace>().map_or(String::new(), |t| t.0.clone());
+            let shipped = |deploy: Deploy| Shipped {
+                service: deploy.service,
+                stage: deploy.stage,
+                trace: trace.clone(),
+            };
+            let outcome: incur::Result<Outcome> = match command {
+                Ops::Status => Ok(incur::ok(format!("{} {trace}", c.name))),
+                Ops::Deploy(deploy) | Ops::Ship(deploy) => {
+                    let _ = (deploy.replicas, deploy.verbose, deploy.api_token.as_ref());
+                    let _ = (deploy.dry_run, deploy.cache.len(), deploy.region.len());
+                    let _ = deploy.labels.len();
+                    Ok(incur::ok(shipped(deploy)))
+                }
+                Ops::Db(Db::Shell { name }) | Ops::Admin(Db::Shell { name }) => {
+                    Ok(incur::ok(format!("{name:?} {trace}")))
+                }
+                Ops::Db(Db::Migrate) | Ops::Admin(Db::Migrate) => Ok(incur::ok("migrated")),
+                Ops::Misc(Misc::Ping) => Ok(incur::ok("pong")),
+                Ops::Wipe { yes, level } if yes => Ok(incur::ok(level)),
+                Ops::Wipe { .. } => Err(Error::new("UNCONFIRMED", "Pass --yes")),
+            };
+            outcome
+        });
+    let single = Bare::cli().update(false).handle(|Bare, _| async {
+        Shipped {
+            service: "bare".into(),
+            stage: Stage::Prod,
+            trace: String::new(),
+        }
+    });
+    let data = Bare::cli().update(false).handle(|Bare, _| Shipped {
+        service: "sync".into(),
+        stage: Stage::Dev,
+        trace: String::new(),
+    });
+    let tools = [
+        r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        &call(2, "deploy", r#"{"service":"api","stage":"prod"}"#),
+    ];
+    let outputs = [
+        serve(&cli, &["deploy", "api", "--format", "json"]).1,
+        serve(&cli, &["wipe"]).1,
+        serve(&cli, &["wipe", "--yes"]).1,
+        serve(&cli, &["db", "migrate"]).1,
+        serve(&cli, &["status"]).1,
+        serve(&cli, &["ship", "web"]).1,
+        serve(&cli, &["admin", "sh", "main"]).1,
+        run(&cli, &["--mcp"], &[], &tools, false).1,
+        http(&cli, "GET", "/ship/web?stage=prod", &[], ""),
+        serve(&single, &[]).1,
+        serve(&data, &[]).1,
+    ];
+    assert_snapshot!(outputs.join("---\n"), @r#"
+    {
+      "service": "api",
+      "stage": "dev",
+      "trace": "ops,deploy,"
+    }
+    ---
+    code: UNCONFIRMED
+    message: Pass --yes
+    ---
+    ---
+    migrated
+    ---
+    ops ops,
+    ---
+    service: web
+    stage: dev
+    trace: "ops,deploy,ship,"
+    ---
+    Some("main") ops,db,
+    ---
+    {"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"ops","version":"2.0.0"}},"jsonrpc":"2.0","id":0}
+    {"result":{"tools":[{"name":"admin_migrate","description":"Run migrations","inputSchema":{"type":"object","properties":{}}},{"name":"admin_shell","description":"Open a shell","inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"name":{"description":"Database name","type":"string"}}}},{"name":"db_migrate","description":"Run migrations","inputSchema":{"type":"object","properties":{}}},{"name":"db_shell","description":"Open a shell","inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"name":{"description":"Database name","type":"string"}}}},{"name":"deploy","description":"Deploys a service.","inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"service":{"type":"string","description":"Service name"},"replicas":{"description":"Replica count","type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"stage":{"default":"dev","description":"Target stage","type":"string","enum":["dev","prod"]},"verbose":{"default":0,"description":"Verbosity","count":true,"type":"number"},"dry":{"description":"Renamed flag","type":"boolean"},"region":{"default":"","description":"Region","type":"string"},"labels":{"default":[],"description":"Labels","type":"array","items":{"type":"string"}}},"required":["service"]},"outputSchema":{"type":"object","properties":{"service":{"type":"string","description":"Deployed service"}},"required":["service"],"additionalProperties":false}},{"name":"misc_ping","inputSchema":{"type":"object","properties":{}}},{"name":"ship","description":"Ship it now","inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"service":{"type":"string","description":"Service name"},"replicas":{"description":"Replica count","type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"stage":{"default":"dev","description":"Target stage","type":"string","enum":["dev","prod"]},"verbose":{"default":0,"description":"Verbosity","count":true,"type":"number"},"dry":{"description":"Renamed flag","type":"boolean"},"region":{"default":"","description":"Region","type":"string"},"labels":{"default":[],"description":"Labels","type":"array","items":{"type":"string"}}},"required":["service"]},"outputSchema":{"type":"object","properties":{"service":{"type":"string","description":"Deployed service"}},"required":["service"],"additionalProperties":false}},{"name":"status","description":"Show status","inputSchema":{"type":"object","properties":{}}},{"name":"wipe","description":"Wipe all data","inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"level":{"description":"Strict level","type":"number"},"yes":{"default":false,"description":"Confirmation","type":"boolean"}}},"outputSchema":{"type":"object","properties":{"service":{"type":"string","description":"Deployed service"}},"required":["service"],"additionalProperties":false}}]},"jsonrpc":"2.0","id":1}
+    {"result":{"content":[{"type":"text","text":"{\"service\":\"api\",\"stage\":\"prod\",\"trace\":\"ops,deploy,\"}"}],"structuredContent":{"service":"api","stage":"prod","trace":"ops,deploy,"}},"jsonrpc":"2.0","id":2}
+    ---
+    HTTP 200
+    content-type: application/json
+
+    {"ok":true,"data":{"service":"web","stage":"prod","trace":"ops,deploy,ship,"},"meta":{"command":"ship","duration":"<n>"}}---
+    service: bare
+    stage: prod
+    trace: ""
+    ---
+    service: sync
+    stage: dev
+    trace: ""
+    "#);
+}
+
+/// `Type::coerce` converts input as `z.coerce` does, without changing the JSON Schema.
+#[test]
+fn coerces_input() {
+    let ty = Type::object(vec![
+        Field::new("count", u32::schema().coerce()),
+        Field::new("on", bool::schema().coerce()),
+    ]);
+    let parsed = incur::parser::parse(&["7".into(), "false".into()], Some(&ty), None, None);
+    assert_snapshot!(
+        format!(
+            "{}\n{}",
+            parsed.unwrap().args,
+            incur::schema::json_schema(&ty)
+        ),
+        @r#"
+    {"count":7,"on":true}
+    {"type":"object","properties":{"count":{"type":"integer","minimum":-9007199254740991.0,"maximum":9007199254740991.0},"on":{"type":"boolean"}},"required":["count","on"],"additionalProperties":false}
+    "#
+    );
 }

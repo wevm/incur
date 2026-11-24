@@ -1,6 +1,6 @@
 [package]
 name = "incur-macros"
-description = "Derive macros for incur schemas."
+description = "Derive macros for incur: typed CLIs (`Parser`) and schemas (`Schema`)."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

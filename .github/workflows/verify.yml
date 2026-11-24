@@ -19,11 +19,17 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
+      # `pnpm check` fixes files in place, so fail when it leaves changes.
       - name: Check code
-        run: pnpm check
+        run: |
+          pnpm check
+          git diff --exit-code
 
       - name: Check types
         run: pnpm check:types
+
+      - name: Check language port versions
+        run: node langs/version.ts --check
 
   test:
     name: Test Runtime
@@ -74,6 +80,8 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy --workspace --all-targets --features incur/client -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features --features incur/client -- -D warnings
 
       - name: Check docs
         run: cargo doc --workspace --no-deps
@@ -82,6 +90,10 @@ jobs:
 
       - name: Test docs
         run: cargo test --workspace --doc
+
+      # Without the default tokio feature, the blocking entries use a std-only executor.
+      - name: Test without default features
+        run: cargo test --workspace --no-default-features
 
       # Differential, API, and derive tests, failing on any uncovered line.
       # rust-cache disables incremental builds, which inline small functions across crates and

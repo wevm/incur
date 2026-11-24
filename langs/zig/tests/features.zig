@@ -3,6 +3,7 @@
 //! file system failures, malformed protocol messages, and the production network path.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const incur = @import("incur");
 
 const testing = std.testing;
@@ -236,7 +237,7 @@ test "registers MCP servers with exact package versions" {
     var dir = testing.tmpDir(.{});
     defer dir.cleanup();
     try dir.dir.createDirPath(testing.io, "bin");
-    try dir.dir.writeFile(testing.io, .{ .sub_path = "bin/npx", .data = stub, .flags = .{ .permissions = .fromMode(0o755) } });
+    try dir.dir.writeFile(testing.io, .{ .sub_path = "bin/npx", .data = stub, .flags = .{ .permissions = .executable_file } });
     try seed(dir, &.{.{ ".config/amp/settings.json", "[]" }});
     const home = try tmpPath(a, dir);
     const bin = try std.fs.path.join(a, &.{ home, "bin" });
@@ -269,6 +270,41 @@ test "registers MCP servers with exact package versions" {
 
 fn alpha(_: *const incur.update.Check) !?[]const u8 {
     return "1.0.0-alpha";
+}
+
+test "runs Windows command scripts with every argument intact" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var dir = testing.tmpDir(.{});
+    defer dir.cleanup();
+    // Like npm's `npx.cmd`, the script forwards `%*`, which `cmd.exe` parses a second time.
+    try seed(dir, &.{
+        .{ "record.cjs", "require('fs').writeFileSync(require('path').join(__dirname, 'calls'), JSON.stringify(process.argv.slice(2)))\nconsole.log('\u{2502} \u{2713} Codex: added')\n" },
+        .{ "npx.cmd", "@ECHO off\r\nnode \"%~dp0\\record.cjs\" %*\r\n" },
+    });
+    const home = try tmpPath(a, dir);
+    var env = try testing.environ.createMap(a);
+    try env.put("HOME", home);
+    try env.put("PATH", try std.fmt.allocPrint(a, "{s};{s}", .{ home, env.get("PATH") orelse "" }));
+    const agents = [_][]const u8{ "a&b|c<d>e^f", "100%", "%PATH%", "!bang! (x) ;semi, comma", "q\\\"uote", "dir\\" };
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(a, &.{ "mcp", "add" });
+    for (agents) |agent| try argv.appendSlice(a, &.{ "--agent", agent });
+    const cli = try incur.Cli.create(testing.allocator, "kit", .{});
+    defer cli.destroy();
+    var stdout: std.Io.Writer.Allocating = .init(a);
+    var stderr: std.Io.Writer.Allocating = .init(a);
+    const exit = try cli.serveWith(argv.items, .{ .io = testing.io, .env = &env, .stdout = &stdout.writer, .stderr = &stderr.writer, .tty = false, .program = "/x/other" });
+    try testing.expectEqualStrings("Registering MCP server...\r\x1b[K\u{2713} Registered kit as MCP server\n  Agents: Codex\n\nAgents can now use kit tools.\n", stdout.written());
+    try testing.expectEqual(0, exit);
+    const calls = try std.json.parseFromSliceLeaky([]const []const u8, a, try dir.dir.readFileAlloc(testing.io, "calls", a, .unlimited), .{});
+    try testing.expectEqual(6 + 2 * agents.len, calls.len);
+    for (agents, 0..) |agent, i| {
+        try testing.expectEqualStrings("-a", calls[6 + 2 * i]);
+        try testing.expectEqualStrings(agent, calls[7 + 2 * i]);
+    }
 }
 
 test "notices prerelease updates and schedules refreshes" {

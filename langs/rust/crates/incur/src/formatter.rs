@@ -153,7 +153,7 @@ fn kv_table(map: &Map<String, Value>) -> String {
     table(&["Key".into(), "Value".into()], &rows)
 }
 
-/// Renders a columnar table from an array of objects.
+/// Renders a columnar table from an array of objects. Nested cells render as compact JSON.
 fn columnar_table(items: &[Value]) -> String {
     let mut keys: Vec<String> = Vec::new();
     for map in items.iter().filter_map(Value::as_object) {
@@ -169,6 +169,10 @@ fn columnar_table(items: &[Value]) -> String {
             keys.iter()
                 .map(|key| match item.get(key) {
                     None | Some(Value::Null) => String::new(),
+                    // Escape pipes so the JSON stays inside its cell.
+                    Some(value @ (Value::Array(_) | Value::Object(_))) => {
+                        js::stringify(value).replace('|', "\\|")
+                    }
                     Some(value) => js::to_string(value),
                 })
                 .collect()

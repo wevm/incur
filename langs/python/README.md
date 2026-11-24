@@ -39,7 +39,7 @@
 ## Install
 
 ```bash
-pip install incur
+pip install incur-cli
 ```
 
 ## Usage

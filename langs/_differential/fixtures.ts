@@ -169,7 +169,7 @@ const app = Cli.create('app', {
     env: z.object({
       DEPLOY_TOKEN: z.string().describe('Deploy token'),
       DEPLOY_REGION: z.string().default('us').describe('Region'),
-      DEPLOY_RETRIES: z.number().optional().describe('Retries'),
+      DEPLOY_RETRIES: z.int().optional().describe('Retries'),
       DEPLOY_DRY: z.boolean().optional().describe('Dry run'),
     }),
     options: z.object({
@@ -242,7 +242,7 @@ const app = Cli.create('app', {
     options: z.object({
       verbose: z.number().default(0).describe('Verbosity').meta({ count: true }),
       quiet: z.boolean().optional().describe('Quiet'),
-      level: z.number().int().optional().describe('Level'),
+      level: z.int().optional().describe('Level'),
     }),
     alias: { verbose: 'v', quiet: 'q' },
     run: (c) => ({
@@ -442,6 +442,27 @@ const rooted = Cli.create('rooted', {
       run: () => ({ leaf: true }),
     }),
   )
+
+const shadow = Cli.create('shadow', {
+  description: 'Commands named like built-ins',
+  update: false,
+})
+  .command(
+    Cli.create('mcp', { description: 'Manage servers' }).command('add', {
+      description: 'Add a server',
+      run: () => ({ added: true }),
+    }),
+  )
+  .command('skill', {
+    description: 'Show a skill',
+    args: z.object({ id: z.string().describe('Skill id') }),
+    run: (c) => ({ id: c.args.id }),
+  })
+  .command('shell', {
+    description: 'Show the shell',
+    aliases: ['completions'],
+    run: () => ({ shell: true }),
+  })
 
 /**
  * The fake network. Every outgoing `fetch` (hosted sources, OpenAPI URLs, the npm registry, MCP
@@ -672,7 +693,8 @@ function toolCli(
       profile: z.string().default('dev').describe('Profile'),
       verbose: z.boolean().optional().describe('Verbose output'),
     }),
-    vars: z.object({ trace: z.string().default('none') }),
+    // Required: the root middleware sets it before any handler reads it.
+    vars: z.object({ trace: z.string() }),
   })
     .use(async (c, next) => {
       c.set('trace', `root:${c.command}:${c.env.TOOLS_REGION}`)
@@ -960,8 +982,11 @@ const gateway = Cli.create('gateway', {
   update: false,
   sync: false,
   env: z.object({ GATEWAY_MODE: z.string().optional().describe('Mode') }),
+  // Required: the middleware sets it before the fetch handler runs.
+  vars: z.object({ mode: z.string() }),
 })
   .use(async (c, next) => {
+    c.set('mode', c.env.GATEWAY_MODE ?? 'allow')
     if (c.env.GATEWAY_MODE === 'deny')
       return c.error({ code: 'DENIED', message: 'gateway denied', cta: { commands: ['status'] } })
     if (c.env.GATEWAY_MODE === 'throw') throw new Error('middleware threw')
@@ -1100,6 +1125,7 @@ async function fakeMcp(request: Request): Promise<Response> {
               label: { type: 'string' },
               on: { type: 'boolean' },
               ratio: { type: ['number', 'null'] },
+              tags: { type: ['array', 'null'], items: { type: 'string' } },
             },
             required: ['count'],
           },
@@ -1202,6 +1228,7 @@ const remote = Cli.create('remote', {
 function kitCli(
   name: string,
   options: {
+    cwd?: string
     mcp?: { agents?: string[]; command?: string; name?: string }
     package?: string
     version?: string
@@ -1214,6 +1241,7 @@ function kitCli(
     ...(options.package === undefined ? undefined : { package: options.package }),
     ...(options.mcp === undefined ? undefined : { mcp: options.mcp }),
     sync: {
+      ...(options.cwd === undefined ? undefined : { cwd: options.cwd }),
       include: ['skills/*', '_root'],
       body: 'Run `kit auth login` to finish setup.',
       suggestions: ['Show my status', 'Deploy the app'],
@@ -1252,6 +1280,7 @@ const kitcmd = kitCli('kitcmd', {
 const kitbad = kitCli('kitbad', { package: 'Bad Name', version: '1' })
 const kitver = kitCli('kitver', { package: 'kitver', version: 'latest' })
 const spaced = kitCli('kit tool')
+const kitcwd = kitCli('kitcwd', { cwd: 'vendor' })
 
 const upd = Cli.create('upd', {
   description: 'Custom updates',
@@ -1324,6 +1353,7 @@ export const clis = {
   kit,
   kitbad,
   kitcmd,
+  kitcwd,
   kitpkg,
   kitver,
   oa,
@@ -1333,6 +1363,7 @@ export const clis = {
   raw,
   remote,
   rooted,
+  shadow,
   spaced,
   tools,
   upd,

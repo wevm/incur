@@ -2,7 +2,7 @@
   "scripts": {
     "build": "zile",
     "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
-    "changeset:version": "changeset version",
+    "changeset:version": "changeset version && node langs/version.ts",
     "check": "oxlint --fix --ignore-pattern package.json && oxfmt",
     "check:types": "tsc -b src test && tsc -p langs/_differential",
     "incur": "node --import tsx src/cli/index.ts",
@@ -28,7 +28,7 @@
   "[!start-pkg]": "",
   "name": "incur",
   "type": "module",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "license": "MIT",
   "repository": {
     "type": "git",

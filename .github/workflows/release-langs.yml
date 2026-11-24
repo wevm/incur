@@ -1,48 +1,40 @@
 name: Release Language Ports
 on:
-  push:
-    tags: ['rust-v*', 'python-v*', 'zig-v*']
+  # Main calls this right after changesets publishes the npm package.
+  workflow_call:
+  # Releases the current version by hand, e.g. after the one-time registry setup.
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-langs-${{ github.ref }}
   cancel-in-progress: false
 
+# Main verifies every port before changesets publishes, and a manual run releases `main`, which CI
+# has verified.
 jobs:
-  # Every port's gate, including the differential suite against the tagged TypeScript reference.
-  verify:
-    name: Verify
-    uses: ./.github/workflows/verify.yml
-    secrets: inherit
-
   rust:
     name: Publish Rust
-    if: startsWith(github.ref_name, 'rust-v')
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: crates-io
     permissions:
       contents: read
       id-token: write
-    defaults:
-      run:
-        working-directory: langs/rust
     steps:
       - name: Clone repository
         uses: actions/checkout@v7
 
-      - name: Check version
-        run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "incur") | .version')
-          test "rust-v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match incur $version"; exit 1; }
+      - name: Check versions
+        run: node langs/version.ts --check
 
       # Exchanges the workflow's OIDC token for a short-lived crates.io token (trusted publishing).
       - name: Authenticate with crates.io
         id: auth
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: wevm/actions/vendor/rust-lang/crates-io-auth-action/rev-3268eb413133@73e899a58d51092d694fbaf94b7a1d8c09bfea28
 
       # `incur` pins `incur-macros` exactly, so the macros publish first.
       - name: Publish crates
+        working-directory: langs/rust
         run: |
           cargo publish -p incur-macros
           cargo publish -p incur
@@ -51,40 +43,29 @@ jobs:
 
   python:
     name: Publish Python
-    if: startsWith(github.ref_name, 'python-v')
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi
     permissions:
       contents: read
       id-token: write
-    defaults:
-      run:
-        working-directory: langs/python
     steps:
       - name: Clone repository
         uses: actions/checkout@v7
 
+      - name: Check versions
+        run: node langs/version.ts --check
+
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/0.12.9/install.sh | sh
 
-      - name: Check version
-        run: |
-          version=$(uv version --short)
-          test "python-v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match incur $version"; exit 1; }
-
-      - name: Build distributions
-        run: uv build
-
-      # Uses PyPI trusted publishing through the workflow's OIDC token.
-      - name: Publish to PyPI
-        run: uv publish
+      # `uv publish` uses PyPI trusted publishing through the workflow's OIDC token.
+      - name: Build and publish
+        working-directory: langs/python
+        run: uv build && uv publish
 
   zig:
     name: Release Zig
-    if: startsWith(github.ref_name, 'zig-v')
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -93,6 +74,11 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v7
 
+      - name: Check versions
+        run: |
+          node langs/version.ts --check
+          echo "VERSION=$(jq -r .version package.json)" >> "$GITHUB_ENV"
+
       - name: Install Zig
         run: |
           curl -fsSLo /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
@@ -100,24 +86,13 @@ jobs:
           tar xJf /tmp/zig.tar.xz -C "$HOME"
           echo "$HOME/zig-x86_64-linux-0.17.1" >> "$GITHUB_PATH"
 
-      - name: Check version
-        run: |
-          version=$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' langs/zig/build.zig.zon)
-          test "zig-v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match incur $version"; exit 1; }
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-
       # Zig has no registry: a package is a tarball URL. The tarball holds only `langs/zig`, so its
-      # own build.zig and build.zig.zon sit at the package root.
-      - name: Package
+      # own build.zig and build.zig.zon sit at the package root. It attaches to the npm release.
+      - name: Package and upload
         run: |
-          git archive --format=tar.gz --prefix="incur/" -o "incur-zig-$VERSION.tar.gz" "$GITHUB_SHA:langs/zig"
-          echo "HASH=$(zig fetch "incur-zig-$VERSION.tar.gz")" >> "$GITHUB_ENV"
-
-      - name: Create release
-        run: |
-          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/incur-zig-$VERSION.tar.gz"
-          gh release create "$GITHUB_REF_NAME" "incur-zig-$VERSION.tar.gz" \
-            --title "incur for Zig $VERSION" \
-            --notes "$(printf 'Install with Zig 0.17.1:\n\n```sh\nzig fetch --save %s\n```\n\nPackage hash: `%s`\n' "$url" "$HASH")"
+          file="incur-zig-$VERSION.tar.gz"
+          git archive --format=tar.gz --prefix="incur/" -o "$file" "$GITHUB_SHA:langs/zig"
+          echo "Package hash: $(zig fetch "$file")"
+          gh release upload "incur@$VERSION" "$file" --clobber
         env:
           GH_TOKEN: ${{ github.token }}

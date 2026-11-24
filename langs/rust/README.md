@@ -23,13 +23,14 @@
 
 ## Features
 
+- [**Derive**](#usage): declare a CLI as a struct or enum, then `parse()` it like clap, or `serve()` typed outputs
 - [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) so agents find your CLI automatically
 - [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
 - **TOON output**: token-efficient default format, with JSON, YAML, Markdown, and JSONL alternatives
 - [**`--llms` flag**](#agent-discovery): token-efficient command manifest in Markdown or JSON schema
-- **Well-formed I/O**: `#[derive(Schema)]` schemas for arguments, options, environment variables, and output
+- **Well-formed I/O**: schemas for arguments, options, environment variables, and `Serialize` outputs
 - [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
-- [**Async handlers**](#streaming): sync closures, `async` blocks, and streams, on any executor
+- [**Async when you need it**](#streaming): sync closures, `async` blocks, and streams; tokio is an optional default feature
 - [**Mount APIs**](#mount-apis): HTTP handlers, OpenAPI specs, and MCP servers as commands
 - [**Serve over HTTP**](#serve-over-http): commands and MCP as an `http::Request` → `http::Response` handler
 - [**Middleware**](#middleware-and-variables): composable before/after hooks with typed variables
@@ -37,82 +38,112 @@
 ## Install
 
 ```sh
-cargo add incur serde serde_json -F serde/derive
+cargo add incur serde -F serde/derive
 ```
 
 ## Usage
 
 ### Single-command CLI
 
-Pass a `root` command for CLIs that do one thing.
+Derive `Parser` on a struct. Fields are options, `#[incur(arg)]` fields positional arguments, and doc comments descriptions. `parse()` handles help, `--version`, `--llms`, completions, `skills add`, and validation errors itself, and returns the typed command.
 
 ```rust,no_run
-use incur::{Cli, Command, Context, Error, Schema};
-use serde::Deserialize;
-use serde_json::json;
+use incur::Parser;
 
-#[derive(Deserialize, Schema)]
-struct Args {
+/// A greeting CLI
+#[derive(Parser)]
+#[incur(name = "greet")]
+struct Greet {
     /// Name to greet
+    #[incur(arg)]
     name: String,
 }
 
 fn main() {
-    Cli::new("greet")
-        .description("A greeting CLI")
-        .root(Command::new().run(|c: Context<Args>| {
-            Ok::<_, Error>(json!({ "message": format!("hello {}", c.args.name) }))
-        }))
-        .serve();
+    let greet = Greet::parse();
+    println!("hello {}", greet.name);
+}
+```
+
+```sh
+$ greet world
+# → hello world
+```
+
+To let incur write the output, in TOON, JSON, YAML, Markdown, or JSONL, and serve the same command to agents over MCP and HTTP, `serve` a handler that returns any `Serialize` type instead:
+
+```rust,no_run
+# use incur::Parser;
+# /// A greeting CLI
+# #[derive(Parser)]
+# #[incur(name = "greet")]
+# struct Greet {
+#     /// Name to greet
+#     #[incur(arg)]
+#     name: String,
+# }
+#[derive(serde::Serialize)]
+struct Greeting {
+    message: String,
+}
+
+fn main() {
+    Greet::serve(|greet, _| Greeting { message: format!("hello {}", greet.name) });
 }
 ```
 
 ```sh
 $ greet world
 # → message: hello world
+
+$ greet world --json
+# → {
+# →   "message": "hello world"
+# → }
 ```
 
 ### Multi-command CLI
 
-Chain `.command()` calls to register subcommands.
+Derive `Parser` on an enum: each variant is a command, named in kebab-case, with its fields inline. Matching is exhaustive.
 
 ```rust,no_run
-use incur::{Cli, Command, Context, Schema};
-use serde::Deserialize;
-use serde_json::json;
+use incur::Parser;
+use serde::Serialize;
 
-#[derive(Deserialize, Schema)]
-struct InstallArgs {
-    /// Package name
-    package: Option<String>,
+/// My CLI
+#[derive(Parser)]
+#[incur(name = "my-cli", version)]
+enum MyCli {
+    /// Show repo status
+    Status,
+    /// Install a package
+    Install {
+        /// Package name
+        #[incur(arg)]
+        package: Option<String>,
+        /// Save as dev dependency
+        #[incur(alias = 'D')]
+        save_dev: bool,
+    },
 }
 
-#[derive(Deserialize, Schema)]
-#[serde(rename_all = "camelCase")]
-struct InstallOptions {
-    /// Save as dev dependency
-    #[incur(alias = 'D')]
-    save_dev: Option<bool>,
+#[derive(Serialize)]
+struct Status {
+    clean: bool,
+}
+
+#[derive(Serialize)]
+struct Installed {
+    added: u32,
+    packages: u32,
 }
 
 fn main() {
-    Cli::new("my-cli")
-        .description("My CLI")
-        .command(
-            "status",
-            Command::new()
-                .description("Show repo status")
-                .run(|_: Context| incur::ok(json!({ "clean": true }))),
-        )
-        .command(
-            "install",
-            Command::new()
-                .description("Install a package")
-                .run(|_: Context<InstallArgs, InstallOptions>| {
-                    incur::ok(json!({ "added": 1, "packages": 451 }))
-                }),
-        )
-        .serve();
+    // Variants return different types, so each becomes an `Outcome` with `incur::ok`.
+    MyCli::serve(|command, _| match command {
+        MyCli::Status => incur::ok(Status { clean: true }),
+        MyCli::Install { .. } => incur::ok(Installed { added: 1, packages: 451 }),
+    });
 }
 ```
 
@@ -127,7 +158,7 @@ $ my-cli install express -D
 
 ```sh
 $ my-cli --help
-# my-cli — My CLI
+# my-cli@0.1.0 — My CLI
 #
 # Usage: my-cli <command>
 #
@@ -143,42 +174,49 @@ $ my-cli --help
 # Global Options:
 #   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
 #   --format <toon|json|yaml|md|jsonl>  Output format
-#   ...
 ```
 
 ### Sub-command CLI
 
-Create a separate `Cli` and mount it with `.group()` to nest command groups.
+A tuple variant holding another `Parser` enum nests a command group.
 
 ```rust,no_run
-use incur::{Cli, Command, Context, Schema};
+use incur::{Parser, Schema};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
-#[derive(Default, Deserialize, Schema, Serialize)]
+#[derive(Clone, Copy, Deserialize, Schema, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum State {
-    #[default]
     Open,
     Closed,
     All,
 }
 
-#[derive(Deserialize, Schema)]
-struct ListOptions {
-    #[serde(default)]
+/// Pull request commands
+#[derive(Parser)]
+enum Pr {
+    /// List pull requests
+    List {
+        #[incur(default = State::Open)]
+        state: State,
+    },
+}
+
+/// My CLI
+#[derive(Parser)]
+#[incur(name = "my-cli")]
+enum MyCli {
+    Pr(Pr),
+}
+
+#[derive(Serialize)]
+struct Prs {
+    prs: Vec<String>,
     state: State,
 }
 
 fn main() {
-    let pr = Cli::new("pr").description("Pull request commands").command(
-        "list",
-        Command::new()
-            .description("List pull requests")
-            .run(|c: Context<(), ListOptions>| incur::ok(json!({ "prs": [], "state": c.options.state }))),
-    );
-
-    Cli::new("my-cli").description("My CLI").group(pr).serve();
+    MyCli::serve(|MyCli::Pr(Pr::List { state }), _| Prs { prs: Vec::new(), state });
 }
 ```
 
@@ -187,6 +225,10 @@ $ my-cli pr list --state closed
 # → prs: []
 # → state: closed
 ```
+
+### Parse or serve
+
+Both entries share one definition. `parse()` returns the command to your code, which writes the output; it hides `--mcp` and `mcp add`, which need something to call. `serve(handler)` writes what the handler returns and also serves `--mcp`, while `T::cli().handle(handler)` returns the `Cli` for HTTP. Customize either through the builder: `MyCli::cli().middleware(..).parse()` or `.handle(..).serve()`. The builder (`Cli::new`, `Command::new().run(..)`) also declares CLIs on its own, for commands known only at run time.
 
 ## Walkthrough
 
@@ -233,44 +275,49 @@ $ my-cli list
 
 ### Streaming
 
-Handlers may return a value, a `Result`, a future of either, or `incur::stream` of any `futures::Stream`. Chunks print as they arrive, as JSONL with `--format jsonl`, and as NDJSON over HTTP.
+Handlers return data, an `incur::Result`, an `async` block of either, or `incur::stream` of any `futures::Stream`. Chunks print as they arrive, as JSONL with `--format jsonl`, and as NDJSON over HTTP.
 
 ```rust
 use futures::stream::{self, StreamExt};
-use incur::{Command, Context, Error};
+use incur::Parser;
 
-let logs = Command::new().run(|_: Context| {
-    incur::stream(stream::iter(["connecting...", "streaming logs", "done"]).map(Ok::<_, Error>))
+/// Tail logs
+#[derive(Parser)]
+struct Logs;
+
+let cli = Logs::cli().handle(|Logs, _| {
+    incur::stream(stream::iter(["connecting...", "streaming logs", "done"]).map(Ok))
 });
 ```
 
-`Cli::serve` drives the CLI on a current-thread tokio runtime. Inside a runtime, await `Cli::serve_async`, or `Cli::run` with an injected `Io`.
+With the default `tokio` feature, `serve` and `parse` run on a current-thread tokio runtime, so handlers can await tokio timers and IO; inside a runtime, await `serve_async`, or `Cli::run` with an injected `Io`. Without it (`default-features = false`), a minimal executor runs synchronous handlers and runtime-agnostic futures with no runtime at all.
 
 ### Middleware and variables
 
 Middleware wraps every command; `c.set` provides typed variables that handlers read with `c.var`.
 
 ```rust
-use incur::{Cli, Command, Context};
+use incur::Parser;
+
+/// Who am I
+#[derive(Parser)]
+struct Whoami;
 
 struct User(String);
 
-let cli = Cli::new("my-cli")
+let cli = Whoami::cli()
     .middleware(|mut c, next| {
         c.set(User("alice".into()));
         next.run(c)
     })
-    .command(
-        "whoami",
-        Command::new().run(|c: Context| incur::ok(c.var::<User>().map(|u| u.0.clone()))),
-    );
+    .handle(|Whoami, c| c.var::<User>().map(|u| u.0.clone()));
 ```
 
-An `async move` middleware can fail before the command runs or run code after `next.run(c).await`. See [middleware](https://github.com/wevm/incur#middleware).
+An `async move` middleware can fail before the command runs or run code after `next.run(c).await`. `#[incur(middleware = audit)]` attaches a middleware function to one command, or to every command of an enum; `#[incur(example = "...")]` and `#[incur(usage(...))]` document a command. See [middleware](https://github.com/wevm/incur#middleware).
 
 ### Global options
 
-Every CLI gets `--filter-output`, `--format`, `--full-output`, `--help`, `--llms`, `--mcp`, `--json`, `--schema`, `--token-count`, `--token-limit`, `--token-offset`, `--update`, and `--version`. `.globals::<T>()` adds your own, read with `c.globals::<T>()`. See [global options](https://github.com/wevm/incur#global-options).
+Every CLI gets `--filter-output`, `--format`, `--full-output`, `--help`, `--llms`, `--mcp`, `--json`, `--schema`, `--token-count`, `--token-limit`, `--token-offset`, `--update`, and `--version`. `.globals::<T>()` adds your own, read with `c.globals::<T>()`; `#[incur(env)]` fields read environment variables. See [global options](https://github.com/wevm/incur#global-options).
 
 ### Config file
 

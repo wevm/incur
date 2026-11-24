@@ -71,12 +71,19 @@ function kvTable(obj: Record<string, unknown>): string {
   )
 }
 
-/** Renders a columnar table from an array of objects. */
+/** Renders a columnar table from an array of objects. Nested cells render as compact JSON. */
 function columnarTable(items: Record<string, unknown>[]): string {
   const keys = [...new Set(items.flatMap(Object.keys))]
   return table(
     keys,
-    items.map((item) => keys.map((k) => String(item[k] ?? ''))),
+    items.map((item) =>
+      keys.map((k) => {
+        const value = item[k]
+        if (isScalar(value)) return String(value ?? '')
+        // Escape pipes so the JSON stays inside its cell.
+        return Json.stringify(value).replaceAll('|', '\\|')
+      }),
+    ),
   )
 }
 

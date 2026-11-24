@@ -69,7 +69,7 @@ fn stringItems(a: Allocator, value: ?Value) ServeError![]const []const u8 {
 /// Returns the names of previously synced skills that are still installed: the recorded paths
 /// that hold a `SKILL.md`, or for older metadata without paths, the recorded skills found under
 /// `~/.agents/skills` or `<cwd>/.agents/skills`.
-fn installedSkills(a: Allocator, process: *const Process, name: []const u8, cwd: []const u8) ServeError![]const []const u8 {
+fn installedSkills(a: Allocator, process: *const Process, name: []const u8) ServeError![]const []const u8 {
     const io = process.io;
     const meta = try update.readJson(a, io, try metaPath(a, process, name)) orelse return &.{};
     const skills = try stringItems(a, meta.get("skills"));
@@ -80,7 +80,7 @@ fn installedSkills(a: Allocator, process: *const Process, name: []const u8, cwd:
         for (paths) |path| if (try exists(io, try std.fs.path.join(a, &.{ path, "SKILL.md" }))) try out.append(a, std.fs.path.basename(path));
         return out.items;
     }
-    const bases = [_][]const u8{ try std.fs.path.join(a, &.{ home(process), ".agents", "skills" }), try std.fs.path.join(a, &.{ cwd, ".agents", "skills" }) };
+    const bases = [_][]const u8{ try std.fs.path.join(a, &.{ home(process), ".agents", "skills" }), try std.fs.path.join(a, &.{ try currentPath(a, io), ".agents", "skills" }) };
     for (skills) |s| for (bases) |base| {
         if (!try exists(io, try std.fs.path.join(a, &.{ base, s, "SKILL.md" }))) continue;
         try out.append(a, s);
@@ -171,11 +171,11 @@ fn byName(comptime T: type) fn (void, T, T) bool {
 /// Lists the skills `skills add` would install, with their install status.
 pub fn list(a: Allocator, cli: *cli_.Cli, process: *const Process) ServeError![]const Listed {
     const sync = cli.options.sync.?;
-    const cwd = sync.cwd orelse try currentPath(a, process.io);
-    const installed = try installedSkills(a, process, cli.name, cwd);
+    const root = sync.cwd orelse try packageRoot(a, process);
+    const installed = try installedSkills(a, process, cli.name);
     var out: std.ArrayList(Listed) = .empty;
     for (try files(a, cli, sync.depth)) |file| try out.append(a, .{ .name = file.name, .description = file.description, .installed = contains(installed, file.name) });
-    for (try included(a, process, cli.name, sync.include, cwd)) |inc| {
+    for (try included(a, process, cli.name, sync.include, root)) |inc| {
         for (out.items) |item| {
             if (std.mem.eql(u8, item.name, inc.name)) break;
         } else try out.append(a, .{ .name = inc.name, .description = inc.description, .installed = contains(installed, inc.name) });
@@ -216,7 +216,8 @@ pub const Added = struct {
 pub fn add(a: Allocator, cli: *cli_.Cli, process: *const Process, depth: f64, global: bool) ServeError!Result(Added) {
     const io = process.io;
     const sync = cli.options.sync.?;
-    const cwd = sync.cwd orelse if (global) try packageRoot(a, process) else try currentPath(a, io);
+    const root = sync.cwd orelse try packageRoot(a, process);
+    const cwd = try currentPath(a, io);
     var random: [8]u8 = undefined;
     io.random(&random);
     const tmp = try std.fs.path.join(a, &.{ process.env.get("TMPDIR") orelse "/tmp", try std.fmt.allocPrint(a, "incur-skills-{s}-{x}", .{ cli.name, &random }) });
@@ -227,7 +228,7 @@ pub fn add(a: Allocator, cli: *cli_.Cli, process: *const Process, depth: f64, gl
             return .{ .err = try std.fmt.allocPrint(a, "Cannot write skills to {s}", .{tmp}) };
         try skills.append(a, .{ .name = file.name, .description = file.description });
     }
-    for (try included(a, process, cli.name, sync.include, cwd)) |inc| {
+    for (try included(a, process, cli.name, sync.include, root)) |inc| {
         try writeFile(io, try std.fs.path.join(a, &.{ tmp, inc.name, "SKILL.md" }), inc.content) orelse continue;
         for (skills.items) |s| {
             if (std.mem.eql(u8, s.name, inc.name)) break;
@@ -660,8 +661,7 @@ pub fn staleNotice(a: Allocator, cli: *cli_.Cli, process: *const Process, displa
     const meta = try update.readJson(a, process.io, try metaPath(a, process, cli.name)) orelse return null;
     const stored = meta.get("hash") orelse return null;
     if (stored != .string or stored.string.len == 0) return null;
-    const cwd = cli.options.sync.?.cwd orelse try currentPath(a, process.io);
-    if ((try installedSkills(a, process, cli.name, cwd)).len == 0) return null;
+    if ((try installedSkills(a, process, cli.name)).len == 0) return null;
     if (std.mem.eql(u8, try skill.hash(a, (try cli_.skillInfos(a, cli)).commands), stored.string)) return null;
     const package = cli.options.package;
     const launched = env(process, "npm_config_user_agent") != null or env(process, "npm_execpath") != null;

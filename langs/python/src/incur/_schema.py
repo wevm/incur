@@ -98,17 +98,28 @@ class Type:
         """Whether the option reads no value from the next token."""
         return self.count or self.kind == "boolean"
 
+    def unwrap(self) -> Type:
+        """Returns the only non-null option of a union, or the schema itself.
+
+        The parser and help read a union such as `type: ["array", "null"]` as its array.
+        """
+        if self.kind != "union":
+            return self
+        options = [v for v in self.variants if v.kind != "null"]
+        return options[0].unwrap() if len(options) == 1 else self
+
     def type_name(self) -> str:
         """Returns the type label help output shows."""
         if self.count:
             return "count"
-        if self.kind == "enum":
-            return "|".join(self.values)
-        if self.kind == "integer":
+        ty = self.unwrap()
+        if ty.kind == "enum":
+            return "|".join(ty.values)
+        if ty.kind == "integer":
             return "number"
-        if self.kind in ("object", "record", "unknown"):
+        if ty.kind in ("object", "record", "unknown"):
             return "value"
-        return self.kind
+        return ty.kind
 
     def with_count(self) -> Type:
         """Marks the option as a counter of repeated flags: a number that defaults to 0."""

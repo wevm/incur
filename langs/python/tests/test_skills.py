@@ -5,7 +5,9 @@ re-syncs that remove stale skills, and the package root that global syncs resolv
 from __future__ import annotations
 
 import io
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -169,6 +171,101 @@ add-mcp kit --mcp --name kit -y -g -a cursor
 """)
 
 
+def test_mcp_add_through_windows_command_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows, `npx.cmd` runs through `cmd.exe` with each argument quoted for batch files."""
+    (tmp_path / "npx").write_text("")
+    (tmp_path / "npx.cmd").write_text("")
+    calls: list[tuple[str, str | None]] = []
+
+    def run(line: str, **kwargs: str) -> subprocess.CompletedProcess[bytes]:
+        calls.append((line, kwargs["executable"]))
+        return subprocess.CompletedProcess(line, 0, "│ ✓ Codex: added\n".encode(), b"")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "argv", [""])
+    monkeypatch.setattr(subprocess, "run", run)
+    env = {
+        "COMSPEC": "C:\\Windows\\system32\\cmd.exe",
+        "HOME": str(tmp_path),
+        "PATH": f'"{tmp_path}";',
+        "PATHEXT": ".exe;.cmd",
+    }
+    cli = incur.Cli("kit", update=False)
+    agents = ["a&b|c^d", "100%", "%PATH%", 'say "hi"', 'a\\"b', "dir\\", "café"]
+    argv = [arg for agent in agents for arg in ("--agent", agent)]
+    assert mcp_add(cli, env, *argv)[0] == 0
+    assert mcp_add(cli, {**env, "PATH": f";{tmp_path / 'none'}"}, "--agent", "codex") == snapshot(
+        (1, "Registering MCP server...code: MCP_ADD_FAILED\nmessage: spawn npx ENOENT\n")
+    )
+    assert mcp_add(cli, env, "--agent", "a\nb") == snapshot(
+        (1, "Registering MCP server...code: MCP_ADD_FAILED\nmessage: spawn npx EINVAL\n")
+    )
+    script = tmp_path / "npx.cmd"
+    assert calls == [
+        (
+            f'cmd.exe /e:ON /v:OFF /d /c ""{script}" add-mcp "npx kit --mcp" --name kit -y -g'
+            ' -a "a&b|c^d" -a "100%%cd:~,%" -a "%%cd:~,%PATH%%cd:~,%" -a "say ""hi"""'
+            ' -a "a\\\\""b" -a "dir\\\\" -a café"',
+            "C:\\Windows\\system32\\cmd.exe",
+        )
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="stands a POSIX script in for bunx.exe")
+def test_mcp_add_through_windows_executables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows, a runner installed as an executable, such as `bunx.exe`, runs directly."""
+    bunx = tmp_path / "bunx.exe"
+    bunx.write_text(f'#!/bin/sh\necho "$@" > "{tmp_path}/calls"\necho "│ ✓ Codex: added"\n')
+    bunx.chmod(0o755)
+    (tmp_path / "bunx.cmd").write_text("")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "argv", [""])
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": str(tmp_path),
+        "PATHEXT": ".exe;.cmd",
+        "npm_config_user_agent": "bun/1.0.0",
+    }
+    cli = incur.Cli("kit", update=False)
+    assert mcp_add(cli, env, "--agent", "codex") == snapshot(
+        (
+            0,
+            """\
+Registering MCP server...\r\x1b[K✓ Registered kit as MCP server
+  Agents: Codex
+
+Agents can now use kit tools.
+""",
+        )
+    )
+    assert (tmp_path / "calls").read_text() == "add-mcp bunx kit --mcp --name kit -y -g -a codex\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="runs a real Windows command script")
+def test_mcp_add_through_a_real_windows_command_script(tmp_path: Path) -> None:
+    """Arguments reach an npm-style `npx.cmd`, which forwards `%*` to its program, intact."""
+    record = tmp_path / "record.py"
+    record.write_text(
+        "import json, os, sys\n"
+        "open(os.environ['INCUR_CALLS'], 'w').write(json.dumps(sys.argv[1:]))\n"
+    )
+    (tmp_path / "npx.cmd").write_text(
+        f'@ECHO off\r\n"{sys.executable}" "%~dp0\\record.py" %*\r\n', newline=""
+    )
+    env = {**os.environ, "HOME": str(tmp_path), "INCUR_CALLS": str(tmp_path / "calls")}
+    env["PATH"] = f"{tmp_path};{env['PATH']}"
+    agents = ["a&b|c<d>e^f", "100%", "%PATH%", "!bang! (x) ;semi, comma", 'q\\"uote', "dir\\"]
+    argv = [arg for agent in agents for arg in ("--agent", agent)]
+    code, output = mcp_add(incur.Cli("kit", update=False), env, *argv)
+    assert code == 0, output
+    calls = json.loads((tmp_path / "calls").read_text())
+    assert calls[6:] == [arg for agent in agents for arg in ("-a", agent)]
+
+
 def test_mcp_add_to_amp(tmp_path: Path) -> None:
     env = stub(tmp_path, "")
     outputs: list[tuple[int, str]] = []
@@ -255,6 +352,8 @@ Line two. Run `kit ping --help` for usage details.
     monkeypatch.chdir(gone)
     gone.rmdir()
     assert serve(kit(tmp_path, "a"), home, "skills", "list")[0] == 0
+    # Without an entry point, the package root falls back to the missing working directory.
+    monkeypatch.setattr(sys, "argv", [""])
     unrooted = incur.Cli("kit", update=False)
     assert serve(unrooted, home, "skills", "list") == snapshot(
         (

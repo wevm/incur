@@ -213,14 +213,25 @@ pub struct Io<'a> {
 
 /// A CLI: a router of commands, optionally with its own root command.
 ///
+/// Declare one with `#[derive(Parser)]` (see [`Parser`](crate::Parser)), or build one at run
+/// time:
+///
 /// ```no_run
 /// use incur::{Cli, Command, Context};
 ///
+/// #[derive(serde::Serialize)]
+/// struct Status {
+///     clean: bool,
+/// }
+///
 /// Cli::new("my-cli")
 ///     .description("My CLI")
-///     .command("status", Command::new().description("Show repo status").run(|_: Context| {
-///         Ok::<_, incur::Error>(serde_json::json!({ "clean": true }))
-///     }))
+///     .command(
+///         "status",
+///         Command::new()
+///             .description("Show repo status")
+///             .run(|_: Context| Status { clean: true }),
+///     )
 ///     .serve();
 /// ```
 #[derive(Clone)]
@@ -262,6 +273,9 @@ pub struct Cli {
     pub(crate) root_generated: Option<Arc<dyn Generate>>,
     /// State shared between invocations: the MCP HTTP session and generated commands.
     pub(crate) state: Arc<State>,
+    /// Whether the CLI only parses a derived command, so commands that need a handler, such
+    /// as `--mcp`, are hidden.
+    pub(crate) parse_only: bool,
     /// Skills integration settings.
     pub(crate) sync: SkillSync,
     /// Update settings.
@@ -297,6 +311,7 @@ impl Cli {
             name: name.into(),
             output_policy: None,
             package: None,
+            parse_only: false,
             root: None,
             root_fetch: None,
             root_generated: None,
@@ -656,9 +671,11 @@ impl Cli {
     /// Runs the CLI with the process arguments, environment, and standard streams, then exits
     /// with the command's exit code.
     ///
-    /// Blocks on a current-thread tokio runtime with every driver the dependency graph enables,
-    /// so handlers may await tokio timers and IO. Inside a running async runtime, await
-    /// [`Cli::serve_async`] instead: tokio refuses to start a runtime within another.
+    /// With the default `tokio` feature, blocks on a current-thread tokio runtime with every
+    /// driver the dependency graph enables, so handlers may await tokio timers and IO. Inside a
+    /// running async runtime, await [`Cli::serve_async`] instead: tokio refuses to start a
+    /// runtime within another. Without the feature, a minimal executor parks the thread between
+    /// polls, which suits synchronous handlers and runtime-agnostic futures.
     pub fn serve(&self) {
         // The runtime fails to start only when the operating system refuses its drivers.
         let code = block_on(self.serve_process());
@@ -687,23 +704,19 @@ impl Cli {
 
     /// Serves the process arguments with process I/O. Returns the exit code.
     async fn serve_process(&self) -> i32 {
-        let argv = std::env::args().skip(1).collect::<Vec<_>>();
-        let env = |key: &str| std::env::var(key).ok();
-        let mut stdout = std::io::stdout();
-        let mut stderr = std::io::stderr();
-        let mut stdin = ProcessLines::default();
-        let tty = std::io::IsTerminal::is_terminal(&stdout);
-        self.serve_impl(
-            &argv,
-            &mut Io {
-                env: &env,
-                stderr: &mut stderr,
-                stdin: &mut stdin,
-                stdout: &mut stdout,
-                tty,
-            },
-        )
-        .await
+        let mut process = Process::new();
+        let argv = std::mem::take(&mut process.argv);
+        self.serve_impl(&argv, &mut process.io()).await
+    }
+
+    /// Whether a built-in command is available: `skills` needs the skills integration, and
+    /// `mcp` a handler.
+    fn builtin_enabled(&self, builtin: &str) -> bool {
+        match builtin {
+            "skills" => self.sync.enabled,
+            "mcp" => !self.parse_only,
+            _ => true,
+        }
     }
 
     /// Returns the root command with the CLI description as its fallback.
@@ -777,6 +790,41 @@ fn expand<'a>(
     })
 }
 
+/// The process arguments and standard streams.
+pub(crate) struct Process {
+    /// The arguments after the program name.
+    pub(crate) argv: Vec<String>,
+    /// Standard error.
+    stderr: std::io::Stderr,
+    /// Standard input lines.
+    stdin: ProcessLines,
+    /// Standard output.
+    stdout: std::io::Stdout,
+}
+
+impl Process {
+    /// Captures the process arguments and streams.
+    pub(crate) fn new() -> Self {
+        Self {
+            argv: std::env::args().skip(1).collect(),
+            stderr: std::io::stderr(),
+            stdin: ProcessLines::default(),
+            stdout: std::io::stdout(),
+        }
+    }
+
+    /// Returns process I/O: the environment, the streams, and whether stdout is a terminal.
+    pub(crate) fn io(&mut self) -> Io<'_> {
+        Io {
+            env: &|key| std::env::var(key).ok(),
+            tty: std::io::IsTerminal::is_terminal(&self.stdout),
+            stderr: &mut self.stderr,
+            stdin: &mut self.stdin,
+            stdout: &mut self.stdout,
+        }
+    }
+}
+
 /// Process standard input as lines, read on a thread started at the first poll so commands that
 /// never read input leave it untouched.
 #[derive(Default)]
@@ -805,11 +853,36 @@ impl Stream for ProcessLines {
 }
 
 /// Drives a future to completion on a current-thread tokio runtime with every enabled driver.
-fn block_on<F: Future<Output = i32>>(future: F) -> std::io::Result<i32> {
+#[cfg(feature = "tokio")]
+fn block_on<F: Future>(future: F) -> std::io::Result<F::Output> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     Ok(runtime.block_on(future))
+}
+
+/// Drives a future to completion on the current thread, parking it until the future's waker
+/// fires. Synchronous handlers complete on the first poll.
+#[cfg(not(feature = "tokio"))]
+fn block_on<F: Future>(future: F) -> std::io::Result<F::Output> {
+    /// Wakes the blocked thread.
+    struct Unpark(std::thread::Thread);
+
+    impl std::task::Wake for Unpark {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    let mut future = std::pin::pin!(future);
+    let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
+    let mut cx = std::task::Context::from_waker(&waker);
+    loop {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return Ok(output);
+        }
+        std::thread::park();
+    }
 }
 
 /// Exits the process with a non-zero exit code.
@@ -1036,8 +1109,8 @@ struct Flags {
     config_disabled: bool,
     /// `--<config> <path>`.
     config_path: Option<String>,
-    /// `--filter-output`.
-    filter_output: Option<String>,
+    /// Parsed `--filter-output` paths.
+    filter_output: Option<Vec<Vec<filter::Segment>>>,
     /// `--format` or `--json`.
     format: Format,
     /// Whether the format was explicit.
@@ -1071,7 +1144,12 @@ struct Flags {
 }
 
 /// Extracts built-in flags from argv.
-fn extract_flags(argv: &[String], config_flag: Option<&str>, update: bool) -> Result<Flags, Error> {
+fn extract_flags(
+    argv: &[String],
+    config_flag: Option<&str>,
+    update: bool,
+    mcp: bool,
+) -> Result<Flags, Error> {
     let mut flags = Flags::default();
     let config = config_flag.map(|flag| {
         (
@@ -1088,7 +1166,7 @@ fn extract_flags(argv: &[String], config_flag: Option<&str>, update: bool) -> Re
             "--full-output" => flags.full_output = true,
             "--llms" => flags.llms = true,
             "--llms-full" => flags.llms_full = true,
-            "--mcp" => flags.mcp = true,
+            "--mcp" if mcp => flags.mcp = true,
             "--help" | "-h" => flags.help = true,
             "--update" if update => flags.update = true,
             update::CHECK_FLAG => flags.update_check = true,
@@ -1113,13 +1191,16 @@ fn extract_flags(argv: &[String], config_flag: Option<&str>, update: bool) -> Re
                 i += 1;
             }
             "--filter-output" if next.is_some() => {
-                flags.filter_output = next.cloned();
+                flags.filter_output = Some(filter::parse(next.map_or("", String::as_str))?);
                 i += 1;
             }
             "--token-limit" | "--token-offset" if next.is_some() => {
                 let raw = next.map_or("", String::as_str);
                 let value = js::to_number(raw);
-                if !value.is_finite() || raw.trim_matches(js::is_whitespace).is_empty() {
+                if !value.is_finite()
+                    || value < 0.0
+                    || raw.trim_matches(js::is_whitespace).is_empty()
+                {
                     return Err(Error::new(
                         "UNKNOWN",
                         format!("Invalid value for {token}: \"{raw}\""),
@@ -1400,6 +1481,19 @@ fn find_builtin(token: &str) -> Option<&'static str> {
     }
 }
 
+/// Resolves a token to a built-in command name, unless a registered command or alias of the same
+/// name shadows it.
+fn find_unshadowed_builtin(
+    commands: &IndexMap<String, Entry>,
+    token: &str,
+) -> Option<&'static str> {
+    if commands.contains_key(token) {
+        None
+    } else {
+        find_builtin(token)
+    }
+}
+
 /// The per-invocation serve state.
 struct Run<'a, 'b> {
     /// The CLI.
@@ -1460,6 +1554,7 @@ impl Run<'_, '_> {
         help::Options {
             config_flag: self.config_flag(),
             globals: self.cli.globals.as_ref(),
+            hide_mcp: self.cli.parse_only,
             hide_skills: !self.cli.sync.enabled,
             hide_update: !self.cli.update.enabled,
             ..help::Options::default()
@@ -1507,7 +1602,12 @@ impl Run<'_, '_> {
             return;
         }
         let tty = self.io.tty;
-        let flags = match extract_flags(argv, self.config_flag(), cli.update.enabled) {
+        let flags = match extract_flags(
+            argv,
+            self.config_flag(),
+            cli.update.enabled,
+            !cli.parse_only,
+        ) {
             Ok(flags) => flags,
             Err(error) => {
                 self.early_error(&error, tty, Format::Toon);
@@ -1595,12 +1695,14 @@ impl Run<'_, '_> {
             return;
         }
 
+        let commands = self.commands.clone();
         let builtin_index = |builtin: &str| {
-            if filtered.first().and_then(|t| find_builtin(t)) == Some(builtin) {
+            let matches = |token: Option<&String>| {
+                token.and_then(|t| find_unshadowed_builtin(&commands, t)) == Some(builtin)
+            };
+            if matches(filtered.first()) {
                 Some(0)
-            } else if filtered.first() == Some(&cli.name)
-                && filtered.get(1).and_then(|t| find_builtin(t)) == Some(builtin)
-            {
+            } else if filtered.first() == Some(&cli.name) && matches(filtered.get(1)) {
                 Some(1)
             } else {
                 None
@@ -1634,7 +1736,7 @@ impl Run<'_, '_> {
         }
 
         for builtin in ["skills", "mcp"] {
-            if builtin == "skills" && !cli.sync.enabled {
+            if !cli.builtin_enabled(builtin) {
                 continue;
             }
             if let Some(index) = builtin_index(builtin) {
@@ -1774,7 +1876,7 @@ impl Run<'_, '_> {
                     BUILTINS
                         .iter()
                         .map(|(name, _)| *name)
-                        .filter(|n| cli.sync.enabled || *n != "skills"),
+                        .filter(|n| cli.builtin_enabled(n)),
                 );
                 let blocked = !error.starts_with('/') && suggest(&error, candidates).is_some();
                 match (&root_fetch, self.root) {
@@ -1814,7 +1916,7 @@ impl Run<'_, '_> {
             flags: &flags,
             format,
             human,
-            filter: flags.filter_output.as_deref().map(filter::parse),
+            filter: flags.filter_output.clone(),
             render: !(human && policy == Some(OutputPolicy::AgentOnly)),
         };
 
@@ -2347,7 +2449,7 @@ impl Run<'_, '_> {
             ("skills", "list") => self.skills_list(flags),
             ("skills", "add") => self.skills_add(rest, flags),
             ("mcp", "doctor") => self.mcp_doctor(flags),
-            _ => self.mcp_add(rest, flags),
+            _ => self.mcp_add(rest, flags, human),
         }
     }
 
@@ -2529,26 +2631,39 @@ impl Run<'_, '_> {
     }
 
     /// Runs `mcp add`.
-    fn mcp_add(&mut self, rest: &[String], flags: &Flags) {
+    fn mcp_add(&mut self, rest: &[String], flags: &Flags, human: bool) {
         let cli = self.cli;
         let global = !rest.iter().any(|t| t == "--no-global");
         let mut command = cli.mcp.command.clone();
         let mut agents = cli.mcp.agents.clone();
         let mut i = 0;
         while i < rest.len() {
-            let next = rest.get(i + 1).filter(|n| !n.is_empty());
-            match (rest[i].as_str(), next) {
-                ("--command" | "-c", Some(value)) => {
-                    command = Some(value.clone());
-                    i += 1;
-                }
-                ("--agent", Some(value)) => {
-                    agents.push(value.clone());
-                    i += 1;
-                }
-                _ => {}
-            }
+            // `--command` / `-c` and `--agent`, spaced or with `=`. A blank or option-shaped
+            // value is missing, so it cannot swallow the next flag.
+            let (flag, value) = match rest[i].split_once('=') {
+                Some((flag, value)) => (flag, Some(value)),
+                None => (rest[i].as_str(), None),
+            };
             i += 1;
+            if !matches!(flag, "--command" | "-c" | "--agent") {
+                continue;
+            }
+            let value = value.or_else(|| {
+                i += 1;
+                rest.get(i - 1).map(String::as_str)
+            });
+            let Some(value) = value.filter(|v| {
+                !v.trim_matches(js::is_whitespace).is_empty() && (*v == "-" || !v.starts_with('-'))
+            }) else {
+                let error = Error::unknown(format!("Missing value for flag: {flag}"));
+                self.early_error(&error, human, Self::action_format(flags));
+                return;
+            };
+            if flag == "--agent" {
+                agents.push(value.to_owned());
+            } else {
+                command = Some(value.to_owned());
+            }
         }
         let name = cli.mcp.name.clone().unwrap_or_else(|| cli.name.clone());
         self.write("Registering MCP server...");
@@ -2706,22 +2821,20 @@ impl Run<'_, '_> {
     /// Returns the notice that installed skills are out of date, when they are.
     async fn skills_notice(&mut self, filtered: &[String]) -> Option<FormattedCtaBlock> {
         let cli = self.cli;
+        let commands = &self.commands;
+        let matches = |token: Option<&String>, name: &str| {
+            token.and_then(|t| find_unshadowed_builtin(commands, t)) == Some(name)
+        };
         let builtin = |name: &str| {
-            filtered.first().and_then(|t| find_builtin(t)) == Some(name)
-                || (filtered.first() == Some(&cli.name)
-                    && filtered.get(1).and_then(|t| find_builtin(t)) == Some(name))
+            matches(filtered.first(), name)
+                || (filtered.first() == Some(&cli.name) && matches(filtered.get(1), name))
         };
         if builtin("skills") || builtin("mcp") {
             return None;
         }
         let env = self.io.env;
         let stored = sync::read_hash(&cli.name, env)?;
-        let cwd = cli
-            .sync
-            .cwd
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        if !sync::has_installed(&cli.name, env, &cwd) {
+        if !sync::has_installed(&cli.name, env) {
             return None;
         }
         let tree = cli.tree(&Scope::All).await.ok()?;
@@ -2777,7 +2890,7 @@ impl Run<'_, '_> {
             .map_or((words.len() - 1) as f64, |raw| js::to_number(&raw));
         let cut = js::relative_index(index, words.len());
         let before = (|| {
-            let mut rest = extract_flags(&words[..cut], self.config_flag(), true)
+            let mut rest = extract_flags(&words[..cut], self.config_flag(), true, true)
                 .ok()?
                 .rest;
             if js::element(words, index - 1.0).is_some_and(|w| w == "--version") {
@@ -2804,7 +2917,7 @@ impl Run<'_, '_> {
         match non_flags.as_deref() {
             Some(words) if words.len() <= 1 => {
                 for (name, description) in BUILTINS {
-                    if name == "skills" && !cli.sync.enabled {
+                    if !cli.builtin_enabled(name) {
                         continue;
                     }
                     if name.starts_with(current) && !candidates.iter().any(|c| c.value == name) {
@@ -2817,14 +2930,14 @@ impl Run<'_, '_> {
                 }
             }
             Some([_, parent]) => {
-                if let Some(builtin) = find_builtin(parent)
-                    .filter(|b| *b != "completions" && (cli.sync.enabled || *b != "skills"))
-                {
+                // A built-in group completes its own subcommands in place of root commands
+                if let Some(builtin) = find_unshadowed_builtin(&commands, parent).filter(|b| {
+                    *b != "completions" && cli.builtin_enabled(b) && !current.starts_with('-')
+                }) {
+                    candidates.clear();
                     for sub in BUILTIN_SUBCOMMANDS.iter().filter(|s| s.0 == builtin) {
                         for value in std::iter::once(sub.1).chain(sub.3.iter().copied()) {
-                            if value.starts_with(current)
-                                && !candidates.iter().any(|c| c.value == value)
-                            {
+                            if value.starts_with(current) {
                                 candidates.push(completions::Candidate {
                                     description: Some(sub.2.into()),
                                     no_space: false,
@@ -2836,6 +2949,27 @@ impl Run<'_, '_> {
                 }
             }
             _ => {}
+        }
+        // Add the built-in global flags that help lists for the active command
+        if let Some(words) = non_flags.as_deref().filter(|_| current.starts_with('-')) {
+            let options = help::Options {
+                root: words.len() <= 1,
+                ..self.help_options()
+            };
+            for (flag, description) in help::global_flags(&options) {
+                for value in flag
+                    .split(", ")
+                    .map(|f| f.split_once(' ').map_or(f, |(name, _)| name))
+                {
+                    if value.starts_with(current) && !candidates.iter().any(|c| c.value == value) {
+                        candidates.push(completions::Candidate {
+                            description: Some(description.into()),
+                            no_space: false,
+                            value: value.into(),
+                        });
+                    }
+                }
+            }
         }
         let out = completions::format(shell, &candidates);
         if !out.is_empty() {
@@ -2865,7 +2999,7 @@ impl Run<'_, '_> {
                 BUILTINS
                     .iter()
                     .map(|b| b.0)
-                    .filter(|n| cli.sync.enabled || *n != "skills"),
+                    .filter(|n| cli.builtin_enabled(n)),
             );
         }
         let suggestion = suggest(error, candidates);
@@ -2922,12 +3056,13 @@ impl Run<'_, '_> {
             return (text.to_owned(), false, None);
         }
         let sliced = tokens::slice(text, offset, end);
+        let start = offset.min(total);
         let actual_end = end.min(total);
         let next = (actual_end < total).then_some(actual_end);
         (
             format!(
                 "{sliced}\n[truncated: showing tokens {}\u{2013}{} of {}]",
-                js::number_to_string(offset),
+                js::number_to_string(start),
                 js::number_to_string(actual_end),
                 js::number_to_string(total)
             ),

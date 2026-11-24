@@ -51,7 +51,7 @@ from ._errors import (
 from ._filter import MISSING, Missing
 from ._formatter import FORMATS, Format, format_value
 from ._help import Entry as HelpEntry
-from ._help import Example, Usage, format_command, format_root
+from ._help import Example, Usage, format_command, format_root, global_flags
 from ._help import Options as HelpOptions
 from ._http import FetchHandler, Request, RequestSource, Response, asgi, call
 from ._js import Json
@@ -610,7 +610,7 @@ class _Flags:
 
     config_disabled: bool = False
     config_path: str | None = None
-    filter_output: str | None = None
+    filter_output: list[list[_filter.Segment]] | None = None
     format: Format = "toon"
     format_explicit: bool = False
     full_output: bool = False
@@ -670,11 +670,11 @@ def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True
             flags.format_explicit = True
             i += 1
         elif token == "--filter-output" and nxt is not None:
-            flags.filter_output = nxt
+            flags.filter_output = _filter.parse(nxt)
             i += 1
         elif token in ("--token-limit", "--token-offset") and nxt is not None:
             value = _js.to_number(nxt)
-            if not math.isfinite(value) or not _js.trim(nxt):
+            if not math.isfinite(value) or value < 0 or not _js.trim(nxt):
                 raise unknown(f'Invalid value for {token}: "{nxt}"')
             if token == "--token-limit":
                 flags.token_limit = value
@@ -774,6 +774,11 @@ def _find_builtin(token: str) -> str | None:
     return {"completions": "completions", "mcp": "mcp", "skills": "skills", "skill": "skills"}.get(
         token
     )
+
+
+def _find_unshadowed_builtin(commands: dict[str, Entry], token: str) -> str | None:
+    """Resolves a token to a built-in command name unless a command or alias shadows it."""
+    return None if token in commands else _find_builtin(token)
 
 
 def _string_type(description: str) -> Type:
@@ -936,12 +941,12 @@ class _Run:
             return
 
         def builtin_index(builtin: str) -> int | None:
-            if filtered and _find_builtin(filtered[0]) == builtin:
+            if filtered and _find_unshadowed_builtin(cli.commands, filtered[0]) == builtin:
                 return 0
             if (
                 len(filtered) > 1
                 and filtered[0] == cli.name
-                and _find_builtin(filtered[1]) == builtin
+                and _find_unshadowed_builtin(cli.commands, filtered[1]) == builtin
             ):
                 return 1
             return None
@@ -1064,7 +1069,7 @@ class _Run:
             flags=flags,
             format=fmt,
             human=human,
-            filter=_filter.parse(flags.filter_output) if flags.filter_output is not None else None,
+            filter=flags.filter_output,
             render=not (human and policy == "agent-only"),
         )
 
@@ -1126,11 +1131,13 @@ class _Run:
         for index in (0, 1):
             if index == 1 and (not filtered or filtered[0] != cli.name):
                 break
-            if len(filtered) > index and _find_builtin(filtered[index]) in ("skills", "mcp"):
+            if len(filtered) > index and _find_unshadowed_builtin(
+                cli.commands, filtered[index]
+            ) in ("skills", "mcp"):
                 return None
         env = self.env_map
         stored = read_hash(cli.name, env)
-        if stored is None or not has_installed_skills(cli.name, env, cli.sync.cwd):
+        if stored is None or not has_installed_skills(cli.name, env):
             return None
         # The stored hash covers every command, deferred groups included.
         await cli.load()
@@ -1448,7 +1455,7 @@ class _Run:
             if report["ok"] is not True:
                 self.exit = 1
         else:
-            await self.mcp_add(rest, flags, fmt)
+            await self.mcp_add(rest, flags, fmt, human)
 
     def sync_options(self) -> SyncOptions:
         cli = self.cli
@@ -1564,7 +1571,7 @@ class _Run:
             report["warnings"] = ["No MCP tools exposed."]
         return report
 
-    async def mcp_add(self, rest: list[str], flags: _Flags, fmt: Format) -> None:
+    async def mcp_add(self, rest: list[str], flags: _Flags, fmt: Format, human: bool) -> None:
         """Handles `mcp add`."""
         cli = self.cli
         options = cli.mcp or McpOptions()
@@ -1572,12 +1579,20 @@ class _Run:
         agents = list(options.agents)
         i = 0
         while i < len(rest):
-            if rest[i] in ("--command", "-c") and i + 1 < len(rest) and rest[i + 1]:
-                command = rest[i + 1]
-                i += 1
-            elif rest[i] == "--agent" and i + 1 < len(rest) and rest[i + 1]:
-                agents.append(rest[i + 1])
-                i += 1
+            # `--command` / `-c` and `--agent`, spaced or with `=`. A blank or option-shaped
+            # value is missing, so it cannot swallow the next flag.
+            flag, eq, value = rest[i].partition("=")
+            if flag in ("--command", "-c", "--agent"):
+                if not eq:
+                    i += 1
+                    value = rest[i] if i < len(rest) else ""
+                if not _js.trim(value) or (value.startswith("-") and len(value) > 1):
+                    self.early_error(unknown(f"Missing value for flag: {flag}"), human, fmt)
+                    return
+                if flag == "--agent":
+                    agents.append(value)
+                else:
+                    command = value
             i += 1
         name = options.name or cli.name
         self.write("Registering MCP server...")
@@ -1662,16 +1677,27 @@ class _Run:
                         _completions.Candidate(name, description, name != "completions")
                     )
         elif non_flags is not None and len(non_flags) == 2:
-            builtin = _find_builtin(non_flags[1])
-            if builtin is not None and builtin != "completions" and builtin in self.builtin_names():
+            builtin = _find_unshadowed_builtin(cli.commands, non_flags[1])
+            # A built-in group completes its own subcommands in place of root commands
+            if (
+                builtin is not None
+                and builtin != "completions"
+                and builtin in self.builtin_names()
+                and not current.startswith("-")
+            ):
+                candidates.clear()
                 for sub in _BUILTIN_SUBCOMMANDS:
                     if sub[0] != builtin:
                         continue
                     for value in (sub[1], *sub[3]):
-                        if value.startswith(current) and not any(
-                            c.value == value for c in candidates
-                        ):
+                        if value.startswith(current):
                             candidates.append(_completions.Candidate(value, sub[2]))
+        # Add the built-in global flags that help lists for the active command
+        if non_flags is not None and current.startswith("-"):
+            for flag, description in global_flags(self.help_options(root=len(non_flags) <= 1)):
+                for value in (f.split(" ")[0] for f in flag.split(", ")):
+                    if value.startswith(current) and not any(c.value == value for c in candidates):
+                        candidates.append(_completions.Candidate(value, description))
         out = _completions.format_candidates(shell, candidates)
         if out:
             self.write(out)
@@ -1732,10 +1758,11 @@ class _Run:
         if offset == 0 and end >= total:
             return text, False, None
         sliced = _tokens.slice_tokens(text, offset, end)
+        start = min(offset, total)
         actual_end = min(end, total)
         nxt = actual_end if actual_end < total else None
         note = (
-            f"[truncated: showing tokens {_js.number_to_string(offset)}\u2013"
+            f"[truncated: showing tokens {_js.number_to_string(start)}\u2013"
             f"{_js.number_to_string(actual_end)} of {_js.number_to_string(total)}]"
         )
         return f"{sliced}\n{note}", True, nxt

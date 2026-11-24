@@ -7,7 +7,7 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/wevm/incur"
 rust-version = "1.97.0"
-version = "0.1.0"
+version = "0.10.0"
 
 [workspace.dependencies]
 bytes = "1"
@@ -17,7 +17,7 @@ futures-core = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["alloc", "std"] }
 http = "1"
 http-body = "1"
-incur-macros = { path = "crates/incur-macros", version = "=0.1.0" }
+incur-macros = { path = "crates/incur-macros", version = "=0.10.0" }
 indexmap = "2"
 insta = "1"
 proc-macro2 = "1"

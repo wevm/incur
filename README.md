@@ -28,12 +28,13 @@
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> · <a href="#quickprompt">Quickprompt</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
+  <a href="#features">Features</a> · <a href="#agent-prompt">Agent Prompt</a> · <a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#walkthrough">Walkthrough</a> · <a href="#license">License</a>
 </p>
 
 ## Features
 
 - [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) so agents find your CLI automatically
+- [**Multi-language**](#multi-language): Rust, Python, and Zig ports with the same output, help, and agent integrations
 - [**Session savings**](#session-savings): up to **3× fewer tokens** per session vs. MCP or skill alternatives
 - [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
 - [**TOON output**](#toon-output): token-efficient default format that agents parse easily, with JSON, YAML, Markdown, and JSONL alternatives
@@ -46,20 +47,12 @@
 - [**Light API surface**](#light-api-surface): `Cli.create()`, `Cli.command()`, `.command()`, `.fs()`, and `.serve()`
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 
-## Quickprompt
+## Agent Prompt
 
-Prompt your agent:
-
-**Skills (recommended – lighter on tokens)**
+Paste this prompt into a coding agent:
 
 ```txt
-Run `npx incur skills add`, then show me how to build CLIs with incur.
-```
-
-**MCP**
-
-```txt
-Run `npx incur mcp add`, then show me how to build CLIs with incur.
+Read github.com/wevm/incur and help me build a CLI with incur.
 ```
 
 ## Install
@@ -120,6 +113,7 @@ $ greet --help
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --full-output                       Show full output envelope
 #   --help                              Show help
+#   --json                              Shorthand for --format json
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for command
@@ -191,6 +185,7 @@ $ my-cli --help
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --full-output                       Show full output envelope
 #   --help                              Show help
+#   --json                              Shorthand for --format json
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for command
@@ -249,6 +244,7 @@ $ my-cli --help
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --full-output                       Show full output envelope
 #   --help                              Show help
+#   --json                              Shorthand for --format json
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for command
@@ -1215,6 +1211,127 @@ my-cli completions fish | source     # add to ~/.config/fish/config.fish
 Completions are dynamic — subcommands, `--options`, short aliases, and enum values are all suggested based on the current command context. Command groups suppress the trailing space so you can keep tabbing into subcommands.
 
 Run `my-cli completions --help` for setup instructions.
+
+### Multi-language
+
+incur also ships for Rust, Python, and Zig. Each port matches the TypeScript CLI's output, help, errors, and exit codes, and comes with the same agent discovery, global options, and MCP and HTTP serving.
+
+#### Rust
+
+```sh
+cargo add incur serde -F serde/derive
+```
+
+```rust
+use incur::Parser;
+
+/// A greeting CLI
+#[derive(Parser)]
+#[incur(name = "greet")]
+struct Greet {
+    /// Name to greet
+    #[incur(arg)]
+    name: String,
+}
+
+#[derive(serde::Serialize)]
+struct Greeting {
+    message: String,
+}
+
+fn main() {
+    Greet::serve(|greet, _| Greeting { message: format!("hello {}", greet.name) });
+}
+```
+
+```sh
+$ greet world
+# → message: hello world
+```
+
+See the [Rust README](langs/rust/README.md) for more.
+
+#### Python
+
+```bash
+pip install incur-cli
+```
+
+```python
+from typing import Annotated
+
+import incur
+
+
+@incur.schema
+class Args:
+    name: Annotated[str, incur.field("Name to greet")]
+
+
+cli = incur.Cli("greet", description="A greeting CLI")
+
+
+@cli.root()
+def greet(c: incur.Context[Args]) -> dict[str, str]:
+    return {"message": f"hello {c.args.name}"}
+
+
+if __name__ == "__main__":
+    cli.serve()
+```
+
+```sh
+$ greet world
+# → message: hello world
+```
+
+See the [Python README](langs/python/README.md) for more.
+
+#### Zig
+
+Requires Zig 0.17.1.
+
+```sh
+v=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/wevm/incur/releases/latest | sed 's|.*/incur@||')
+zig fetch --save "https://github.com/wevm/incur/releases/download/incur@$v/incur-zig-$v.tar.gz"
+```
+
+```zig
+// build.zig
+const incur = b.dependency("incur", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("incur", incur.module("incur"));
+```
+
+```zig
+const std = @import("std");
+const incur = @import("incur");
+
+const Args = struct {
+    name: []const u8,
+
+    pub const incur = .{ .fields = .{ .name = .{ .description = "Name to greet" } } };
+};
+
+fn greet(c: *incur.Context(.{ .args = Args })) !incur.Outcome {
+    return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "hello {s}", .{c.args.name}) });
+}
+
+pub fn main(init: std.process.Init) !void {
+    const cli = try incur.Cli.create(init.gpa, "greet", .{
+        .description = "A greeting CLI",
+        .root = .{ .run = incur.handler(greet) },
+    });
+    defer cli.destroy();
+    try cli.serve(init);
+}
+```
+
+```sh
+$ greet world
+# → message: hello world
+```
+
+See the [Zig README](langs/zig/README.md) for more.
 
 ## API Reference
 

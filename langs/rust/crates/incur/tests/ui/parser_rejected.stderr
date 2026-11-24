@@ -1,0 +1,190 @@
+error: Parser cannot be derived for unions
+ --> tests/ui/parser_rejected.rs:6:7
+  |
+6 | union Bits {
+  |       ^^^^
+
+error: Parser can only be derived for structs with named fields
+  --> tests/ui/parser_rejected.rs:11:13
+   |
+11 | struct Tuple(u8);
+   |             ^^^^
+
+error: Parser cannot be derived for generic types
+  --> tests/ui/parser_rejected.rs:14:15
+   |
+14 | struct Generic<T> {
+   |               ^
+
+error: a tuple variant holds exactly one Parser type
+  --> tests/ui/parser_rejected.rs:20:5
+   |
+20 |     Both(u8, u8),
+   |     ^^^^
+
+error: a field cannot be both `arg` and `env`
+  --> tests/ui/parser_rejected.rs:25:5
+   |
+25 |     #[incur(arg, env)]
+   |     ^
+
+error: unknown incur attribute
+  --> tests/ui/parser_rejected.rs:30:9
+   |
+30 | #[incur(about = "text")]
+   |         ^^^^^
+
+error: unknown incur attribute
+  --> tests/ui/parser_rejected.rs:37:13
+   |
+37 |     #[incur(version = "1.0.0")]
+   |             ^^^^^^^
+
+error: `aliases` takes string literals
+  --> tests/ui/parser_rejected.rs:42:20
+   |
+42 | #[incur(aliases = [1])]
+   |                    ^
+
+error: unknown incur attribute
+  --> tests/ui/parser_rejected.rs:49:13
+   |
+49 |     #[incur(name = "other")]
+   |             ^^^^
+
+error: `hint` describes a command, but an enum is a command group
+  --> tests/ui/parser_rejected.rs:77:9
+   |
+77 | #[incur(hint = "Commands")]
+   |         ^^^^
+
+error: `example` describes a command, but an enum is a command group
+  --> tests/ui/parser_rejected.rs:83:28
+   |
+83 | #[incur(middleware = noop, example = "status")]
+   |                            ^^^^^^^
+
+error: expected `command` or `description`
+  --> tests/ui/parser_rejected.rs:90:21
+   |
+90 |     #[incur(example(text = "status"))]
+   |                     ^^^^
+
+error: expected `args`, `options`, `prefix`, or `suffix`
+  --> tests/ui/parser_rejected.rs:96:19
+   |
+96 |     #[incur(usage(flags = ["a"]))]
+   |                   ^^^^^
+
+error[E0277]: the trait bound `Group: Schema` is not satisfied
+  --> tests/ui/parser_rejected.rs:66:22
+   |
+66 |     #[incur(output = Group)]
+   |                      ^^^^^ unsatisfied trait bound
+   |
+help: the trait `Schema` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = help: the following other types implement trait `Schema`:
+             Option<T>
+             Vec<T>
+             bool
+             f32
+             f64
+             i16
+             i32
+             i64
+           and $N others
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:60:13
+   |
+60 |     #[incur(aliases = ["g"])]
+   |             ^^^^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:62:13
+   |
+62 |     #[incur(hint = "Commands")]
+   |             ^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:64:25
+   |
+64 |     #[incur(name = "x", destructive)]
+   |                         ^^^^^^^^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:66:13
+   |
+66 |     #[incur(output = Group)]
+   |             ^^^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:68:13
+   |
+68 |     #[incur(middleware = noop)]
+   |             ^^^^^^^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:70:13
+   |
+70 |     #[incur(example = "status")]
+   |             ^^^^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum
+
+error[E0277]: `Group` is a command group, so this attribute does not apply
+  --> tests/ui/parser_rejected.rs:72:13
+   |
+72 |     #[incur(usage(args = ["name"]))]
+   |             ^^^^^ describes a command
+   |
+help: the trait `incur::__private::Leaf` is not implemented for `Group`
+  --> tests/ui/parser_rejected.rs:54:1
+   |
+54 | enum Group {
+   | ^^^^^^^^^^
+   = note: a group variant takes only `name` and `description`; put middleware on the enum

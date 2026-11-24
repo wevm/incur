@@ -67,6 +67,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -89,6 +90,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -118,6 +120,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -236,6 +239,17 @@ describe('formatCommand', () => {
     expect(result).toContain('--level <low|medium|high>')
   })
 
+  test('shows the inner type of T | null union options', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        tags: z.union([z.array(z.string()), z.null()]).optional(),
+        value: z.union([z.string(), z.number(), z.null()]).optional(),
+      }),
+    })
+    expect(result).toContain('--tags <array>')
+    expect(result).toContain('--value <value>')
+  })
+
   test('shows [deprecated] tag for deprecated options', () => {
     const result = Help.formatCommand('tool deploy', {
       description: 'Deploy app',
@@ -269,6 +283,7 @@ describe('formatCommand', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --no-config                         Disable JSON option defaults for this run
         --schema                            Show JSON Schema for command
@@ -304,6 +319,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -329,6 +345,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -358,6 +375,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -387,6 +405,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
@@ -420,6 +439,7 @@ describe('formatRoot', () => {
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
+        --json                              Shorthand for --format json
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --no-config                         Disable JSON option defaults for this run

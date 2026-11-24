@@ -87,7 +87,8 @@ message: spawn npm ENOENT
 
 def test_reports_package_manager_commands(tmp_path: Path) -> None:
     npm = tmp_path / "npm"
-    npm.write_text("#!/bin/sh\n")
+    # Output that is not UTF-8, such as a lifecycle script's locale encoding, does not fail it.
+    npm.write_text("#!/bin/sh\nprintf '\\351'\nprintf '\\351' >&2\n")
     npm.chmod(0o755)
     cli = kit(incur.Update(package="kit"))
     env = {"HOME": str(tmp_path), "PATH": f"{tmp_path}:/usr/bin:/bin"}

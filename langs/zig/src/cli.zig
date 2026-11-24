@@ -129,8 +129,9 @@ pub const Options = struct {
 pub const Sync = struct {
     /// Text shown after `skills add` lists the synced skills.
     body: ?[]const u8 = null,
-    /// The directory `include` patterns resolve against. Defaults to the package root for global
-    /// installs and the working directory otherwise.
+    /// The directory `include` patterns resolve against, for `skills add` and `skills list`.
+    /// Defaults to the package root. Project installs (`skills add --no-global`) always go to the
+    /// working directory.
     cwd: ?[]const u8 = null,
     /// Grouping depth for skill files.
     depth: f64 = 1,
@@ -685,8 +686,8 @@ const Flags = struct {
     config_disabled: bool = false,
     /// `--<config> <path>`.
     config_path: ?[]const u8 = null,
-    /// `--filter-output`.
-    filter_output: ?[]const u8 = null,
+    /// Parsed `--filter-output` paths.
+    filter_output: ?[]const filter.Path = null,
     /// `--format` or `--json`.
     format: Format = .toon,
     /// Whether the format was explicit.
@@ -761,11 +762,14 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
             flags.format_explicit = true;
             i += 1;
         } else if (eql(token, "--filter-output") and next != null) {
-            flags.filter_output = next;
+            flags.filter_output = switch (try filter.parse(a, next.?)) {
+                .ok => |paths| paths,
+                .err => |err| return .{ .err = err },
+            };
             i += 1;
         } else if ((eql(token, "--token-limit") or eql(token, "--token-offset")) and next != null) {
             const value = js.toNumber(next.?);
-            if (!std.math.isFinite(value) or js.trim(next.?).len == 0)
+            if (!std.math.isFinite(value) or value < 0 or js.trim(next.?).len == 0)
                 return .{ .err = .{ .message = try std.fmt.allocPrint(a, "Invalid value for {s}: \"{s}\"", .{ token, next.? }) } };
             if (eql(token, "--token-limit")) flags.token_limit = value else flags.token_offset = value;
             i += 1;
@@ -972,6 +976,13 @@ fn findBuiltin(token: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, token, "mcp")) return "mcp";
     if (std.mem.eql(u8, token, "skills") or std.mem.eql(u8, token, "skill")) return "skills";
     return null;
+}
+
+/// Resolves a token to a built-in command name, unless a registered command or alias of the same
+/// name shadows it.
+fn findUnshadowedBuiltin(commands: Commands, token: []const u8) ?[]const u8 {
+    if (lookup(commands, token) != null) return null;
+    return findBuiltin(token);
 }
 
 /// Output settings resolved for a command.
@@ -1208,7 +1219,7 @@ const Run = struct {
             .flags = &flags,
             .format = format,
             .human = human,
-            .filter = if (flags.filter_output) |f| try filter.parse(a, f) else null,
+            .filter = flags.filter_output,
             .render = !(human and policy == .agent_only),
         };
 
@@ -1527,7 +1538,7 @@ const Run = struct {
                 if (!result.ok) run.exit = 1;
                 return;
             }
-            return run.mcpAdd(rest, flags, format);
+            return run.mcpAdd(rest, flags, format, human);
         }
         if (std.mem.eql(u8, found.name, "list")) return run.skillsList();
         return run.skillsAdd(rest, flags, format);
@@ -1617,7 +1628,7 @@ const Run = struct {
     }
 
     /// Registers the CLI as an MCP server for `mcp add`.
-    fn mcpAdd(run: *Run, rest: []const []const u8, flags: *const Flags, format: Format) ServeError!void {
+    fn mcpAdd(run: *Run, rest: []const []const u8, flags: *const Flags, format: Format, human: bool) ServeError!void {
         const a = run.a;
         const cli = run.cli;
         const settings = cli.options.mcp orelse Mcp{};
@@ -1626,14 +1637,19 @@ const Run = struct {
         try agents.appendSlice(a, settings.agents);
         var i: usize = 0;
         while (i < rest.len) : (i += 1) {
-            const has_value = i + 1 < rest.len and rest[i + 1].len > 0;
-            if ((std.mem.eql(u8, rest[i], "--command") or std.mem.eql(u8, rest[i], "-c")) and has_value) {
+            // `--command` / `-c` and `--agent`, spaced or with `=`. A blank or option-shaped value
+            // is missing, so it cannot swallow the next flag.
+            const eq = std.mem.findScalar(u8, rest[i], '=');
+            const flag = rest[i][0 .. eq orelse rest[i].len];
+            const is_agent = std.mem.eql(u8, flag, "--agent");
+            if (!is_agent and !std.mem.eql(u8, flag, "--command") and !std.mem.eql(u8, flag, "-c")) continue;
+            const value = if (eq) |e| rest[i][e + 1 ..] else value: {
                 i += 1;
-                command_override = rest[i];
-            } else if (std.mem.eql(u8, rest[i], "--agent") and has_value) {
-                i += 1;
-                try agents.append(a, rest[i]);
-            }
+                break :value if (i < rest.len) rest[i] else "";
+            };
+            if (js.trim(value).len == 0 or (value.len > 1 and value[0] == '-'))
+                return run.earlyError(.{ .message = try std.fmt.allocPrint(a, "Missing value for flag: {s}", .{flag}) }, human, format);
+            if (is_agent) try agents.append(a, value) else command_override = value;
         }
         const name = settings.name orelse cli.name;
         run.write("Registering MCP server...");
@@ -1704,16 +1720,31 @@ const Run = struct {
                     if (std.mem.startsWith(u8, name, current) and !listed(candidates.items, name))
                         try candidates.append(a, .{ .description = description, .no_space = !std.mem.eql(u8, name, "completions"), .value = name });
                 }
-            } else if (non_flags.items.len == 2) if (findBuiltin(non_flags.items[1])) |b_name| {
-                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills"))) {
+            } else if (non_flags.items.len == 2) if (findUnshadowedBuiltin(cli.commands.items, non_flags.items[1])) |b_name| {
+                // A built-in group completes its own subcommands in place of root commands
+                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills")) and !std.mem.startsWith(u8, current, "-")) {
+                    candidates.clearRetainingCapacity();
                     for (builtin_subcommands) |s| if (std.mem.eql(u8, s.builtin, b_name)) {
                         for (try std.mem.concat(a, []const u8, &.{ &.{s.name}, s.aliases })) |value| {
-                            if (std.mem.startsWith(u8, value, current) and !listed(candidates.items, value))
+                            if (std.mem.startsWith(u8, value, current))
                                 try candidates.append(a, .{ .description = s.description, .value = value });
                         }
                     };
                 }
             };
+            // Add the built-in global flags that help lists for the active command
+            if (std.mem.startsWith(u8, current, "-")) {
+                var options = run.helpOptions();
+                options.root = non_flags.items.len <= 1;
+                for (try help.globalFlags(a, options)) |f| {
+                    var flag_names = std.mem.splitSequence(u8, f[0], ", ");
+                    while (flag_names.next()) |name| {
+                        const value = name[0 .. std.mem.indexOfScalar(u8, name, ' ') orelse name.len];
+                        if (std.mem.startsWith(u8, value, current) and !listed(candidates.items, value))
+                            try candidates.append(a, .{ .description = f[1], .value = value });
+                    }
+                }
+            }
         }
         const out = try completions.format(a, shell, candidates.items);
         if (out.len > 0) run.write(out);
@@ -1755,7 +1786,7 @@ const Run = struct {
         return .{
             try std.fmt.allocPrint(a, "{s}\n[truncated: showing tokens {s}\u{2013}{s} of {s}]", .{
                 sliced,
-                try js.numberToString(a, offset),
+                try js.numberToString(a, @min(offset, total)),
                 try js.numberToString(a, actual_end),
                 try js.numberToString(a, total),
             }),
@@ -2380,10 +2411,12 @@ fn listed(candidates: []const completions.Candidate, value: []const u8) bool {
     return false;
 }
 
-/// Returns the index of a built-in in the filtered tokens: first, or after the CLI name.
+/// Returns the index of a built-in in the filtered tokens: first, or after the CLI name. A
+/// registered command or alias of the same name shadows the built-in.
 fn builtinIndex(cli: *const Cli, filtered: []const []const u8, b: []const u8) ?usize {
-    if (filtered.len > 0) if (findBuiltin(filtered[0])) |found| if (std.mem.eql(u8, found, b)) return 0;
-    if (filtered.len > 1 and std.mem.eql(u8, filtered[0], cli.name)) if (findBuiltin(filtered[1])) |found| if (std.mem.eql(u8, found, b)) return 1;
+    const commands = cli.commands.items;
+    if (filtered.len > 0) if (findUnshadowedBuiltin(commands, filtered[0])) |found| if (std.mem.eql(u8, found, b)) return 0;
+    if (filtered.len > 1 and std.mem.eql(u8, filtered[0], cli.name)) if (findUnshadowedBuiltin(commands, filtered[1])) |found| if (std.mem.eql(u8, found, b)) return 1;
     return null;
 }
 

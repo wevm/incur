@@ -78,7 +78,7 @@ const ListArgs = struct {
 const DeployEnv = struct {
     deploy_token: []const u8,
     deploy_region: []const u8 = "us",
-    deploy_retries: ?f64 = null,
+    deploy_retries: ?i64 = null,
     deploy_dry: ?bool = null,
 
     pub const incur = .{
@@ -759,6 +759,35 @@ fn rooted(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
+const ShadowSkillArgs = struct {
+    id: []const u8,
+
+    pub const incur = .{ .fields = .{ .id = .{ .description = "Skill id" } } };
+};
+
+fn shadowAdd(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .added = true });
+}
+
+fn shadowSkill(c: *Context(.{ .args = ShadowSkillArgs })) !Outcome {
+    return c.ok(.{ .id = c.args.id });
+}
+
+fn shadowShell(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .shell = true });
+}
+
+fn shadow(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "shadow", .{ .update = null, .description = "Commands named like built-ins" });
+    errdefer cli.destroy();
+    const mcp = try incur.Cli.create(gpa, "mcp", .{ .description = "Manage servers" });
+    try mcp.command("add", .{ .description = "Add a server", .run = incur.handler(shadowAdd) });
+    try cli.group(mcp);
+    try cli.command("skill", .{ .description = "Show a skill", .run = incur.handler(shadowSkill) });
+    try cli.command("shell", .{ .description = "Show the shell", .aliases = &.{"completions"}, .run = incur.handler(shadowShell) });
+    return cli;
+}
+
 const ToolsEnv = struct {
     tools_region: []const u8 = "eu",
 
@@ -1314,7 +1343,7 @@ fn fakeMcp(a: Allocator, _: *const incur.Process, request: *const incur.http.Req
 
 /// The tools `fakeMcp` lists.
 const fake_tools =
-    \\{"tools":[{"name":"structured","description":"Structured result","inputSchema":{"type":"object","properties":{"count":{"type":"integer","description":"Count"},"label":{"type":"string"},"on":{"type":"boolean"},"ratio":{"type":["number","null"]}},"required":["count"]},"outputSchema":{"type":"object","properties":{"total":{"type":"number"}}},"annotations":{"readOnlyHint":true}},{"name":"headers","description":"Echo MCP headers"},{"name":"texts","description":"Two text items","outputSchema":{"type":"string"}},{"name":"words","description":"Non-JSON text"},{"name":"none","description":"No content"},{"name":"tool-error","description":"Tool error result"},{"name":"silent-error","description":"Tool error without text"},{"name":"rpc-error","description":"JSON-RPC error"},{"name":"http-error","description":"HTTP error"},{"name":"sse","description":"SSE response"},{"name":"sse-other","description":"SSE without a matching message"},{"name":"empty-body","description":"Empty response body"}]}
+    \\{"tools":[{"name":"structured","description":"Structured result","inputSchema":{"type":"object","properties":{"count":{"type":"integer","description":"Count"},"label":{"type":"string"},"on":{"type":"boolean"},"ratio":{"type":["number","null"]},"tags":{"type":["array","null"],"items":{"type":"string"}}},"required":["count"]},"outputSchema":{"type":"object","properties":{"total":{"type":"number"}}},"annotations":{"readOnlyHint":true}},{"name":"headers","description":"Echo MCP headers"},{"name":"texts","description":"Two text items","outputSchema":{"type":"string"}},{"name":"words","description":"Non-JSON text"},{"name":"none","description":"No content"},{"name":"tool-error","description":"Tool error result"},{"name":"silent-error","description":"Tool error without text"},{"name":"rpc-error","description":"JSON-RPC error"},{"name":"http-error","description":"HTTP error"},{"name":"sse","description":"SSE response"},{"name":"sse-other","description":"SSE without a matching message"},{"name":"empty-body","description":"Empty response body"}]}
 ;
 
 fn remote(gpa: Allocator) !*incur.Cli {
@@ -1353,7 +1382,7 @@ fn kitDeploy(c: *Context(.{ .args = KitDeployArgs })) !Outcome {
 }
 
 /// Builds a CLI that syncs skills and registers MCP servers.
-fn kitCli(gpa: Allocator, name: []const u8, options: struct { mcp: incur.Mcp = .{}, package: ?[]const u8 = null, version: []const u8 = "1.4.0" }) !*incur.Cli {
+fn kitCli(gpa: Allocator, name: []const u8, options: struct { cwd: ?[]const u8 = null, mcp: incur.Mcp = .{}, package: ?[]const u8 = null, version: []const u8 = "1.4.0" }) !*incur.Cli {
     const cli = try incur.Cli.create(gpa, name, .{
         .description = "Skill and MCP sync",
         .version = options.version,
@@ -1361,6 +1390,7 @@ fn kitCli(gpa: Allocator, name: []const u8, options: struct { mcp: incur.Mcp = .
         .package = options.package,
         .mcp = options.mcp,
         .sync = .{
+            .cwd = options.cwd,
             .include = &.{ "skills/*", "_root" },
             .body = "Run `kit auth login` to finish setup.",
             .suggestions = &.{ "Show my status", "Deploy the app" },
@@ -1386,6 +1416,10 @@ fn kitpkg(gpa: Allocator) !*incur.Cli {
 
 fn kitcmd(gpa: Allocator) !*incur.Cli {
     return kitCli(gpa, "kitcmd", .{ .mcp = .{ .agents = &.{ "cursor", "amp" }, .command = "kit serve --stdio" } });
+}
+
+fn kitcwd(gpa: Allocator) !*incur.Cli {
+    return kitCli(gpa, "kitcwd", .{ .cwd = "vendor" });
 }
 
 fn kitbad(gpa: Allocator) !*incur.Cli {
@@ -1486,7 +1520,7 @@ pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
         .{ "remote", remote },   .{ "kit", kit },           .{ "kitpkg", kitpkg },   .{ "kitcmd", kitcmd },
         .{ "kitbad", kitbad },   .{ "kitver", kitver },     .{ "spaced", spaced },   .{ "upd", upd },
         .{ "updbeta", updbeta }, .{ "updcheck", updcheck }, .{ "updnone", updnone }, .{ "updpkg", updpkg },
-        .{ "updbad", updbad },
+        .{ "updbad", updbad },   .{ "shadow", shadow },     .{ "kitcwd", kitcwd },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

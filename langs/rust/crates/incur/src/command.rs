@@ -195,13 +195,17 @@ pub fn ok<T: Serialize>(data: T) -> Outcome {
 /// error ends the stream.
 ///
 /// ```
-/// use incur::{Command, Context, Error};
-/// use serde_json::json;
+/// use incur::{Command, Context};
+///
+/// #[derive(serde::Serialize)]
+/// struct Progress {
+///     percent: u8,
+/// }
 ///
 /// let command = Command::new().run(|_: Context| {
 ///     incur::stream(futures::stream::iter([
-///         Ok::<_, Error>(json!({ "progress": 50 })),
-///         Ok(json!({ "progress": 100 })),
+///         Ok(Progress { percent: 50 }),
+///         Ok(Progress { percent: 100 }),
 ///     ]))
 /// });
 /// ```
@@ -243,12 +247,36 @@ pub mod marker {
 
     /// Marks futures a handler returns, resolved by awaiting them.
     pub enum Deferred {}
+
+    /// Marks serializable data a handler returns directly.
+    pub enum Data {}
+
+    /// Marks futures that resolve to serializable data.
+    pub enum DeferredData {}
 }
 
-/// Values a handler may return: anything [`IntoOutcome`], or a [`Future`] that resolves to one.
+/// A `Result` whose error defaults to [`Error`], for handlers and helpers that may fail.
 ///
-/// The marker `M` is inferred: [`marker::Immediate`] for direct values and [`marker::Deferred`]
-/// for futures.
+/// ```
+/// use incur::{Command, Context};
+///
+/// let command = Command::new().run(|_: Context| -> incur::Result<u32> {
+///     let parsed = "42".parse::<u32>().map_err(incur::Error::unknown)?;
+///     Ok(parsed)
+/// });
+/// ```
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Values a handler may return:
+///
+/// - any serializable data, such as a struct deriving `Serialize` (`null` and `()` mean no
+///   data);
+/// - anything [`IntoOutcome`]: an [`Outcome`] from [`ok`] or [`stream`], or a `Result` of
+///   either;
+/// - a [`Future`] that resolves to any of these, such as an `async` block.
+///
+/// The marker `M` is inferred. A `Result` whose error type is itself serializable, such as
+/// `Result<T, String>`, matches two forms; return `Result<T, Error>` instead.
 pub trait HandlerOutput<M> {
     /// Resolves the value to an outcome.
     fn resolve(self) -> impl Future<Output = Outcome> + Send + 'static;
@@ -267,6 +295,22 @@ where
 {
     async fn resolve(self) -> Outcome {
         self.await.into_outcome()
+    }
+}
+
+impl<T: Serialize> HandlerOutput<marker::Data> for T {
+    fn resolve(self) -> impl Future<Output = Outcome> + Send + 'static {
+        std::future::ready(ok(self))
+    }
+}
+
+impl<F> HandlerOutput<marker::DeferredData> for F
+where
+    F: Future + Send + 'static,
+    F::Output: Serialize,
+{
+    async fn resolve(self) -> Outcome {
+        ok(self.await)
     }
 }
 
@@ -321,6 +365,12 @@ impl<T: Serialize, E: Into<Error>> IntoOutcome for Result<T, E> {
     }
 }
 
+impl<E: Into<Error>> IntoOutcome for Result<Outcome, E> {
+    fn into_outcome(self) -> Outcome {
+        self.unwrap_or_else(|error| Outcome(Inner::Error(error.into())))
+    }
+}
+
 /// Where a command output may appear.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum OutputPolicy {
@@ -357,6 +407,26 @@ pub(crate) struct Invocation {
     pub(crate) vars: Vars,
     /// CLI version.
     pub(crate) version: Option<String>,
+}
+
+impl Invocation {
+    /// Builds a handler context around deserialized inputs.
+    pub(crate) fn into_context<A, O, E>(self, args: A, options: O, env: E) -> Context<A, O, E> {
+        Context {
+            agent: self.agent,
+            args,
+            display_name: self.display_name,
+            env,
+            format: self.format,
+            format_explicit: self.format_explicit,
+            globals: self.globals,
+            name: self.name,
+            options,
+            request: self.request,
+            vars: self.vars,
+            version: self.version,
+        }
+    }
 }
 
 /// A type-erased handler.
@@ -427,13 +497,12 @@ impl Command {
     /// Sets the handler. The argument, option, and environment schemas come from the context
     /// type the closure declares.
     ///
-    /// The handler returns anything [`IntoOutcome`], such as a `Result` of serializable data,
-    /// or a future that resolves to one, such as an `async` block.
+    /// The handler returns any [`HandlerOutput`]: serializable data, a `Result` of it, an
+    /// [`Outcome`], or a future that resolves to one of these, such as an `async` block.
     ///
     /// ```
     /// use incur::{Command, Context, Schema};
-    /// use serde::Deserialize;
-    /// use serde_json::json;
+    /// use serde::{Deserialize, Serialize};
     ///
     /// #[derive(Deserialize, Schema)]
     /// struct Args {
@@ -441,13 +510,25 @@ impl Command {
     ///     name: String,
     /// }
     ///
-    /// let greet = Command::new().run(|c: Context<Args>| {
-    ///     Ok::<_, incur::Error>(json!({ "message": format!("hello {}", c.args.name) }))
+    /// #[derive(Serialize)]
+    /// struct Greeting {
+    ///     message: String,
+    /// }
+    ///
+    /// let greet = Command::new().run(|c: Context<Args>| Greeting {
+    ///     message: format!("hello {}", c.args.name),
     /// });
     ///
     /// let fetch = Command::new().run(|c: Context<Args>| async move {
     ///     // Await IO here.
-    ///     Ok::<_, incur::Error>(json!({ "fetched": c.args.name }))
+    ///     Greeting { message: c.args.name }
+    /// });
+    ///
+    /// let check = Command::new().run(|c: Context<Args>| -> incur::Result<Greeting> {
+    ///     if c.args.name.is_empty() {
+    ///         return Err(incur::Error::new("EMPTY", "Name is empty"));
+    ///     }
+    ///     Ok(Greeting { message: c.args.name })
     /// });
     /// ```
     #[must_use]
@@ -462,28 +543,23 @@ impl Command {
         self.args = A::schema();
         self.options = O::schema();
         self.env = E::schema();
-        self.handler = Some(Arc::new(move |input: Invocation| -> BoxFuture<Outcome> {
-            let context = (|| {
-                Ok::<_, Error>(Context {
-                    agent: input.agent,
-                    args: A::from_value(input.args)?,
-                    display_name: input.display_name,
-                    env: E::from_value(input.env)?,
-                    format: input.format,
-                    format_explicit: input.format_explicit,
-                    globals: input.globals,
-                    name: input.name,
-                    options: O::from_value(input.options)?,
-                    request: input.request,
-                    vars: input.vars,
-                    version: input.version,
-                })
-            })();
-            match context {
-                Ok(context) => Box::pin(f(context).resolve()),
-                Err(error) => Box::pin(std::future::ready(error.into())),
-            }
-        }));
+        self.handler = Some(Arc::new(
+            move |mut input: Invocation| -> BoxFuture<Outcome> {
+                let inputs = (|| {
+                    Ok::<_, Error>((
+                        A::from_value(std::mem::take(&mut input.args))?,
+                        O::from_value(std::mem::take(&mut input.options))?,
+                        E::from_value(std::mem::take(&mut input.env))?,
+                    ))
+                })();
+                match inputs {
+                    Ok((args, options, env)) => {
+                        Box::pin(f(input.into_context(args, options, env)).resolve())
+                    }
+                    Err(error) => Box::pin(std::future::ready(error.into())),
+                }
+            },
+        ));
         self
     }
 

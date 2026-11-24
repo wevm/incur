@@ -12,6 +12,102 @@ describe('parse', () => {
     expect(result.args).toEqual({ greeting: 'hello', name: 'world' })
   })
 
+  test('rejects a positional after the last scalar arg', () => {
+    expect(() => Parser.parse(['a', 'b'], { args: z.object({ target: z.string() }) })).toThrow(
+      expect.objectContaining({ name: 'Incur.ParseError', message: 'Unexpected argument: b' }),
+    )
+  })
+
+  test('rejects positionals when there is no args schema', () => {
+    expect(() => Parser.parse(['extra'])).toThrow(
+      expect.objectContaining({ name: 'Incur.ParseError', message: 'Unexpected argument: extra' }),
+    )
+    expect(() => Parser.parse(['extra'], { args: z.object({}) })).toThrow(
+      expect.objectContaining({ name: 'Incur.ParseError', message: 'Unexpected argument: extra' }),
+    )
+  })
+
+  test('does not count option values as positionals', () => {
+    expect(
+      Parser.parse(['a', '--format', 'json'], {
+        args: z.object({ target: z.string() }),
+        options: z.object({ format: z.string() }),
+      }),
+    ).toEqual({ args: { target: 'a' }, options: { format: 'json' } })
+    expect(() =>
+      Parser.parse(['a', '--format', 'json', 'b'], {
+        args: z.object({ target: z.string() }),
+        options: z.object({ format: z.string() }),
+      }),
+    ).toThrow('Unexpected argument: b')
+  })
+
+  test('-- treats following tokens as positionals, including flag-shaped tokens', () => {
+    expect(() =>
+      Parser.parse(['a', '--', '--force'], { args: z.object({ target: z.string() }) }),
+    ).toThrow('Unexpected argument: --force')
+    expect(
+      Parser.parse(['--', '--force'], { args: z.object({ paths: z.array(z.string()) }) }),
+    ).toEqual({ args: { paths: ['--force'] }, options: {} })
+  })
+
+  test('keeps boolean-looking positional values after a boolean option', () => {
+    expect(
+      Parser.parse(['--verbose', 'false'], {
+        args: z.object({ value: z.enum(['true', 'false']) }),
+        options: z.object({ verbose: z.boolean() }),
+      }),
+    ).toEqual({ args: { value: 'false' }, options: { verbose: true } })
+  })
+
+  test('consumes spaced boolean values only when positional capacity is exceeded', () => {
+    const options = {
+      args: z.object({ value: z.enum(['true', 'false']) }),
+      options: z.object({ verbose: z.boolean() }),
+    }
+    expect(Parser.parse(['--verbose', 'false', 'true'], options)).toEqual({
+      args: { value: 'true' },
+      options: { verbose: false },
+    })
+    expect(Parser.parse(['true', '--verbose', 'false'], options)).toEqual({
+      args: { value: 'true' },
+      options: { verbose: false },
+    })
+    expect(Parser.parse(['--verbose', 'false', '--verbose'], { options: options.options })).toEqual(
+      {
+        args: {},
+        options: { verbose: true },
+      },
+    )
+    expect(Parser.parse(['--verbose', '--verbose', 'false'], { options: options.options })).toEqual(
+      {
+        args: {},
+        options: { verbose: false },
+      },
+    )
+    expect(
+      Parser.parse(['-v', 'false'], { options: options.options, alias: { verbose: 'v' } }),
+    ).toEqual({ args: {}, options: { verbose: false } })
+  })
+
+  test('consumes boolean candidates earliest-first', () => {
+    expect(
+      Parser.parse(['--quiet', 'true', '--verbose', 'false'], {
+        args: z.object({ target: z.string() }),
+        options: z.object({ quiet: z.boolean(), verbose: z.boolean() }),
+      }),
+    ).toEqual({ args: { target: 'false' }, options: { quiet: true, verbose: true } })
+  })
+
+  test('a final array keeps boolean-looking tokens as positionals', () => {
+    expect(
+      Parser.parse(['--verbose', 'false', 'true'], {
+        args: z.object({ values: z.array(z.string()) }),
+        options: z.object({ verbose: z.boolean() }),
+      }),
+    ).toEqual({ args: { values: ['false', 'true'] }, options: { verbose: true } })
+  })
+
   test('collects remaining positionals into a final array arg', () => {
     const result = Parser.parse(['a.ts', 'b.ts', 'c.ts'], {
       args: z.object({ paths: z.array(z.string()) }),
@@ -121,6 +217,36 @@ describe('parse', () => {
       options: z.object({ limit: z.number() }),
     })
     expect(result.options).toEqual({ limit: 10 })
+  })
+
+  test('coerces string to number for zod number formats', () => {
+    const result = Parser.parse(['--limit=10', '--offset', '2', '--ratio', '0.5'], {
+      options: z.object({
+        limit: z.int(),
+        offset: z.uint32().optional(),
+        ratio: z.float64().default(1),
+      }),
+    })
+    expect(result.options).toEqual({ limit: 10, offset: 2, ratio: 0.5 })
+  })
+
+  test('treats T | null unions as T', () => {
+    const options = z.object({
+      label: z.union([z.array(z.string()), z.null()]).optional(),
+      tag: z.union([z.array(z.string()), z.null()]).optional(),
+      limit: z.union([z.null(), z.number()]).optional(),
+      force: z.union([z.boolean(), z.null()]).optional(),
+      value: z.union([z.string(), z.number(), z.null()]).optional(),
+    })
+    const argv = '--label bug --label feature --tag x --limit 10 --force --value 7'.split(' ')
+    const result = Parser.parse(argv, { options })
+    expect(result.options).toEqual({
+      label: ['bug', 'feature'],
+      tag: ['x'],
+      limit: 10,
+      force: true,
+      value: '7',
+    })
   })
 
   test('coerces string to boolean', () => {
@@ -465,11 +591,9 @@ describe('parseGlobals', () => {
 
   test('handles short aliases', () => {
     const schema = z.object({ rpcUrl: z.string() })
-    const result = Parser.parseGlobals(
-      ['-r', 'http://example.com', 'deploy'],
-      schema,
-      { rpcUrl: 'r' },
-    )
+    const result = Parser.parseGlobals(['-r', 'http://example.com', 'deploy'], schema, {
+      rpcUrl: 'r',
+    })
     expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
     expect(result.rest).toEqual(['deploy'])
   })
@@ -572,9 +696,9 @@ describe('parseGlobals', () => {
       output: z.string(),
       verbose: z.boolean().default(false),
     })
-    expect(() => Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' })).toThrow(
-      /must be last/,
-    )
+    expect(() =>
+      Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' }),
+    ).toThrow(/must be last/)
   })
 
   test('short flag value-taking as last in stacked alias', () => {
@@ -673,6 +797,17 @@ describe('parseGlobals', () => {
         parsed: { network: 'x', yes: true },
         rest: ['deploy', '-d', '--network=y'],
       })
+    })
+  })
+})
+
+describe('parseEnv', () => {
+  test('coerces string to number for zod number formats', () => {
+    const schema = z.object({ PORT: z.int(), RATIO: z.float64().optional(), LIMIT: z.number() })
+    expect(Parser.parseEnv(schema, { PORT: '8080', RATIO: '0.5', LIMIT: '3' })).toEqual({
+      PORT: 8080,
+      RATIO: 0.5,
+      LIMIT: 3,
     })
   })
 })

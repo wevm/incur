@@ -10,6 +10,7 @@ vi.mock('node:child_process', () => ({
     (
       _command: string,
       _args: string[],
+      _options: object,
       callback: (error: Error | null, stdout: string, stderr: string) => void,
     ) => {
       callback(null, '', '')
@@ -216,6 +217,8 @@ test('reports deferred custom installations', async () => {
 
 test('installs executing packages through their package manager', async () => {
   setupPackage({ name: 'frog', version: '1.0.0' })
+  // On Windows, `npm` resolves to its `.cmd` script on `PATH`.
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
 
   await expect(install('frog')).resolves.toEqual({
     command: 'npm install --global frog@latest',
@@ -224,8 +227,10 @@ test('installs executing packages through their package manager', async () => {
   expect(childProcess.execFile).toHaveBeenCalledWith(
     'npm',
     ['install', '--global', 'frog@latest'],
+    { windowsVerbatimArguments: false },
     expect.any(Function),
   )
+  platform.mockRestore()
 })
 
 test('reports unsupported standalone installation', async () => {

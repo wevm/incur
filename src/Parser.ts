@@ -14,18 +14,39 @@ export function parse<
   const optionNames = createOptionNames(optionsSchema, alias)
 
   // First pass: split argv into positional tokens and raw option values
-  const positionals: string[] = []
+  let positionals: string[] = []
   const rawArgvOptions: Record<string, unknown> = {}
+  // `true`/`false` tokens after boolean flags, kept as positionals until the arg count is known
+  const candidates: { index: number; name: string; value: boolean; flagIndex: number }[] = []
+  // argv index of the last token that set each boolean option
+  const lastBoolean = new Map<string, number>()
+
+  function setBoolean(name: string, flagIndex: number, value: boolean) {
+    rawArgvOptions[name] = value
+    lastBoolean.set(name, flagIndex)
+  }
+
+  function setBooleanCandidate(name: string, flagIndex: number) {
+    setBoolean(name, flagIndex, true)
+    const next = argv[flagIndex + 1]
+    if (next !== 'true' && next !== 'false') return false
+    candidates.push({ index: positionals.length, name, value: next === 'true', flagIndex })
+    positionals.push(next)
+    return true
+  }
 
   let i = 0
   while (i < argv.length) {
     const token = argv[i]!
 
-    if (token.startsWith('--no-') && token.length > 5) {
+    if (token === '--') {
+      positionals.push(...argv.slice(i + 1))
+      break
+    } else if (token.startsWith('--no-') && token.length > 5) {
       // --no-flag negation
       const name = normalizeOptionName(token.slice(5), optionNames)
       if (!name) throw new ParseError({ message: `Unknown flag: ${token}` })
-      rawArgvOptions[name] = false
+      setBoolean(name, i, false)
       i++
     } else if (token.startsWith('--')) {
       const eqIdx = token.indexOf('=')
@@ -35,6 +56,7 @@ export function parse<
         const name = normalizeOptionName(raw, optionNames)
         if (!name) throw new ParseError({ message: `Unknown flag: --${raw}` })
         setOption(rawArgvOptions, name, token.slice(eqIdx + 1), optionsSchema)
+        if (isBooleanOption(name, optionsSchema)) lastBoolean.set(name, i)
         i++
       } else {
         // --flag [value]
@@ -44,8 +66,7 @@ export function parse<
           rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
           i++
         } else if (isBooleanOption(name, optionsSchema)) {
-          rawArgvOptions[name] = true
-          i++
+          i += setBooleanCandidate(name, i) ? 2 : 1
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -66,7 +87,7 @@ export function parse<
           if (isCountOption(name, optionsSchema)) {
             rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
           } else if (isBooleanOption(name, optionsSchema)) {
-            rawArgvOptions[name] = true
+            setBoolean(name, i, true)
           } else {
             throw new ParseError({
               message: `Non-boolean flag -${short} must be last in a stacked alias`,
@@ -75,7 +96,7 @@ export function parse<
         } else if (isCountOption(name, optionsSchema)) {
           rawArgvOptions[name] = ((rawArgvOptions[name] as number) ?? 0) + 1
         } else if (isBooleanOption(name, optionsSchema)) {
-          rawArgvOptions[name] = true
+          if (setBooleanCandidate(name, i)) i++
         } else {
           const value = argv[i + 1]
           if (value === undefined)
@@ -91,22 +112,36 @@ export function parse<
     }
   }
 
+  // A spaced `true`/`false` after a boolean flag is its value only when no positional slot is left
+  // for it, earliest first; a later assignment of the same flag still wins
+  const keys = argsSchema ? Object.keys(argsSchema.shape) : []
+  const variadic = keys.length > 0 && isArrayField(keys.at(-1)!, argsSchema)
+  if (!variadic) {
+    const consumed = new Set<number>()
+    for (const candidate of candidates) {
+      if (positionals.length - consumed.size <= keys.length) break
+      consumed.add(candidate.index)
+      if (lastBoolean.get(candidate.name) === candidate.flagIndex)
+        rawArgvOptions[candidate.name] = candidate.value
+    }
+    positionals = positionals.filter((_, index) => !consumed.has(index))
+  }
+
   // Assign positionals to args schema keys in order; a final array key collects the rest
   const rawArgs: Record<string, unknown> = {}
-  if (argsSchema) {
-    const keys = Object.keys(argsSchema.shape)
-    for (let j = 0; j < keys.length; j++) {
-      const key = keys[j]!
-      if (isArrayField(key, argsSchema)) {
-        if (j !== keys.length - 1)
-          throw new Error(`Variadic arg "${key}" must be the last key in the args schema`)
-        const rest = positionals.slice(j)
-        if (rest.length > 0) rawArgs[key] = rest
-      } else if (positionals[j] !== undefined) {
-        rawArgs[key] = positionals[j]!
-      }
+  for (let j = 0; j < keys.length; j++) {
+    const key = keys[j]!
+    if (isArrayField(key, argsSchema)) {
+      if (j !== keys.length - 1)
+        throw new Error(`Variadic arg "${key}" must be the last key in the args schema`)
+      const rest = positionals.slice(j)
+      if (rest.length > 0) rawArgs[key] = rest
+    } else if (positionals[j] !== undefined) {
+      rawArgs[key] = positionals[j]!
     }
   }
+  if (!variadic && positionals.length > keys.length)
+    throw new ParseError({ message: `Unexpected argument: ${positionals[keys.length]}` })
 
   // Validate args through zod
   const args = argsSchema ? zodParse(argsSchema, rawArgs) : {}
@@ -211,11 +246,20 @@ function normalizeOptionDefaults(
   return normalized
 }
 
-/** Unwraps ZodDefault/ZodOptional to get the inner type. */
+/**
+ * Unwraps ZodDefault/ZodOptional/ZodNullable and `T | null` unions to get the inner type.
+ * `z.fromJSONSchema` converts a nullable type such as `type: ['array', 'null']` into a union.
+ */
 function unwrap(schema: z.ZodType): z.ZodType {
-  let s = schema as any
-  while (s.def?.innerType) s = s.def.innerType
-  return s
+  const def = schema.def as any
+  if (def.innerType) return unwrap(def.innerType)
+  if (def.type === 'union') {
+    const options = (def.options as z.ZodType[]).filter(
+      (option) => option.def.type !== 'null' && option.def.type !== 'undefined',
+    )
+    if (options.length === 1) return unwrap(options[0]!)
+  }
+  return schema
 }
 
 /** Checks if an option's inner type is boolean. */
@@ -314,7 +358,8 @@ export function parseEnv<const env extends z.ZodObject<any>>(
 function coerceEnv(value: string, field: z.ZodType): unknown {
   const inner = unwrap(field)
   const typeName = inner.constructor.name
-  if (typeName === 'ZodNumber') return Number(value)
+  // Number formats such as `z.int()` are `ZodNumberFormat` instances with the same `def.type`.
+  if (inner.def.type === 'number') return Number(value)
   if (typeName === 'ZodBoolean') return value === 'true' || value === '1'
   return value
 }
@@ -326,7 +371,7 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   const inner = unwrap(field)
   const typeName = inner.constructor.name
 
-  if (typeName === 'ZodNumber' && typeof value === 'string') {
+  if (inner.def.type === 'number' && typeof value === 'string') {
     return Number(value)
   }
   if (typeName === 'ZodBoolean' && typeof value === 'string') {

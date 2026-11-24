@@ -854,6 +854,14 @@ struct KitDeployArgs {
     env: Environment,
 }
 
+/// The skill sync settings of the `kit` CLIs.
+fn kit_sync() -> SkillSync {
+    SkillSync::new()
+        .include(["skills/*", "_root"])
+        .body("Run `kit auth login` to finish setup.")
+        .suggestions(["Show my status", "Deploy the app"])
+}
+
 /// Builds a CLI that syncs skills and registers MCP servers.
 fn kit_cli(name: &str, package: Option<&str>, version: Option<&str>, mcp: Option<Mcp>) -> Cli {
     let mut cli = client(Cli::new(name))
@@ -866,43 +874,38 @@ fn kit_cli(name: &str, package: Option<&str>, version: Option<&str>, mcp: Option
     if let Some(mcp) = mcp {
         cli = cli.mcp(mcp);
     }
-    cli.sync(
-        SkillSync::new()
-            .include(["skills/*", "_root"])
-            .body("Run `kit auth login` to finish setup.")
-            .suggestions(["Show my status", "Deploy the app"]),
-    )
-    .command(
-        "status",
-        Command::new()
-            .description("Show status")
-            .example("", Some("Show status"))
-            .run(|_: Context| data(json!({ "ok": true }))),
-    )
-    .command(
-        "deploy",
-        Command::new()
-            .description("Deploy the app")
-            .destructive()
-            .run(|c: Context<KitDeployArgs>| data(json!({ "deployed": c.args.env }))),
-    )
-    .group(
-        Cli::new("auth")
-            .description("Authentication")
-            .command(
-                "login",
-                Command::new()
-                    .description("Log in")
-                    .run(|_: Context| data(json!({ "ok": true }))),
-            )
-            .command(
-                "logout",
-                Command::new()
-                    .description("Log out")
-                    .hint("Clears tokens.")
-                    .run(|_: Context| data(json!({ "ok": true }))),
-            ),
-    )
+    cli.sync(kit_sync())
+        .command(
+            "status",
+            Command::new()
+                .description("Show status")
+                .example("", Some("Show status"))
+                .run(|_: Context| data(json!({ "ok": true }))),
+        )
+        .command(
+            "deploy",
+            Command::new()
+                .description("Deploy the app")
+                .destructive()
+                .run(|c: Context<KitDeployArgs>| data(json!({ "deployed": c.args.env }))),
+        )
+        .group(
+            Cli::new("auth")
+                .description("Authentication")
+                .command(
+                    "login",
+                    Command::new()
+                        .description("Log in")
+                        .run(|_: Context| data(json!({ "ok": true }))),
+                )
+                .command(
+                    "logout",
+                    Command::new()
+                        .description("Log out")
+                        .hint("Clears tokens.")
+                        .run(|_: Context| data(json!({ "ok": true }))),
+                ),
+        )
 }
 
 pub(crate) fn kit() -> Cli {
@@ -929,6 +932,10 @@ pub(crate) fn kitcmd() -> Cli {
                 .command("kit serve --stdio"),
         ),
     )
+}
+
+pub(crate) fn kitcwd() -> Cli {
+    kit_cli("kitcwd", None, None, None).sync(kit_sync().cwd("vendor"))
 }
 
 pub(crate) fn kitbad() -> Cli {

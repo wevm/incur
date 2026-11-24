@@ -709,7 +709,7 @@ export declare namespace create {
       | {
           /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
           body?: string | undefined
-          /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
+          /** Directory that `include` globs resolve against, in both `skills add` and `skills list`. Defaults to the package root of the running bin (the nearest `package.json` above `process.argv[1]`). Project installs (`skills add --no-global`) always go to the working directory, not here. */
           cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
           depth?: number | undefined
@@ -871,13 +871,27 @@ async function serveImpl(
         }
       } else if (nonFlags?.length === 2) {
         const parent = nonFlags[nonFlags.length - 1]!
-        const builtin = findBuiltin(parent)
-        if (builtin?.subcommands && builtins.includes(builtin))
+        // A registered command with the same name shadows the builtin
+        const builtin = commands.has(parent) ? undefined : findBuiltin(parent)
+        // A built-in group completes its own subcommands in place of root commands
+        if (builtin?.subcommands && builtins.includes(builtin) && !current.startsWith('-')) {
+          candidates.length = 0
           for (const sub of builtin.subcommands)
             for (const value of [sub.name, ...(sub.aliases ?? [])])
-              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+              if (value.startsWith(current))
                 candidates.push({ value, description: sub.description })
+        }
       }
+      // Add the built-in global flags that help lists for the active command
+      if (nonFlags && current.startsWith('-'))
+        for (const { flag, desc } of Help.globalFlags(
+          nonFlags.length <= 1,
+          configFlag,
+          !updateEnabled,
+        ))
+          for (const value of flag.split(', ').map((f) => f.split(' ')[0]!))
+            if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+              candidates.push({ value, description: desc })
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
     }
@@ -899,7 +913,7 @@ async function serveImpl(
     fullOutput,
     format: formatFlag,
     formatExplicit,
-    filterOutput,
+    filterPaths,
     tokenLimit,
     tokenOffset,
     tokenCount,
@@ -1026,11 +1040,11 @@ async function serveImpl(
     !updateCheck &&
     !version
   ) {
-    const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
-    const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
+    const isSkillsAdd = builtinIdx(filtered, name, commands, 'skills') !== -1
+    const isMcpAdd = builtinIdx(filtered, name, commands, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
-      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: sync?.cwd })) {
+      if (stored && SyncSkills.hasInstalledSkills(name)) {
         // The stored hash covers every command, deferred groups included.
         await options.load?.()
         const groups = new Map<string, string>()
@@ -1118,7 +1132,7 @@ async function serveImpl(
   }
 
   // completions <shell>: print shell hook script to stdout
-  const completionsIdx = builtinIdx(filtered, name, 'completions')
+  const completionsIdx = builtinIdx(filtered, name, commands, 'completions')
   if (completionsIdx !== -1) {
     const shell = filtered[completionsIdx + 1]
     if (help || !shell) {
@@ -1149,7 +1163,7 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx = skillsEnabled ? builtinIdx(filtered, name, 'skills') : -1
+  const skillsIdx = skillsEnabled ? builtinIdx(filtered, name, commands, 'skills') : -1
   if (skillsIdx !== -1) {
     const builtin = findBuiltin('skills')!
     const skillsSub = filtered[skillsIdx + 1]
@@ -1191,10 +1205,10 @@ async function serveImpl(
       }
       try {
         const result = await SyncSkills.list(name, commands, {
-          cwd: sync?.cwd,
           depth: sync?.depth ?? 1,
           description: options.description,
           include: sync?.include,
+          root: sync?.cwd,
           rootCommand: options.rootCommand,
         })
         if (result.length === 0) {
@@ -1247,11 +1261,11 @@ async function serveImpl(
     try {
       stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
-        cwd: sync?.cwd,
         depth,
         description: options.description,
         global,
         include: sync?.include,
+        root: sync?.cwd,
         rootCommand: options.rootCommand,
       })
       stdout('\r\x1b[K')
@@ -1301,7 +1315,7 @@ async function serveImpl(
   }
 
   // mcp add/doctor: register or smoke-test CLI MCP server integration.
-  const mcpIdx = builtinIdx(filtered, name, 'mcp')
+  const mcpIdx = builtinIdx(filtered, name, commands, 'mcp')
   if (mcpIdx !== -1) {
     const builtin = findBuiltin('mcp')!
     const mcpSub = filtered[mcpIdx + 1]
@@ -1346,12 +1360,25 @@ async function serveImpl(
     const rest = filtered.slice(mcpIdx + 2)
     const global = rest.includes('--no-global') ? false : true
 
-    // Parse --command / -c and --agent flags from argv
+    // Parse --command / -c and --agent, spaced or with `=`. A blank or option-shaped value is
+    // missing, so it cannot swallow the next flag.
     let command = options.mcp?.command
     const agents: string[] = [...(options.mcp?.agents ?? [])]
     for (let i = 0; i < rest.length; i++) {
-      if ((rest[i] === '--command' || rest[i] === '-c') && rest[i + 1]) command = rest[++i]!
-      else if (rest[i] === '--agent' && rest[i + 1]) agents.push(rest[++i]!)
+      const token = rest[i]!
+      const eq = token.indexOf('=')
+      const flag = eq === -1 ? token : token.slice(0, eq)
+      if (flag !== '--command' && flag !== '-c' && flag !== '--agent') continue
+      const value = eq === -1 ? rest[++i] : token.slice(eq + 1)
+      if (value === undefined || !value.trim() || (value.startsWith('-') && value.length > 1)) {
+        const error = { code: 'UNKNOWN', message: `Missing value for flag: ${flag}` }
+        if (human) writeln(formatHumanError(error))
+        else writeln(Formatter.format(error, formatExplicit ? formatFlag : 'toon'))
+        exit(1)
+        return
+      }
+      if (flag === '--agent') agents.push(value)
+      else command = value
     }
 
     try {
@@ -1682,8 +1709,6 @@ async function serveImpl(
     ('outputPolicy' in resolved && resolved.outputPolicy) || options.outputPolicy
   const renderOutput = !(human && !formatExplicit && effectiveOutputPolicy === 'agent-only')
 
-  const filterPaths = filterOutput ? Filter.parse(filterOutput) : undefined
-
   function truncate(s: string): {
     text: string
     truncated: boolean
@@ -1695,10 +1720,11 @@ async function serveImpl(
     const end = tokenLimit != null ? offset + tokenLimit : total
     if (offset === 0 && end >= total) return { text: s, truncated: false }
     const sliced = sliceByTokens(s, offset, end)
+    const start = Math.min(offset, total)
     const actualEnd = Math.min(end, total)
     const nextOffset = actualEnd < total ? actualEnd : undefined
     return {
-      text: `${sliced}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
+      text: `${sliced}\n[truncated: showing tokens ${start}–${actualEnd} of ${total}]`,
       truncated: true,
       nextOffset,
     }
@@ -1894,7 +1920,7 @@ async function serveImpl(
         ? Parser.parseEnv(options.envSchema, options.env ?? process.env)
         : {}
       if (fetchMiddleware.length > 0) {
-        const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
+        const varsMap = Command.varDefaults(options.vars)
         const errorFn = (opts: Command.ErrorOptions): never =>
           ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
@@ -2822,7 +2848,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   let formatExplicit = false
   let configPath: string | undefined
   let configDisabled = false
-  let filterOutput: string | undefined
+  let filterPaths: Filter.FilterPath[] | undefined
   let tokenLimit: number | undefined
   let tokenOffset: number | undefined
   let tokenCount = false
@@ -2873,17 +2899,18 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       configPath = undefined
       configDisabled = true
     } else if (token === '--filter-output' && argv[i + 1]) {
-      filterOutput = argv[i + 1]!
+      // Parse up front so a malformed filter is reported before the command runs
+      filterPaths = Filter.parse(argv[i + 1]!)
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+      if (!Number.isFinite(n) || n < 0 || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
       tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
       const n = Number(argv[i + 1])
-      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+      if (!Number.isFinite(n) || n < 0 || argv[i + 1]!.trim() === '')
         throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
       tokenOffset = n
       i++
@@ -2897,7 +2924,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     formatExplicit,
     configPath,
     configDisabled,
-    filterOutput,
+    filterPaths,
     tokenLimit,
     tokenOffset,
     tokenCount,
@@ -3066,12 +3093,22 @@ function collectHelpCommands(
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-/** @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found. */
-function builtinIdx(filtered: string[], cliName: string, builtin: string): number {
+/**
+ * @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found.
+ * A registered command or alias with the same name shadows the builtin.
+ */
+function builtinIdx(
+  filtered: string[],
+  cliName: string,
+  commands: Map<string, CommandEntry>,
+  builtin: string,
+): number {
+  const matches = (token: string | undefined) =>
+    token !== undefined && !commands.has(token) && findBuiltin(token)?.name === builtin
   // e.g. `skills add` or `skill add`
-  if (findBuiltin(filtered[0]!)?.name === builtin) return 0
+  if (matches(filtered[0])) return 0
   // e.g. `my-cli skills add`
-  if (filtered[0] === cliName && findBuiltin(filtered[1]!)?.name === builtin) return 1
+  if (filtered[0] === cliName && matches(filtered[1])) return 1
   // not a match
   return -1
 }
