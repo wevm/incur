@@ -61,7 +61,7 @@
 - **Rust gate** — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (also with `--features incur/client` and `--no-default-features`, alone and combined), `cargo test --workspace --no-default-features`, and `cargo llvm-cov --workspace --fail-uncovered-lines 0` in `langs/rust`.
 - **Python gate** — `uv run ruff check`, `uv run ruff format --check`, `uv run pyright` (strict), and `uv run coverage erase && uv run coverage run -m pytest && uv run coverage report` (100% branch coverage; erase first, since stale `.coverage.*` files from subprocess runs otherwise merge in) in `langs/python`.
 - **Zig gate** — `zig fmt --check .`, `zig build test`, and `zig build coverage` (kcov, 100% of `src/` lines) in `langs/zig`, on Zig 0.17.1. No `test` blocks in `src/`; README programs run in `zig build test`, as child processes that coverage traces under kcov.
-- **Package READMEs mirror the root** — each port's README is a concise version of the root README (header, Features, Install, Usage, Walkthrough, License) with tested examples; development commands live in `langs/README.md`.
+- **Package READMEs mirror the root** — each port's README is a concise version of the root README (header, Features, Install, Usage, Walkthrough, License) with tested examples; development commands live in `langs/CONTRIBUTING.md`.
 - **No unpaired surrogates in cases** — JavaScript strings can hold them; Rust, Python, and Zig strings cannot, so the suite never compares them.
 - **Node-independent expectations** — a case must not depend on the Node version's wording, such as `fs` error messages; test those per port instead.
 
