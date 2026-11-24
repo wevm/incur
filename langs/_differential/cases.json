@@ -2261,6 +2261,8 @@
 {"cli": "remote", "argv": ["session", "web", "--name", "n"], "sandbox": {}},
 {"cli": "remote", "argv": ["fake", "structured", "--count", "3"], "sandbox": {}},
 {"cli": "remote", "argv": ["fake", "structured", "--count", "3", "--label", "l", "--on", "true", "--ratio", "0.5"], "sandbox": {}},
+{"cli": "remote", "argv": ["fake", "structured", "--count", "1", "--tags", "a", "--tags", "b"], "sandbox": {}},
+{"cli": "remote", "argv": ["fake", "structured", "--count", "1", "--tags", "a"], "sandbox": {}},
 {"cli": "remote", "argv": ["fake", "structured", "--count", "x"], "sandbox": {}},
 {"cli": "remote", "argv": ["fake", "structured"], "sandbox": {}},
 {"cli": "remote", "argv": ["fake", "headers"], "sandbox": {}},

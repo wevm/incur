@@ -379,6 +379,7 @@ pub(crate) async fn fake_mcp(request: http::Request<Body>) -> Result<http::Respo
                                 "label": { "type": "string" },
                                 "on": { "type": "boolean" },
                                 "ratio": { "type": ["number", "null"] },
+                                "tags": { "type": ["array", "null"], "items": { "type": "string" } },
                             },
                             "required": ["count"],
                         },

@@ -63,10 +63,25 @@ pub const Type = struct {
         return ty.count or ty.kind == .boolean;
     }
 
+    /// Returns the only non-null option of a union, such as `type: ["array", "null"]` converts
+    /// to, as the parser and help read it; any other schema is itself.
+    pub fn unwrap(ty: *const Type) *const Type {
+        const options = switch (ty.kind) {
+            .@"union" => |options| options,
+            else => return ty,
+        };
+        var inner: ?*const Type = null;
+        for (options) |*option| if (option.kind != .null) {
+            if (inner != null) return ty;
+            inner = option;
+        };
+        return if (inner) |t| t.unwrap() else ty;
+    }
+
     /// Returns the type label help output shows.
     pub fn typeName(ty: *const Type, a: Allocator) Allocator.Error![]const u8 {
         if (ty.count) return "count";
-        return switch (ty.kind) {
+        return switch (ty.unwrap().kind) {
             .array => "array",
             .boolean => "boolean",
             .@"enum" => |values| std.mem.join(a, "|", values),

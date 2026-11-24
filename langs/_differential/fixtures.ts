@@ -1121,6 +1121,7 @@ async function fakeMcp(request: Request): Promise<Response> {
               label: { type: 'string' },
               on: { type: 'boolean' },
               ratio: { type: ['number', 'null'] },
+              tags: { type: ['array', 'null'], items: { type: 'string' } },
             },
             required: ['count'],
           },
