@@ -1622,6 +1622,7 @@ fn upstream(a: Allocator, _: *const incur.Process, request: *const incur.http.Re
     if (eql(route, "text")) return incur.http.Response.text(a, "plain text body", 200, "text/plain;charset=UTF-8");
     if (eql(route, "fail")) return jsonResponse(a, "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"No such thing\"}}", 404);
     if (eql(route, "bad")) return jsonResponse(a, "{\"message\":\"Bad input\",\"error\":{\"code\":7}}", 400);
+    if (eql(route, "bad-object")) return jsonResponse(a, "{\"message\":{\"detail\":\"Bad input\"}}", 422);
     if (eql(route, "boom")) return incur.http.Response.text(a, "Internal failure", 500, "text/plain;charset=UTF-8");
     if (eql(route, "down")) return jsonResponse(a, "{\"status\":\"down\"}", 503);
     if (eql(route, "empty")) return .{ .status = 204 };

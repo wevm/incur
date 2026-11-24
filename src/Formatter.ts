@@ -87,6 +87,11 @@ function columnarTable(items: Record<string, unknown>[]): string {
   )
 }
 
+/** Renders an array that is not a table: scalars joined by commas, or compact JSON when it nests values. */
+function arrayText(value: unknown[]): string {
+  return value.every(isScalar) ? String(value) : Json.stringify(value)
+}
+
 /** Formats a value as Markdown, recursing into nested objects. */
 function formatMarkdown(value: unknown, path: string[] = []): string {
   if (isScalar(value)) {
@@ -100,7 +105,7 @@ function formatMarkdown(value: unknown, path: string[] = []): string {
       if (path.length === 0) return table
       return `## ${path.join('.')}\n\n${table}`
     }
-    return formatMarkdown(String(value), path)
+    return formatMarkdown(arrayText(value), path)
   }
 
   const obj = value as Record<string, unknown>
@@ -123,7 +128,7 @@ function formatMarkdown(value: unknown, path: string[] = []): string {
         if (isFlat(nested)) return `## ${childPath.join('.')}\n\n${kvTable(nested)}`
         return formatMarkdown(nested, childPath)
       }
-      return `## ${childPath.join('.')}\n\n${String(val)}`
+      return `## ${childPath.join('.')}\n\n${arrayText(val as unknown[])}`
     })
     return sections.join('\n\n')
   }

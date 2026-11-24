@@ -93,6 +93,15 @@ fn is_flat(map: &Map<String, Value>) -> bool {
     map.values().all(is_scalar)
 }
 
+/// Renders a value outside a table: arrays that nest values as compact JSON, anything else as
+/// `String(value)` does.
+fn text(value: &Value) -> String {
+    match value {
+        Value::Array(items) if !items.iter().all(is_scalar) => js::stringify(value),
+        value => js::to_string(value),
+    }
+}
+
 /// Whether a value is a non-empty array of objects.
 fn is_array_of_objects(value: &Value) -> bool {
     matches!(value, Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_object))
@@ -188,7 +197,7 @@ fn markdown(value: &Value) -> String {
         Value::Array(items) if is_array_of_objects(value) => columnar_table(items),
         Value::Object(map) if is_flat(map) => kv_table(map),
         Value::Object(map) => sections(map, &[]),
-        value => js::to_string(value),
+        value => text(value),
     }
 }
 
@@ -205,7 +214,7 @@ fn sections(map: &Map<String, Value>, path: &[String]) -> String {
                 Value::Array(items) if is_array_of_objects(val) => {
                     heading(&child, columnar_table(items))
                 }
-                val => heading(&child, js::to_string(val)),
+                val => heading(&child, text(val)),
             }
         })
         .collect::<Vec<_>>()

@@ -506,6 +506,7 @@ async function upstream(request: Request): Promise<Response> {
   if (route === 'text') return new Response('plain text body', { status: 200 })
   if (route === 'fail') return json({ error: { code: 'NOT_FOUND', message: 'No such thing' } }, 404)
   if (route === 'bad') return json({ message: 'Bad input', error: { code: 7 } }, 400)
+  if (route === 'bad-object') return json({ message: { detail: 'Bad input' } }, 422)
   if (route === 'boom') return new Response('Internal failure', { status: 500 })
   if (route === 'down') return json({ status: 'down' }, 503)
   if (route === 'empty') return new Response(null, { status: 204 })
