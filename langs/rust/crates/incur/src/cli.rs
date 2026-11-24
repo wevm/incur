@@ -2955,6 +2955,27 @@ impl Run<'_, '_> {
             }
             _ => {}
         }
+        // Add the built-in global flags that help lists for the active command
+        if let Some(words) = non_flags.as_deref().filter(|_| current.starts_with('-')) {
+            let options = help::Options {
+                root: words.len() <= 1,
+                ..self.help_options()
+            };
+            for (flag, description) in help::global_flags(&options) {
+                for value in flag
+                    .split(", ")
+                    .map(|f| f.split_once(' ').map_or(f, |(name, _)| name))
+                {
+                    if value.starts_with(current) && !candidates.iter().any(|c| c.value == value) {
+                        candidates.push(completions::Candidate {
+                            description: Some(description.into()),
+                            no_space: false,
+                            value: value.into(),
+                        });
+                    }
+                }
+            }
+        }
         let out = completions::format(shell, &candidates);
         if !out.is_empty() {
             self.write(&out);

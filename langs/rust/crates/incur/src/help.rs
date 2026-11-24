@@ -363,7 +363,18 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         option_lines(lines, globals);
     }
 
-    let mut flags: Vec<(String, &str)> = Vec::new();
+    let flags = global_flags(options);
+    let width = flags.iter().map(|(f, _)| f.len()).max().unwrap_or(0);
+    lines.push(String::new());
+    lines.push("Global Options:".into());
+    for (flag, description) in flags {
+        lines.push(format!("  {}  {description}", pad(&flag, width)));
+    }
+}
+
+/// Returns the built-in global flags listed under "Global Options", sorted as help shows them.
+pub(crate) fn global_flags(options: &Options<'_>) -> Vec<(String, &'static str)> {
+    let mut flags: Vec<(String, &'static str)> = Vec::new();
     if let Some(flag) = options.config_flag {
         flags.push((
             format!("--{flag} <path>"),
@@ -402,12 +413,7 @@ fn global_lines(lines: &mut Vec<String>, options: &Options<'_>) {
         flags.push(("--version".into(), "Show version"));
     }
     flags.sort_by(|a, b| js::locale_compare(&a.0, &b.0));
-    let width = flags.iter().map(|(f, _)| f.len()).max().unwrap_or(0);
-    lines.push(String::new());
-    lines.push("Global Options:".into());
-    for (flag, description) in flags {
-        lines.push(format!("  {}  {description}", pad(&flag, width)));
-    }
+    flags
 }
 
 /// Redacts a value, keeping only the last four characters of long values.

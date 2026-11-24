@@ -422,7 +422,20 @@ function globalOptionsLines(
     }
   }
 
-  const flags = [
+  const flags = globalFlags(root, configFlag, hideUpdate)
+  const maxLen = Math.max(...flags.map((f) => f.flag.length))
+  lines.push(
+    '',
+    'Global Options:',
+    ...flags.map((f) => `  ${f.flag}${' '.repeat(maxLen - f.flag.length)}  ${f.desc}`),
+  )
+
+  return lines
+}
+
+/** @internal Built-in global flags listed under "Global Options", sorted as help shows them. */
+export function globalFlags(root: boolean, configFlag?: string, hideUpdate = false) {
+  return [
     ...(configFlag
       ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
       : []),
@@ -446,14 +459,6 @@ function globalOptionsLines(
     ...(root && !hideUpdate ? [{ flag: '--update', desc: 'Update to latest version' }] : []),
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ].sort((a, b) => a.flag.localeCompare(b.flag))
-  const maxLen = Math.max(...flags.map((f) => f.flag.length))
-  lines.push(
-    '',
-    'Global Options:',
-    ...flags.map((f) => `  ${f.flag}${' '.repeat(maxLen - f.flag.length)}  ${f.desc}`),
-  )
-
-  return lines
 }
 
 /** Redacts a value, showing only the last 4 characters for long values. */
