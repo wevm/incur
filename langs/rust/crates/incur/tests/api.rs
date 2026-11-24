@@ -2126,7 +2126,7 @@ fn mounts_unusual_mcp_servers() {
     [
         (
             0,
-            "remote direct\n\nUsage: remote direct <command>\n\nCommands:\n  listed\n  nulled\n  numeric\n  silent\n  zero\n\nGlobal Options:\n  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])\n  --format <toon|json|yaml|md|jsonl>  Output format\n  --full-output                       Show full output envelope\n  --help                              Show help\n  --llms, --llms-full                 Print LLM-readable manifest\n  --schema                            Show JSON Schema for command\n  --token-count                       Print token count of output (instead of output)\n  --token-limit <n>                   Limit output to n tokens\n  --token-offset <n>                  Skip first n tokens of output\n",
+            "remote direct\n\nUsage: remote direct <command>\n\nCommands:\n  listed\n  nulled\n  numeric\n  silent\n  zero\n\nGlobal Options:\n  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])\n  --format <toon|json|yaml|md|jsonl>  Output format\n  --full-output                       Show full output envelope\n  --help                              Show help\n  --json                              Shorthand for --format json\n  --llms, --llms-full                 Print LLM-readable manifest\n  --schema                            Show JSON Schema for command\n  --token-count                       Print token count of output (instead of output)\n  --token-limit <n>                   Limit output to n tokens\n  --token-offset <n>                  Skip first n tokens of output\n",
         ),
         (
             1,
@@ -2718,6 +2718,7 @@ fn parses_derived_commands() {
       --format <toon|json|yaml|md|jsonl>  Output format
       --full-output                       Show full output envelope
       --help                              Show help
+      --json                              Shorthand for --format json
       --llms, --llms-full                 Print LLM-readable manifest
       --schema                            Show JSON Schema for command
       --token-count                       Print token count of output (instead of output)
@@ -2809,6 +2810,7 @@ fn hides_mcp_when_parsing() {
       --format <toon|json|yaml|md|jsonl>  Output format
       --full-output                       Show full output envelope
       --help                              Show help
+      --json                              Shorthand for --format json
       --llms, --llms-full                 Print LLM-readable manifest
       --schema                            Show JSON Schema for command
       --token-count                       Print token count of output (instead of output)
@@ -2872,6 +2874,7 @@ fn hides_mcp_when_parsing() {
       --format <toon|json|yaml|md|jsonl>  Output format
       --full-output                       Show full output envelope
       --help                              Show help
+      --json                              Shorthand for --format json
       --llms, --llms-full                 Print LLM-readable manifest
       --schema                            Show JSON Schema for command
       --token-count                       Print token count of output (instead of output)
@@ -2909,6 +2912,7 @@ fn hides_mcp_when_parsing() {
       --format <toon|json|yaml|md|jsonl>  Output format
       --full-output                       Show full output envelope
       --help                              Show help
+      --json                              Shorthand for --format json
       --llms, --llms-full                 Print LLM-readable manifest
       --schema                            Show JSON Schema for command
       --token-count                       Print token count of output (instead of output)
@@ -2932,6 +2936,7 @@ fn hides_mcp_when_parsing() {
       --format <toon|json|yaml|md|jsonl>  Output format
       --full-output                       Show full output envelope
       --help                              Show help
+      --json                              Shorthand for --format json
       --llms, --llms-full                 Print LLM-readable manifest
       --schema                            Show JSON Schema for command
       --token-count                       Print token count of output (instead of output)

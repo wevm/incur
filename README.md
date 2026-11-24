@@ -120,6 +120,7 @@ $ greet --help
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --full-output                       Show full output envelope
 #   --help                              Show help
+#   --json                              Shorthand for --format json
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for command
@@ -191,6 +192,7 @@ $ my-cli --help
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --full-output                       Show full output envelope
 #   --help                              Show help
+#   --json                              Shorthand for --format json
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for command
@@ -249,6 +251,7 @@ $ my-cli --help
 #   --format <toon|json|yaml|md|jsonl>  Output format
 #   --full-output                       Show full output envelope
 #   --help                              Show help
+#   --json                              Shorthand for --format json
 #   --llms                              Print LLM-readable manifest
 #   --mcp                               Start as MCP stdio server
 #   --schema                            Show JSON Schema for command

@@ -234,6 +234,7 @@ def _global_lines(lines: list[str], options: Options) -> None:
         ("--filter-output <keys>", "Filter output by key paths (e.g. foo,bar.baz,a[0,3])"),
         ("--format <toon|json|yaml|md|jsonl>", "Output format"),
         ("--help", "Show help"),
+        ("--json", "Shorthand for --format json"),
         ("--llms, --llms-full", "Print LLM-readable manifest"),
         ("--schema", "Show JSON Schema for command"),
         ("--token-count", "Print token count of output (instead of output)"),

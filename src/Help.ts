@@ -426,6 +426,7 @@ function globalOptionsLines(
     },
     { flag: '--format <toon|json|yaml|md|jsonl>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
+    { flag: '--json', desc: 'Shorthand for --format json' },
     { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },
     ...(root ? [{ flag: '--mcp', desc: 'Start as MCP stdio server' }] : []),
     ...(configFlag
