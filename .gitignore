@@ -5,3 +5,4 @@ clac.generated.ts
 tasks
 *.tsbuildinfo
 target
+*.profraw
