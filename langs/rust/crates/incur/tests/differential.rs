@@ -6,7 +6,7 @@
 //! process entry point, [`incur::Cli::serve`] and [`incur::Cli::serve_async`], so they read their
 //! real arguments, environment, and binary name.
 //!
-//! Sandboxed cases (see `langs/README.md`) also run this executable again, with the program path
+//! Sandboxed cases (see `langs/CONTRIBUTING.md`) also run this executable again, with the program path
 //! `<sandbox>/<bin>`, a cleared environment, the sandbox as `HOME` and working directory, and stub
 //! package-manager runners on `PATH`. Cases with `stdin` are fed one line at a time, waiting for
 //! each request's response. Cases with `requests` send them to [`incur::Cli::fetch`] in the child.

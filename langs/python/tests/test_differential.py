@@ -5,7 +5,7 @@ sandbox files. Mirrors `langs/_differential/run.ts`.
 Cases with a `bin` and no `sandbox` run in a child process started through a link with that name,
 so the process entry point `Cli.serve` reads its real arguments, environment, and binary name.
 
-Cases with a `sandbox` run isolated, as `langs/README.md` describes: fresh fixture CLIs, a reset
+Cases with a `sandbox` run isolated, as `langs/CONTRIBUTING.md` describes: fresh fixture CLIs, a reset
 sandbox directory as `HOME` and working directory, an environment of only `HOME`, `PATH` (stub
 package-manager runners), `TMPDIR`, and the case's variables, `stdin` fed to `--mcp`, and
 `requests` sent to `Cli.fetch`.
