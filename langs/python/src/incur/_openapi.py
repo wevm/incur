@@ -417,6 +417,126 @@ def _compact_operation(operation: dict[str, Json]) -> None:
         body["schema"] = _compact(_js.as_object(body["schema"]), seen)
 
 
+@dataclass
+class _Walk:
+    """The state of one request-body flattening."""
+
+    path: set[int] = field(default_factory=set[int])
+    done: dict[int, tuple[dict[str, Json], list[str]]] = field(
+        default_factory=dict[int, tuple[dict[str, Json], list[str]]]
+    )
+    cuts: int = 0
+
+
+def _body_fields(schema: Json, walk: _Walk | None = None) -> tuple[dict[str, Json], list[str]]:
+    """Flattens a request-body schema into option fields and the names a body must include.
+
+    Merges `allOf` members and `anyOf`/`oneOf` object variants.
+    """
+    walk = _Walk() if walk is None else walk
+    if not isinstance(schema, dict):
+        return {}, []
+    key_ = id(schema)
+    # A schema that references itself adds nothing beyond what its outer occurrence collects.
+    if key_ in walk.path:
+        walk.cuts += 1
+        return {}, []
+    # Shared subschemas flatten once, unless a cycle cut their result short.
+    if key_ in walk.done:
+        return walk.done[key_]
+    cuts = walk.cuts
+    walk.path.add(key_)
+    own = schema.get("properties")
+    required = schema.get("required")
+    members = [
+        (
+            own if isinstance(own, dict) else {},
+            [n for n in required if isinstance(n, str)] if isinstance(required, list) else [],
+        )
+    ]
+    every = schema.get("allOf")
+    if isinstance(every, list):
+        members.extend(_body_fields(member, walk) for member in every)
+    for key in ("anyOf", "oneOf"):
+        listed = schema.get(key)
+        if not isinstance(listed, list):
+            continue
+        variants = [_without_defaults(_body_fields(v, walk)) for v in listed if _object_variant(v)]
+        if not variants:
+            continue
+        # Any one variant may be sent, so a field stays required only when every variant
+        # requires it.
+        shared = [n for n in variants[0][1] if all(n in r for _, r in variants)]
+        members.append((_merge_properties(variants), shared))
+    walk.path.discard(key_)
+    # Every member applies at once, so fields accumulate and any member's requirement holds.
+    names = list(dict.fromkeys(n for _, r in members for n in r))
+    fields = _merge_properties(members), names
+    if walk.cuts == cuts:
+        walk.done[key_] = fields
+    return fields
+
+
+def _without_defaults(
+    fields: tuple[dict[str, Json], list[str]],
+) -> tuple[dict[str, Json], list[str]]:
+    """Drops field defaults from a union variant, which apply only when that variant is sent."""
+    properties, required = fields
+    return {
+        name: {k: v for k, v in field.items() if k != "default"}
+        if isinstance(field, dict)
+        else field
+        for name, field in properties.items()
+    }, required
+
+
+def _object_variant(schema: Json) -> bool:
+    """Whether a union variant can be an object; others, such as a batch array, carry no fields."""
+    if not isinstance(schema, dict):
+        return False
+    if "type" not in schema:
+        return True
+    kind = schema["type"]
+    return kind == "object" or (isinstance(kind, list) and "object" in kind)
+
+
+def _merge_properties(fields: list[tuple[dict[str, Json], list[str]]]) -> dict[str, Json]:
+    """Merges same-named fields in first-seen order.
+
+    A field whose schemas differ keeps only the `type` they share, so argv still coerces, and
+    otherwise accepts any value. The server validates it against the composed schema.
+    """
+    properties: dict[str, Json] = {}
+    for name in dict.fromkeys(n for p, _ in fields for n in p):
+        schemas = [p[name] for p, _ in fields if name in p]
+        found = [_schema_type(s) for s in schemas]
+        typed = all(has for has, _ in found)
+        types = [t for _, t in found]
+        if len({_js.stringify(schema) for schema in schemas}) == 1:
+            properties[name] = schemas[0]
+        elif typed and len({_js.stringify(t) for t in types}) == 1:
+            properties[name] = {"type": types[0]}
+        else:
+            properties[name] = {}
+    return properties
+
+
+def _schema_type(schema: Json) -> tuple[bool, Json]:
+    """A schema's `type`, or the JSON type of its `const` value, and whether either applies."""
+    if not isinstance(schema, dict):
+        return False, None
+    if "type" in schema:
+        return True, schema["type"]
+    value = schema.get("const")
+    if isinstance(value, bool):
+        return True, "boolean"
+    if isinstance(value, str):
+        return True, "string"
+    if isinstance(value, int | float):
+        return True, "number"
+    return False, None
+
+
 def _body(operation: dict[str, Json]) -> dict[str, Json] | None:
     """The `application/json` request body media object, when it has a schema."""
     request = operation.get("requestBody")
@@ -541,11 +661,7 @@ def _command(
             seen.add(normalized)
             headers.append((normalized, parameter))
     body = _body(op)
-    body_schema = _js.as_object(body["schema"]) if body else {}
-    body_props = body_schema.get("properties")
-    body_props = body_props if isinstance(body_props, dict) else {}
-    body_required = body_schema.get("required")
-    body_required = body_required if isinstance(body_required, list) else []
+    body_props, body_required = _body_fields(body["schema"] if body else None)
 
     used = {str(p.get("name")) for p in query_params} | set(body_props)
     header_options: list[tuple[str, dict[str, Json]]] = []

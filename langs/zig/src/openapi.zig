@@ -414,8 +414,8 @@ fn addOperation(group: *cli_.Cli, a: Allocator, document: Value, op: *const Entr
     }
 
     const body_schema: ?Value = if (operation.get("requestBody")) |b| if (b.get("content")) |c| if (c.get("application/json")) |m| m.get("schema") else null else null else null;
-    const body_props = if (body_schema) |b| (if (b.get("properties")) |p| (if (p == .object) p.object else &.{}) else &.{}) else &.{};
-    const body_required = if (body_schema) |b| (if (b.get("required")) |r| (if (r == .array) r.array else &.{}) else &.{}) else &.{};
+    const body = if (body_schema) |b| try bodyFields(a, b) else BodyFields{};
+    const body_props = body.properties;
 
     // Header options take names that query parameters and body properties leave free.
     var used: std.ArrayList([]const u8) = .empty;
@@ -454,9 +454,7 @@ fn addOperation(group: *cli_.Cli, a: Allocator, document: Value, op: *const Entr
     for (body_props) |entry| {
         try body_keys.append(a, entry.key);
         var s = try json_schema.convert(a, entry.value);
-        var listed = false;
-        for (body_required) |r| listed = listed or (r == .string and std.mem.eql(u8, r.string, entry.key));
-        if (!listed) s = try s.optional(a);
+        if (!contains(body.required, entry.key)) s = try s.optional(a);
         try putField(a, &option_fields, entry.key, try s.toType(a));
     }
     for (headers.items) |header| {
@@ -668,6 +666,106 @@ fn compactSchema(a: Allocator, value: Value) Allocator.Error!Value {
         try out.entries.append(a, .{ .key = entry.key, .value = v });
     }
     return out.finish();
+}
+
+/// Request-body fields and the names every valid body must include.
+const BodyFields = struct {
+    properties: []const Value.Entry = &.{},
+    required: []const []const u8 = &.{},
+};
+
+/// Flattens a request-body schema into option fields, merging `allOf` members and `anyOf`/`oneOf`
+/// object variants.
+fn bodyFields(a: Allocator, body: Value) Allocator.Error!BodyFields {
+    if (body != .object) return .{};
+    var own: std.ArrayList([]const u8) = .empty;
+    if (body.get("required")) |r| if (r == .array) for (r.array) |name| if (name == .string) try own.append(a, name.string);
+    var members: std.ArrayList(BodyFields) = .empty;
+    try members.append(a, .{
+        .properties = if (body.get("properties")) |p| (if (p == .object) p.object else &.{}) else &.{},
+        .required = own.items,
+    });
+    if (body.get("allOf")) |all| if (all == .array) for (all.array) |member| try members.append(a, try bodyFields(a, member));
+    for ([_][]const u8{ "anyOf", "oneOf" }) |key| {
+        const list = body.get(key) orelse continue;
+        if (list != .array) continue;
+        var variants: std.ArrayList(BodyFields) = .empty;
+        for (list.array) |variant| if (isObjectVariant(variant)) try variants.append(a, try withoutDefaults(a, try bodyFields(a, variant)));
+        if (variants.items.len == 0) continue;
+        // Any one variant may be sent, so a field stays required only when every variant requires it.
+        var shared: std.ArrayList([]const u8) = .empty;
+        for (variants.items[0].required) |name| {
+            const every = for (variants.items) |variant| {
+                if (!contains(variant.required, name)) break false;
+            } else true;
+            if (every) try shared.append(a, name);
+        }
+        try members.append(a, .{ .properties = try mergeProperties(a, variants.items), .required = shared.items });
+    }
+    // Every member applies at once, so fields accumulate and any member's requirement holds.
+    var all: std.ArrayList([]const u8) = .empty;
+    for (members.items) |member| for (member.required) |name| if (!contains(all.items, name)) try all.append(a, name);
+    return .{ .properties = try mergeProperties(a, members.items), .required = all.items };
+}
+
+/// Drops field defaults from a union variant, which apply only when that variant is sent.
+fn withoutDefaults(a: Allocator, fields: BodyFields) Allocator.Error!BodyFields {
+    const stripped = try a.alloc(Value.Entry, fields.properties.len);
+    for (fields.properties, stripped) |entry, *slot| {
+        slot.* = entry;
+        if (entry.value != .object) continue;
+        var kept: std.ArrayList(Value.Entry) = .empty;
+        for (entry.value.object) |e| if (!std.mem.eql(u8, e.key, "default")) try kept.append(a, e);
+        slot.value = .{ .object = kept.items };
+    }
+    return .{ .properties = stripped, .required = fields.required };
+}
+
+/// Whether a union variant can be an object; others (e.g. a JSON-RPC batch array) carry no fields.
+fn isObjectVariant(variant: Value) bool {
+    if (variant != .object) return false;
+    const ty = variant.get("type") orelse return true;
+    if (ty == .array) for (ty.array) |t| if (t == .string and std.mem.eql(u8, t.string, "object")) return true;
+    return ty == .string and std.mem.eql(u8, ty.string, "object");
+}
+
+/// Merges same-named fields in first-seen order. A field whose schemas differ keeps only the `type`
+/// they share, so argv still coerces, and otherwise accepts any value. The server validates it
+/// against the composed schema.
+fn mergeProperties(a: Allocator, fields: []const BodyFields) Allocator.Error![]const Value.Entry {
+    var out: std.ArrayList(Value.Entry) = .empty;
+    for (fields) |field| for (field.properties) |entry| {
+        if ((Value{ .object = out.items }).get(entry.key) != null) continue;
+        const key = try json.stringify(a, entry.value);
+        const ty = schemaType(entry.value);
+        const ty_key = if (ty) |t| try json.stringify(a, t) else "";
+        var same = true;
+        var same_type = ty != null;
+        for (fields) |other| if ((Value{ .object = other.properties }).get(entry.key)) |s| {
+            same = same and std.mem.eql(u8, try json.stringify(a, s), key);
+            const t = schemaType(s);
+            same_type = same_type and t != null and std.mem.eql(u8, try json.stringify(a, t.?), ty_key);
+        };
+        const merged: Value = if (same) entry.value else if (same_type) blk: {
+            const shared = try a.alloc(Value.Entry, 1);
+            shared[0] = .{ .key = "type", .value = ty.? };
+            break :blk .{ .object = shared };
+        } else .{ .object = &.{} };
+        try out.append(a, .{ .key = entry.key, .value = merged });
+    };
+    return out.items;
+}
+
+/// A schema's `type`, or the JSON type of its `const` value when it declares none.
+fn schemaType(s: Value) ?Value {
+    if (s.get("type")) |t| return t;
+    const value = s.get("const") orelse return null;
+    return switch (value) {
+        .bool => .{ .string = "boolean" },
+        .string => .{ .string = "string" },
+        .integer, .big_integer, .float => .{ .string = "number" },
+        else => null,
+    };
 }
 
 fn contains(list: []const []const u8, item: []const u8) bool {
