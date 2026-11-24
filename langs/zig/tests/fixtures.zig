@@ -759,6 +759,35 @@ fn rooted(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
+const ShadowSkillArgs = struct {
+    id: []const u8,
+
+    pub const incur = .{ .fields = .{ .id = .{ .description = "Skill id" } } };
+};
+
+fn shadowAdd(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .added = true });
+}
+
+fn shadowSkill(c: *Context(.{ .args = ShadowSkillArgs })) !Outcome {
+    return c.ok(.{ .id = c.args.id });
+}
+
+fn shadowShell(c: *Context(.{})) !Outcome {
+    return c.ok(.{ .shell = true });
+}
+
+fn shadow(gpa: Allocator) !*incur.Cli {
+    const cli = try incur.Cli.create(gpa, "shadow", .{ .update = null, .description = "Commands named like built-ins" });
+    errdefer cli.destroy();
+    const mcp = try incur.Cli.create(gpa, "mcp", .{ .description = "Manage servers" });
+    try mcp.command("add", .{ .description = "Add a server", .run = incur.handler(shadowAdd) });
+    try cli.group(mcp);
+    try cli.command("skill", .{ .description = "Show a skill", .run = incur.handler(shadowSkill) });
+    try cli.command("shell", .{ .description = "Show the shell", .aliases = &.{"completions"}, .run = incur.handler(shadowShell) });
+    return cli;
+}
+
 const ToolsEnv = struct {
     tools_region: []const u8 = "eu",
 
@@ -1486,7 +1515,7 @@ pub fn create(gpa: Allocator, name: []const u8) !*incur.Cli {
         .{ "remote", remote },   .{ "kit", kit },           .{ "kitpkg", kitpkg },   .{ "kitcmd", kitcmd },
         .{ "kitbad", kitbad },   .{ "kitver", kitver },     .{ "spaced", spaced },   .{ "upd", upd },
         .{ "updbeta", updbeta }, .{ "updcheck", updcheck }, .{ "updnone", updnone }, .{ "updpkg", updpkg },
-        .{ "updbad", updbad },
+        .{ "updbad", updbad },   .{ "shadow", shadow },
     };
     inline for (fixtures) |entry| if (std.mem.eql(u8, name, entry[0])) return entry[1](gpa);
     return error.UnknownFixture;

@@ -1478,6 +1478,19 @@ fn find_builtin(token: &str) -> Option<&'static str> {
     }
 }
 
+/// Resolves a token to a built-in command name, unless a registered command or alias of the same
+/// name shadows it.
+fn find_unshadowed_builtin(
+    commands: &IndexMap<String, Entry>,
+    token: &str,
+) -> Option<&'static str> {
+    if commands.contains_key(token) {
+        None
+    } else {
+        find_builtin(token)
+    }
+}
+
 /// The per-invocation serve state.
 struct Run<'a, 'b> {
     /// The CLI.
@@ -1679,12 +1692,14 @@ impl Run<'_, '_> {
             return;
         }
 
+        let commands = self.commands.clone();
         let builtin_index = |builtin: &str| {
-            if filtered.first().and_then(|t| find_builtin(t)) == Some(builtin) {
+            let matches = |token: Option<&String>| {
+                token.and_then(|t| find_unshadowed_builtin(&commands, t)) == Some(builtin)
+            };
+            if matches(filtered.first()) {
                 Some(0)
-            } else if filtered.first() == Some(&cli.name)
-                && filtered.get(1).and_then(|t| find_builtin(t)) == Some(builtin)
-            {
+            } else if filtered.first() == Some(&cli.name) && matches(filtered.get(1)) {
                 Some(1)
             } else {
                 None
@@ -2790,10 +2805,13 @@ impl Run<'_, '_> {
     /// Returns the notice that installed skills are out of date, when they are.
     async fn skills_notice(&mut self, filtered: &[String]) -> Option<FormattedCtaBlock> {
         let cli = self.cli;
+        let commands = &self.commands;
+        let matches = |token: Option<&String>, name: &str| {
+            token.and_then(|t| find_unshadowed_builtin(commands, t)) == Some(name)
+        };
         let builtin = |name: &str| {
-            filtered.first().and_then(|t| find_builtin(t)) == Some(name)
-                || (filtered.first() == Some(&cli.name)
-                    && filtered.get(1).and_then(|t| find_builtin(t)) == Some(name))
+            matches(filtered.first(), name)
+                || (filtered.first() == Some(&cli.name) && matches(filtered.get(1), name))
         };
         if builtin("skills") || builtin("mcp") {
             return None;
@@ -2901,8 +2919,8 @@ impl Run<'_, '_> {
                 }
             }
             Some([_, parent]) => {
-                if let Some(builtin) =
-                    find_builtin(parent).filter(|b| *b != "completions" && cli.builtin_enabled(b))
+                if let Some(builtin) = find_unshadowed_builtin(&commands, parent)
+                    .filter(|b| *b != "completions" && cli.builtin_enabled(b))
                 {
                     for sub in BUILTIN_SUBCOMMANDS.iter().filter(|s| s.0 == builtin) {
                         for value in std::iter::once(sub.1).chain(sub.3.iter().copied()) {

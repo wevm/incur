@@ -935,6 +935,39 @@ fn rooted() -> Cli {
         )
 }
 
+#[derive(Deserialize, Schema)]
+struct ShadowSkillArgs {
+    /// Skill id
+    id: String,
+}
+
+fn shadow() -> Cli {
+    Cli::new("shadow")
+        .update(false)
+        .description("Commands named like built-ins")
+        .group(
+            Cli::new("mcp").description("Manage servers").command(
+                "add",
+                Command::new()
+                    .description("Add a server")
+                    .run(|_: Context| data(json!({ "added": true }))),
+            ),
+        )
+        .command(
+            "skill",
+            Command::new()
+                .description("Show a skill")
+                .run(|c: Context<ShadowSkillArgs>| data(json!({ "id": c.args.id }))),
+        )
+        .command(
+            "shell",
+            Command::new()
+                .description("Show the shell")
+                .aliases(["completions"])
+                .run(|_: Context| data(json!({ "shell": true }))),
+        )
+}
+
 /// Returns the fixture CLI with the given key from `cases.json`.
 pub(crate) fn cli(name: &str) -> Cli {
     match name {
@@ -944,6 +977,7 @@ pub(crate) fn cli(name: &str) -> Cli {
         "greet" => greet(),
         "plain" => plain(),
         "rooted" => rooted(),
+        "shadow" => shadow(),
         "bare" => sandboxed::bare(),
         "catalog" => sandboxed::catalog(),
         "dupe" => sandboxed::dupe(),
