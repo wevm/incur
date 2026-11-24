@@ -94,6 +94,8 @@ class Spec:
     lazy: dict[str, Callable[[], Awaitable[None]]] = field(
         default_factory=dict[str, Callable[[], Awaitable[None]]]
     )
+    parse_only: bool = False
+    """Whether the CLI parses a declared command for its caller, which hides `--mcp`."""
 
     def root_command(self) -> Command | None:
         """Returns the root command, described by the CLI when it has no description."""

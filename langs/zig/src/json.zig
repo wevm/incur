@@ -58,6 +58,25 @@ pub const Value = union(enum) {
         };
     }
 
+    /// Returns a deep copy allocated with `a`.
+    pub fn clone(value: Value, a: Allocator) Allocator.Error!Value {
+        return switch (value) {
+            .null, .bool, .integer, .float => value,
+            .big_integer => |digits| .{ .big_integer = try a.dupe(u8, digits) },
+            .string => |text| .{ .string = try a.dupe(u8, text) },
+            .array => |items| array: {
+                const out = try a.alloc(Value, items.len);
+                for (items, out) |item, *slot| slot.* = try item.clone(a);
+                break :array .{ .array = out };
+            },
+            .object => |entries| object: {
+                const out = try a.alloc(Entry, entries.len);
+                for (entries, out) |entry, *slot| slot.* = .{ .key = try a.dupe(u8, entry.key), .value = try entry.value.clone(a) };
+                break :object .{ .object = out };
+            },
+        };
+    }
+
     /// Returns the value of an object property, or null for missing keys and non-objects.
     pub fn get(value: Value, key: []const u8) ?Value {
         if (value != .object) return null;

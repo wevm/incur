@@ -6,35 +6,50 @@
 
 const std = @import("std");
 
-const cli = @import("cli.zig");
+const cli_ = @import("cli.zig");
 const command = @import("command.zig");
 const derive = @import("derive.zig");
+const declare = @import("declare.zig");
 const errors_ = @import("errors.zig");
 
 /// A CLI: a router of commands, optionally with its own root command.
-pub const Cli = cli.Cli;
+pub const Cli = cli_.Cli;
 /// Options for `Cli.create`.
-pub const CliOptions = cli.Options;
+pub const CliOptions = cli_.Options;
 /// Errors `Cli.create` reports.
-pub const CreateError = cli.CreateError;
+pub const CreateError = cli_.CreateError;
 /// Process I/O for `Cli.serveWith`.
-pub const Process = cli.Process;
+pub const Process = cli_.Process;
 /// Text shown above root help.
-pub const Banner = cli.Banner;
+pub const Banner = cli_.Banner;
 /// Who sees the banner.
-pub const BannerMode = cli.BannerMode;
+pub const BannerMode = cli_.BannerMode;
 /// Config-file option defaults.
-pub const Config = cli.Config;
+pub const Config = cli_.Config;
 /// Skill sync settings.
-pub const Sync = cli.Sync;
+pub const Sync = cli_.Sync;
 /// Self-update settings.
-pub const Update = cli.Update;
+pub const Update = cli_.Update;
 /// MCP server settings.
-pub const Mcp = cli.Mcp;
+pub const Mcp = cli_.Mcp;
 /// A command backed by an HTTP handler, optionally described by an OpenAPI document.
-pub const Gateway = cli.Gateway;
+pub const Gateway = cli_.Gateway;
 /// A group of commands generated from a remote MCP server's tools.
-pub const McpSource = cli.McpSource;
+pub const McpSource = cli_.McpSource;
+
+/// Creates a CLI named and described by a declared type: a struct is a command, a
+/// `union(enum)` a group of commands. Add the commands with `Cli.handle` or `Cli.parse`.
+pub const cli = declare.cli;
+/// Declares a CLI and parses the process arguments into the typed command.
+pub const parse = declare.parse;
+/// Declares a CLI and parses explicit arguments, returning the command or an exit code.
+pub const parseWith = declare.parseWith;
+/// Declares a CLI and serves it, running a handler with the typed command.
+pub const serve = declare.serve;
+/// The result of `parseWith`: the command or an exit code.
+pub const Parsed = declare.Parsed;
+/// The handler `serve` and `Cli.handle` run with a typed command.
+pub const Run = declare.Run;
 
 /// A command definition.
 pub const Command = command.Command;

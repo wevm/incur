@@ -290,7 +290,8 @@ def parse(ty: Type, value: Parsed, path: list[str | int], issues: list[Issue]) -
             return _ABSENT
         if ty.coerce:
             # `Number(undefined)` is NaN; `Boolean(undefined)` is false.
-            return _parse_present(ty, math.nan if ty.kind == "number" else False, path, issues)
+            number = ty.kind in ("integer", "number")
+            return _parse_present(ty, math.nan if number else False, path, issues)
     if ty.kind in ("enum", "literal"):
         return _parse_choice(ty, value, path, issues)
     if isinstance(value, _Absent):
@@ -326,7 +327,7 @@ def _parse_present(ty: Type, value: Json, path: list[str | int], issues: list[Is
     """Validates a value that is present in the input."""
     kind = ty.kind
     if ty.coerce:
-        value = _js_number(value) if kind == "number" else _js_truthy(value)
+        value = _js_number(value) if kind in ("integer", "number") else _js_truthy(value)
     if kind in ("enum", "literal"):
         return _parse_choice(ty, value, path, issues)
     if kind == "union":

@@ -4,14 +4,15 @@ This package is the Python port of the TypeScript `incur` package. Its output ma
 TypeScript package byte for byte.
 """
 
-from ._cli import BannerMode, Cli, Config, Writer
+from ._cli import BannerMode, Cli, CliOptions, Config, Writer
 from ._command import Context, Middleware, MiddlewareContext, Next, Outcome, OutputPolicy, ok
+from ._derive import Command, Group, Handler
 from ._errors import Cta, CtaBlock, Error, FieldError
 from ._formatter import Format
 from ._help import Example, Usage
 from ._http import FetchHandler, Headers, Request, RequestSource, Response, from_request, set_fetch
 from ._mcp import McpOptions, McpTool, ToolAnnotations, ToolFilter
-from ._model import FieldInfo, RenameRule, SchemaError, dump, field, schema
+from ._model import FieldInfo, RenameRule, SchemaError, arg, dump, env, field, schema
 from ._openapi import OpenapiConfig, OpenapiOperation, OpenapiSource
 from ._sync import Sync
 from ._update import Update, UpdateCheck, UpdateInstall
@@ -19,6 +20,8 @@ from ._update import Update, UpdateCheck, UpdateInstall
 __all__ = [
     "BannerMode",
     "Cli",
+    "CliOptions",
+    "Command",
     "Config",
     "Context",
     "Cta",
@@ -29,6 +32,8 @@ __all__ = [
     "FieldError",
     "FieldInfo",
     "Format",
+    "Group",
+    "Handler",
     "Headers",
     "McpOptions",
     "McpTool",
@@ -53,7 +58,9 @@ __all__ = [
     "UpdateInstall",
     "Usage",
     "Writer",
+    "arg",
     "dump",
+    "env",
     "field",
     "from_request",
     "ok",

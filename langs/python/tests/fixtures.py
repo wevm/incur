@@ -153,11 +153,6 @@ class UsageOptions:
 
 
 @incur.schema
-class PrListOptions:
-    state: Annotated[Literal["open", "closed", "all"], field("State")] = "open"
-
-
-@incur.schema
 class UserRow:
     name: Annotated[str, field("Name")]
     email: Annotated[str, field("Email")]
@@ -191,9 +186,34 @@ class DataArgs:
     json: Annotated[str, field("JSON value")]
 
 
-@incur.schema
-class PrViewArgs:
-    number: Annotated[float, field("PR number")]
+async def prefix_user(c: incur.MiddlewareContext[UserVars], next_: incur.Next) -> None:
+    """Prefixes the acting user for pull request commands."""
+    c.var.user = f"pr:{c.var.user}"
+    await next_()
+
+
+class PrList(incur.Command, name="list"):
+    """List pull requests"""
+
+    state: Annotated[Literal["open", "closed", "all"], field("State")] = "open"
+
+
+class PrView(incur.Command, name="view"):
+    """View a pull request"""
+
+    number: Annotated[float, incur.arg("PR number", coerce=False)]
+
+
+class Pr(incur.Group[PrList | PrView], middleware=[prefix_user]):
+    """Pull request commands"""
+
+
+def pr(command: PrList | PrView, c: incur.Context[None, None, None, UserVars]) -> Data:
+    match command:
+        case PrList(state=state):
+            return {"prs": [], "state": state, "user": c.var.user}
+        case PrView(number=number):
+            return {"number": number}
 
 
 @incur.schema
@@ -202,21 +222,6 @@ class DbArgs:
 
 
 def app() -> incur.Cli:
-    pr = incur.Cli("pr", description="Pull request commands", vars=UserVars)
-
-    @pr.use
-    async def prefix_user(c: incur.MiddlewareContext[UserVars], next_: incur.Next) -> None:
-        c.var.user = f"pr:{c.var.user}"
-        await next_()
-
-    @pr.command("list", description="List pull requests")
-    def pr_list(c: Context[None, PrListOptions, None, UserVars]) -> Data:
-        return {"prs": [], "state": c.options.state, "user": c.var.user}
-
-    @pr.command("view", description="View a pull request")
-    def pr_view(c: Context[PrViewArgs]) -> Data:
-        return {"number": c.args.number}
-
     db = incur.Cli("db", description="Database commands", output_policy="agent-only")
 
     @db.root()
@@ -424,29 +429,20 @@ def app() -> incur.Cli:
     def usage(c: Context[UsageArgs, UsageOptions]) -> Data:
         return {"ok": True}
 
-    return cli.group(pr).group(db).group(hi)
+    return cli.group(incur.Cli(Pr).handle(pr)).group(db).group(hi)
 
 
-@incur.schema
-class LoudOptions:
+class Greet(incur.Command, name="greet"):
+    """A greeting CLI"""
+
+    name: Annotated[str, incur.arg("Name to greet")]
     loud: Annotated[bool | None, field("Shout")] = None
 
 
-def greet() -> incur.Cli:
-    cli = incur.Cli(
-        "greet",
-        description="A greeting CLI",
-        update=False,
-        banner=lambda: "Greet banner",
-        banner_mode="agent",
-    )
-
-    @cli.root()
-    def root(c: Context[GreetArgs, LoudOptions]) -> Data:
-        name = c.args.name
-        return {"message": f"HELLO {name}" if c.options.loud else f"hello {name}"}
-
-    return cli
+def greet() -> incur.Cli[Greet]:
+    return incur.Cli(
+        Greet, update=False, banner=lambda: "Greet banner", banner_mode="agent"
+    ).handle(lambda g, _: {"message": f"HELLO {g.name}" if g.loud else f"hello {g.name}"})
 
 
 @incur.schema
@@ -568,39 +564,51 @@ def cfg() -> incur.Cli:
     return cli.group(project)
 
 
-def plain() -> incur.Cli:
-    cli = incur.Cli(
-        "plain",
-        description="No skills, JSON by default",
+class Hello(incur.Command):
+    """Say hello"""
+
+
+class Ping(incur.Command): ...
+
+
+class HelloLoud(incur.Command, name="Hello"):
+    """Say hello loudly"""
+
+
+class V2(incur.Command):
+    """Version two"""
+
+
+class Pin(incur.Command, name="ピン"):
+    """Katakana ping"""
+
+
+class Plain(incur.Group[Hello | Ping | HelloLoud | V2 | Pin], aliases=["pl", "plain-cli"]):
+    """No skills, JSON by default"""
+
+
+def plain() -> incur.Cli[Hello | Ping | HelloLoud | V2 | Pin]:
+    def run(command: Hello | Ping | HelloLoud | V2 | Pin, _: object) -> object:
+        match command:
+            case Hello():
+                return {"hello": "world"}
+            case Ping():
+                return "pong"
+            case HelloLoud():
+                return {"hello": "WORLD"}
+            case V2():
+                return {"v": 2}
+            case Pin():
+                return "ポン"
+
+    return incur.Cli(
+        Plain,
         update=False,
         sync=False,
         format="json",
-        aliases=["pl", "plain-cli"],
         config=incur.Config(),
         banner=lambda: "Welcome to plain",
-    )
-
-    @cli.command("hello", description="Say hello")
-    def hello(c: Context) -> Data:
-        return {"hello": "world"}
-
-    @cli.command("ping")
-    def ping(c: Context) -> str:
-        return "pong"
-
-    @cli.command("Hello", description="Say hello loudly")
-    def hello_loud(c: Context) -> Data:
-        return {"hello": "WORLD"}
-
-    @cli.command("v2", description="Version two")
-    def v2(c: Context) -> Data:
-        return {"v": 2}
-
-    @cli.command("ピン", description="Katakana ping")
-    def katakana(c: Context) -> str:
-        return "ポン"
-
-    return cli
+    ).handle(run)
 
 
 @incur.schema

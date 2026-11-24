@@ -3,7 +3,8 @@
 //! Every `zig` code block with a `pub fn main` becomes an example. The `sh` blocks after it, up
 //! to the next example, list invocations: a `$ <program> <args>` line followed by its expected
 //! standard output, one `# → ` line per output line. The generated program runs each invocation
-//! as a child process that serves the example, and fails on any difference.
+//! as a child process that serves the example, and fails on any difference. With `INCUR_KCOV`,
+//! `INCUR_KCOV_BIN`, and `INCUR_KCOV_INCLUDE` set, each child runs under kcov.
 
 const std = @import("std");
 
@@ -79,11 +80,17 @@ const runner =
     \\    const a = init.arena.allocator();
     \\    const self = try std.process.executablePathAlloc(init.io, a);
     \\    var failed = false;
-    \\    for (cases) |case| {
+    \\    for (cases, 0..) |case, i| {
     \\        var env: std.process.Environ.Map = .init(a);
     \\        try env.put("INCUR_README_EXAMPLE", try std.fmt.allocPrint(a, "{d}", .{case.example}));
     \\        try env.put("HOME", "/nonexistent");
-    \\        const argv = try std.mem.concat(a, []const u8, &.{ &.{self}, case.argv });
+    \\        // With `INCUR_KCOV=<dir>`, each child runs under kcov and writes its own report.
+    \\        const kcov: []const []const u8 = if (init.environ_map.get("INCUR_KCOV")) |dir| &.{
+    \\            init.environ_map.get("INCUR_KCOV_BIN").?,
+    \\            try std.fmt.allocPrint(a, "--include-path={s}", .{init.environ_map.get("INCUR_KCOV_INCLUDE").?}),
+    \\            try std.fmt.allocPrint(a, "{s}/readme-{d}", .{ dir, i }),
+    \\        } else &.{};
+    \\        const argv = try std.mem.concat(a, []const u8, &.{ kcov, &.{self}, case.argv });
     \\        const result = try std.process.run(a, init.io, .{ .argv = argv, .environ_map = &env });
     \\        if (result.term.success() and std.mem.eql(u8, result.stdout, case.stdout)) continue;
     \\        failed = true;

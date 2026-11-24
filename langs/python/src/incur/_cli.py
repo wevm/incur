@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import inspect
 import io
 import math
@@ -13,7 +14,20 @@ import time
 import typing
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, NoReturn, Protocol, TextIO, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    NoReturn,
+    Protocol,
+    Self,
+    TextIO,
+    TypedDict,
+    TypeVar,
+    Unpack,
+    overload,
+)
 
 from . import (
     _completions,
@@ -30,6 +44,7 @@ from . import (
 )
 from ._command import (
     Command,
+    Context,
     Middleware,
     MiddlewareContext,
     Outcome,
@@ -40,6 +55,9 @@ from ._command import (
     inputs,
     run_chain,
 )
+from ._derive import Command as Declared
+from ._derive import Group as DeclaredGroup
+from ._derive import attach, meta_of
 from ._errors import (
     Error,
     FormattedCta,
@@ -90,6 +108,15 @@ from ._update import install as install_update
 from ._update import refresh as refresh_update
 
 _F = TypeVar("_F", bound=Callable[..., object])
+_T = TypeVar("_T")
+_C = TypeVar("_C", bound=Declared)
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeVar as _DefaultTypeVar
+
+    _T_co = _DefaultTypeVar("_T_co", covariant=True, default=Any)
+else:
+    _T_co = TypeVar("_T_co", covariant=True)
 
 
 class Writer(Protocol):
@@ -118,7 +145,30 @@ class Config:
     It may be an `async def` function."""
 
 
-class Cli:
+class CliOptions(TypedDict, total=False):
+    """The keyword arguments of `Cli`, documented there."""
+
+    description: str | None
+    version: str | None
+    aliases: Sequence[str]
+    banner: Callable[[], str | Awaitable[str | None] | None] | None
+    banner_mode: BannerMode
+    config: Config | None
+    env: type | None
+    fetch: FetchHandler | None
+    format: Format | None
+    globals: type | None
+    mcp: McpOptions | Literal[False] | None
+    openapi: OpenapiSource | None
+    openapi_config: OpenapiConfig | None
+    output_policy: OutputPolicy | None
+    package: str | None
+    sync: Sync | bool
+    update: Update | bool
+    vars: type | Mapping[str, Any] | None
+
+
+class Cli(Generic[_T_co]):
     """A CLI: a router of commands, optionally with its own root command.
 
     >>> import incur
@@ -134,11 +184,22 @@ class Cli:
     generators. `serve()` runs the event loop; `await cli.serve_async()` and `await cli.run(...)`
     run inside one that is already running. `await cli.fetch(request)` and the ASGI application
     `cli.asgi` serve the same commands over HTTP.
+
+    A CLI of a declared `incur.Command` or `incur.Group` class is typed by the value it parses:
+    `Cli(Ops).parse()` returns a command of `Ops`, and `Cli(Ops).handle(fn)` runs it.
     """
 
+    @overload
+    def __init__(self: Cli[Any], name: str, **options: Unpack[CliOptions]) -> None: ...
+    @overload
+    def __init__(self: Cli[_C], name: type[_C], **options: Unpack[CliOptions]) -> None: ...
+    @overload
+    def __init__(
+        self: Cli[_T], name: type[DeclaredGroup[_T]], **options: Unpack[CliOptions]
+    ) -> None: ...
     def __init__(
         self,
-        name: str,
+        name: str | type,
         *,
         description: str | None = None,
         version: str | None = None,
@@ -162,7 +223,9 @@ class Cli:
         """Creates a CLI.
 
         Args:
-            name: The CLI name, shown in help and used as the default binary name.
+            name: The CLI name, shown in help and used as the default binary name. Or a declared
+                `incur.Command` or `incur.Group` class, whose name, description, version, and
+                aliases are the defaults, and whose group middleware runs around every command.
             description: What the CLI does.
             version: Version printed by `--version`.
             aliases: Alternative binary names. Completions register every name.
@@ -190,11 +253,24 @@ class Cli:
                 `c.var`; or a mapping of defaults, copied into a `dict`.
 
         Raises:
-            SchemaError: When a global option collides with a built-in flag.
+            SchemaError: When a global option collides with a built-in flag, or `name` is a class
+                that is not declared.
         """
+        declared = name if isinstance(name, type) else None
+        middleware: list[Middleware] = []
+        if isinstance(name, type):
+            meta = meta_of(name)
+            name = meta.name
+            description = meta.description if description is None else description
+            version = meta.version if version is None else version
+            aliases = aliases or meta.aliases
+            if meta.members is not None:
+                middleware = meta.middleware
+        self._declared = declared
         self.name = name
         """The CLI name."""
         spec = Spec(name)
+        spec.middleware = list(middleware)
         self._spec = spec
         spec.description = description
         spec.version = version
@@ -328,7 +404,7 @@ class Cli:
         openapi_config: OpenapiConfig | None = None,
         output_policy: OutputPolicy | None = None,
         mcp: bool = True,
-    ) -> Cli:
+    ) -> Self:
         """Adds a command that forwards to a fetch handler. Returns this CLI.
 
         Arguments after the command become a curl-style HTTP request: path segments, `--key value`
@@ -368,7 +444,7 @@ class Cli:
         headers: Mapping[str, str] | None = None,
         description: str | None = None,
         output_policy: OutputPolicy | None = None,
-    ) -> Cli:
+    ) -> Self:
         """Adds a group of commands that call the tools of a remote MCP server. Returns this CLI.
 
         The server is reached over streamable HTTP when the group is first used, and its tools
@@ -439,7 +515,7 @@ class Cli:
 
         return register
 
-    def group(self, cli: Cli) -> Cli:
+    def group(self, cli: Cli[Any]) -> Self:
         """Mounts another CLI as a command group. Returns this CLI."""
         sub = cli._spec
         root = sub.root_command()
@@ -579,6 +655,113 @@ class Cli:
             self.run(argv, env=env, stdout=stdout, stderr=stderr, stdin=stdin, tty=tty)
         )
 
+    def _declared_class(self, method: str) -> type:
+        if self._declared is None:
+            raise SchemaError(
+                f"{method}() needs a Cli of an incur.Command or incur.Group class, "
+                f"such as incur.Cli(MyCommand)"
+            )
+        return self._declared
+
+    def handle(
+        self, handler: Callable[[_T_co, Context[None, None, None, Any, Any]], object]
+    ) -> Self:
+        """Runs the declared commands with `handler`. Returns this CLI.
+
+        The handler takes the parsed command and the context, whose `args`, `options`, and `env`
+        are `None`, as the command holds them. It returns data, as a command handler does: it may
+        be an `async def` function, stream from a generator, or raise `incur.Error`.
+
+        Raises:
+            SchemaError: When the CLI was not created from a declared class.
+        """
+        root = attach(self._spec.commands, self._declared_class("handle"), handler)
+        if root is not None:
+            self._spec.root = root
+        return self
+
+    def parse(self) -> _T_co:
+        """Parses the process arguments into the declared command, or exits.
+
+        Middleware runs before it returns. Help, `--version`, `--llms`, completions, skills, and
+        errors print and exit with their code, as `serve` does. `--mcp` and `mcp add`, which need
+        a handler, are not commands. Runs the event loop with `asyncio.run`; inside a running
+        loop, await `parse_async`.
+        """
+        return asyncio.run(self.parse_async())
+
+    async def parse_async(self) -> _T_co:
+        """Parses the process arguments inside a running event loop, as `parse` does."""
+        display = os.path.basename(sys.argv[0]) if sys.argv else None
+        parsed = await self._parse(
+            sys.argv[1:],
+            dict(os.environ),
+            sys.stdout,
+            sys.stderr,
+            sys.stdin,
+            sys.stdout.isatty(),
+            display,
+        )
+        sys.stdout.flush()
+        if isinstance(parsed, int):
+            raise SystemExit(parsed)
+        return parsed
+
+    def parse_with(
+        self,
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdout: Writer | None = None,
+        stderr: Writer | None = None,
+        stdin: TextIO | None = None,
+        tty: bool = False,
+    ) -> _T_co | int:
+        """Parses explicit arguments into the declared command, or returns the exit code.
+
+        Takes the same arguments as `serve_with`. Returns the exit code when no command was
+        parsed, such as for help, or when it failed, such as middleware raising after `next()`.
+        Output after the command, such as the envelope of `--full-output`, is dropped.
+        """
+        return asyncio.run(
+            self._parse(
+                list(argv),
+                dict(env or {}),
+                stdout or _Null(),
+                stderr or _Null(),
+                stdin or io.StringIO(),
+                tty,
+                None,
+            )
+        )
+
+    async def _parse(
+        self,
+        argv: list[str],
+        env: dict[str, str],
+        stdout: Writer,
+        stderr: Writer,
+        stdin: TextIO,
+        tty: bool,
+        bin_name: str | None,
+    ) -> _T_co | int:
+        declared = self._declared_class("parse")
+        # Commands load into this CLI before the copy that parses shares them.
+        await self._spec.load_pending()
+        parsed: list[Any] = []
+        spec = replace(self._spec, commands=dict(self._spec.commands), parse_only=True)
+        root = attach(spec.commands, declared, lambda value, _: parsed.append(value))
+        if root is not None:
+            spec.root = root
+        clone = copy.copy(self)
+        clone._spec = spec
+        gate = _Gate(stdout, parsed)
+        code = await clone._serve(argv, env, gate, stderr, stdin, tty, bin_name)
+        if parsed and code == 0:
+            return parsed[0]
+        gate.release()
+        return code
+
     async def _serve(
         self,
         argv: list[str],
@@ -602,6 +785,29 @@ class _Null:
 
     def write(self, text: str, /) -> int:
         return len(text)
+
+
+class _Gate:
+    """Holds output written after a command was parsed.
+
+    The output belongs to the caller, unless the run then fails.
+    """
+
+    def __init__(self, out: Writer, parsed: list[Any]) -> None:
+        self.out = out
+        self.parsed = parsed
+        self.held: list[str] = []
+
+    def write(self, text: str, /) -> int:
+        if self.parsed:
+            self.held.append(text)
+            return len(text)
+        return self.out.write(text)
+
+    def release(self) -> None:
+        """Writes the held output."""
+        for text in self.held:
+            self.out.write(text)
 
 
 @dataclass
@@ -632,7 +838,9 @@ class _Flags:
 UPDATE_CHECK_FLAG = "--incur-update-check"
 
 
-def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True) -> _Flags:
+def _extract_flags(
+    argv: list[str], config_flag: str | None, update: bool = True, mcp: bool = True
+) -> _Flags:
     """Extracts built-in flags from argv."""
     flags = _Flags()
     i = 0
@@ -645,7 +853,7 @@ def _extract_flags(argv: list[str], config_flag: str | None, update: bool = True
             flags.llms = True
         elif token == "--llms-full":
             flags.llms_full = True
-        elif token == "--mcp":
+        elif token == "--mcp" and mcp:
             flags.mcp = True
         elif token in ("--help", "-h"):
             flags.help = True
@@ -776,11 +984,6 @@ def _find_builtin(token: str) -> str | None:
     )
 
 
-def _find_unshadowed_builtin(commands: dict[str, Entry], token: str) -> str | None:
-    """Resolves a token to a built-in command name unless a command or alias shadows it."""
-    return None if token in commands else _find_builtin(token)
-
-
 def _string_type(description: str) -> Type:
     return Type("string", optional=True, description=description)
 
@@ -841,6 +1044,7 @@ class _Run:
         base = HelpOptions(
             config_flag=self.config_flag(),
             globals=self.cli.globals,
+            hide_mcp=self.cli.parse_only,
             hide_skills=not self.cli.sync,
             hide_update=self.cli.update is None,
         )
@@ -892,7 +1096,9 @@ class _Run:
             await self.complete(shell, argv)
             return
         try:
-            flags = _extract_flags(argv, self.config_flag(), cli.update is not None)
+            flags = _extract_flags(
+                argv, self.config_flag(), cli.update is not None, not cli.parse_only
+            )
         except Error as error:
             self.early_error(error, self.tty, "toon")
             return
@@ -913,7 +1119,7 @@ class _Run:
             flags.mcp
             or ((flags.llms or flags.llms_full) and first is None)
             or first == cli.name
-            or (first is not None and _find_builtin(first) is not None)
+            or (first is not None and self.find_builtin(first) is not None)
         )
         if reaches_all:
             await cli.load()
@@ -941,12 +1147,12 @@ class _Run:
             return
 
         def builtin_index(builtin: str) -> int | None:
-            if filtered and _find_unshadowed_builtin(cli.commands, filtered[0]) == builtin:
+            if filtered and self.find_unshadowed_builtin(filtered[0]) == builtin:
                 return 0
             if (
                 len(filtered) > 1
                 and filtered[0] == cli.name
-                and _find_unshadowed_builtin(cli.commands, filtered[1]) == builtin
+                and self.find_unshadowed_builtin(filtered[1]) == builtin
             ):
                 return 1
             return None
@@ -968,8 +1174,6 @@ class _Run:
             return
 
         for builtin in ("skills", "mcp"):
-            if builtin == "skills" and not cli.sync:
-                continue
             index = builtin_index(builtin)
             if index is not None:
                 await self.builtin(builtin, filtered, index, argv, flags, human)
@@ -1131,9 +1335,10 @@ class _Run:
         for index in (0, 1):
             if index == 1 and (not filtered or filtered[0] != cli.name):
                 break
-            if len(filtered) > index and _find_unshadowed_builtin(
-                cli.commands, filtered[index]
-            ) in ("skills", "mcp"):
+            if len(filtered) > index and self.find_unshadowed_builtin(filtered[index]) in (
+                "skills",
+                "mcp",
+            ):
                 return None
         env = self.env_map
         stored = read_hash(cli.name, env)
@@ -1157,8 +1362,20 @@ class _Run:
         )
 
     def builtin_names(self) -> list[str]:
-        """Names of built-in commands, without skills when the integration is disabled."""
-        return [n for n, _ in _BUILTINS if self.cli.sync or n != "skills"]
+        """Names of enabled built-in commands."""
+        return [n for n, _ in _BUILTINS if self.find_builtin(n) is not None]
+
+    def find_builtin(self, token: str) -> str | None:
+        """Resolves a token to an enabled built-in command name."""
+        found = _find_builtin(token)
+        hidden = (found == "skills" and not self.cli.sync) or (
+            found == "mcp" and self.cli.parse_only
+        )
+        return None if hidden else found
+
+    def find_unshadowed_builtin(self, token: str) -> str | None:
+        """Resolves a token to an enabled built-in unless a command or alias shadows it."""
+        return None if token in self.cli.commands else self.find_builtin(token)
 
     def register_scripts(self, shell: str) -> str:
         names = [self.cli.name, *self.cli.aliases]
@@ -1674,21 +1891,16 @@ class _Run:
         non_flags = [w for w in before if not w.startswith("-")] if before is not None else None
         if non_flags is not None and len(non_flags) <= 1:
             for name, description in _BUILTINS:
-                if name == "skills" and not cli.sync:
+                if name not in self.builtin_names():
                     continue
                 if name.startswith(current) and not any(c.value == name for c in candidates):
                     candidates.append(
                         _completions.Candidate(name, description, name != "completions")
                     )
         elif non_flags is not None and len(non_flags) == 2:
-            builtin = _find_unshadowed_builtin(cli.commands, non_flags[1])
+            builtin = self.find_unshadowed_builtin(non_flags[1])
             # A built-in group completes its own subcommands in place of root commands
-            if (
-                builtin is not None
-                and builtin != "completions"
-                and builtin in self.builtin_names()
-                and not current.startswith("-")
-            ):
+            if builtin is not None and builtin != "completions" and not current.startswith("-"):
                 candidates.clear()
                 for sub in _BUILTIN_SUBCOMMANDS:
                     if sub[0] != builtin:

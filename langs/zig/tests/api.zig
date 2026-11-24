@@ -860,4 +860,5 @@ test "ends serving when its task is canceled" {
 
 test {
     _ = @import("features.zig");
+    _ = @import("parse.zig");
 }

@@ -312,26 +312,31 @@ pub fn handler(comptime f: anytype) Handler {
         .call = struct {
             fn call(i: *const Invocation) anyerror!Outcome {
                 const a = i.allocator;
-                var c: Ctx = .{
-                    .allocator = a,
-                    .io = i.io,
-                    .agent = i.agent,
-                    .args = try decodeInput(input.args, a, i.args),
-                    .display_name = i.display_name,
-                    .env = try decodeInput(input.env, a, i.env),
-                    .format = i.format,
-                    .format_explicit = i.format_explicit,
-                    .globals = i.globals,
-                    .name = i.name,
-                    .options = try decodeInput(input.options, a, i.options),
-                    .vars = i.vars,
-                    .version = i.version,
-                    .request = i.request,
-                    .failure = i.failure,
-                };
+                var c = contextOf(Ctx, i, try decodeInput(input.args, a, i.args), try decodeInput(input.options, a, i.options), try decodeInput(input.env, a, i.env));
                 return f(&c);
             }
         }.call,
+    };
+}
+
+/// Returns the context of an invocation with decoded input.
+pub fn contextOf(comptime Ctx: type, i: *const Invocation, args: Ctx.declared.args, options: Ctx.declared.options, env: Ctx.declared.env) Ctx {
+    return .{
+        .allocator = i.allocator,
+        .io = i.io,
+        .agent = i.agent,
+        .args = args,
+        .display_name = i.display_name,
+        .env = env,
+        .format = i.format,
+        .format_explicit = i.format_explicit,
+        .globals = i.globals,
+        .name = i.name,
+        .options = options,
+        .vars = i.vars,
+        .version = i.version,
+        .request = i.request,
+        .failure = i.failure,
     };
 }
 

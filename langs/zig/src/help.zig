@@ -59,6 +59,8 @@ pub const Options = struct {
     globals: ?*const Type = null,
     /// Hide the global options section.
     hide_global_options: bool = false,
+    /// Hide the MCP integration and the `--mcp` flag.
+    hide_mcp: bool = false,
     /// Hide the skills integration.
     hide_skills: bool = false,
     /// Hide the `--update` flag.
@@ -259,11 +261,14 @@ fn globalLines(a: Allocator, lines: *Lines, options: Options) Allocator.Error!vo
             .{ "mcp", "Register as MCP server (add, doctor)" },
             .{ "skills", "Sync skill files to agents (add, list)" },
         };
-        const shown = if (options.hide_skills) integrations[0..2] else integrations[0..];
         // `completions` is the longest name either way.
         const width = "completions".len;
         try lines.appendSlice(a, &.{ "", "Integrations:" });
-        for (shown) |entry| try lines.append(a, try std.fmt.allocPrint(a, "  {s}  {s}", .{ try js.pad(a, entry[0], width), entry[1] }));
+        for (integrations) |entry| {
+            if (options.hide_mcp and std.mem.eql(u8, entry[0], "mcp")) continue;
+            if (options.hide_skills and std.mem.eql(u8, entry[0], "skills")) continue;
+            try lines.append(a, try std.fmt.allocPrint(a, "  {s}  {s}", .{ try js.pad(a, entry[0], width), entry[1] }));
+        }
     }
 
     if (options.globals) |globals| if (globals.fields().len > 0) {
@@ -297,7 +302,8 @@ pub fn globalFlags(a: Allocator, options: Options) Allocator.Error![]const Flag 
         .{ "--token-offset <n>", "Skip first n tokens of output" },
         .{ "--full-output", "Show full output envelope" },
     });
-    if (options.root) try flags.appendSlice(a, &.{ .{ "--mcp", "Start as MCP stdio server" }, .{ "--version", "Show version" } });
+    if (options.root and !options.hide_mcp) try flags.append(a, .{ "--mcp", "Start as MCP stdio server" });
+    if (options.root) try flags.append(a, .{ "--version", "Show version" });
     if (options.root and !options.hide_update) try flags.append(a, .{ "--update", "Update to latest version" });
     std.mem.sort(Flag, flags.items, {}, struct {
         fn lessThan(_: void, x: Flag, y: Flag) bool {

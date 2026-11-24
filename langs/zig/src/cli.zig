@@ -21,6 +21,7 @@ const mcp_source = @import("mcp_source.zig");
 const server = @import("server.zig");
 const sync_api = @import("sync.zig");
 const update_api = @import("update.zig");
+const declare = @import("declare.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -294,6 +295,10 @@ pub const Cli = struct {
     loaded: bool = false,
     /// The stateful MCP session for `/mcp` over HTTP, created on first use.
     session: ?*mcp.Session = null,
+    /// Whether the CLI parses commands for its caller instead of running them, as
+    /// `Cli.parse` does: `--mcp`, `mcp add`, and `mcp doctor`, which need handlers to call, are
+    /// unknown commands and hidden from help, completions, and suggestions.
+    parse_only: bool = false,
 
     /// Where a generated group's commands come from.
     pub const Source = union(enum) {
@@ -444,25 +449,41 @@ pub const Cli = struct {
     /// with the command's exit code when it is not 0. Outgoing HTTP requests use
     /// `std.http.Client`.
     pub fn serve(cli: *Cli, init: std.process.Init) !void {
-        const io = init.io;
-        const args = try init.minimal.args.toSlice(init.arena.allocator());
-        var out_buf: [4096]u8 = undefined;
-        var err_buf: [1024]u8 = undefined;
-        var in_buf: [4096]u8 = undefined;
-        var stdout = std.Io.File.stdout().writer(io, &out_buf);
-        var stderr = std.Io.File.stderr().writer(io, &err_buf);
-        var stdin = std.Io.File.stdin().reader(io, &in_buf);
-        const tty = std.Io.File.stdout().isTty(io) catch false;
-        const code = try cli.serveWith(args[1..], .{
-            .io = io,
-            .env = init.environ_map,
-            .stdout = &stdout.interface,
-            .stderr = &stderr.interface,
-            .stdin = &stdin.interface,
-            .tty = tty,
-            .program = args[0],
-        });
+        var stdio: Stdio = undefined;
+        const argv, const process = try stdio.open(init);
+        const code = try cli.serveWith(argv, process);
         if (code != 0) std.process.exit(code);
+    }
+
+    /// Adds the commands of the declared type `T` (see `incur.cli`), which call `run` with the
+    /// parsed command. `run` returns what incur writes, as any handler does.
+    pub fn handle(cli: *Cli, comptime T: type, comptime run: *const declare.Run(T)) Allocator.Error!void {
+        return declare.attach(cli, T, run, null);
+    }
+
+    /// Adds the commands of the declared type `T` and parses the process arguments into a `T`,
+    /// which the caller runs. Help, `--version`, `--llms`, completions, skills, and invalid input
+    /// are handled as `serve` handles them, after which the process exits with their exit code.
+    /// The command is allocated in `init.arena`, so it lives until the process exits.
+    pub fn parse(cli: *Cli, comptime T: type, init: std.process.Init) !T {
+        var stdio: Stdio = undefined;
+        const argv, const process = try stdio.open(init);
+        return switch (try cli.parseWith(T, init.arena.allocator(), argv, process)) {
+            .command => |parsed| parsed,
+            .exit => |code| std.process.exit(code),
+        };
+    }
+
+    /// Adds the commands of the declared type `T` and parses `argv` with explicit I/O, returning
+    /// the command instead of running it, or the exit code when a built-in ran, the input was
+    /// invalid, or middleware failed. Middleware runs before this returns. `--mcp`, `mcp add`, and
+    /// `mcp doctor`, which need handlers to call, are unknown commands. Call it once per CLI.
+    ///
+    /// The command's strings and slices are allocated with `a` and never freed individually, so
+    /// pass an arena and free the command with it. Output written after the command was parsed,
+    /// such as the empty result, is discarded.
+    pub fn parseWith(cli: *Cli, comptime T: type, a: Allocator, argv: []const []const u8, process: Process) ServeError!declare.Parsed(T) {
+        return declare.parseCli(cli, T, a, argv, process);
     }
 
     /// Runs the CLI with explicit arguments and I/O. Returns the exit code; fails only when
@@ -507,6 +528,34 @@ pub const Cli = struct {
                 return self.fetch(a, process, request);
             }
         }.call };
+    }
+};
+
+/// The buffered standard streams of the process.
+const Stdio = struct {
+    out_buf: [4096]u8,
+    err_buf: [1024]u8,
+    in_buf: [4096]u8,
+    stdout: std.Io.File.Writer,
+    stderr: std.Io.File.Writer,
+    stdin: std.Io.File.Reader,
+
+    /// Opens the streams and returns the arguments after the program and the process I/O.
+    fn open(s: *Stdio, init: std.process.Init) !struct { []const []const u8, Process } {
+        const io = init.io;
+        const args = try init.minimal.args.toSlice(init.arena.allocator());
+        s.stdout = std.Io.File.stdout().writer(io, &s.out_buf);
+        s.stderr = std.Io.File.stderr().writer(io, &s.err_buf);
+        s.stdin = std.Io.File.stdin().reader(io, &s.in_buf);
+        return .{ args[1..], .{
+            .io = io,
+            .env = init.environ_map,
+            .stdout = &s.stdout.interface,
+            .stderr = &s.stderr.interface,
+            .stdin = &s.stdin.interface,
+            .tty = std.Io.File.stdout().isTty(io) catch false,
+            .program = args[0],
+        } };
     }
 };
 
@@ -724,7 +773,7 @@ const Flags = struct {
 };
 
 /// Extracts built-in flags from argv.
-fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8, update: bool) Allocator.Error!parser.Result(Flags) {
+fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8, update: bool, mcp_enabled: bool) Allocator.Error!parser.Result(Flags) {
     var flags: Flags = .{};
     var rest: std.ArrayList([]const u8) = .empty;
     var i: usize = 0;
@@ -742,7 +791,7 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
             flags.llms = true;
         } else if (eql(token, "--llms-full")) {
             flags.llms_full = true;
-        } else if (eql(token, "--mcp")) {
+        } else if (eql(token, "--mcp") and mcp_enabled) {
             flags.mcp = true;
         } else if (eql(token, "--help") or eql(token, "-h")) {
             flags.help = true;
@@ -973,19 +1022,27 @@ fn findSub(subs: []const BuiltinSub, name: []const u8) ?BuiltinSub {
     return null;
 }
 
-/// Resolves a token to a built-in command name.
-fn findBuiltin(token: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, token, "completions")) return "completions";
-    if (std.mem.eql(u8, token, "mcp")) return "mcp";
-    if (std.mem.eql(u8, token, "skills") or std.mem.eql(u8, token, "skill")) return "skills";
-    return null;
+/// Resolves a token to the name of a built-in command the CLI enables.
+fn findBuiltin(cli: *const Cli, token: []const u8) ?[]const u8 {
+    const name: []const u8 = if (std.mem.eql(u8, token, "skill")) "skills" else for (builtins) |b| {
+        if (std.mem.eql(u8, token, b[0])) break b[0];
+    } else return null;
+    return if (builtinEnabled(cli, name)) name else null;
+}
+
+/// Whether the CLI enables a built-in command: `skills` needs sync settings, and `mcp` a CLI
+/// that runs commands rather than parsing them.
+fn builtinEnabled(cli: *const Cli, name: []const u8) bool {
+    if (std.mem.eql(u8, name, "skills")) return cli.options.sync != null;
+    if (std.mem.eql(u8, name, "mcp")) return !cli.parse_only;
+    return true;
 }
 
 /// Resolves a token to a built-in command name, unless a registered command or alias of the same
 /// name shadows it.
-fn findUnshadowedBuiltin(commands: Commands, token: []const u8) ?[]const u8 {
-    if (lookup(commands, token) != null) return null;
-    return findBuiltin(token);
+fn findUnshadowedBuiltin(cli: *const Cli, token: []const u8) ?[]const u8 {
+    if (lookup(cli.commands.items, token) != null) return null;
+    return findBuiltin(cli, token);
 }
 
 /// Output settings resolved for a command.
@@ -1045,7 +1102,13 @@ const Run = struct {
 
     /// Base help options shared by most help output.
     fn helpOptions(run: *Run) help.Options {
-        return .{ .config_flag = run.configFlag(), .globals = run.cli.options.globals, .hide_skills = run.cli.options.sync == null, .hide_update = run.cli.options.update == null };
+        return .{
+            .config_flag = run.configFlag(),
+            .globals = run.cli.options.globals,
+            .hide_mcp = run.cli.parse_only,
+            .hide_skills = run.cli.options.sync == null,
+            .hide_update = run.cli.options.update == null,
+        };
     }
 
     /// Reports an error before a command resolves.
@@ -1074,7 +1137,7 @@ const Run = struct {
         const cli = run.cli;
         if (run.process.env.get("COMPLETE")) |shell| return run.complete(shell, argv);
         const tty = run.process.tty;
-        const flags = switch (try extractFlags(a, argv, run.configFlag(), cli.options.update != null)) {
+        const flags = switch (try extractFlags(a, argv, run.configFlag(), cli.options.update != null, !cli.parse_only)) {
             .ok => |f| f,
             .err => |e| return run.earlyError(e, tty, .toon),
         };
@@ -1089,7 +1152,7 @@ const Run = struct {
         // tree-wide modes.
         const first: ?[]const u8 = if (filtered.len > 0) filtered[0] else null;
         const all = flags.mcp or ((flags.llms or flags.llms_full) and first == null) or
-            (first != null and (std.mem.eql(u8, first.?, cli.name) or findBuiltin(first.?) != null));
+            (first != null and (std.mem.eql(u8, first.?, cli.name) or findBuiltin(cli, first.?) != null));
         if (try cli.load(a, &run.process, if (all) null else first orelse "")) |e| return run.earlyError(e, human, flags.format);
 
         if (flags.update_check) {
@@ -1128,7 +1191,6 @@ const Run = struct {
         }
 
         for ([_][]const u8{ "skills", "mcp" }) |b| {
-            if (std.mem.eql(u8, b, "skills") and cli.options.sync == null) continue;
             if (builtinIndex(cli, filtered, b)) |index| return run.builtin(b, filtered, index, argv, &flags, human);
         }
 
@@ -1205,7 +1267,7 @@ const Run = struct {
         if (resolved == .err and resolved.err.path.len == 0 and (run.root != null or root_gateway != null)) {
             var candidates: std.ArrayList([]const u8) = .empty;
             try candidates.appendSlice(a, try names(a, resolved.err.commands));
-            for (builtins) |b| if (cli.options.sync != null or !std.mem.eql(u8, b[0], "skills")) try candidates.append(a, b[0]);
+            for (builtins) |b| if (builtinEnabled(cli, b[0])) try candidates.append(a, b[0]);
             const blocked = !std.mem.startsWith(u8, resolved.err.token, "/") and try suggest(a, resolved.err.token, candidates.items) != null;
             if (!blocked) resolved = if (root_gateway) |g|
                 .{ .gateway = .{ .gateway = g, .path = cli.name, .rest = filtered } }
@@ -1697,7 +1759,7 @@ const Run = struct {
         const index = if (run.process.env.get("_COMPLETE_INDEX")) |raw| js.toNumber(raw) else @as(f64, @floatFromInt(words.len - 1));
         const cut = js.relativeIndex(index, words.len);
         const before: ?[]const []const u8 = before: {
-            const extracted = switch (try extractFlags(a, words[0..cut], run.configFlag(), cli.options.update != null)) {
+            const extracted = switch (try extractFlags(a, words[0..cut], run.configFlag(), cli.options.update != null, !cli.parse_only)) {
                 .ok => |f| f,
                 .err => break :before null,
             };
@@ -1722,13 +1784,13 @@ const Run = struct {
             if (non_flags.items.len <= 1) {
                 for (builtins) |entry| {
                     const name, const description = entry;
-                    if (std.mem.eql(u8, name, "skills") and cli.options.sync == null) continue;
+                    if (!builtinEnabled(cli, name)) continue;
                     if (std.mem.startsWith(u8, name, current) and !listed(candidates.items, name))
                         try candidates.append(a, .{ .description = description, .no_space = !std.mem.eql(u8, name, "completions"), .value = name });
                 }
-            } else if (non_flags.items.len == 2) if (findUnshadowedBuiltin(cli.commands.items, non_flags.items[1])) |b_name| {
+            } else if (non_flags.items.len == 2) if (findUnshadowedBuiltin(cli, non_flags.items[1])) |b_name| {
                 // A built-in group completes its own subcommands in place of root commands
-                if (!std.mem.eql(u8, b_name, "completions") and (cli.options.sync != null or !std.mem.eql(u8, b_name, "skills")) and !std.mem.startsWith(u8, current, "-")) {
+                if (!std.mem.eql(u8, b_name, "completions") and !std.mem.startsWith(u8, current, "-")) {
                     candidates.clearRetainingCapacity();
                     for (builtin_subcommands) |s| if (std.mem.eql(u8, s.builtin, b_name)) {
                         for (try std.mem.concat(a, []const u8, &.{ &.{s.name}, s.aliases })) |value| {
@@ -1763,7 +1825,7 @@ const Run = struct {
         const parent = if (path.len == 0) cli.name else try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, path });
         var candidates: std.ArrayList([]const u8) = .empty;
         try candidates.appendSlice(a, try names(a, commands));
-        if (path.len == 0) for (builtins) |b| if (cli.options.sync != null or !std.mem.eql(u8, b[0], "skills")) try candidates.append(a, b[0]);
+        if (path.len == 0) for (builtins) |b| if (builtinEnabled(cli, b[0])) try candidates.append(a, b[0]);
         const suggestion = try suggest(a, token, candidates.items);
         const did_you_mean = if (suggestion) |s| try std.fmt.allocPrint(a, " Did you mean '{s}'?", .{s}) else "";
         const message = try std.fmt.allocPrint(a, "'{s}' is not a command for '{s}'.{s}", .{ token, parent, did_you_mean });
@@ -2420,9 +2482,8 @@ fn listed(candidates: []const completions.Candidate, value: []const u8) bool {
 /// Returns the index of a built-in in the filtered tokens: first, or after the CLI name. A
 /// registered command or alias of the same name shadows the built-in.
 fn builtinIndex(cli: *const Cli, filtered: []const []const u8, b: []const u8) ?usize {
-    const commands = cli.commands.items;
-    if (filtered.len > 0) if (findUnshadowedBuiltin(commands, filtered[0])) |found| if (std.mem.eql(u8, found, b)) return 0;
-    if (filtered.len > 1 and std.mem.eql(u8, filtered[0], cli.name)) if (findUnshadowedBuiltin(commands, filtered[1])) |found| if (std.mem.eql(u8, found, b)) return 1;
+    if (filtered.len > 0) if (findUnshadowedBuiltin(cli, filtered[0])) |found| if (std.mem.eql(u8, found, b)) return 0;
+    if (filtered.len > 1 and std.mem.eql(u8, filtered[0], cli.name)) if (findUnshadowedBuiltin(cli, filtered[1])) |found| if (std.mem.eql(u8, found, b)) return 1;
     return null;
 }
 

@@ -23,13 +23,13 @@
 
 ## Features
 
+- [**Declare once**](#usage): a struct is a command and a `union(enum)` a group; `parse()` returns the typed command to `switch` on, or `serve()` runs a handler
 - [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) and `--llms` manifests
 - [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
 - **TOON output**: token-efficient default format, with JSON, YAML, Markdown, and JSONL alternatives
 - **Well-formed I/O**: plain structs as schemas for arguments, options, environment variables, and output
-- **Inferred types**: handlers receive typed structs, with no casts or manual parsing
 - [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI
-- [**Middleware**](#middleware-and-variables): composable before/after hooks with typed variables via `cli.use()`
+- [**Middleware**](#middleware-and-variables): composable before/after hooks with typed variables
 - [**Mount APIs**](#mounting-apis): HTTP handlers, OpenAPI documents, and remote MCP servers become commands
 - [**Serve over HTTP**](#serving-over-http): the CLI as an HTTP handler, with MCP over HTTP at `/mcp`
 - **`std.Io` throughout**: handlers, middleware, and streams do I/O and run concurrently with `io.async`
@@ -52,74 +52,109 @@ exe.root_module.addImport("incur", incur.module("incur"));
 
 ### Single-command CLI
 
-Pass `root` to `Cli.create()` for CLIs that do one thing. Schemas are plain structs; a `pub const incur` declaration carries field metadata.
+Declare the CLI as a struct. Fields are options, `.arg = true` fields positional arguments, and the `pub const incur` declaration names the CLI and describes its fields. `incur.parse` handles help, `--version`, `--llms`, completions, `skills add`, and validation errors itself, and returns the typed command.
 
 ```zig
 const std = @import("std");
 const incur = @import("incur");
 
-const Args = struct {
+const Greet = struct {
     name: []const u8,
 
-    pub const incur = .{ .fields = .{ .name = .{ .description = "Name to greet" } } };
+    pub const incur = .{
+        .name = "greet",
+        .description = "A greeting CLI",
+        .fields = .{ .name = .{ .arg = true, .description = "Name to greet" } },
+    };
 };
 
-fn greet(c: *incur.Context(.{ .args = Args })) !incur.Outcome {
-    return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "hello {s}", .{c.args.name}) });
+pub fn main(init: std.process.Init) !void {
+    const greet = try incur.parse(Greet, init);
+    const line = try std.fmt.allocPrint(init.arena.allocator(), "hello {s}\n", .{greet.name});
+    try std.Io.File.stdout().writeStreamingAll(init.io, line);
+}
+```
+
+```sh
+$ greet world
+# → hello world
+```
+
+To let incur write the output, in TOON, JSON, YAML, Markdown, or JSONL, and serve the same command to agents over MCP and HTTP, `serve` a handler instead:
+
+```zig
+const std = @import("std");
+const incur = @import("incur");
+
+const Greet = struct {
+    name: []const u8,
+
+    pub const incur = .{
+        .name = "greet",
+        .description = "A greeting CLI",
+        .fields = .{ .name = .{ .arg = true, .description = "Name to greet" } },
+    };
+};
+
+fn run(c: *incur.Context(.{}), greet: Greet) !incur.Outcome {
+    return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "hello {s}", .{greet.name}) });
 }
 
 pub fn main(init: std.process.Init) !void {
-    const cli = try incur.Cli.create(init.gpa, "greet", .{
-        .description = "A greeting CLI",
-        .root = .{ .run = incur.handler(greet) },
-    });
-    defer cli.destroy();
-    try cli.serve(init);
+    try incur.serve(Greet, init, run);
 }
 ```
 
 ```sh
 $ greet world
 # → message: hello world
+
+$ greet world --format md
+# → | Key     | Value       |
+# → |---------|-------------|
+# → | message | hello world |
 ```
 
 ### Multi-command CLI
 
-Call `cli.command()` to register subcommands.
+Declare a `union(enum)`: each member is a command, named in kebab-case, with its fields inline. Matching is exhaustive.
 
 ```zig
 const std = @import("std");
 const incur = @import("incur");
 
-const InstallArgs = struct {
-    package: ?[]const u8 = null,
+const MyCli = union(enum) {
+    status,
+    install: struct {
+        package: ?[]const u8 = null,
+        save_dev: bool = false,
 
-    pub const incur = .{ .fields = .{ .package = .{ .description = "Package name" } } };
-};
-
-const InstallOptions = struct {
-    save_dev: bool = false,
+        pub const incur = .{ .fields = .{
+            .package = .{ .arg = true, .description = "Package name" },
+            .save_dev = .{ .alias = 'D', .description = "Save as dev dependency" },
+        } };
+    },
 
     pub const incur = .{
-        .rename_all = .camel_case,
-        .fields = .{ .save_dev = .{ .description = "Save as dev dependency", .alias = 'D' } },
+        .name = "my-cli",
+        .version = "0.1.0",
+        .description = "My CLI",
+        .fields = .{
+            .status = .{ .description = "Show repo status" },
+            .install = .{ .description = "Install a package" },
+        },
     };
 };
 
-fn status(c: *incur.Context(.{})) !incur.Outcome {
-    return c.ok(.{ .clean = true });
-}
-
-fn install(c: *incur.Context(.{ .args = InstallArgs, .options = InstallOptions })) !incur.Outcome {
-    return c.ok(.{ .added = 1, .packages = 451, .dev = c.options.save_dev });
+fn run(c: *incur.Context(.{}), command: MyCli) !incur.Outcome {
+    return switch (command) {
+        .status => c.ok(.{ .clean = true }),
+        .install => c.ok(.{ .added = 1, .packages = 451 }),
+    };
 }
 
 pub fn main(init: std.process.Init) !void {
-    const cli = try incur.Cli.create(init.gpa, "my-cli", .{ .description = "My CLI" });
-    defer cli.destroy();
-    try cli.command("status", .{ .description = "Show repo status", .run = incur.handler(status) });
-    try cli.command("install", .{ .description = "Install a package", .run = incur.handler(install) });
-    try cli.serve(init);
+    try incur.serve(MyCli, init, run);
 }
 ```
 
@@ -130,30 +165,38 @@ $ my-cli status
 $ my-cli install express -D
 # → added: 1
 # → packages: 451
-# → dev: true
 ```
 
 ### Sub-command CLI
 
-Create a separate `Cli` and mount it with `cli.group()` to nest command groups.
+A member whose type is another union nests a command group.
 
 ```zig
 const std = @import("std");
 const incur = @import("incur");
 
-const ListOptions = struct { state: enum { open, closed, all } = .open };
+const Pr = union(enum) {
+    list: struct { state: enum { open, closed, all } = .open },
 
-fn list(c: *incur.Context(.{ .options = ListOptions })) !incur.Outcome {
-    return c.ok(.{ .prs = [_][]const u8{}, .state = c.options.state });
+    pub const incur = .{ .description = "Pull request commands", .fields = .{ .list = .{ .description = "List pull requests" } } };
+};
+
+const MyCli = union(enum) {
+    pr: Pr,
+
+    pub const incur = .{ .name = "my-cli" };
+};
+
+fn run(c: *incur.Context(.{}), command: MyCli) !incur.Outcome {
+    return switch (command) {
+        .pr => |pr| switch (pr) {
+            .list => |list| c.ok(.{ .prs = [_][]const u8{}, .state = list.state }),
+        },
+    };
 }
 
 pub fn main(init: std.process.Init) !void {
-    const cli = try incur.Cli.create(init.gpa, "my-cli", .{ .description = "My CLI" });
-    defer cli.destroy();
-    const pr = try incur.Cli.create(init.gpa, "pr", .{ .description = "Pull request commands" });
-    try pr.command("list", .{ .description = "List pull requests", .run = incur.handler(list) });
-    try cli.group(pr); // `cli` now owns `pr`.
-    try cli.serve(init);
+    try incur.serve(MyCli, init, run);
 }
 ```
 
@@ -162,6 +205,39 @@ $ my-cli pr list --state closed
 # → prs: []
 # → state: closed
 ```
+
+### Parse or serve
+
+Both entries share one definition. `parse` returns the command to your code, which writes the output; it hides `--mcp` and `mcp add`, which need something to call, and exits by itself after help, `--version`, or an error. The command lives in `init.arena`. `serve` writes what the handler returns and also serves `--mcp`. To customize either, create the `Cli` with `incur.cli(T, gpa, options)`, then add middleware or commands and call `cli.parse(T, init)`, or `cli.handle(T, run)` and `cli.serve(init)` or `cli.fetch` for HTTP. Tests call `incur.parseWith(T, arena, argv, process)`, which returns `.{ .command = ... }` or `.{ .exit = code }` and allocates everything, the command included, with the arena.
+
+```zig
+const std = @import("std");
+const incur = @import("incur");
+
+const MyCli = union(enum) {
+    status,
+
+    pub const incur = .{ .name = "my-cli", .version = "0.1.0", .fields = .{ .status = .{ .description = "Show repo status" } } };
+};
+
+pub fn main(init: std.process.Init) !void {
+    const cli = try incur.cli(MyCli, init.gpa, .{ .update = null });
+    defer cli.destroy();
+    switch (try cli.parse(MyCli, init)) {
+        .status => try std.Io.File.stdout().writeStreamingAll(init.io, "clean\n"),
+    }
+}
+```
+
+```sh
+$ my-cli status
+# → clean
+
+$ my-cli --version
+# → 0.1.0
+```
+
+The builder (`incur.Cli.create`, `cli.command`, `incur.handler`) declares CLIs on its own too, for commands known only at run time, and the two compose: `cli.group(declared)` mounts a declared group on a builder CLI, and `cli.command` adds builder commands to a declared one.
 
 ## Walkthrough
 
@@ -200,7 +276,7 @@ fn auth(c: *incur.MiddlewareContext, next: incur.Next) !void {
 }
 ```
 
-Register with `cli.use(auth)`, per group, or per command (`.middleware`). Handlers read variables with `c.get("user")`; `Options.vars` sets defaults.
+Register with `cli.use(auth)`, or with `.middleware = &.{auth}` in a declared group's or command's `incur` declaration. Handlers read variables with `c.get("user")`; `Options.vars` sets defaults.
 
 ### Global options
 

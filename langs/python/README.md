@@ -23,6 +23,7 @@
 
 ## Features
 
+- [**Declarative**](#usage): declare a CLI as `Command` classes and `Group` unions, then `parse()` it like clap, or `serve()` typed outputs
 - [**Agent discovery**](#agent-discovery): built-in Skills and MCP sync (`skills add`, `mcp add`) so agents find your CLI automatically
 - [**Call-to-actions**](#call-to-actions): suggest next commands to agents and humans after a run
 - **TOON output**: token-efficient default format, with JSON, YAML, Markdown, and JSONL alternatives
@@ -46,7 +47,7 @@ pip install incur-cli
 
 ### Single-command CLI
 
-Register a root command with `@cli.root()` for CLIs that do one thing.
+Subclass `incur.Command`. Fields are options, `incur.arg` fields positional arguments, and the docstring is the description. `parse()` handles help, `--version`, `--llms`, completions, `skills add`, and validation errors itself, and returns the typed command.
 
 ```python
 from typing import Annotated
@@ -54,31 +55,46 @@ from typing import Annotated
 import incur
 
 
-@incur.schema
-class Args:
-    name: Annotated[str, incur.field("Name to greet")]
+class Greet(incur.Command, name="greet"):
+    """A greeting CLI"""
+
+    name: Annotated[str, incur.arg("Name to greet")]
 
 
-cli = incur.Cli("greet", description="A greeting CLI")
-
-
-@cli.root()
-def greet(c: incur.Context[Args]) -> dict[str, str]:
-    return {"message": f"hello {c.args.name}"}
+def main() -> None:
+    greet = Greet.parse()
+    print(f"hello {greet.name}")
 
 
 if __name__ == "__main__":
-    cli.serve()
+    main()
+```
+
+```sh
+$ greet world
+# → hello world
+```
+
+To let incur write the output, in TOON, JSON, YAML, Markdown, or JSONL, and serve the same command to agents over MCP and HTTP, `serve` a handler that returns data instead:
+
+```python
+def main() -> None:
+    Greet.serve(lambda greet, _: {"message": f"hello {greet.name}"})
 ```
 
 ```sh
 $ greet world
 # → message: hello world
+
+$ greet world --json
+# → {
+# →   "message": "hello world"
+# → }
 ```
 
 ### Multi-command CLI
 
-Decorate a function per subcommand.
+Subclass `incur.Group` with the union of its commands, named in kebab-case. Class patterns `match` the parsed command, and pyright checks that the match is exhaustive.
 
 ```python
 from typing import Annotated
@@ -86,31 +102,31 @@ from typing import Annotated
 import incur
 
 
-@incur.schema
-class InstallArgs:
-    package: Annotated[str | None, incur.field("Package name")] = None
+class Status(incur.Command):
+    """Show repo status"""
 
 
-@incur.schema(rename_all="camelCase")
-class InstallOptions:
-    save_dev: Annotated[bool | None, incur.field("Save as dev dependency", alias="D")] = None
+class Install(incur.Command):
+    """Install a package"""
+
+    package: Annotated[str | None, incur.arg("Package name")] = None
+    save_dev: Annotated[bool, incur.field("Save as dev dependency", alias="D")] = False
 
 
-cli = incur.Cli("my-cli", description="My CLI")
+class MyCli(incur.Group[Status | Install], name="my-cli", version="0.1.0"):
+    """My CLI"""
 
 
-@cli.command("status", description="Show repo status")
-def status(c: incur.Context) -> dict[str, bool]:
-    return {"clean": True}
+def run(command: Status | Install, c: incur.Context) -> object:
+    match command:
+        case Status():
+            return {"clean": True}
+        case Install():
+            return {"added": 1, "packages": 451}
 
 
-@cli.command("install", description="Install a package")
-def install(c: incur.Context[InstallArgs, InstallOptions]) -> dict[str, int]:
-    return {"added": 1, "packages": 451}
-
-
-if __name__ == "__main__":
-    cli.serve()
+def main() -> None:
+    MyCli.serve(run)
 ```
 
 ```sh
@@ -124,31 +140,30 @@ $ my-cli install express -D
 
 ### Sub-command CLI
 
-Create a separate `Cli` and mount it with `cli.group(...)` to nest command groups.
+A group in a group's union nests a command group. Its commands parse wrapped in it, as `Pr(ListPrs(...))`.
 
 ```python
 from typing import Literal
 
 import incur
 
-cli = incur.Cli("my-cli", description="My CLI")
-pr = incur.Cli("pr", description="Pull request commands")
 
+class ListPrs(incur.Command, name="list"):
+    """List pull requests"""
 
-@incur.schema
-class ListOptions:
     state: Literal["open", "closed", "all"] = "open"
 
 
-@pr.command("list", description="List pull requests")
-def list_prs(c: incur.Context[None, ListOptions]) -> dict[str, object]:
-    return {"prs": [], "state": c.options.state}
+class Pr(incur.Group[ListPrs]):
+    """Pull request commands"""
 
 
-cli.group(pr)
+class MyCli(incur.Group[Pr], name="my-cli"):
+    """My CLI"""
 
-if __name__ == "__main__":
-    cli.serve()
+
+def main() -> None:
+    MyCli.serve(lambda pr, _: {"prs": [], "state": pr.command.state})
 ```
 
 ```sh
@@ -156,6 +171,12 @@ $ my-cli pr list --state closed
 # → prs: []
 # → state: closed
 ```
+
+### Parse or serve
+
+Both entries share one definition. `parse()` returns the command to your code, which writes the output; it hides `--mcp` and `mcp add`, which need something to call. `serve(handler)` writes what the handler returns and also serves `--mcp`. `incur.Cli(MyCli)` is the typed `Cli` to customize, such as `.use(middleware)`, before `.parse()`, or `.handle(handler)` for `serve()`, `fetch`, and `asgi`. Inside a running event loop, await `parse_async()` or `serve_async()`; in tests, `parse_with(argv)` returns the command or the exit code.
+
+The builder (`@cli.command`, `@cli.root()`, and `cli.group`) declares CLIs too, for commands known only at run time, and mixes with declared ones: `cli.group(incur.Cli(Pr).handle(run))`.
 
 ## Walkthrough
 
