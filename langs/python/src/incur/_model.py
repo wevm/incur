@@ -67,6 +67,15 @@ class FieldInfo:
     """Whether the option counts repeated flags."""
     deprecated: bool = False
     """Whether the option warns when used."""
+    coerce: bool = False
+    """Whether a positional argument reads numbers from text, as `z.coerce` does."""
+    source: Literal["option", "arg", "env"] = "option"
+    """Where an `incur.Command` field reads its value: an option, a positional argument, or an
+    environment variable."""
+
+
+#: A described field: its attribute name, schema, and metadata.
+Described = tuple[str, Type, FieldInfo]
 
 
 def field(
@@ -91,6 +100,49 @@ def field(
         deprecated: Warns when the option is used.
     """
     return FieldInfo(description, alias, name, min, max, count, deprecated)
+
+
+def arg(
+    description: str | None = None,
+    *,
+    name: str | None = None,
+    min: float | None = None,
+    max: float | None = None,
+    coerce: bool = True,
+) -> FieldInfo:
+    """Marks a field of an `incur.Command` class as a positional argument.
+
+    Use it as `typing.Annotated` metadata. Arguments are positional in field order.
+
+    Args:
+        description: Help text for the argument.
+        name: The name in help and input. Defaults to the attribute name in camelCase.
+        min: Minimum value, string length, or item count.
+        max: Maximum value, string length, or item count.
+        coerce: Reads an `int` or `float` argument from text, as `z.coerce.number()` does. With
+            `False`, it must be a number, which only JSON input such as MCP passes.
+    """
+    return FieldInfo(description, name=name, min=min, max=max, coerce=coerce, source="arg")
+
+
+def env(
+    description: str | None = None,
+    *,
+    name: str | None = None,
+    min: float | None = None,
+    max: float | None = None,
+) -> FieldInfo:
+    """Marks a field of an `incur.Command` class as an environment variable.
+
+    Use it as `typing.Annotated` metadata.
+
+    Args:
+        description: Help text for the variable.
+        name: The variable name. Defaults to the attribute name in SCREAMING_SNAKE_CASE.
+        min: Minimum value, string length, or item count.
+        max: Maximum value, string length, or item count.
+    """
+    return FieldInfo(description, name=name, min=min, max=max, source="env")
 
 
 @overload
@@ -142,6 +194,33 @@ def _declare(cls: type[_T], rename_all: str | None, scope: dict[str, Any]) -> ty
         raise SchemaError(
             f"{where}: unknown rename_all rule {rename_all!r}; expected one of {', '.join(_RULES)}"
         )
+    data_cls, described = describe_fields(cls, scope)
+    fields: list[Field] = []
+    for attr, ty, info in described:
+        label = f"{where}.{attr}"
+        if info.source != "option":
+            raise SchemaError(
+                f"{label}: incur.{info.source}() marks a field of an incur.Command class"
+            )
+        if info.name is not None:
+            name = info.name
+        elif rename_all is not None:
+            name = rename(rename_all, attr)
+        else:
+            name = attr
+        add_field(fields, label, Field(name, ty, info.alias, attr))
+    setattr(data_cls, _SCHEMA, object_type(fields))
+    return data_cls
+
+
+def rename(rule: str, attr: str) -> str:
+    """Spells an attribute name with a `rename_all` rule."""
+    return _RULES[rule]([w for w in attr.split("_") if w] or [attr])
+
+
+def describe_fields(cls: type[_T], scope: dict[str, Any]) -> tuple[type[_T], list[Described]]:
+    """Turns a class into a keyword-only dataclass and describes its fields."""
+    where = cls.__qualname__
     # Lists are valid JSON defaults; give each instance its own copy.
     annotations = inspect.get_annotations(cls)
     for attr, value in list(vars(cls).items()):
@@ -150,7 +229,7 @@ def _declare(cls: type[_T], rename_all: str | None, scope: dict[str, Any]) -> ty
             setattr(cls, attr, dataclasses.field(default_factory=_copier(items)))
     data_cls = dataclasses.dataclass(kw_only=True)(cls)
     hints = typing.get_type_hints(data_cls, localns=scope, include_extras=True)
-    fields: list[Field] = []
+    described: list[Described] = []
     for item in dataclasses.fields(typing.cast("Any", data_cls)):
         label = f"{where}.{item.name}"
         hint, info = _unwrap(hints[item.name], label)
@@ -162,19 +241,17 @@ def _declare(cls: type[_T], rename_all: str | None, scope: dict[str, Any]) -> ty
             value = _to_json(default, label)
             if value is not None:
                 ty = dataclasses.replace(ty, default=_js.normalize(value))
-        if info.name is not None:
-            name = info.name
-        elif rename_all is not None:
-            name = _RULES[rename_all]([w for w in item.name.split("_") if w] or [item.name])
-        else:
-            name = item.name
-        if any(f.name == name for f in fields):
-            raise SchemaError(f"{label}: duplicate field name {name!r}")
-        if info.alias is not None and any(f.alias == info.alias for f in fields):
-            raise SchemaError(f"{label}: duplicate alias {info.alias!r}")
-        fields.append(Field(name, ty, info.alias, item.name))
-    setattr(data_cls, _SCHEMA, object_type(fields))
-    return data_cls
+        described.append((item.name, ty, info))
+    return data_cls, described
+
+
+def add_field(fields: list[Field], label: str, field: Field) -> None:
+    """Appends a field, rejecting a name or alias that another field already uses."""
+    if any(f.name == field.name for f in fields):
+        raise SchemaError(f"{label}: duplicate field name {field.name!r}")
+    if field.alias is not None and any(f.alias == field.alias for f in fields):
+        raise SchemaError(f"{label}: duplicate alias {field.alias!r}")
+    fields.append(field)
 
 
 def _copier(value: list[object]) -> Callable[[], list[object]]:

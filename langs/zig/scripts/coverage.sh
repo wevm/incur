@@ -16,9 +16,9 @@ out=$(pwd)/zig-out/kcov
 rm -rf "$out"
 mkdir -p "$out"
 
-for bin in "$api" "$readme"; do
-    "$kcov" --include-path="$src" "$out/$(basename "$bin")" "$bin" > /dev/null
-done
+"$kcov" --include-path="$src" "$out/$(basename "$api")" "$api" > /dev/null
+# README examples run in child processes, each under its own kcov.
+INCUR_KCOV="$out" INCUR_KCOV_BIN="$kcov" INCUR_KCOV_INCLUDE="$src" "$readme" > /dev/null
 # A traced process cannot start another tracer, so the in-process cases run under kcov and the
 # `bin` cases run untraced, each child under its own kcov.
 INCUR_DIFFERENTIAL_CASES=in-process "$kcov" --include-path="$src" "$out/differential" "$differential"

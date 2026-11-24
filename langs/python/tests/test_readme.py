@@ -1,10 +1,14 @@
 """Runs the README: every Python example executes, and every shell command followed by `# →`
-lines runs against the `cli` its preceding example defines and prints exactly those lines.
+lines prints exactly those lines. A command runs the `main` its preceding example defines, with
+the process arguments, or else serves its `cli`. An example without imports continues the
+previous one.
 """
 
 from __future__ import annotations
 
+import contextlib
 import io
+import os
 import re
 import shlex
 import sys
@@ -40,16 +44,30 @@ def test_readme(monkeypatch: pytest.MonkeyPatch) -> None:
     checked = 0
     for index, (language, code) in enumerate(blocks()):
         if language == "python":
-            # A registered module, as dataclasses and annotations resolve through it.
-            module = types.ModuleType(f"readme_{index}")
-            monkeypatch.setitem(sys.modules, module.__name__, module)
-            exec(compile(code, str(README), "exec"), module.__dict__)
-            namespace = module.__dict__
+            if re.search(r"^(import|from) ", code, re.M):
+                # A registered module, as dataclasses and annotations resolve through it.
+                module = types.ModuleType(f"readme_{index}")
+                monkeypatch.setitem(sys.modules, module.__name__, module)
+                namespace = module.__dict__
+            exec(compile(code, str(README), "exec"), namespace)
         elif language == "sh":
-            cli: incur.Cli = namespace["cli"]
             for command, expected in commands(code):
-                stdout = io.StringIO()
-                cli.serve_with(shlex.split(command)[1:], stdout=stdout)
-                assert stdout.getvalue().splitlines() == expected, command
+                assert run(namespace, shlex.split(command), monkeypatch) == expected, command
                 checked += 1
     assert checked >= 10
+
+
+def run(namespace: dict[str, Any], argv: list[str], monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Runs an example's `main` with `argv` as the process arguments, or serves its `cli`."""
+    stdout = io.StringIO()
+    if "main" not in namespace:
+        cli: incur.Cli = namespace["cli"]
+        cli.serve_with(argv[1:], stdout=stdout)
+        return stdout.getvalue().splitlines()
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "argv", argv)
+        patch.setattr(sys, "stdout", stdout)
+        patch.setattr(os, "environ", {})
+        with contextlib.suppress(SystemExit):
+            namespace["main"]()
+    return stdout.getvalue().splitlines()

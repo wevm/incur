@@ -39,7 +39,14 @@
 //! `.screaming_snake_case`), `fields`, and `omit_null` (skip null optionals when serializing).
 //! Field options: `description`, `alias` (one ASCII letter or digit), `min` and `max` (numbers,
 //! string lengths, and array item counts), `count` (a number field counting repeated flags),
-//! `deprecated`, and `rename`. Unknown names and misplaced options are compile errors.
+//! `coerce` (convert input to a number or boolean first, as `z.coerce` does), `deprecated`, and
+//! `rename`. Unknown names and misplaced options are compile errors.
+//!
+//! A struct declared as a command (see `incur.cli`) also takes the command options listed in
+//! `command_keys`, and its fields `arg` (a positional argument) and `env` (an environment
+//! variable). Its options and arguments are named in camelCase and its environment variables in
+//! SCREAMING_SNAKE_CASE, unless `rename_all` or `rename` says otherwise. Positional numbers
+//! convert from strings unless `.coerce = false` keeps them strict, as `z.number()` does.
 
 const std = @import("std");
 const json = @import("json.zig");
@@ -59,8 +66,12 @@ pub fn of(comptime T: type) *const Type {
 /// Struct-level metadata keys.
 const struct_keys = [_][]const u8{ "rename_all", "fields", "omit_null" };
 
+/// The metadata keys of a struct or union declared as a command or command group, read by
+/// `incur.cli`.
+const command_keys = [_][]const u8{ "name", "version", "aliases", "description", "hint", "destructive", "output", "middleware", "examples", "usage" };
+
 /// Field-level metadata keys.
-const field_keys = [_][]const u8{ "description", "alias", "min", "max", "count", "deprecated", "rename" };
+const field_keys = [_][]const u8{ "description", "alias", "min", "max", "count", "coerce", "deprecated", "rename", "arg", "env" };
 
 /// Returns the `incur` metadata declaration of a struct, or an empty one.
 fn metaOf(comptime T: type) type {
@@ -74,7 +85,7 @@ fn metaOf(comptime T: type) type {
     const Meta = @TypeOf(meta);
     if (@typeInfo(Meta) != .@"struct") @compileError(@typeName(T) ++ ".incur must be a struct literal such as .{ .fields = .{} }");
     for (@typeInfo(Meta).@"struct".field_names) |key| {
-        if (!contains(&struct_keys, key)) @compileError("unknown incur option '" ++ key ++ "' on " ++ @typeName(T) ++ "; expected rename_all, fields, or omit_null");
+        if (!contains(&struct_keys, key) and !contains(&command_keys, key)) @compileError("unknown incur option '" ++ key ++ "' on " ++ @typeName(T) ++ "; expected rename_all, fields, omit_null, or a command option");
     }
     const fields = if (@hasField(Meta, "fields")) meta.fields else .{};
     for (@typeInfo(@TypeOf(fields)).@"struct".field_names) |name| {
@@ -82,7 +93,7 @@ fn metaOf(comptime T: type) type {
         const field_meta = @field(fields, name);
         for (@typeInfo(@TypeOf(field_meta)).@"struct".field_names) |key| {
             if (!contains(&field_keys, key)) @compileError("unknown incur field option '" ++ key ++ "' on " ++ @typeName(T) ++ "." ++ name ++
-                "; expected description, alias, min, max, count, deprecated, or rename");
+                "; expected description, alias, min, max, count, coerce, deprecated, rename, arg, or env");
         }
     }
     return struct {
@@ -93,7 +104,7 @@ fn metaOf(comptime T: type) type {
 }
 
 /// Whether `list` contains `name`.
-fn contains(comptime list: []const []const u8, comptime name: []const u8) bool {
+pub fn contains(comptime list: []const []const u8, comptime name: []const u8) bool {
     for (list) |item| if (std.mem.eql(u8, item, name)) return true;
     return false;
 }
@@ -109,6 +120,9 @@ fn fieldMeta(comptime T: type, comptime name: []const u8) type {
         const min: ?f64 = if (@hasField(Meta, "min")) meta.min else null;
         const max: ?f64 = if (@hasField(Meta, "max")) meta.max else null;
         const count: bool = if (@hasField(Meta, "count")) meta.count else false;
+        const coerce: ?bool = if (@hasField(Meta, "coerce")) meta.coerce else null;
+        const arg: bool = if (@hasField(Meta, "arg")) meta.arg else false;
+        const env: bool = if (@hasField(Meta, "env")) meta.env else false;
         const deprecated: bool = if (@hasField(Meta, "deprecated")) meta.deprecated else false;
         const rename: ?[]const u8 = if (@hasField(Meta, "rename")) meta.rename else null;
     };
@@ -129,6 +143,11 @@ fn fieldName(comptime T: type, comptime name: []const u8) []const u8 {
     return comptime applyRename(name, rule);
 }
 
+/// Returns a snake_case name in kebab-case.
+pub fn kebabCase(comptime name: []const u8) []const u8 {
+    return comptime applyRename(name, .kebab_case);
+}
+
 /// Applies a `rename_all` rule to a snake_case name.
 fn applyRename(comptime name: []const u8, comptime rule: anytype) []const u8 {
     var out: []const u8 = "";
@@ -144,6 +163,65 @@ fn applyRename(comptime name: []const u8, comptime rule: anytype) []const u8 {
         .screaming_snake_case => out = out ++ .{std.ascii.toUpper(ch)},
         else => @compileError("unknown incur rename_all '" ++ @tagName(rule) ++ "'; expected camel_case, pascal_case, kebab_case, or screaming_snake_case"),
     };
+    return out;
+}
+
+/// The input of a command that a field of its struct belongs to.
+pub const Part = enum { args, options, env };
+
+/// Returns the input a command struct field belongs to.
+fn partOf(comptime T: type, comptime name: []const u8) Part {
+    const M = fieldMeta(T, name);
+    if (M.arg and M.env) @compileError("incur field " ++ @typeName(T) ++ "." ++ name ++ " cannot be both arg and env");
+    return if (M.arg) .args else if (M.env) .env else .options;
+}
+
+/// Returns the input name of a command struct field: camelCase, or SCREAMING_SNAKE_CASE for
+/// environment variables, unless renamed.
+fn commandFieldName(comptime T: type, comptime name: []const u8) []const u8 {
+    if (fieldMeta(T, name).rename) |rename| return rename;
+    if (partOf(T, name) == .env) return comptime applyRename(name, .screaming_snake_case);
+    const rule = metaOf(T).rename_all;
+    return comptime applyRename(name, if (@TypeOf(rule) == @TypeOf(null)) .camel_case else rule);
+}
+
+/// Returns the schema of one input of a command struct, or null when no field belongs to it.
+pub fn inputOf(comptime T: type, comptime part: Part) ?*const Type {
+    if (T == void) return null;
+    const fields = comptime fields: {
+        @setEvalBranchQuota(100_000);
+        _ = metaOf(T);
+        const s = @typeInfo(T).@"struct";
+        var fields: []const schema.Field = &.{};
+        for (s.field_names, s.field_types, s.field_attrs) |name, F, attrs| {
+            if (partOf(T, name) != part) continue;
+            var field = fieldOf(T, name, F, attrs.defaultValue(F));
+            field.name = commandFieldName(T, name);
+            // The command line passes positional numbers as strings, so they convert unless
+            // `.coerce = false` keeps them strict.
+            if (part == .args and fieldMeta(T, name).coerce == null and (field.ty.kind == .integer or field.ty.kind == .number)) field.ty.coerce = true;
+            fields = fields ++ .{field};
+        }
+        break :fields fields;
+    };
+    if (fields.len == 0) return null;
+    return &struct {
+        const value: Type = .{ .kind = .{ .object = fields } };
+    }.value;
+}
+
+/// Converts the validated inputs of a command into its struct.
+pub fn decodeCommand(comptime T: type, a: Allocator, args: Value, options: Value, env: Value) Allocator.Error!T {
+    if (T == void) return {};
+    var out: T = undefined;
+    inline for (@typeInfo(T).@"struct".field_names, @typeInfo(T).@"struct".field_types) |name, F| {
+        const input = switch (comptime partOf(T, name)) {
+            .args => args,
+            .options => options,
+            .env => env,
+        };
+        @field(out, name) = try decode(F, a, input.get(commandFieldName(T, name)));
+    }
     return out;
 }
 
@@ -209,6 +287,12 @@ fn fieldOf(comptime T: type, comptime name: []const u8, comptime F: type, compti
         }
         ty.count = true;
         if (ty.default == null) ty.default = .{ .integer = 0 };
+    }
+    if (M.coerce == true) {
+        switch (ty.kind) {
+            .boolean, .integer, .number => ty.coerce = true,
+            else => @compileError("incur coerce on " ++ @typeName(T) ++ "." ++ name ++ " needs a number or boolean field"),
+        }
     }
     if (M.min != null or M.max != null) {
         const bounds: schema.Bounds = .{ .min = M.min, .max = M.max };

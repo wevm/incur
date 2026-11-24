@@ -55,6 +55,7 @@ class Options:
     examples: list[Example] | None = None
     globals: Type | None = None
     hide_global_options: bool = False
+    hide_mcp: bool = False
     hide_skills: bool = False
     hide_update: bool = False
     hint: str | None = None
@@ -215,7 +216,8 @@ _INTEGRATIONS = (
 def _global_lines(lines: list[str], options: Options) -> None:
     """Writes the integrations and global options sections."""
     if options.root:
-        builtins = [b for b in _INTEGRATIONS if not options.hide_skills or b[0] != "skills"]
+        hidden = {"mcp": options.hide_mcp, "skills": options.hide_skills}
+        builtins = [b for b in _INTEGRATIONS if not hidden.get(b[0])]
         width = _width([n for n, _ in builtins])
         lines += ["", "Integrations:"]
         for name, description in builtins:
@@ -252,7 +254,9 @@ def global_flags(options: Options) -> list[tuple[str, str]]:
         ("--full-output", "Show full output envelope"),
     ]
     if options.root:
-        flags += [("--mcp", "Start as MCP stdio server"), ("--version", "Show version")]
+        if not options.hide_mcp:
+            flags.append(("--mcp", "Start as MCP stdio server"))
+        flags.append(("--version", "Show version"))
         if not options.hide_update:
             flags.append(("--update", "Update to latest version"))
     flags.sort(key=lambda entry: _js.locale_key(entry[0]))

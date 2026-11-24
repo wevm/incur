@@ -90,8 +90,13 @@ fn readmeExample(b: *std.Build) std.Build.LazyPath {
 /// Schema metadata fixtures that must fail to compile. Each starts with `// error: <text>`.
 const compile_error_fixtures = [_][]const u8{
     "alias_not_char",
+    "arg_and_env",
+    "coerce_on_string",
     "count_on_string",
+    "group_command_option",
+    "group_member_command_option",
     "min_on_bool",
+    "missing_cli_name",
     "unknown_field",
     "unknown_field_option",
     "unknown_rename_all",

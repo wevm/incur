@@ -146,10 +146,28 @@ const UsageOptions = struct {
 
 const PrState = enum { open, closed, all };
 
-const PrListOptions = struct {
-    state: PrState = .open,
+/// Pull request commands, declared as a group.
+const Pr = union(enum) {
+    list: struct {
+        state: PrState = .open,
 
-    pub const incur = .{ .fields = .{ .state = .{ .description = "State" } } };
+        pub const incur = .{ .fields = .{ .state = .{ .description = "State" } } };
+    },
+    view: struct {
+        number: f64,
+
+        pub const incur = .{ .fields = .{ .number = .{ .arg = true, .coerce = false, .description = "PR number" } } };
+    },
+
+    pub const incur = .{
+        .name = "pr",
+        .description = "Pull request commands",
+        .middleware = &.{prUser},
+        .fields = .{
+            .list = .{ .description = "List pull requests" },
+            .view = .{ .description = "View a pull request" },
+        },
+    };
 };
 
 const UserRow = struct {
@@ -194,12 +212,6 @@ const DataArgs = struct {
     json: []const u8,
 
     pub const incur = .{ .fields = .{ .json = .{ .description = "JSON value" } } };
-};
-
-const PrViewArgs = struct {
-    number: f64,
-
-    pub const incur = .{ .fields = .{ .number = .{ .description = "PR number" } } };
 };
 
 const DbArgs = struct {
@@ -260,12 +272,11 @@ fn requireRoot(c: *incur.MiddlewareContext, next: incur.Next) !void {
     try next.run(c);
 }
 
-fn prList(c: *Context(.{ .options = PrListOptions })) !Outcome {
-    return c.ok(.{ .prs = .{}, .state = c.options.state, .user = c.get("user") });
-}
-
-fn prView(c: *Context(.{ .args = PrViewArgs })) !Outcome {
-    return c.ok(.{ .number = c.args.number });
+fn pr(c: *Context(.{}), command: Pr) !Outcome {
+    return switch (command) {
+        .list => |options| c.ok(.{ .prs = .{}, .state = options.state, .user = c.get("user") }),
+        .view => |args| c.ok(.{ .number = args.number }),
+    };
 }
 
 fn dbRoot(c: *Context(.{ .args = DbArgs })) !Outcome {
@@ -501,11 +512,12 @@ fn app(gpa: Allocator) !*incur.Cli {
         .run = incur.handler(usage),
     });
 
-    const pr = try incur.Cli.create(gpa, "pr", .{ .description = "Pull request commands" });
-    try pr.use(prUser);
-    try pr.command("list", .{ .description = "List pull requests", .run = incur.handler(prList) });
-    try pr.command("view", .{ .description = "View a pull request", .run = incur.handler(prView) });
-    try cli.group(pr);
+    const prs = try incur.cli(Pr, gpa, .{});
+    prs.handle(Pr, pr) catch |err| {
+        prs.destroy();
+        return err;
+    };
+    try cli.group(prs);
 
     const db = try incur.Cli.create(gpa, "db", .{ .description = "Database commands", .output_policy = .agent_only, .root = .{ .run = incur.handler(dbRoot) } });
     try db.command("migrate", .{ .description = "Run migrations", .run = incur.handler(migrate) });
@@ -515,15 +527,24 @@ fn app(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
-const LoudOptions = struct {
+/// A greeting CLI, declared as a command.
+const Greet = struct {
+    name: []const u8,
     loud: ?bool = null,
 
-    pub const incur = .{ .fields = .{ .loud = .{ .description = "Shout" } } };
+    pub const incur = .{
+        .name = "greet",
+        .description = "A greeting CLI",
+        .fields = .{
+            .name = .{ .arg = true, .description = "Name to greet" },
+            .loud = .{ .description = "Shout" },
+        },
+    };
 };
 
-fn greetRoot(c: *Context(.{ .args = GreetArgs, .options = LoudOptions })) !Outcome {
-    const prefix = if (c.options.loud == true) "HELLO" else "hello";
-    return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "{s} {s}", .{ prefix, c.args.name }) });
+fn greetRoot(c: *Context(.{}), greet_: Greet) !Outcome {
+    const prefix = if (greet_.loud == true) "HELLO" else "hello";
+    return c.ok(.{ .message = try std.fmt.allocPrint(c.allocator, "{s} {s}", .{ prefix, greet_.name }) });
 }
 
 fn greetBanner(_: std.Io, _: Allocator) !?[]const u8 {
@@ -531,12 +552,10 @@ fn greetBanner(_: std.Io, _: Allocator) !?[]const u8 {
 }
 
 fn greetCli(gpa: Allocator) !*incur.Cli {
-    return incur.Cli.create(gpa, "greet", .{
-        .update = null,
-        .description = "A greeting CLI",
-        .banner = .{ .mode = .agent, .render = greetBanner },
-        .root = .{ .run = incur.handler(greetRoot) },
-    });
+    const cli = try incur.cli(Greet, gpa, .{ .update = null, .banner = .{ .mode = .agent, .render = greetBanner } });
+    errdefer cli.destroy();
+    try cli.handle(Greet, greetRoot);
+    return cli;
 }
 
 const Globals = struct {
@@ -687,20 +706,35 @@ fn cfg(gpa: Allocator) !*incur.Cli {
     return cli;
 }
 
-fn hello(c: *Context(.{})) !Outcome {
-    return c.ok(.{ .hello = "world" });
-}
+/// No skills, JSON by default: commands declared as a group.
+const Plain = union(enum) {
+    hello,
+    ping,
+    hello_loud,
+    v2,
+    pin,
 
-fn helloLoud(c: *Context(.{})) !Outcome {
-    return c.ok(.{ .hello = "WORLD" });
-}
+    pub const incur = .{
+        .name = "plain",
+        .aliases = &.{ "pl", "plain-cli" },
+        .description = "No skills, JSON by default",
+        .fields = .{
+            .hello = .{ .description = "Say hello" },
+            .hello_loud = .{ .name = "Hello", .description = "Say hello loudly" },
+            .v2 = .{ .description = "Version two" },
+            .pin = .{ .name = "ピン", .description = "Katakana ping" },
+        },
+    };
+};
 
-fn v2(c: *Context(.{})) !Outcome {
-    return c.ok(.{ .v = 2 });
-}
-
-fn katakana(c: *Context(.{})) !Outcome {
-    return c.ok("ポン");
+fn plainCommand(c: *Context(.{}), command: Plain) !Outcome {
+    return switch (command) {
+        .hello => c.ok(.{ .hello = "world" }),
+        .ping => c.ok("pong"),
+        .hello_loud => c.ok(.{ .hello = "WORLD" }),
+        .v2 => c.ok(.{ .v = 2 }),
+        .pin => c.ok("ポン"),
+    };
 }
 
 fn plainBanner(_: std.Io, _: Allocator) !?[]const u8 {
@@ -708,21 +742,15 @@ fn plainBanner(_: std.Io, _: Allocator) !?[]const u8 {
 }
 
 fn plain(gpa: Allocator) !*incur.Cli {
-    const cli = try incur.Cli.create(gpa, "plain", .{
+    const cli = try incur.cli(Plain, gpa, .{
         .update = null,
-        .description = "No skills, JSON by default",
         .sync = null,
         .format = .json,
-        .aliases = &.{ "pl", "plain-cli" },
         .config = .{},
         .banner = .{ .mode = .all, .render = plainBanner },
     });
     errdefer cli.destroy();
-    try cli.command("hello", .{ .description = "Say hello", .run = incur.handler(hello) });
-    try cli.command("ping", .{ .run = incur.handler(ping) });
-    try cli.command("Hello", .{ .description = "Say hello loudly", .run = incur.handler(helloLoud) });
-    try cli.command("v2", .{ .description = "Version two", .run = incur.handler(v2) });
-    try cli.command("ピン", .{ .description = "Katakana ping", .run = incur.handler(katakana) });
+    try cli.handle(Plain, plainCommand);
     return cli;
 }
 
