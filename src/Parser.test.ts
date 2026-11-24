@@ -495,11 +495,9 @@ describe('parseGlobals', () => {
 
   test('handles short aliases', () => {
     const schema = z.object({ rpcUrl: z.string() })
-    const result = Parser.parseGlobals(
-      ['-r', 'http://example.com', 'deploy'],
-      schema,
-      { rpcUrl: 'r' },
-    )
+    const result = Parser.parseGlobals(['-r', 'http://example.com', 'deploy'], schema, {
+      rpcUrl: 'r',
+    })
     expect(result.parsed).toEqual({ rpcUrl: 'http://example.com' })
     expect(result.rest).toEqual(['deploy'])
   })
@@ -602,9 +600,9 @@ describe('parseGlobals', () => {
       output: z.string(),
       verbose: z.boolean().default(false),
     })
-    expect(() => Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' })).toThrow(
-      /must be last/,
-    )
+    expect(() =>
+      Parser.parseGlobals(['-ov', 'file'], schema, { output: 'o', verbose: 'v' }),
+    ).toThrow(/must be last/)
   })
 
   test('short flag value-taking as last in stacked alias', () => {

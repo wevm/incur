@@ -44,7 +44,6 @@ export function register(shell: Shell, name: string): string {
   }
 }
 
-
 /**
  * Computes completion candidates for the given argv words and cursor index.
  * Walks the command tree to resolve the active command, then suggests

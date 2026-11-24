@@ -169,11 +169,7 @@ async function discoverTools(session: Session) {
   return tools
 }
 
-async function callRemoteTool(
-  session: Session,
-  name: string,
-  arguments_: Record<string, unknown>,
-) {
+async function callRemoteTool(session: Session, name: string, arguments_: Record<string, unknown>) {
   const result = await request(session, 'tools/call', { name, arguments: arguments_ })
   if (result.isError) throw new Error(resultText(result) || `MCP tool failed: ${name}`)
   return resultValue(result)

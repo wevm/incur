@@ -6,6 +6,8 @@
   "printWidth": 100,
   "ignorePatterns": [
     "package.json",
+    // Written by `changeset version`; reformatting it would fail every release PR.
+    "CHANGELOG.md",
     // Shared differential fixtures: invalid JSON by design, and one case per line.
     "langs/_differential/cases.json",
     "langs/_differential/config",
