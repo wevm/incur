@@ -3,6 +3,7 @@
 const std = @import("std");
 const js = @import("js.zig");
 const json = @import("json.zig");
+const parser = @import("parser.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = json.Value;
@@ -23,8 +24,9 @@ pub const Segment = union(enum) {
 /// A filter path.
 pub const Path = []const Segment;
 
-/// Parses a filter expression into paths.
-pub fn parse(a: Allocator, expression: []const u8) Allocator.Error![]const Path {
+/// Parses a filter expression into paths. Returns an `UNKNOWN` error when a `[` has no
+/// closing `]`.
+pub fn parse(a: Allocator, expression: []const u8) Allocator.Error!parser.Result([]const Path) {
     var tokens: std.ArrayList([]const u8) = .empty;
     var depth: i32 = 0;
     var start: usize = 0;
@@ -48,17 +50,19 @@ pub fn parse(a: Allocator, expression: []const u8) Allocator.Error![]const Path 
                 break;
             };
             try keys(a, remaining[0..open], &path);
-            const close = if (std.mem.findScalar(u8, remaining[open..], ']')) |i| open + i else null;
-            var bounds = std.mem.splitScalar(u8, remaining[open + 1 .. close orelse remaining.len], ',');
+            const close = open + (std.mem.findScalar(u8, remaining[open..], ']') orelse return .{ .err = .{
+                .message = try std.fmt.allocPrint(a, "Unclosed bracket in filter expression: \"{s}\"", .{token}),
+            } });
+            var bounds = std.mem.splitScalar(u8, remaining[open + 1 .. close], ',');
             const first = js.toNumber(bounds.first());
             const end = if (bounds.next()) |b| js.toNumber(b) else std.math.nan(f64);
             try path.append(a, .{ .slice = .{ .start = first, .end = end } });
-            remaining = if (close) |c| remaining[c + 1 ..] else "";
+            remaining = remaining[close + 1 ..];
             if (std.mem.startsWith(u8, remaining, ".")) remaining = remaining[1..];
         }
         slot.* = path.items;
     }
-    return paths;
+    return .{ .ok = paths };
 }
 
 /// Appends the non-empty dot-separated keys of `text`.

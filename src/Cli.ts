@@ -899,7 +899,7 @@ async function serveImpl(
     fullOutput,
     format: formatFlag,
     formatExplicit,
-    filterOutput,
+    filterPaths,
     tokenLimit,
     tokenOffset,
     tokenCount,
@@ -1681,8 +1681,6 @@ async function serveImpl(
   const effectiveOutputPolicy =
     ('outputPolicy' in resolved && resolved.outputPolicy) || options.outputPolicy
   const renderOutput = !(human && !formatExplicit && effectiveOutputPolicy === 'agent-only')
-
-  const filterPaths = filterOutput ? Filter.parse(filterOutput) : undefined
 
   function truncate(s: string): {
     text: string
@@ -2822,7 +2820,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   let formatExplicit = false
   let configPath: string | undefined
   let configDisabled = false
-  let filterOutput: string | undefined
+  let filterPaths: Filter.FilterPath[] | undefined
   let tokenLimit: number | undefined
   let tokenOffset: number | undefined
   let tokenCount = false
@@ -2873,7 +2871,8 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       configPath = undefined
       configDisabled = true
     } else if (token === '--filter-output' && argv[i + 1]) {
-      filterOutput = argv[i + 1]!
+      // Parse up front so a malformed filter is reported before the command runs
+      filterPaths = Filter.parse(argv[i + 1]!)
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
       const n = Number(argv[i + 1])
@@ -2897,7 +2896,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     formatExplicit,
     configPath,
     configDisabled,
-    filterOutput,
+    filterPaths,
     tokenLimit,
     tokenOffset,
     tokenCount,

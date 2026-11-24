@@ -685,8 +685,8 @@ const Flags = struct {
     config_disabled: bool = false,
     /// `--<config> <path>`.
     config_path: ?[]const u8 = null,
-    /// `--filter-output`.
-    filter_output: ?[]const u8 = null,
+    /// Parsed `--filter-output` paths.
+    filter_output: ?[]const filter.Path = null,
     /// `--format` or `--json`.
     format: Format = .toon,
     /// Whether the format was explicit.
@@ -761,7 +761,10 @@ fn extractFlags(a: Allocator, argv: []const []const u8, config_flag: ?[]const u8
             flags.format_explicit = true;
             i += 1;
         } else if (eql(token, "--filter-output") and next != null) {
-            flags.filter_output = next;
+            flags.filter_output = switch (try filter.parse(a, next.?)) {
+                .ok => |paths| paths,
+                .err => |err| return .{ .err = err },
+            };
             i += 1;
         } else if ((eql(token, "--token-limit") or eql(token, "--token-offset")) and next != null) {
             const value = js.toNumber(next.?);
@@ -1208,7 +1211,7 @@ const Run = struct {
             .flags = &flags,
             .format = format,
             .human = human,
-            .filter = if (flags.filter_output) |f| try filter.parse(a, f) else null,
+            .filter = flags.filter_output,
             .render = !(human and policy == .agent_only),
         };
 
