@@ -342,7 +342,12 @@ test('register keeps amp settings changed while add-mcp runs', async () => {
   const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
   mkdirSync(join(fakeHome!, '.config', 'amp'), { recursive: true })
   writeFileSync(configPath, '{}')
-  vi.mocked(execFile).mockImplementationOnce(((_cmd: string, _args: string[], cb: Function) => {
+  vi.mocked(execFile).mockImplementationOnce(((
+    _cmd: string,
+    _args: string[],
+    _options: object,
+    cb: Function,
+  ) => {
     writeFileSync(configPath, JSON.stringify({ 'amp.mcpServers': { other: { command: 'x' } } }))
     cb(null, '', '')
   }) as any)
