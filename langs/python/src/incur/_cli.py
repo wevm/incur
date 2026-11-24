@@ -1455,7 +1455,7 @@ class _Run:
             if report["ok"] is not True:
                 self.exit = 1
         else:
-            await self.mcp_add(rest, flags, fmt)
+            await self.mcp_add(rest, flags, fmt, human)
 
     def sync_options(self) -> SyncOptions:
         cli = self.cli
@@ -1571,7 +1571,7 @@ class _Run:
             report["warnings"] = ["No MCP tools exposed."]
         return report
 
-    async def mcp_add(self, rest: list[str], flags: _Flags, fmt: Format) -> None:
+    async def mcp_add(self, rest: list[str], flags: _Flags, fmt: Format, human: bool) -> None:
         """Handles `mcp add`."""
         cli = self.cli
         options = cli.mcp or McpOptions()
@@ -1579,12 +1579,20 @@ class _Run:
         agents = list(options.agents)
         i = 0
         while i < len(rest):
-            if rest[i] in ("--command", "-c") and i + 1 < len(rest) and rest[i + 1]:
-                command = rest[i + 1]
-                i += 1
-            elif rest[i] == "--agent" and i + 1 < len(rest) and rest[i + 1]:
-                agents.append(rest[i + 1])
-                i += 1
+            # `--command` / `-c` and `--agent`, spaced or with `=`. A blank or option-shaped
+            # value is missing, so it cannot swallow the next flag.
+            flag, eq, value = rest[i].partition("=")
+            if flag in ("--command", "-c", "--agent"):
+                if not eq:
+                    i += 1
+                    value = rest[i] if i < len(rest) else ""
+                if not _js.trim(value) or (value.startswith("-") and len(value) > 1):
+                    self.early_error(unknown(f"Missing value for flag: {flag}"), human, fmt)
+                    return
+                if flag == "--agent":
+                    agents.append(value)
+                else:
+                    command = value
             i += 1
         name = options.name or cli.name
         self.write("Registering MCP server...")

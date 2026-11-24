@@ -1350,12 +1350,25 @@ async function serveImpl(
     const rest = filtered.slice(mcpIdx + 2)
     const global = rest.includes('--no-global') ? false : true
 
-    // Parse --command / -c and --agent flags from argv
+    // Parse --command / -c and --agent, spaced or with `=`. A blank or option-shaped value is
+    // missing, so it cannot swallow the next flag.
     let command = options.mcp?.command
     const agents: string[] = [...(options.mcp?.agents ?? [])]
     for (let i = 0; i < rest.length; i++) {
-      if ((rest[i] === '--command' || rest[i] === '-c') && rest[i + 1]) command = rest[++i]!
-      else if (rest[i] === '--agent' && rest[i + 1]) agents.push(rest[++i]!)
+      const token = rest[i]!
+      const eq = token.indexOf('=')
+      const flag = eq === -1 ? token : token.slice(0, eq)
+      if (flag !== '--command' && flag !== '-c' && flag !== '--agent') continue
+      const value = eq === -1 ? rest[++i] : token.slice(eq + 1)
+      if (value === undefined || !value.trim() || (value.startsWith('-') && value.length > 1)) {
+        const error = { code: 'UNKNOWN', message: `Missing value for flag: ${flag}` }
+        if (human) writeln(formatHumanError(error))
+        else writeln(Formatter.format(error, formatExplicit ? formatFlag : 'toon'))
+        exit(1)
+        return
+      }
+      if (flag === '--agent') agents.push(value)
+      else command = value
     }
 
     try {

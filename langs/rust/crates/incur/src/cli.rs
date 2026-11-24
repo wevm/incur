@@ -2449,7 +2449,7 @@ impl Run<'_, '_> {
             ("skills", "list") => self.skills_list(flags),
             ("skills", "add") => self.skills_add(rest, flags),
             ("mcp", "doctor") => self.mcp_doctor(flags),
-            _ => self.mcp_add(rest, flags),
+            _ => self.mcp_add(rest, flags, human),
         }
     }
 
@@ -2631,26 +2631,39 @@ impl Run<'_, '_> {
     }
 
     /// Runs `mcp add`.
-    fn mcp_add(&mut self, rest: &[String], flags: &Flags) {
+    fn mcp_add(&mut self, rest: &[String], flags: &Flags, human: bool) {
         let cli = self.cli;
         let global = !rest.iter().any(|t| t == "--no-global");
         let mut command = cli.mcp.command.clone();
         let mut agents = cli.mcp.agents.clone();
         let mut i = 0;
         while i < rest.len() {
-            let next = rest.get(i + 1).filter(|n| !n.is_empty());
-            match (rest[i].as_str(), next) {
-                ("--command" | "-c", Some(value)) => {
-                    command = Some(value.clone());
-                    i += 1;
-                }
-                ("--agent", Some(value)) => {
-                    agents.push(value.clone());
-                    i += 1;
-                }
-                _ => {}
-            }
+            // `--command` / `-c` and `--agent`, spaced or with `=`. A blank or option-shaped
+            // value is missing, so it cannot swallow the next flag.
+            let (flag, value) = match rest[i].split_once('=') {
+                Some((flag, value)) => (flag, Some(value)),
+                None => (rest[i].as_str(), None),
+            };
             i += 1;
+            if !matches!(flag, "--command" | "-c" | "--agent") {
+                continue;
+            }
+            let value = value.or_else(|| {
+                i += 1;
+                rest.get(i - 1).map(String::as_str)
+            });
+            let Some(value) = value.filter(|v| {
+                !v.trim_matches(js::is_whitespace).is_empty() && (*v == "-" || !v.starts_with('-'))
+            }) else {
+                let error = Error::unknown(format!("Missing value for flag: {flag}"));
+                self.early_error(&error, human, Self::action_format(flags));
+                return;
+            };
+            if flag == "--agent" {
+                agents.push(value.to_owned());
+            } else {
+                command = Some(value.to_owned());
+            }
         }
         let name = cli.mcp.name.clone().unwrap_or_else(|| cli.name.clone());
         self.write("Registering MCP server...");
