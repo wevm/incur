@@ -1481,7 +1481,9 @@ const Run = struct {
         }
         if (prefix.items.len == 0) root = if (run.root) |*r| r else null;
         const markdown = !flags.format_explicit or flags.format == .md;
-        const scoped = if (prefix.items.len == 0) cli.name else try std.fmt.allocPrint(a, "{s} {s}", .{ cli.name, try std.mem.join(a, " ", prefix.items) });
+        // Markdown manifests show `sync.command` (e.g. `bunx @scope/cli`) in place of the name.
+        const shown = if (cli.options.sync) |s| s.command orelse cli.name else cli.name;
+        const scoped = if (prefix.items.len == 0) shown else try std.fmt.allocPrint(a, "{s} {s}", .{ shown, try std.mem.join(a, " ", prefix.items) });
         if (markdown) {
             var groups: std.ArrayList(skill.Group) = .empty;
             var infos: std.ArrayList(skill.CommandInfo) = .empty;

@@ -435,6 +435,7 @@ export function create(
       await loadAll()
       const globalsDesc = toGlobals.get(cli)
       return fetchImpl(name, commands, req, {
+        command: def.sync === false ? undefined : def.sync?.command,
         description: def.description,
         envSchema: def.env,
         globals: globalsDesc,
@@ -709,7 +710,7 @@ export declare namespace create {
       | {
           /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
           body?: string | undefined
-          /** Command that generated skill files show in place of the CLI name, such as `bunx @scope/my-cli`. Skill names still derive from the CLI name. Defaults to the CLI name. */
+          /** Command shown in place of the CLI name, such as `bunx @scope/my-cli`, in generated skill files (`skills add`, `skills list`, and the skills `fetch` serves) and in Markdown `--llms` and `--llms-full` output. Skill names still derive from the CLI name. Defaults to the CLI name. */
           command?: string | undefined
           /** Directory that `include` globs resolve against, in both `skills add` and `skills list`. Defaults to the package root of the running bin (the nearest `package.json` above `process.argv[1]`). Project installs (`skills add --no-global`) always go to the working directory, not here. */
           cwd?: string | undefined
@@ -1099,6 +1100,8 @@ async function serveImpl(
     }
 
     if (prefix.length === 0) scopedRoot = options.rootCommand
+    // Markdown manifests show `sync.command` (e.g. `bunx @scope/cli`) in place of the CLI name.
+    const shown = sync?.command ?? name
     // Markdown skill output renders scopedName separately. Passing prefix again
     // to those collect helpers would double the group segment in command names
     // (e.g. "cli auth auth login" instead of "cli auth login").
@@ -1108,7 +1111,7 @@ async function serveImpl(
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
         const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
-        const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
+        const scopedName = prefix.length > 0 ? `${shown} ${prefix.join(' ')}` : shown
         writeln(Skill.generate(scopedName, cmds, groups))
         return
       }
@@ -1124,7 +1127,7 @@ async function serveImpl(
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
       const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
-      const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
+      const scopedName = prefix.length > 0 ? `${shown} ${prefix.join(' ')}` : shown
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
     }
@@ -2098,6 +2101,8 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    /** Command that served skill files show in place of the CLI name (`sync.command`). */
+    command?: string | undefined
     /** CLI description. */
     description?: string | undefined
     /** CLI-level env schema. */
@@ -2323,7 +2328,7 @@ async function fetchImpl(
     await Yaml.load()
     const groups = new Map<string, string>()
     const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
-    const files = Skill.split(name, cmds, 1, groups)
+    const files = Skill.split(name, cmds, 1, groups, options.command)
 
     // GET /.well-known/{agent-skills,skills}/index.json
     if (segments[2] === 'index.json' && segments.length === 3) {

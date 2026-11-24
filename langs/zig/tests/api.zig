@@ -46,6 +46,18 @@ fn one(c: *Context(.{})) !Outcome {
     return c.ok(1);
 }
 
+test "splits skill files that show the CLI name or a command in its place" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const commands: []const incur.skill.CommandInfo = &.{.{ .name = "status", .description = "Show status" }};
+    const plain = try incur.skill.split(a, "kit", commands, &.{}, 1);
+    try testing.expect(std.mem.indexOf(u8, plain[0].content, "\n# kit status\n") != null);
+    const run = try incur.skill.splitAs(a, "kit", "bunx @acme/kit", commands, &.{}, 1);
+    try testing.expectEqualStrings("kit-status", run[0].name);
+    try testing.expect(std.mem.indexOf(u8, run[0].content, "\n# bunx @acme/kit status\n") != null);
+}
+
 test "runs commands without handlers and replaces commands registered twice" {
     const cli = try incur.Cli.create(testing.allocator, "tool", .{});
     defer cli.destroy();

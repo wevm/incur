@@ -63,7 +63,7 @@ async def handle(
     ):
         groups: dict[str, str] = {}
         infos = _skill.collect(spec.commands, [], groups, spec.root_command())
-        files = _skill.split(spec.name, infos, 1, groups)
+        files = _skill.split(spec.name, infos, 1, groups, spec.sync.command if spec.sync else None)
         if segments[2] == "index.json" and len(segments) == 3:
             listed = [(f.dir or spec.name, f.description, f.content) for f in files]
             if segments[1] == "agent-skills":
