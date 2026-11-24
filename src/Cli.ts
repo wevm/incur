@@ -1438,6 +1438,9 @@ async function serveImpl(
     return
   }
 
+  // Built-ins a registered command or alias shadows are unreachable, so root help leaves them out.
+  const hideBuiltins = builtinCommands.filter((b) => commands.has(b.name)).map((b) => b.name)
+
   if (filtered.length === 0) {
     if (
       options.rootCommand &&
@@ -1464,6 +1467,7 @@ async function serveImpl(
           examples: formatExamples(cmd.examples),
           usage: cmd.usage,
           commands: commands.size > 0 ? collectHelpCommands(commands) : undefined,
+          hideBuiltins,
           hideSkills: !skillsEnabled,
           hideUpdate: !updateEnabled,
           root: true,
@@ -1483,6 +1487,7 @@ async function serveImpl(
           globals: options.globals,
           version: options.version,
           commands: collectHelpCommands(commands),
+          hideBuiltins,
           hideSkills: !skillsEnabled,
           hideUpdate: !updateEnabled,
           root: true,
@@ -1519,6 +1524,7 @@ async function serveImpl(
           description: options.description,
           version: options.version,
           commands: collectHelpCommands(commands),
+          hideBuiltins,
           hideSkills: !skillsEnabled,
           hideUpdate: !updateEnabled,
           root: true,
@@ -1555,6 +1561,7 @@ async function serveImpl(
             examples: formatExamples(cmd.examples),
             usage: cmd.usage,
             commands: collectHelpCommands(helpCmds),
+            hideBuiltins,
             hideSkills: !skillsEnabled,
             hideUpdate: !updateEnabled,
             root: true,
@@ -1569,6 +1576,7 @@ async function serveImpl(
             globals: options.globals,
             version: isRoot ? options.version : undefined,
             commands: collectHelpCommands(helpCmds),
+            hideBuiltins,
             hideSkills: !skillsEnabled,
             hideUpdate: !updateEnabled,
             root: isRoot,
@@ -1601,6 +1609,7 @@ async function serveImpl(
           examples: formatExamples(cmd.examples),
           usage: cmd.usage,
           commands: helpSubcommands,
+          hideBuiltins,
           hideSkills: !skillsEnabled,
           hideUpdate: !updateEnabled,
           root: isRootCmd,

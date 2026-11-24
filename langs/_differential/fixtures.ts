@@ -464,6 +464,15 @@ const shadow = Cli.create('shadow', {
     run: () => ({ shell: true }),
   })
 
+const shadowall = Cli.create('shadowall', {
+  description: 'Every built-in shadowed',
+  update: false,
+  sync: false,
+  run: () => ({ root: true }),
+})
+  .command('mcp', { description: 'User mcp', run: () => ({ mcp: true }) })
+  .command('completions', { description: 'User completions', run: () => ({ completions: true }) })
+
 /**
  * The fake network. Every outgoing `fetch` (hosted sources, OpenAPI URLs, the npm registry, MCP
  * URLs without a handler) lands here. `hosted.test` and `registry.test` answer; any other host
@@ -1368,6 +1377,7 @@ export const clis = {
   remote,
   rooted,
   shadow,
+  shadowall,
   spaced,
   tools,
   upd,

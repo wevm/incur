@@ -57,6 +57,9 @@ pub const Options = struct {
     examples: []const Example = &.{},
     /// Global options schema.
     globals: ?*const Type = null,
+    /// Built-in commands to leave out of the integrations list, such as ones a registered command
+    /// shadows.
+    hide_builtins: []const []const u8 = &.{},
     /// Hide the global options section.
     hide_global_options: bool = false,
     /// Hide the MCP integration and the `--mcp` flag.
@@ -261,14 +264,21 @@ fn globalLines(a: Allocator, lines: *Lines, options: Options) Allocator.Error!vo
             .{ "mcp", "Register as MCP server (add, doctor)" },
             .{ "skills", "Sync skill files to agents (add, list)" },
         };
-        // `completions` is the longest name either way.
-        const width = "completions".len;
-        try lines.appendSlice(a, &.{ "", "Integrations:" });
+        var shown: std.ArrayList(Flag) = .empty;
+        var width: usize = 0;
         for (integrations) |entry| {
             if (options.hide_mcp and std.mem.eql(u8, entry[0], "mcp")) continue;
             if (options.hide_skills and std.mem.eql(u8, entry[0], "skills")) continue;
-            try lines.append(a, try std.fmt.allocPrint(a, "  {s}  {s}", .{ try js.pad(a, entry[0], width), entry[1] }));
+            const hidden = for (options.hide_builtins) |name| {
+                if (std.mem.eql(u8, name, entry[0])) break true;
+            } else false;
+            if (hidden) continue;
+            try shown.append(a, entry);
+            width = @max(width, entry[0].len);
         }
+        // Skip the section when every built-in is hidden
+        if (shown.items.len > 0) try lines.appendSlice(a, &.{ "", "Integrations:" });
+        for (shown.items) |entry| try lines.append(a, try std.fmt.allocPrint(a, "  {s}  {s}", .{ try js.pad(a, entry[0], width), entry[1] }));
     }
 
     if (options.globals) |globals| if (globals.fields().len > 0) {

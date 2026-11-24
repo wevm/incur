@@ -2586,5 +2586,8 @@
 {"cli": "kitrun", "argv": ["skills", "add"], "sandbox": {"cli": "", "package.json": "{}", "skills/extra/SKILL.md": "---\nname: extra\ndescription: Extra skill\n---\n\n# Extra\n"}},
 {"cli": "kitrun", "argv": ["skills", "add", "--depth", "0"], "sandbox": {"cli": "", "package.json": "{}"}},
 {"cli": "kitrun", "argv": ["skills", "list"], "sandbox": {"cli": "", "package.json": "{}"}},
-{"cli": "kitrun", "argv": ["status"], "sandbox": {"cli": "", "package.json": "{}", ".local/share/incur/kitrun.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kitrun-status\"],\"paths\":[\"<sandbox>/.agents/skills/kitrun-status\"]}\n", ".agents/skills/kitrun-status/SKILL.md": "old\n"}}
+{"cli": "kitrun", "argv": ["status"], "sandbox": {"cli": "", "package.json": "{}", ".local/share/incur/kitrun.json": "{\"hash\":\"0000000000000000\",\"skills\":[\"kitrun-status\"],\"paths\":[\"<sandbox>/.agents/skills/kitrun-status\"]}\n", ".agents/skills/kitrun-status/SKILL.md": "old\n"}},
+{"cli": "shadowall", "argv": ["--help"]},
+{"cli": "shadowall", "argv": []},
+{"cli": "shadowall", "argv": ["mcp"]}
 ]

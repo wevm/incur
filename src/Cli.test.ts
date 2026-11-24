@@ -3531,6 +3531,15 @@ describe('built-in commands', () => {
     `)
     // Names nothing shadows still reach the built-in
     expect((await serve(cli, ['skills'])).output).toContain('test skills')
+    // Root help lists only the built-ins still reachable
+    const help = (await serve(cli, ['--help'])).output
+    expect(help.slice(help.indexOf('Integrations:'), help.indexOf('Global Options:')))
+      .toMatchInlineSnapshot(`
+        "Integrations:
+          skills  Sync skill files to agents (add, list)
+
+        "
+      `)
   })
 
   test('bare mcp shows help with subcommands', async () => {
