@@ -302,6 +302,28 @@ describe('format md', () => {
     `)
   })
 
+  test('formats nested table cells as compact JSON', () => {
+    const result = Formatter.format(
+      {
+        rows: [
+          { name: 'one', details: { path: 'alpha.txt', count: 0 }, entries: [{ path: 'b|c\nd' }] },
+          { name: 'two', details: {}, entries: [] },
+          { name: 'three', details: null, entries: ['x', null, false] },
+        ],
+      },
+      'md',
+    )
+    expect(result).toMatchInlineSnapshot(`
+      "## rows
+
+      | name  | details                        | entries              |
+      |-------|--------------------------------|----------------------|
+      | one   | {"path":"alpha.txt","count":0} | [{"path":"b\\|c\\nd"}] |
+      | two   | {}                             | []                   |
+      | three |                                | ["x",null,false]     |"
+    `)
+  })
+
   test('formats single-entry flat object at root as kvTable (line 85)', () => {
     // Single flat object at root returns kvTable directly (line 85)
     // Line 106 (kvTable fallback) appears unreachable — needsHeadings is always

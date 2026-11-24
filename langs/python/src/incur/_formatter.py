@@ -69,16 +69,23 @@ def _kv_table(data: dict[str, Json]) -> str:
     return _table(["Key", "Value"], [[k, _js.to_string(v)] for k, v in data.items()])
 
 
+def _cell(value: Json) -> str:
+    """Renders a table cell: scalars as strings, nested values as compact JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        # Escape pipes so the JSON stays inside its cell.
+        return _js.stringify(value).replace("|", "\\|")
+    return _js.to_string(value)
+
+
 def _columnar_table(items: list[dict[str, Json]]) -> str:
     keys: list[str] = []
     for item in items:
         for key in item:
             if key not in keys:
                 keys.append(key)
-    rows = [
-        ["" if item.get(key) is None else _js.to_string(item[key]) for key in keys]
-        for item in items
-    ]
+    rows = [[_cell(item.get(key)) for key in keys] for item in items]
     return _table(keys, rows)
 
 
