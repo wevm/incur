@@ -227,7 +227,7 @@ async def _run(
     result = task.result()
     if isinstance(result, Error):
         body = {"ok": False, "error": result.to_json(), "meta": meta(format_cta(name, result.cta))}
-        status = 400 if result.code == "VALIDATION_ERROR" else 500
+        status = 400 if (result.code == "VALIDATION_ERROR" or result.parse_error) else 500
         return Response.json(body, status=status)
     body: dict[str, Json] = {"ok": True}
     if result.data is not None:

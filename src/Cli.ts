@@ -2713,7 +2713,7 @@ async function executeCommand(
           ...(cta ? { cta } : undefined),
         },
       },
-      result.error.code === 'VALIDATION_ERROR' ? 400 : 500,
+      result.error.code === 'VALIDATION_ERROR' || result.parseError ? 400 : 500,
     )
   }
 

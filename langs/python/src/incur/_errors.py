@@ -88,6 +88,7 @@ class Error(Exception):
         exit_code: int | None = None,
         cta: CtaBlock | None = None,
         field_errors: list[FieldError] | None = None,
+        parse_error: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -104,6 +105,8 @@ class Error(Exception):
         """Suggested commands to run next."""
         self.field_errors = field_errors
         """Per-field validation errors."""
+        self.parse_error = parse_error
+        """Whether the failure originated from argument parsing."""
 
     def to_json(self) -> dict[str, Json]:
         """Returns the `error` object of the output envelope."""

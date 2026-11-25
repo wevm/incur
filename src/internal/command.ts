@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { FieldError } from '../Errors.js'
-import { IncurError, ValidationError } from '../Errors.js'
+import { IncurError, ParseError, ValidationError } from '../Errors.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from '../middleware.js'
 import * as Parser from '../Parser.js'
 import { toJsonSchema } from '../Schema.js'
@@ -254,6 +254,11 @@ export function fromError(error: unknown): execute.Failure {
       ok: false,
       error: { code: 'VALIDATION_ERROR', message: error.message, fieldErrors: error.fieldErrors },
     }
+  if (error instanceof ParseError)
+    return {
+      ...failure({ code: 'UNKNOWN', message: error.message }),
+      parseError: true,
+    }
   if (error instanceof IncurError) return failure(error)
   return failure({
     code: 'UNKNOWN',
@@ -461,6 +466,8 @@ export declare namespace execute {
     cta?: CtaBlock | undefined
     /** Process exit code. Defaults to `1`. */
     exitCode?: number | undefined
+    /** @internal Whether the failure came from argument parsing (`ParseError`). */
+    parseError?: boolean | undefined
   }
 
   /** Result of executing a command. */

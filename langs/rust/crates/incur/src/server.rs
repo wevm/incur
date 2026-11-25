@@ -399,8 +399,8 @@ impl Cli {
         }
         let env = execute::parse_env(self.env.as_ref(), &process_env);
         let request = Arc::new(parts);
-        let executed = match env {
-            Err(error) => Executed::Error(error),
+        let (executed, parse_error) = match env {
+            Err(error) => (Executed::Error(error), false),
             Ok(env) => {
                 let context = MiddlewareContext {
                     agent: true,
@@ -415,23 +415,29 @@ impl Cli {
                     vars: self.vars.clone(),
                     version: self.version.clone(),
                 };
-                let input = execute::parse_split(
+                let mut input_parse_error = false;
+                let input = execute::parse_split_tracked(
                     rest,
                     &options,
                     command.args.as_ref(),
                     command.options.as_ref(),
                 )
+                .map_err(|(error, is_parse)| {
+                    input_parse_error = is_parse;
+                    error
+                })
                 .and_then(|parsed| {
                     Ok((
                         parsed,
                         execute::parse_env(command.env.as_ref(), &process_env)?,
                     ))
                 });
-                execute::execute(
+                execute::execute_tracked(
                     chain,
                     context,
                     command.handler.clone(),
                     input,
+                    input_parse_error,
                     Elicit::default(),
                 )
                 .await
@@ -459,7 +465,7 @@ impl Cli {
             }
             Executed::Error(error) => {
                 let cta = FormattedCtaBlock::new(&self.name, error.cta.as_deref());
-                let status = if error.code == "VALIDATION_ERROR" {
+                let status = if error.code == "VALIDATION_ERROR" || parse_error {
                     400
                 } else {
                     500

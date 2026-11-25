@@ -102,6 +102,11 @@ def check(schema: Type, data: dict[str, Json]) -> dict[str, Json]:
     return parsed
 
 
+def _parse_error(message: str) -> Error:
+    """Creates an `UNKNOWN` argument parse error."""
+    return Error("UNKNOWN", message, parse_error=True)
+
+
 def parse(
     argv: list[str],
     args: Type | None,
@@ -128,7 +133,7 @@ def parse(
         if token.startswith("--no-") and len(token) > 5:
             name = names.long(token[5:])
             if name is None:
-                raise unknown(f"Unknown flag: {token}")
+                raise _parse_error(f"Unknown flag: {token}")
             raw[name] = False
             last_boolean[name] = i
             i += 1
@@ -138,7 +143,7 @@ def parse(
                 flag, value = body.split("=", 1)
                 name = names.long(flag)
                 if name is None:
-                    raise unknown(f"Unknown flag: --{flag}")
+                    raise _parse_error(f"Unknown flag: --{flag}")
                 _set(raw, names, name, value)
                 if names.is_boolean(name):
                     last_boolean[name] = i
@@ -146,7 +151,7 @@ def parse(
                 continue
             name = names.long(body)
             if name is None:
-                raise unknown(f"Unknown flag: {token}")
+                raise _parse_error(f"Unknown flag: {token}")
             if names.is_count(name):
                 _increment(raw, name)
                 i += 1
@@ -160,7 +165,7 @@ def parse(
                 i += 1
             else:
                 if i + 1 >= len(argv):
-                    raise unknown(f"Missing value for flag: {token}")
+                    raise _parse_error(f"Missing value for flag: {token}")
                 _set(raw, names, name, argv[i + 1])
                 i += 2
         elif len(token) >= 2 and token.startswith("-"):
@@ -168,7 +173,7 @@ def parse(
             for j, short in enumerate(chars):
                 name = names.aliases.get(short)
                 if name is None:
-                    raise unknown(f"Unknown flag: -{short}")
+                    raise _parse_error(f"Unknown flag: -{short}")
                 if names.is_count(name):
                     _increment(raw, name)
                 elif names.is_boolean(name):
@@ -180,10 +185,10 @@ def parse(
                         positionals.append(argv[i + 1])
                         i += 1
                 elif j != len(chars) - 1:
-                    raise unknown(f"Non-boolean flag -{short} must be last in a stacked alias")
+                    raise _parse_error(f"Non-boolean flag -{short} must be last in a stacked alias")
                 else:
                     if i + 1 >= len(argv):
-                        raise unknown(f"Missing value for flag: -{short}")
+                        raise _parse_error(f"Missing value for flag: -{short}")
                     _set(raw, names, name, argv[i + 1])
                     i += 1
             i += 1
@@ -210,14 +215,14 @@ def parse(
     for j, f in enumerate(fields):
         if f.ty.unwrap().kind == "array":
             if j != len(fields) - 1:
-                raise unknown(f'Variadic arg "{f.name}" must be the last key in the args schema')
+                raise _parse_error(f'Variadic arg "{f.name}" must be the last key in the args schema')
             rest = positionals[j:]
             if rest:
                 raw_args[f.name] = list(rest)
         elif j < len(positionals):
             raw_args[f.name] = positionals[j]
     if not variadic and len(positionals) > len(fields):
-        raise unknown(f"Unexpected argument: {positionals[len(fields)]}")
+        raise _parse_error(f"Unexpected argument: {positionals[len(fields)]}")
     parsed_args = check(args, raw_args) if args is not None else {}
 
     merged = _normalize_defaults(defaults, names)

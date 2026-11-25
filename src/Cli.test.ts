@@ -6335,6 +6335,40 @@ describe('fetch', () => {
     `)
   })
 
+  test('argument parse error (extra path segment) → 400', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      run: (c) => ({ greeting: c.args.name }),
+    })
+    const { status, body } = await fetchJson(cli, new Request('http://localhost/greet/a/b'))
+    expect(status).toBe(400)
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNKNOWN',
+        message: 'Unexpected argument: b',
+      },
+    })
+  })
+
+  test('argument parse error (flag-shaped path segment) → 400', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      run: (c) => ({ greeting: c.args.name }),
+    })
+    const { status, body } = await fetchJson(cli, new Request('http://localhost/greet/-x'))
+    expect(status).toBe(400)
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNKNOWN',
+        message: 'Unknown flag: -x',
+      },
+    })
+  })
+
   test('async generator → NDJSON streaming response', async () => {
     const cli = Cli.create('test')
     cli.command('stream', {
