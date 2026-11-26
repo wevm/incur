@@ -77,7 +77,7 @@ const Names = struct {
 
 /// Error for an unknown flag or a missing value.
 fn parseError(a: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Error!Error {
-    return .{ .message = try std.fmt.allocPrint(a, fmt, args) };
+    return .{ .message = try std.fmt.allocPrint(a, fmt, args), .parse_error = true };
 }
 
 /// Raw option values in input order.

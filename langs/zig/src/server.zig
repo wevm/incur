@@ -231,7 +231,7 @@ const Call = struct {
         return switch (try exec.run(cmd, middleware, path, .{ .split = .{ .tokens = rest, .options = options } })) {
             .streamed => http.Response.text(a, sink.body.items, 200, "application/x-ndjson"),
             .ok => |r| c.envelope(true, r.data, path, try errors.FormattedCtaBlock.init(a, c.cli.name, r.cta), 200),
-            .err => |e| c.envelope(false, try e.toValue(a), path, try errors.FormattedCtaBlock.init(a, c.cli.name, e.cta), if (std.mem.eql(u8, e.code, "VALIDATION_ERROR")) 400 else 500),
+            .err => |e| c.envelope(false, try e.toValue(a), path, try errors.FormattedCtaBlock.init(a, c.cli.name, e.cta), if (e.parse_error or std.mem.eql(u8, e.code, "VALIDATION_ERROR")) 400 else 500),
         };
     }
 };

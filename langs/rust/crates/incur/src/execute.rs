@@ -106,6 +106,21 @@ pub(crate) async fn execute(
     input: Input,
     elicit: Elicit,
 ) -> Executed {
+    execute_tracked(chain, context, handler, input, false, elicit)
+        .await
+        .0
+}
+
+/// Runs `chain` around `handler` and reports whether a returned `Executed::Error` came from
+/// argument parsing rather than middleware or the handler.
+pub(crate) async fn execute_tracked(
+    chain: Vec<Middleware>,
+    context: MiddlewareContext,
+    handler: Option<Handler>,
+    input: Input,
+    input_parse_error: bool,
+    elicit: Elicit,
+) -> (Executed, bool) {
     let (outcome_tx, mut outcome_rx) = oneshot::channel();
     let (stream_tx, mut stream_rx) = oneshot::channel();
     let terminal = terminal(handler, input, elicit, outcome_tx, stream_tx);
@@ -124,24 +139,27 @@ pub(crate) async fn execute(
     })
     .await;
     let result = match step {
-        Step::Handover(handover) => return handed_over(handover, None, chain),
+        Step::Handover(handover) => return (handed_over(handover, None, chain), false),
         // Middleware may abandon the chain after the handler hands over its stream.
         Step::Finished(result) => match stream_rx.try_recv().ok().flatten() {
-            Some(handover) => return handed_over(handover, Some(result), chain),
+            Some(handover) => return (handed_over(handover, Some(result), chain), false),
             None => result,
         },
     };
     match result {
         // A middleware error replaces the result.
-        Err(error) => Executed::Error(error),
+        Err(error) => (Executed::Error(error), false),
         // Middleware that skips `next.run(c)` leaves no result.
         Ok(()) => match outcome_rx.try_recv().ok().flatten() {
-            Some(Inner::Data { cta, data }) => Executed::Data { cta, data },
-            Some(Inner::Error(error)) => Executed::Error(error),
-            Some(Inner::Stream { .. }) | None => Executed::Data {
-                cta: None,
-                data: None,
-            },
+            Some(Inner::Data { cta, data }) => (Executed::Data { cta, data }, false),
+            Some(Inner::Error(error)) => (Executed::Error(error), input_parse_error),
+            Some(Inner::Stream { .. }) | None => (
+                Executed::Data {
+                    cta: None,
+                    data: None,
+                },
+                false,
+            ),
         },
     }
 }
@@ -221,6 +239,23 @@ pub(crate) fn parse_flat(
 }
 
 /// Parses an HTTP invocation: arguments from path segments, options from the query or body.
+pub(crate) fn parse_split_tracked(
+    rest: &[String],
+    params: &Map<String, Value>,
+    args: Option<&Type>,
+    options: Option<&Type>,
+) -> Result<Parsed, (Error, bool)> {
+    let parsed = parser::parse(rest, args, None, None).map_err(|e| (e, true))?;
+    Ok(Parsed {
+        args: parsed.args,
+        options: match options {
+            Some(schema) => parser::validate(schema, params).map_err(|e| (e, false))?,
+            None => Value::Object(Map::new()),
+        },
+    })
+}
+
+#[allow(dead_code)]
 pub(crate) fn parse_split(
     rest: &[String],
     params: &Map<String, Value>,

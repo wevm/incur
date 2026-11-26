@@ -26,6 +26,8 @@ pub const Error = struct {
     hint: ?[]const u8 = null,
     /// Whether the operation can be retried.
     retryable: ?bool = null,
+    /// Whether the failure originated from argument parsing.
+    parse_error: bool = false,
 
     /// Returns the `error` object of the output envelope.
     pub fn toValue(e: Error, a: Allocator) Allocator.Error!Value {

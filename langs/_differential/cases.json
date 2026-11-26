@@ -2803,5 +2803,6 @@
 {"cli": "view", "argv": ["mcp", "doctor"], "sandbox": {}},
 {"cli": "viewmissing", "argv": ["mcp", "doctor"], "sandbox": {}},
 {"cli": "viewscheme", "argv": ["mcp", "doctor"], "sandbox": {}},
-{"cli": "kbbad", "argv": ["mcp", "doctor"], "sandbox": {}}
+{"cli": "kbbad", "argv": ["mcp", "doctor"], "sandbox": {}},
+{"cli": "app", "argv": [], "requests": [{"url": "/greet/-x"}, {"url": "/greet/--foo"}], "sandbox": {}}
 ]
